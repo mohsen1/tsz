@@ -13671,62 +13671,6 @@ impl<'a> CheckerState<'a> {
     /// - In `super(...)` constructor calls: base class constructor type (for argument checking)
     /// - In static members: base class constructor type (`super.staticMember`)
     /// - In instance members: base class instance type (`super.method()`)
-    fn get_type_of_super_keyword(&mut self, idx: NodeIndex) -> TypeId {
-        // Check super expression validity and emit any errors
-        self.check_super_expression(idx);
-
-        let Some(class_info) = self.ctx.enclosing_class.clone() else {
-            return TypeId::ERROR;
-        };
-
-        let Some(base_class_idx) = self.get_base_class_idx(class_info.class_idx) else {
-            return TypeId::ERROR;
-        };
-
-        let Some(base_node) = self.ctx.arena.get(base_class_idx) else {
-            return TypeId::ERROR;
-        };
-        let Some(base_class) = self.ctx.arena.get_class(base_node) else {
-            return TypeId::ERROR;
-        };
-
-        // Detect `super(...)` usage by checking if the parent is a CallExpression whose callee is `super`.
-        let is_super_call = self
-            .ctx
-            .arena
-            .get_extended(idx)
-            .and_then(|ext| self.ctx.arena.get(ext.parent).map(|n| (ext.parent, n)))
-            .and_then(|(parent_idx, parent_node)| {
-                if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-                    return None;
-                }
-                let call = self.ctx.arena.get_call_expr(parent_node)?;
-                Some(call.expression == idx && parent_idx.is_some())
-            })
-            .unwrap_or(false);
-
-        // Static context: the current `this` type is the current class constructor type.
-        let is_static_context = self.current_this_type().is_some_and(|this_ty| {
-            if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_info.class_idx) {
-                this_ty == self.get_type_of_symbol(sym_id)
-            } else if let Some(class_node) = self.ctx.arena.get(class_info.class_idx) {
-                if let Some(class) = self.ctx.arena.get_class(class_node) {
-                    this_ty == self.get_class_constructor_type(class_info.class_idx, class)
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        });
-
-        if is_super_call || is_static_context {
-            return self.get_class_constructor_type(base_class_idx, base_class);
-        }
-
-        self.get_class_instance_type(base_class_idx, base_class)
-    }
-
     /// Check and validate `super` expression usage.
     ///
     /// Validates:
@@ -13735,7 +13679,7 @@ impl<'a> CheckerState<'a> {
     /// - TS2337: Super calls are not permitted outside constructors or in nested functions
     /// - TS2376: 'super' call must be first statement when class has initialized properties
     /// - TS17011: 'super' cannot be referenced in a static property initializer
-    fn check_super_expression(&mut self, idx: NodeIndex) {
+    pub(crate) fn check_super_expression(&mut self, idx: NodeIndex) {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         // Check TS17011: super in static property initializer
@@ -16943,7 +16887,7 @@ impl<'a> CheckerState<'a> {
         "<anonymous>".to_string()
     }
 
-    fn get_base_class_idx(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn get_base_class_idx(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
         use crate::scanner::SyntaxKind;
 
         let node = self.ctx.arena.get(class_idx)?;
