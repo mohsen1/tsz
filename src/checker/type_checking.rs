@@ -98,6 +98,7 @@ impl<'a> CheckerState<'a> {
                 && right_node.kind == crate::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+                self.check_object_literal_missing_properties(right_type, left_type, right_idx);
             }
 
             // Check array literal elements when assigned to a tuple type
@@ -186,6 +187,7 @@ impl<'a> CheckerState<'a> {
                 && right_node.kind == crate::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+                self.check_object_literal_missing_properties(right_type, left_type, right_idx);
             }
 
             // Check array literal elements when assigned to a tuple type
@@ -1943,6 +1945,11 @@ impl<'a> CheckerState<'a> {
             && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
             self.check_object_literal_excess_properties(
+                return_type,
+                expected_type,
+                return_data.expression,
+            );
+            self.check_object_literal_missing_properties(
                 return_type,
                 expected_type,
                 return_data.expression,
