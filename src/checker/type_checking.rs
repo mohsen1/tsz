@@ -2091,9 +2091,10 @@ impl<'a> CheckerState<'a> {
 
         // Check if export modifier is present
         mods.nodes.iter().any(|&mod_idx| {
-            self.ctx.arena.get(mod_idx).is_some_and(|mod_node| {
-                mod_node.kind == SyntaxKind::ExportKeyword as u16
-            })
+            self.ctx
+                .arena
+                .get(mod_idx)
+                .is_some_and(|mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
         })
     }
 
@@ -5728,9 +5729,10 @@ impl<'a> CheckerState<'a> {
 
         // Check if export modifier is present
         mods.nodes.iter().any(|&mod_idx| {
-            self.ctx.arena.get(mod_idx).is_some_and(|mod_node| {
-                mod_node.kind == SyntaxKind::ExportKeyword as u16
-            })
+            self.ctx
+                .arena
+                .get(mod_idx)
+                .is_some_and(|mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
         })
     }
 
