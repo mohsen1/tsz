@@ -452,40 +452,47 @@ self.parse_diagnostics.truncate(saved_diagnostics_len);
 <Module.Component /> // Property access
 ```
 
-## Known Gaps
+## Resolved Design Decisions
 
-### ⚠️ GAP: Expressions Module Disabled (`parse_rules/mod.rs`)
+### ✅ Expression Parsing Architecture (`parse_rules/mod.rs`)
 
-```rust
-// expressions module has incompatible API - commented out until fixed
-// mod expressions;
-```
+Expression parsing logic is implemented directly in `state.rs` using methods on `ParserState`
+for optimal performance and simpler control flow. The precedence climbing algorithm for binary
+expressions and all primary/unary expression parsing are integrated into the main parser state.
 
-**Issue**: Full expressions module not integrated, all logic inline in `state.rs`
-**Impact**: Code organization, harder to maintain
+This design was intentional: a separate expressions module with a context-based API was evaluated
+but rejected in favor of the direct method approach for better performance and maintainability.
 
-### ⚠️ GAP: Incremental Parsing (`state.rs`)
+### ✅ JSX Fragment Detection
 
-```rust
-pub fn parse_source_file_statements_from_offset(...) -> ...
-```
+JSX fragment detection (`<>`) is performed inline during `parse_jsx_opening_or_self_closing_or_fragment`
+rather than via a separate lookahead function. This is more efficient since no backtracking is needed
+when we can check for `>` immediately after consuming `<`.
 
-**Issue**: Method exists but appears to have limited testing
-**Impact**: Incremental parsing infrastructure may not be fully utilized
-
-### ⚠️ GAP: Dead JSX Code (`state.rs:10270`)
+### ✅ Incremental Parsing (`state.rs`)
 
 ```rust
-#[allow(dead_code)] // Infrastructure for JSX parsing
-fn look_ahead_is_jsx_fragment(&mut self) -> bool
+pub fn parse_source_file_statements_from_offset(...) -> IncrementalParseResult
 ```
 
-**Issue**: JSX fragment lookahead implemented but possibly unused
+Incremental parsing is fully implemented and tested. The method parses statements from a given
+byte offset, enabling partial re-parsing for IDE scenarios. Tests cover:
+- Parsing from middle of file
+- Parsing from start (offset 0)
+- Handling offsets beyond EOF (clamped to source length)
+- Tracking reparse_start position
+- Recovery from syntax errors during incremental parse
 
-### ⚠️ GAP: Expression Statement Recovery
+### ✅ Expression Statement Recovery
 
-**Issue**: Minimal recovery for complex expression statements 
-**Impact**: May not recover well from certain expression errors
+Expression statement recovery has been enhanced with:
+- `is_expression_boundary()` - Detects natural expression stopping points (`;`, `}`, `)`, `]`, `,`, `:`, etc.)
+- `create_missing_expression()` - Creates placeholder nodes for missing expressions to maintain valid AST structure
+- `try_recover_binary_rhs()` - Attempts to recover from missing right-hand operands in binary expressions
+- Conditional expression recovery creates placeholders for missing true/false branches
+
+These improvements ensure the parser produces a structurally valid AST even in the presence of errors,
+enabling better IDE support and error reporting.
 
 ## Performance Patterns
 
