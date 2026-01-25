@@ -85,9 +85,6 @@ pub struct SalsaDatabase {
     /// The underlying Salsa database runtime
     storage: salsa::DatabaseStruct<SolverDatabase>,
 }
-    /// The underlying Salsa database runtime
-    storage: salsa::DatabaseStruct<SolverDatabase>,
-}
 
 impl SalsaDatabase {
     /// Create a new Salsa database with the given interner.
