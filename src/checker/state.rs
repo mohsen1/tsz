@@ -5120,47 +5120,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Get enum member type by property name.
-    pub(crate) fn enum_member_type_for_name(
-        &self,
-        sym_id: SymbolId,
-        property_name: &str,
-    ) -> Option<TypeId> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
-            return None;
-        }
-
-        // Check if the property exists in this enum
-        for &decl_idx in &symbol.declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(enum_decl) = self.ctx.arena.get_enum(node) else {
-                continue;
-            };
-            for &member_idx in &enum_decl.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
-                    continue;
-                };
-                if let Some(name) = self.get_property_name(member.name)
-                    && name == property_name
-                {
-                    // Return the enum type itself, not just STRING or NUMBER
-                    // This allows proper enum assignability checking
-                    return Some(self.ctx.types.intern(crate::solver::TypeKey::Ref(
-                        crate::solver::SymbolRef(sym_id.0),
-                    )));
-                }
-            }
-        }
-
-        None
-    }
-
     pub(crate) fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,
