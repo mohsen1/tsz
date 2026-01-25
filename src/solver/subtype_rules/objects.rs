@@ -202,6 +202,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_read = self.optional_property_type(target);
         let allow_bivariant = source.is_method || target.is_method;
 
+        // Rule #26: Split Accessors - Covariant reads
+        // Source read type must be subtype of target read type
         if !self
             .check_subtype_with_method_variance(source_read, target_read, allow_bivariant)
             .is_true()
@@ -209,8 +211,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // 2. Check WRITE type (contravariant): target.write <: source.write
-        // Only check write types if target is NOT readonly (you can't write to readonly properties)
+        // Rule #26: Split Accessors - Contravariant writes
+        // For mutable target properties, check write type compatibility
+        // Target write type must be subtype of source write type (contravariance)
         if !target.readonly {
             let source_write = self.optional_property_write_type(source);
             let target_write = self.optional_property_write_type(target);

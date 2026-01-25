@@ -13,6 +13,7 @@ use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
+use crate::solver::FreshnessTracker;
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
@@ -310,6 +311,10 @@ pub struct CheckerContext<'a> {
     /// Resolved module specifiers for this file (multi-file CLI mode).
     pub resolved_modules: Option<HashSet<String>>,
 
+    /// Import resolution stack for circular import detection.
+    /// Tracks the chain of modules being resolved to detect circular dependencies.
+    pub import_resolution_stack: Vec<String>,
+
     /// Lib file contexts for global type resolution (lib.es5.d.ts, lib.dom.d.ts, etc.).
     /// Each entry is a (arena, binder) pair from a pre-parsed lib file.
     /// Used as a fallback when resolving type references not found in the main file.
@@ -323,6 +328,11 @@ pub struct CheckerContext<'a> {
     /// Used to check if await expressions are within async context (TS1359).
     pub async_depth: u32,
 
+    /// Closure depth - tracks nesting of function expressions, arrow functions, and method expressions.
+    /// Used to apply Rule #42: CFA Invalidation in Closures.
+    /// When > 0, mutable variables (let/var) lose narrowing in closures.
+    pub inside_closure_depth: u32,
+
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
@@ -330,6 +340,10 @@ pub struct CheckerContext<'a> {
 
     /// Whether type resolution fuel was exhausted (for timeout detection).
     pub fuel_exhausted: RefCell<bool>,
+
+    /// Freshness tracker for object literal excess property checking.
+    /// Tracks which object literals are "fresh" and should trigger excess property checks.
+    pub freshness_tracker: FreshnessTracker,
 }
 
 /// Context for a lib file (arena + binder) for global type resolution.
@@ -394,11 +408,14 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: FxHashSet::default(),
             all_arenas: None,
             resolved_modules: None,
+            import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
+            freshness_tracker: FreshnessTracker::new(),
         }
     }
 
@@ -454,11 +471,14 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: FxHashSet::default(),
             all_arenas: None,
             resolved_modules: None,
+            import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
+            freshness_tracker: FreshnessTracker::new(),
         }
     }
 
@@ -516,11 +536,14 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: cache.private_constructor_types,
             all_arenas: None,
             resolved_modules: None,
+            import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
+            freshness_tracker: FreshnessTracker::new(),
         }
     }
 
@@ -577,11 +600,14 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: cache.private_constructor_types,
             all_arenas: None,
             resolved_modules: None,
+            import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
+            freshness_tracker: FreshnessTracker::new(),
         }
     }
 
@@ -777,6 +803,49 @@ impl<'a> CheckerContext<'a> {
         }
 
         false
+    }
+
+    /// Check if a name is a known global type that should emit TS2318/TS2583 when missing.
+    /// This helps distinguish between "unknown name" (TS2304) and "missing global type" (TS2318/TS2583).
+    pub fn is_known_global_type(&self, name: &str) -> bool {
+        use crate::lib_loader;
+
+        // ES2015+ types
+        if lib_loader::is_es2015_plus_type(name) {
+            return true;
+        }
+
+        // Pre-ES2015 global types that are commonly used
+        // These are always available in lib.d.ts but should emit TS2318 when @noLib is enabled
+        match name {
+            "Object" | "Function" | "Array" | "String" | "Number" | "Boolean" | "Date" | "RegExp"
+            | "Error" | "Math" | "JSON" | "console" | "window" | "document" | "ArrayBuffer"
+            | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray" | "Int16Array"
+            | "Uint16Array" | "Int32Array" | "Uint32Array" | "Float32Array" | "Float64Array"
+            | "this" | "globalThis" => true,
+            _ => false,
+        }
+    }
+
+    /// Check if a global type is missing due to insufficient ES version support.
+    /// Returns the minimum ES version required for this type, or None if not applicable.
+    pub fn get_required_es_version_for_global(&self, name: &str) -> Option<&'static str> {
+        use crate::lib_loader;
+
+        if lib_loader::is_es2015_plus_type(name) {
+            return Some("ES2015");
+        }
+
+        // Most pre-ES2015 globals are available in ES3/ES5
+        match name {
+            "Promise" | "Map" | "Set" | "WeakMap" | "WeakSet" | "Proxy" | "Reflect"
+            | "Symbol" | "Iterator" | "Iterable" => Some("ES2015"),
+            "AsyncFunction" | "SharedArrayBuffer" | "Atomics" => Some("ES2017"),
+            "AsyncGenerator" | "AsyncGeneratorFunction" => Some("ES2018"),
+            "BigInt" | "BigInt64Array" | "BigUint64Array" => Some("ES2020"),
+            "FinalizationRegistry" | "WeakRef" => Some("ES2021"),
+            _ => None,
+        }
     }
 
     /// Check if a modifier list contains a specific modifier kind.

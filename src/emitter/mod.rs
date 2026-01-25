@@ -22,7 +22,6 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
-use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
 use crate::emit_context::EmitContext;
 use crate::parser::NodeIndex;
 use crate::parser::node::{Node, NodeArena};
@@ -55,9 +54,6 @@ mod types;
 pub use comments::{
     CommentKind, CommentRange, get_leading_comment_ranges, get_trailing_comment_ranges,
 };
-
-// Re-export common types for backward compatibility
-pub use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
 
 // =============================================================================
 // Emitter Options

@@ -12,7 +12,7 @@
 
 use crate::interner::Atom;
 use crate::solver::AssignabilityChecker;
-use crate::solver::diagnostics::{SubtypeTracer, FastTracer, DiagnosticTracer, SubtypeFailureReason};
+use crate::solver::diagnostics::{SubtypeTracer, FastTracer, DiagnosticTracer};
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -701,9 +701,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 // =============================================================================
 // Error Explanation API
 // =============================================================================
-
-// Re-export SubtypeFailureReason from diagnostics module
-pub use crate::solver::diagnostics::SubtypeFailureReason;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Explain why `source` is not assignable to `target`.

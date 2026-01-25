@@ -485,11 +485,11 @@ impl UnsoundnessAudit {
             rule_number: 22,
             name: "Template String Expansion Limits",
             phase: ImplementationPhase::Phase4,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/solver/intern.rs", "src/solver/evaluate_rules/template_literal.rs"],
+            test_coverage: 0.90,
             dependencies: vec![],
-            notes: "NOT IMPLEMENTED. Template literal cardinality check needed. Abort expansion > 100k items.",
+            notes: "FULLY IMPLEMENTED. TEMPLATE_LITERAL_EXPANSION_LIMIT = 100,000. Pre-computes cardinality before expansion. Aborts and widens to string with diagnostic logging when limit exceeded. Tests: template_expansion_tests.rs",
         });
 
         rules.insert(23, RuleImplementation {

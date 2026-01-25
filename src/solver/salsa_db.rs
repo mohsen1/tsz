@@ -23,7 +23,7 @@ pub use salsa;
 ///
 /// This holds all the inputs and implements the query group.
 #[salsa::query_group(SolverStorage)]
-pub trait SolverDatabase: salsa::Database {
+pub trait SolverDatabase {
     /// Get the underlying type interner (input).
     #[salsa::input]
     fn interner_ref(&self) -> Arc<TypeInterner>;
@@ -83,36 +83,36 @@ fn is_subtype_of(db: &dyn SolverDatabase, source: TypeId, target: TypeId) -> boo
 /// for compatibility with existing solver code.
 pub struct SalsaDatabase {
     /// The underlying Salsa database runtime
-    storage: salsa::Storage<SolverDatabaseStruct>,
+    storage: salsa::DatabaseStruct<SolverDatabase>,
 }
 
 impl SalsaDatabase {
     /// Create a new Salsa database with the given interner.
     pub fn new(interner: Arc<TypeInterner>) -> Self {
-        let mut storage = salsa::Storage::default();
+        let mut storage = salsa::DatabaseStruct::default();
         storage.set_interner_ref(interner);
         SalsaDatabase { storage }
     }
 
     /// Get the underlying Salsa database for direct query access.
-    pub fn salsa_db(&self) -> &SolverDatabaseStruct {
+    pub fn salsa_db(&self) -> &SolverDatabase {
         &self.storage
     }
 
     /// Clear all cached query results and reset with a new interner.
     pub fn clear(&mut self, interner: Arc<TypeInterner>) {
-        self.storage = salsa::Storage::default();
+        self.storage = salsa::DatabaseStruct::default();
         self.storage.set_interner_ref(interner);
     }
 }
 
 /// Implement salsa::Database for our storage.
 impl salsa::Database for SalsaDatabase {
-    fn salsa_storage(&self) -> &salsa::Storage<SolverDatabaseStruct> {
+    fn salsa_storage(&self) -> &salsa::DatabaseStruct<SolverDatabase> {
         &self.storage
     }
 
-    fn salsa_storage_mut(&mut self) -> &mut salsa::Storage<SolverDatabaseStruct> {
+    fn salsa_storage_mut(&mut self) -> &mut salsa::DatabaseStruct<SolverDatabase> {
         &mut self.storage
     }
 }

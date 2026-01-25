@@ -29,6 +29,8 @@ mod lawyer;
 mod lower;
 mod narrowing;
 mod operations;
+// salsa_db is feature-gated until salsa API is updated
+#[cfg(feature = "experimental_salsa")]
 pub mod salsa_db;
 mod subtype;
 mod subtype_rules;
@@ -54,6 +56,7 @@ pub use lawyer::*;
 pub use lower::*;
 pub use narrowing::*;
 pub use operations::*;
+#[cfg(feature = "experimental_salsa")]
 pub use salsa_db::*;
 pub use subtype::*;
 pub use types::*;
@@ -107,3 +110,5 @@ mod union_tests;
 mod visitor_tests;
 #[cfg(test)]
 mod mapped_key_remap_tests;
+#[cfg(test)]
+mod template_expansion_tests;
