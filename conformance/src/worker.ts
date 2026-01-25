@@ -448,10 +448,12 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         // Write test files to temp directory
         const filesToCheck: string[] = [];
 
-        // Add lib.d.ts unless noLib
-        if (!testCase.options.nolib) {
+        // For native mode, write lib.d.ts to the directory (for reference)
+        // but don't add it to the args list - the native CLI handles lib loading internally
+        // and parsing the huge lib.d.ts file for each test is too slow
+        if (!testCase.options.nolib && libSource) {
           fs.writeFileSync(path.join(tmpDir, 'lib.d.ts'), libSource);
-          filesToCheck.push('lib.d.ts');
+          // Don't add to filesToCheck - native CLI handles its own lib loading
         }
 
         // Write test files
