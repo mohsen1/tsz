@@ -335,6 +335,7 @@ pub fn is_property_name(token: SyntaxKind) -> bool {
             | SyntaxKind::IntrinsicKeyword
     )
 }
+}
 
 /// Check if a token is a literal.
 pub fn is_literal(token: SyntaxKind) -> bool {
