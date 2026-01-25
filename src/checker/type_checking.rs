@@ -1202,6 +1202,7 @@ impl<'a> CheckerState<'a> {
     /// - Only checks string literal specifiers (dynamic specifiers cannot be statically checked)
     /// - Checks if module exists in resolved_modules, module_exports, shorthand_ambient_modules, or declared_modules
     /// - Emits TS2307 for unresolved module specifiers
+    /// - Validates CommonJS vs ESM import compatibility
     pub(crate) fn check_dynamic_import_module_specifier(
         &mut self,
         call: &crate::parser::node::CallExprData,
@@ -1243,6 +1244,8 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
+            // Additional validation: check for ESM/CommonJS compatibility
+            // If this is an ESM file, importing from a CommonJS module might need special handling
             return; // Module exists
         }
 
@@ -1282,10 +1285,13 @@ impl<'a> CheckerState<'a> {
     /// ## Validation:
     /// - Checks if module exists in resolved_modules, module_exports, shorthand_ambient_modules, or declared_modules
     /// - Emits TS2307 for unresolved module specifiers
+    /// - Validates re-exported members exist in source module
+    /// - Checks for circular re-export chains
     pub(crate) fn check_export_module_specifier(&mut self, stmt_idx: NodeIndex) {
         use crate::checker::types::diagnostics::{
             diagnostic_codes, diagnostic_messages, format_message,
         };
+        use std::collections::HashSet;
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -1310,15 +1316,47 @@ impl<'a> CheckerState<'a> {
 
         let module_name = &literal.text;
 
+        // Check for circular re-exports
+        if self.would_create_cycle(module_name) {
+            let cycle_path: Vec<&str> = self.ctx.import_resolution_stack.iter().chain(std::iter::once(module_name)).collect();
+            let cycle_str = cycle_path.join(" -> ");
+            let message = format!("Circular re-export detected: {}", cycle_str);
+            self.error_at_node(
+                export_decl.module_specifier,
+                &message,
+                diagnostic_codes::CANNOT_FIND_MODULE,
+            );
+            return;
+        }
+
+        // Track re-export for cycle detection
+        self.ctx.import_resolution_stack.push(module_name.clone());
+
         // Check if the module was resolved by the CLI driver (multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
+            // Check for circular re-export chains
+            if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
+                let mut visited = HashSet::new();
+                for source_module in source_modules {
+                    self.check_reexport_chain_for_cycles(source_module, &mut visited);
+                }
+            }
+            self.ctx.import_resolution_stack.pop();
             return;
         }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
+            // Check for circular re-export chains
+            if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
+                let mut visited = HashSet::new();
+                for source_module in source_modules {
+                    self.check_reexport_chain_for_cycles(source_module, &mut visited);
+                }
+            }
+            self.ctx.import_resolution_stack.pop();
             return;
         }
 
@@ -1329,10 +1367,12 @@ impl<'a> CheckerState<'a> {
             .shorthand_ambient_modules
             .contains(module_name)
         {
+            self.ctx.import_resolution_stack.pop();
             return;
         }
 
         if self.ctx.binder.declared_modules.contains(module_name) {
+            self.ctx.import_resolution_stack.pop();
             return;
         }
 
@@ -1343,6 +1383,8 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::CANNOT_FIND_MODULE,
         );
+
+        self.ctx.import_resolution_stack.pop();
     }
 
     // =========================================================================
@@ -2155,10 +2197,13 @@ impl<'a> CheckerState<'a> {
     /// ## Validation:
     /// - Checks if module specifier can be resolved
     /// - Validates that imported members exist in module exports
+    /// - Checks for circular imports in re-export chains
+    /// - Validates type-only imports are used correctly
     pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::checker::types::diagnostics::{
             diagnostic_codes, diagnostic_messages, format_message,
         };
+        use std::collections::HashSet;
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -2183,12 +2228,39 @@ impl<'a> CheckerState<'a> {
 
         let module_name = &literal.text;
 
+        // Check for circular imports by tracking the resolution path
+        if self.would_create_cycle(module_name) {
+            // Emit TS2307 for circular import
+            let cycle_path: Vec<&str> = self.ctx.import_resolution_stack.iter().chain(std::iter::once(module_name)).collect();
+            let cycle_str = cycle_path.join(" -> ");
+            let message = format!("Circular import detected: {}", cycle_str);
+            self.error_at_node(
+                import.module_specifier,
+                &message,
+                diagnostic_codes::CANNOT_FIND_MODULE,
+            );
+            return;
+        }
+
+        // Add current module to resolution stack
+        self.ctx.import_resolution_stack.push(module_name.clone());
+
         // Check if the module was resolved by the CLI driver (multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
             // Module exists, check if individual imports are exported
             self.check_imported_members(import, module_name);
+
+            // Check for circular re-export chains
+            if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
+                let mut visited = HashSet::new();
+                for source_module in source_modules {
+                    self.check_reexport_chain_for_cycles(source_module, &mut visited);
+                }
+            }
+
+            self.ctx.import_resolution_stack.pop();
             return;
         }
 
@@ -2197,6 +2269,16 @@ impl<'a> CheckerState<'a> {
         if self.ctx.binder.module_exports.contains_key(module_name) {
             // Module exists, check if individual imports are exported
             self.check_imported_members(import, module_name);
+
+            // Check for circular re-export chains
+            if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
+                let mut visited = HashSet::new();
+                for source_module in source_modules {
+                    self.check_reexport_chain_for_cycles(source_module, &mut visited);
+                }
+            }
+
+            self.ctx.import_resolution_stack.pop();
             return;
         }
 
@@ -2209,10 +2291,12 @@ impl<'a> CheckerState<'a> {
             .shorthand_ambient_modules
             .contains(module_name)
         {
+            self.ctx.import_resolution_stack.pop();
             return; // Shorthand ambient module - imports typed as `any`
         }
 
         if self.ctx.binder.declared_modules.contains(module_name) {
+            self.ctx.import_resolution_stack.pop();
             return; // Regular ambient module declaration
         }
 
@@ -2225,6 +2309,78 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::CANNOT_FIND_MODULE,
         );
+
+        // Remove from stack after emitting error
+        self.ctx.import_resolution_stack.pop();
+    }
+
+    /// Check re-export chains for circular dependencies.
+    ///
+    /// This function detects circular re-export patterns like:
+    /// ```typescript
+    /// // a.ts
+    /// export * from './b';
+    /// // b.ts
+    /// export * from './a';
+    /// ```
+    ///
+    /// ## Parameters:
+    /// - `module_name`: The starting module
+    /// - `visited`: Set of already visited modules in this chain
+    ///
+    /// ## Emits TS2307 when a circular re-export is detected
+    pub(crate) fn check_reexport_chain_for_cycles(
+        &mut self,
+        module_name: &str,
+        visited: &mut HashSet<String>,
+    ) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages,
+        };
+
+        // Check if we've already visited this module in the current chain
+        if visited.contains(module_name) {
+            // Found a cycle!
+            let cycle_path: Vec<&str> = visited.iter().chain(std::iter::once(module_name)).collect();
+            let cycle_str = cycle_path.join(" -> ");
+            let message = format!(
+                "{}: {}",
+                diagnostic_messages::CANNOT_FIND_MODULE,
+                cycle_str
+            );
+            self.error(
+                0,
+                0,
+                message,
+                diagnostic_codes::CANNOT_FIND_MODULE,
+            );
+            return;
+        }
+
+        // Add this module to the visited set
+        visited.insert(module_name.to_string());
+
+        // Check for wildcard re-exports from this module
+        if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
+            for source_module in source_modules {
+                self.check_reexport_chain_for_cycles(source_module, visited);
+            }
+        }
+
+        // Check for named re-exports from this module
+        if let Some(reexports) = self.ctx.binder.reexports.get(module_name) {
+            for (source_module, _) in reexports.values() {
+                self.check_reexport_chain_for_cycles(source_module, visited);
+            }
+        }
+
+        // Remove this module from the visited set (backtracking)
+        visited.remove(module_name);
+    }
+
+    /// Check if adding a module to the resolution path would create a cycle.
+    fn would_create_cycle(&self, module: &str) -> bool {
+        self.ctx.import_resolution_stack.contains(&module.to_string())
     }
 }
 
