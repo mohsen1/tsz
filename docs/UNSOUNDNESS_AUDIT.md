@@ -7,8 +7,8 @@ This document provides an analysis of the TypeScript compatibility layer impleme
 | Metric | Value |
 |--------|-------|
 | **Total Rules** | 44 |
-| **Fully Implemented** | 28 (63.6%) |
-| **Partially Implemented** | 9 (20.5%) |
+| **Fully Implemented** | 29 (65.9%) |
+| **Partially Implemented** | 10 (22.7%) |
 | **Not Implemented** | 7 (15.9%) |
 | **Overall Completion** | 73.9% |
 
@@ -52,6 +52,7 @@ cargo run --bin audit_unsoundness -- --status missing
 |---|------|-------|-------|-------|
 | 1 | The "Any" Type | P1 | `lawyer.rs`, `compat.rs` | `AnyPropagationRules` handles top/bottom semantics |
 | 3 | Covariant Mutable Arrays | P1 | `subtype.rs` | Array covariance implemented |
+| 4 | Freshness / Excess Properties | P2 | `context.rs`, `type_computation.rs`, `state.rs`, `type_checking.rs` | **FULLY IMPLEMENTED** - FreshnessTracker integrated, object literals marked fresh, freshness removed on assignment, excess properties checked for fresh objects |
 | 5 | Nominal Classes (Private Members) | P4 | `class_type.rs`, `compat.rs` | Private brand properties for nominal comparison |
 | 6 | Void Return Exception | P1 | `subtype.rs` | `allow_void_return` flag |
 | 7 | Open Numeric Enums | P4 | `state.rs`, `enum_checker.rs` | Bidirectional number ↔ enum assignability |
@@ -83,6 +84,7 @@ cargo run --bin audit_unsoundness -- --status missing
 |---|------|-------|-------|-------|
 | 1 | The "Any" Type | P1 | `lawyer.rs`, `compat.rs` | `AnyPropagationRules` handles top/bottom semantics |
 | 3 | Covariant Mutable Arrays | P1 | `subtype.rs` | Array covariance implemented |
+| 4 | Freshness / Excess Properties | P2 | `context.rs`, `type_computation.rs`, `type_checking.rs`, `state.rs` | **FULLY IMPLEMENTED** - FreshnessTracker integrated, marks object literals fresh, removes freshness on assignment, checks excess properties for fresh objects |
 | 5 | Nominal Classes (Private Members) | P4 | `class_type.rs`, `compat.rs` | Private brand properties for nominal comparison |
 | 6 | Void Return Exception | P1 | `subtype.rs` | `allow_void_return` flag |
 | 7 | Open Numeric Enums | P4 | `state.rs`, `enum_checker.rs` | Bidirectional number ↔ enum assignability |
@@ -106,12 +108,11 @@ cargo run --bin audit_unsoundness -- --status missing
 | 37 | `unique symbol` | P4 | `subtype.rs` | `TypeKey::UniqueSymbol` handling |
 | 43 | Abstract Class Instantiation | P4 | `class_type.rs`, `state.rs` | `abstract_constructor_types` tracking |
 
-### ⚠️ Partially Implemented Rules (11)
+### ⚠️ Partially Implemented Rules (10)
 
 | # | Rule | Phase | Gap |
 |---|------|-------|-----|
 | 2 | Function Bivariance | P2 | Method vs function differentiation incomplete |
-| 4 | Freshness / Excess Properties | P2 | `FreshnessTracker` exists but not integrated |
 | 12 | Apparent Members of Primitives | P4 | Full primitive to apparent type lowering needed |
 | 15 | Tuple-Array Assignment | P4 | Array to Tuple rejection incomplete |
 | 16 | Rest Parameter Bivariance | P4 | `(...args: any[]) => void` incomplete |
@@ -119,6 +120,7 @@ cargo run --bin audit_unsoundness -- --status missing
 | 30 | keyof Contravariance | P3 | Union -> Intersection inversion partial |
 | 31 | Base Constraint Assignability | P4 | Type parameter checking partial |
 | 33 | Object vs Primitive boxing | P4 | `Intrinsic::Number` vs `Ref(Symbol::Number)` distinction |
+| 44 | Module Augmentation Merging | P4 | **Single-file merging works via `lower_interface_declarations`, multi-file via `declare module` needs enhancement** |
 
 ### ❌ Remaining Missing Rules (7)
 
