@@ -1,6 +1,6 @@
 use super::*;
+use crate::solver::SubtypeFailureReason;
 use crate::solver::db::QueryDatabase;
-use crate::solver::subtype::SubtypeFailureReason;
 use crate::solver::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
     ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement, TypeEnvironment,

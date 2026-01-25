@@ -210,7 +210,7 @@ fn test_template_literal_single_union_member() {
     // Should be the literal string "getkey"
     if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
         let s = interner.resolve_atom_ref(atom);
-        assert_eq!(s.as_str(), "getkey");
+        assert_eq!(&*s, "getkey");
     } else {
         panic!("Expected a literal string");
     }

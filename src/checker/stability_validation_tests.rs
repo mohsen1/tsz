@@ -53,7 +53,7 @@ fn test_boolean_option_with_trailing_delimiters() {
 fn test_recursive_type_depth_limit() {
     // Validates that recursive type expansion has proper depth limits
     // This should not cause OOM or stack overflow
-    use crate::solver::instantiate::MAX_INSTANTIATION_DEPTH;
+    use crate::solver::MAX_INSTANTIATION_DEPTH;
 
     // Verify the limit is set to a reasonable value
     assert!(
@@ -96,7 +96,7 @@ fn test_tree_walk_iteration_limit() {
 #[test]
 fn test_type_lowering_operation_limit() {
     // Validates that type lowering has operation limits
-    use crate::solver::lower::MAX_LOWERING_OPERATIONS;
+    use crate::solver::MAX_LOWERING_OPERATIONS;
 
     assert!(
         MAX_LOWERING_OPERATIONS <= 1_000_000,
@@ -111,7 +111,7 @@ fn test_type_lowering_operation_limit() {
 #[test]
 fn test_constraint_recursion_depth_limit() {
     // Validates that constraint collection has recursion limits
-    use crate::solver::operations::MAX_CONSTRAINT_RECURSION_DEPTH;
+    use crate::solver::MAX_CONSTRAINT_RECURSION_DEPTH;
 
     assert!(
         MAX_CONSTRAINT_RECURSION_DEPTH <= 200,

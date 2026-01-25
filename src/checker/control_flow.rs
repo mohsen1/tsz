@@ -3765,7 +3765,7 @@ if (typeof x === "string") {
         let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
 
         // Verify the variable is let (not const)
-        let flags = var_decl_node.flags;
+        let flags = var_decl_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
         assert!(!is_const, "Variable should be let (mutable), not const");
 
@@ -3813,7 +3813,7 @@ if (typeof x === "string") {
         let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
 
         // Verify the variable is const
-        let flags = var_decl_node.flags;
+        let flags = var_decl_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
         assert!(is_const, "Variable should be const");
 
@@ -3849,7 +3849,7 @@ const fn = () => {
         let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
 
         // Verify the variable is let (mutable)
-        let flags = var_decl_node.flags;
+        let flags = var_decl_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
         assert!(!is_const, "Variable should be let (mutable)");
     }
