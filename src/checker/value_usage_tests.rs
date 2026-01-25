@@ -696,7 +696,7 @@ const x = undefined.toString();  // TS18050: The value 'undefined' cannot be use
 }
 
 #[test]
-fn test_string_subtraction_emits_ts2362() {
+fn test_string_string_subtraction_emits_ts2362() {
     // Test string - string should emit TS2362
     let source = r#"
 const a = "hello";

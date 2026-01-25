@@ -34,7 +34,7 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     let options = CheckerOptions::default();
 
     let mut checker = CheckerState::new(
-        parser.get_arena(),  // Use parser's arena directly
+        parser.get_arena(), // Use parser's arena directly
         &binder,
         &types,
         "test.ts".to_string(),
@@ -167,7 +167,7 @@ fn test_console_emits_ts2304_without_lib() {
 fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     use std::sync::Arc;
 
-    let ctx = TestContext::new();  // This loads lib files
+    let ctx = TestContext::new(); // This loads lib files
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -186,7 +186,7 @@ fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     let options = CheckerOptions::default();
 
     let mut checker = CheckerState::new(
-        parser.get_arena(),  // Use parser's arena directly
+        parser.get_arena(), // Use parser's arena directly
         &binder,
         &types,
         "test.ts".to_string(),

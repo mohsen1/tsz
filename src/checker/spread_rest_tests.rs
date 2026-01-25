@@ -234,7 +234,7 @@ add(...args);  // Should emit TS2345
     // Debug: print all diagnostics
     eprintln!("=== test_spread_in_function_call_with_wrong_types diagnostics ===");
     for d in &diagnostics {
-        eprintln!("  code: {}, message: {}", d.code, d.message);
+        eprintln!("  code: {}, message: {}", d.code, d.message_text);
     }
 
     // Should emit TS2345 (for function arguments) - the spread array has type (string | number)[]
