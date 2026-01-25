@@ -1332,10 +1332,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns None if the node is not an identifier or has no symbol.
     fn get_symbol_for_identifier(&self, idx: NodeIndex) -> Option<SymbolId> {
-        use crate::parser::syntax_kind_ext;
+        use crate::scanner::SyntaxKind;
 
         let node = self.ctx.arena.get(idx)?;
-        if node.kind != syntax_kind_ext::IDENTIFIER {
+        if node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
 

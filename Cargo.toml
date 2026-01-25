@@ -33,7 +33,7 @@ walkdir = "2.5"
 smallvec = "1.13"
 dashmap = "6.1"  # Lock-free concurrent HashMap for sharded type storage
 # Phase 7.5: Query-based Structural Solver
-salsa = "0.25"  # Query-based incremental computation
+salsa = "0.16"  # Query-based incremental computation (0.16 for query_group API)
 ena = "0.14"  # Union-Find for type unification
 indexmap = "2.6"  # Deterministic iteration for structural keys (preserves insertion order)
 bitflags = "2.6"  # Efficient TypeFlags for fast rejection

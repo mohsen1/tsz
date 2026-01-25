@@ -13,7 +13,7 @@ use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
-use crate::solver::lawyer::FreshnessTracker;
+use crate::solver::FreshnessTracker;
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
@@ -407,6 +407,7 @@ impl<'a> CheckerContext<'a> {
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             freshness_tracker: FreshnessTracker::new(),
@@ -468,6 +469,7 @@ impl<'a> CheckerContext<'a> {
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             freshness_tracker: FreshnessTracker::new(),
@@ -531,6 +533,7 @@ impl<'a> CheckerContext<'a> {
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             freshness_tracker: FreshnessTracker::new(),
@@ -593,6 +596,7 @@ impl<'a> CheckerContext<'a> {
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             freshness_tracker: FreshnessTracker::new(),

@@ -22,7 +22,6 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
-use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
 use crate::emit_context::EmitContext;
 use crate::parser::NodeIndex;
 use crate::parser::node::{Node, NodeArena};

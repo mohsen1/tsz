@@ -197,7 +197,7 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 use crate::binder::BinderState;
 use crate::checker::context::LibContext;
 use crate::emit_context::EmitContext;
-use crate::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
+use crate::emitter::{Printer, PrinterOptions};
 use crate::lib_loader::LibFile;
 use crate::lowering_pass::LoweringPass;
 use crate::lsp::diagnostics::convert_diagnostic;
