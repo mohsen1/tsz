@@ -1132,6 +1132,32 @@ impl<'a> CheckerState<'a> {
         });
     }
 
+    /// Report TS2507: "Type 'X' is not a constructor function type"
+    /// This is for expressions used with `new` that don't have construct signatures.
+    pub fn error_not_a_constructor_at(&mut self, type_id: TypeId, idx: NodeIndex) {
+        use crate::solver::TypeFormatter;
+
+        let Some(loc) = self.get_source_location(idx) else {
+            return;
+        };
+
+        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        let type_str = formatter.format(type_id);
+
+        let message = diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE
+            .replace("{0}", &type_str);
+
+        self.ctx.diagnostics.push(Diagnostic {
+            code: diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+            category: DiagnosticCategory::Error,
+            message_text: message,
+            file: self.ctx.file_name.clone(),
+            start: loc.start,
+            length: loc.length(),
+            related_information: Vec::new(),
+        });
+    }
+
     // =========================================================================
     // Binary Operator Errors
     // =========================================================================
@@ -1153,9 +1179,9 @@ impl<'a> CheckerState<'a> {
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 
-        // Check if this is an arithmetic operator (-, *, /, %)
+        // Check if this is an arithmetic operator (-, *, /, %, **)
         // Note: + is handled separately - it can be string concatenation or arithmetic
-        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%");
+        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "**");
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
@@ -1467,6 +1493,26 @@ impl<'a> CheckerState<'a> {
             );
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                start: loc.start,
+                length: loc.length(),
+                file: self.ctx.file_name.clone(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Report TS18050: The value 'X' cannot be used here.
+    /// Emitted when a value (like a variable or literal) is used where it's not permitted.
+    pub fn error_value_cannot_be_used_here_at(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format_message(
+                diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
+                &[name],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,

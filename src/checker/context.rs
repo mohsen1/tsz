@@ -973,4 +973,11 @@ impl<'a> CheckerContext<'a> {
     pub fn no_lib(&self) -> bool {
         self.compiler_options.no_lib
     }
+
+    /// Check if lib files are loaded (lib.d.ts, etc.).
+    /// Returns false when noLib is enabled or when no lib_contexts are available.
+    /// Used to determine whether to emit TS2304/TS2318/TS2583 for missing global types.
+    pub fn has_lib_loaded(&self) -> bool {
+        !self.compiler_options.no_lib && !self.lib_contexts.is_empty()
+    }
 }

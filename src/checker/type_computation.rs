@@ -1804,7 +1804,9 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if instance_types.is_empty() {
-                    return TypeId::ERROR; // No construct signatures in intersection - expose error
+                    // TS2507: Type 'X' is not a constructor function type
+                    self.error_not_a_constructor_at(constructor_type, idx);
+                    return TypeId::ERROR;
                 } else if instance_types.len() == 1 {
                     return instance_types[0];
                 } else {
@@ -1816,7 +1818,9 @@ impl<'a> CheckerState<'a> {
         };
 
         let Some(construct_type) = construct_type else {
-            return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+            // TS2507: Type 'X' is not a constructor function type
+            self.error_not_a_constructor_at(constructor_type, idx);
+            return TypeId::ERROR;
         };
 
         let args = new_expr
@@ -3258,12 +3262,28 @@ impl<'a> CheckerState<'a> {
                     return self.get_type_of_symbol(sym_id);
                 }
 
-                // === CRITICAL FIX: Synthesize ANY for known globals when not found in lib ===
-                // This prevents TS2304 false positives when lib files aren't loaded.
-                // This is more permissive than TSC but prevents cascading errors.
-                // The rationale: if someone uses `console.log()` without lib files,
-                // we should allow it rather than erroring with "Cannot find name 'console'".
-                // When lib files are loaded, the actual types will be used.
+                // === Check if lib files are loaded ===
+                // When lib files are not loaded (noLib or no lib_contexts), emit errors
+                // for missing global types. When lib files ARE loaded, we should have
+                // found the symbol above - reaching here means a lookup failure.
+                if !self.ctx.has_lib_loaded() {
+                    // No lib files loaded - emit appropriate error for global type usage
+                    use crate::lib_loader;
+                    if lib_loader::is_es2015_plus_type(name) {
+                        // ES2015+ type not available - emit TS2583 with library suggestion
+                        self.error_cannot_find_name_change_lib(name, idx);
+                    } else if self.ctx.is_known_global_type(name) {
+                        // Known global type not available (e.g., @noLib) - emit TS2318
+                        self.error_cannot_find_global_type(name, idx);
+                    } else {
+                        // Other known global - emit TS2304
+                        self.error_cannot_find_name_at(name, idx);
+                    }
+                    return TypeId::ERROR;
+                }
+
+                // Lib files are loaded but global was not found - this shouldn't happen
+                // for standard globals. Synthesize ANY to prevent cascading errors.
                 match name.as_str() {
                     // Browser globals (DOM API)
                     "window" | "document" | "navigator" | "localStorage" | "sessionStorage"
@@ -3335,12 +3355,28 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ANY;
                 }
 
-                // === CRITICAL FIX: Check if this is a known global that should be available ===
-                // This catches cases where lib files aren't loaded but the code uses common globals
+                // === Check if this is a known global that should be available ===
+                // When lib files are loaded, return ANY for known globals to prevent cascading errors.
+                // When lib files are NOT loaded, emit appropriate errors.
                 if self.is_known_global_value_name(name) {
-                    // Return ANY for known globals instead of emitting TS2304
-                    // This is more permissive than TSC but prevents cascading errors
-                    return TypeId::ANY;
+                    if self.ctx.has_lib_loaded() {
+                        // Lib files loaded but global not found - use ANY for graceful degradation
+                        return TypeId::ANY;
+                    } else {
+                        // No lib files loaded - emit appropriate error
+                        use crate::lib_loader;
+                        if lib_loader::is_es2015_plus_type(name) {
+                            // ES2015+ type - emit TS2583 with library suggestion
+                            self.error_cannot_find_name_change_lib(name, idx);
+                        } else if self.ctx.is_known_global_type(name) {
+                            // Known global type - emit TS2318
+                            self.error_cannot_find_global_type(name, idx);
+                        } else {
+                            // Other known global - emit TS2304
+                            self.error_cannot_find_name_at(name, idx);
+                        }
+                        return TypeId::ERROR;
+                    }
                 }
 
                 // Report "cannot find name" error

@@ -1,15 +1,28 @@
 //! Tests for spread and rest operator type checking
 
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState;
 use crate::checker::types::Diagnostic;
-use crate::test_fixtures::TestContext;
+use crate::parser::ParserState;
+use crate::solver::TypeInterner;
 
 /// Helper function to check source and return diagnostics
 fn check_source(source: &str) -> Vec<Diagnostic> {
-    let mut ctx = TestContext::new_without_lib();
-    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    ctx.binder.bind_source_file(parser.get_arena(), root);
-    let mut checker = ctx.checker();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
@@ -127,22 +140,22 @@ sum(1, 2, 3);
 }
 
 #[test]
-fn test_rest_parameter_with_wrong_types_emits_ts2322() {
+fn test_rest_parameter_with_wrong_types_emits_ts2345() {
     let source = r#"
 function sum(...nums: number[]) {
     return nums.reduce((a, b) => a + b, 0);
 }
-sum(1, "two", 3);  // Should emit TS2322
+sum(1, "two", 3);  // Should emit TS2345
 "#;
 
     let diagnostics = check_source(source);
 
-    // Should emit TS2322 for string argument
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    // Should emit TS2345 for string argument (TS2345 is for function arguments, TS2322 is for assignments)
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error for wrong type in rest parameter, got {}",
-        ts2322_count
+        ts2345_count >= 1,
+        "Expected at least 1 TS2345 error for wrong type in rest parameter, got {}",
+        ts2345_count
     );
 }
 
@@ -213,17 +226,18 @@ function add(a: number, b: number, c: number) {
     return a + b + c;
 }
 const args = [1, "two", 3];
-add(...args);  // Should emit TS2322
+add(...args);  // Should emit TS2345
 "#;
 
     let diagnostics = check_source(source);
 
-    // Should emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    // Should emit TS2345 (for function arguments) - the spread array has type (string | number)[]
+    // which is not assignable to number parameters
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error for spread with wrong types, got {}",
-        ts2322_count
+        ts2345_count >= 1,
+        "Expected at least 1 TS2345 error for spread with wrong types, got {}",
+        ts2345_count
     );
 }
 
@@ -257,17 +271,17 @@ function greet(name: string, age: number, active: boolean) {
 }
 type Tuple = [string, boolean, number];  // Wrong order
 const args: Tuple = ["Alice", true, 30];
-greet(...args);  // Should emit TS2322
+greet(...args);  // Should emit TS2345
 "#;
 
     let diagnostics = check_source(source);
 
-    // Should emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    // Should emit TS2345 (for function arguments) - boolean is not assignable to number
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error for spread tuple with wrong types, got {}",
-        ts2322_count
+        ts2345_count >= 1,
+        "Expected at least 1 TS2345 error for spread tuple with wrong types, got {}",
+        ts2345_count
     );
 }
 
@@ -319,17 +333,17 @@ function logAll(...messages: string[]) {
     messages.forEach(m => console.log(m));
 }
 logAll("hello", "world");
-logAll("hello", 42);  // Should emit TS2322
+logAll("hello", 42);  // Should emit TS2345
 "#;
 
     let diagnostics = check_source(source);
 
-    // Should emit TS2322 for number argument
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    // Should emit TS2345 for number argument (TS2345 is for function arguments)
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error for wrong type in rest parameter with annotation, got {}",
-        ts2322_count
+        ts2345_count >= 1,
+        "Expected at least 1 TS2345 error for wrong type in rest parameter with annotation, got {}",
+        ts2345_count
     );
 }
 

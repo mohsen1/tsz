@@ -216,6 +216,9 @@ impl ResolutionFailure {
     ///
     /// All resolution failure variants produce TS2307 diagnostics with proper
     /// source location information for IDE integration and error reporting.
+    ///
+    /// The message format matches TypeScript's exactly:
+    /// "Cannot find module '{specifier}' or its corresponding type declarations."
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
             ResolutionFailure::NotFound {
@@ -225,7 +228,10 @@ impl ResolutionFailure {
             } => Diagnostic::error(
                 containing_file,
                 *span,
-                format!("Cannot find module '{}'", specifier),
+                format!(
+                    "Cannot find module '{}' or its corresponding type declarations.",
+                    specifier
+                ),
                 CANNOT_FIND_MODULE,
             ),
             ResolutionFailure::InvalidSpecifier {
@@ -235,7 +241,10 @@ impl ResolutionFailure {
             } => Diagnostic::error(
                 containing_file,
                 *span,
-                format!("Cannot find module: {}", message),
+                format!(
+                    "Cannot find module '{}' or its corresponding type declarations.",
+                    message
+                ),
                 CANNOT_FIND_MODULE,
             ),
             ResolutionFailure::PackageJsonError {
@@ -245,7 +254,10 @@ impl ResolutionFailure {
             } => Diagnostic::error(
                 containing_file,
                 *span,
-                format!("Cannot find module: {}", message),
+                format!(
+                    "Cannot find module '{}' or its corresponding type declarations.",
+                    message
+                ),
                 CANNOT_FIND_MODULE,
             ),
             ResolutionFailure::CircularResolution {
@@ -255,7 +267,10 @@ impl ResolutionFailure {
             } => Diagnostic::error(
                 containing_file,
                 *span,
-                format!("Cannot find module: {}", message),
+                format!(
+                    "Cannot find module '{}' or its corresponding type declarations.",
+                    message
+                ),
                 CANNOT_FIND_MODULE,
             ),
             ResolutionFailure::PathMappingFailed {
@@ -265,7 +280,10 @@ impl ResolutionFailure {
             } => Diagnostic::error(
                 containing_file,
                 *span,
-                format!("Cannot find module: {}", message),
+                format!(
+                    "Cannot find module '{}' or its corresponding type declarations.",
+                    message
+                ),
                 CANNOT_FIND_MODULE,
             ),
         }
