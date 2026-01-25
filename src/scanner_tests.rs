@@ -125,5 +125,4 @@ fn test_unterminated_template_literal() {
     let _scanner3 = ScannerState::new(source3.clone(), false);
 
     // If we get here without panicking, the fix is working
-    assert!(true);
 }

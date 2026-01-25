@@ -142,7 +142,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // This can help reduce false positives when checking (A | B) <: (A | B | C)
             if let TypeKey::Union(source_members) = source_key {
                 let source_members_list = self.interner.type_list(*source_members);
-                if source_members_list.iter().any(|&m| m == member) {
+                if source_members_list.contains(&member) {
                     return SubtypeResult::True;
                 }
             }

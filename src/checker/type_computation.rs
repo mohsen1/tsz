@@ -178,7 +178,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let elems = self.ctx.types.tuple_list(elems_id);
 
-                        if let Some(ref expected) = tuple_context {
+                        if let Some(ref _expected) = tuple_context {
                             // For tuple context, add each element with spread flag
                             for elem in elems.iter() {
                                 let (name, optional) =
@@ -214,7 +214,7 @@ impl<'a> CheckerState<'a> {
 
                     self.ctx.contextual_type = prev_context;
 
-                    if let Some(ref expected) = tuple_context {
+                    if let Some(ref _expected) = tuple_context {
                         let (name, optional) =
                             match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                                 Some(el) => (el.name, el.optional),
@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
 
             self.ctx.contextual_type = prev_context;
 
-            if let Some(ref expected) = tuple_context {
+            if let Some(ref _expected) = tuple_context {
                 let (name, optional) = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                     Some(el) => (el.name, el.optional),
                     None => (None, false),
@@ -2289,6 +2289,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// For a call like `obj.method()`, returns the type of `obj` after
     /// evaluating applications and resolving for property access.
+    #[allow(dead_code)]
     pub(crate) fn get_call_receiver_type(&mut self, callee_idx: NodeIndex) -> Option<TypeId> {
         let node = self.ctx.arena.get(callee_idx)?;
         let access = self.ctx.arena.get_access_expr(node)?;

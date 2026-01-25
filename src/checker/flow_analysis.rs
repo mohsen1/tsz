@@ -25,11 +25,10 @@
 //! - Loop statements
 //! - Return/throw exits
 
-use crate::binder::{SymbolId, symbol_flags};
+use crate::binder::SymbolId;
 use crate::checker::FlowAnalyzer;
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use crate::checker::types::diagnostics::Diagnostic;
-use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;

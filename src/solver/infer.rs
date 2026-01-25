@@ -1128,15 +1128,13 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Collect all potential base classes from the first type
-        let mut base_candidates: Vec<TypeId> = Vec::new();
-
         // For the first type, collect all its base classes (including itself)
-        if let Some(first_bases) = self.get_class_hierarchy(types[0]) {
-            base_candidates = first_bases;
+        let mut base_candidates = if let Some(first_bases) = self.get_class_hierarchy(types[0]) {
+            first_bases
         } else {
             // First type is not a class type, can't find common base class
             return None;
-        }
+        };
 
         // For each other type, intersect its base classes with our candidates
         for &ty in types.iter().skip(1) {

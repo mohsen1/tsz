@@ -27,8 +27,8 @@ use crate::parser::{
     node_flags,
     parse_rules::{
         is_identifier_or_keyword, look_ahead_is, look_ahead_is_abstract_declaration,
-        look_ahead_is_accessor_keyword, look_ahead_is_async_declaration, look_ahead_is_const_enum,
-        look_ahead_is_import_call, look_ahead_is_import_equals, look_ahead_is_module_declaration,
+        look_ahead_is_async_declaration, look_ahead_is_const_enum, look_ahead_is_import_call,
+        look_ahead_is_import_equals, look_ahead_is_module_declaration,
         look_ahead_is_type_alias_declaration,
     },
     syntax_kind_ext,
@@ -8586,6 +8586,7 @@ impl ParserState {
     }
 
     /// Enhanced parse_expected for better error recovery in type annotation contexts
+    #[allow(dead_code)]
     fn parse_expected_in_type_context(&mut self, kind: SyntaxKind) -> bool {
         if self.is_token(kind) {
             self.next_token();
@@ -8609,21 +8610,13 @@ impl ParserState {
                 | SyntaxKind::CloseBracketToken
                 | SyntaxKind::CloseBraceToken => {
                     // In type contexts, if we see statement starters, suppress the error
-                    if self.is_statement_start() || self.is_token(SyntaxKind::SemicolonToken) {
-                        true
-                    } else if self.scanner.has_preceding_line_break() {
-                        true
-                    } else {
-                        false
-                    }
+                    self.is_statement_start()
+                        || self.is_token(SyntaxKind::SemicolonToken)
+                        || self.scanner.has_preceding_line_break()
                 }
                 SyntaxKind::ColonToken => {
                     // For missing colon in type annotations, be more permissive
-                    if self.is_statement_start() {
-                        true
-                    } else {
-                        false
-                    }
+                    self.is_statement_start()
                 }
                 _ => false,
             };

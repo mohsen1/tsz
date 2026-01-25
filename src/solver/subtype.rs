@@ -10,12 +10,9 @@
 //! - TypeResolver trait for lazy symbol resolution
 //! - Tracer pattern for zero-cost diagnostic abstraction
 
-use crate::interner::Atom;
 use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
-use crate::solver::diagnostics::{
-    DiagnosticTracer, FastTracer, SubtypeFailureReason, SubtypeTracer,
-};
+use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
 use crate::solver::utils;
 use std::collections::HashSet;
