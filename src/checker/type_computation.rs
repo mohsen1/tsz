@@ -42,6 +42,9 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        // Get condition type to validate it (should be truthy/falsy)
+        let _condition_type = self.get_type_of_node(cond.condition);
+
         // Apply contextual typing to each branch and check assignability
         let prev_context = self.ctx.contextual_type;
         let (when_true, when_false) = if let Some(contextual) = prev_context {
@@ -49,9 +52,27 @@ impl<'a> CheckerState<'a> {
             self.ctx.contextual_type = Some(contextual);
             let when_true = self.get_type_of_node(cond.when_true);
 
+            // Emit TS2322 if whenTrue is not assignable to contextual type
+            if contextual != TypeId::ANY
+                && contextual != TypeId::UNKNOWN
+                && !self.type_contains_error(contextual)
+                && !self.is_assignable_to(when_true, contextual)
+            {
+                self.error_type_not_assignable_with_reason_at(when_true, contextual, cond.when_true);
+            }
+
             // Check whenFalse branch against contextual type
             self.ctx.contextual_type = Some(contextual);
             let when_false = self.get_type_of_node(cond.when_false);
+
+            // Emit TS2322 if whenFalse is not assignable to contextual type
+            if contextual != TypeId::ANY
+                && contextual != TypeId::UNKNOWN
+                && !self.type_contains_error(contextual)
+                && !self.is_assignable_to(when_false, contextual)
+            {
+                self.error_type_not_assignable_with_reason_at(when_false, contextual, cond.when_false);
+            }
 
             self.ctx.contextual_type = prev_context;
             (when_true, when_false)
