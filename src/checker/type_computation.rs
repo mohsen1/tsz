@@ -1519,7 +1519,13 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
-        self.ctx.types.object(properties)
+        let object_type = self.ctx.types.object(properties);
+
+        // Mark object literal as fresh for excess property checking
+        // Freshness is removed when the object is assigned to a variable
+        self.ctx.freshness_tracker.mark_fresh(object_type);
+
+        object_type
     }
 
     /// Collect properties from a spread expression in an object literal.
