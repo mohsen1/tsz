@@ -24,13 +24,14 @@ use crate::parser::{
         TemplateExprData, TemplateSpanData, TryData, TypeAssertionData, UnaryExprData,
         UnaryExprDataEx, VariableData, VariableDeclarationData,
     },
-    node_flags, syntax_kind_ext,
+    node_flags,
     parse_rules::{
-        look_ahead_is, look_ahead_is_abstract_declaration, look_ahead_is_accessor_keyword,
-        look_ahead_is_async_declaration, look_ahead_is_const_enum, look_ahead_is_import_call,
-        look_ahead_is_import_equals, look_ahead_is_module_declaration, is_identifier_or_keyword,
+        is_identifier_or_keyword, look_ahead_is, look_ahead_is_abstract_declaration,
+        look_ahead_is_accessor_keyword, look_ahead_is_async_declaration, look_ahead_is_const_enum,
+        look_ahead_is_import_call, look_ahead_is_import_equals, look_ahead_is_module_declaration,
         look_ahead_is_type_alias_declaration,
     },
+    syntax_kind_ext,
 };
 use crate::scanner::SyntaxKind;
 use crate::scanner_impl::{ScannerState, TokenFlags};
@@ -1403,7 +1404,11 @@ impl ParserState {
 
     /// Look ahead to see if we have "import identifier ="
     fn look_ahead_is_import_equals(&mut self) -> bool {
-        look_ahead_is_import_equals(&mut self.scanner, self.current_token, is_identifier_or_keyword)
+        look_ahead_is_import_equals(
+            &mut self.scanner,
+            self.current_token,
+            is_identifier_or_keyword,
+        )
     }
 
     /// Look ahead to see if we have "import (" (dynamic import call)
@@ -8576,7 +8581,8 @@ impl ParserState {
     fn error_node(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let end_pos = start_pos;
-        self.arena.add_token(SyntaxKind::Identifier as u16, start_pos, end_pos)
+        self.arena
+            .add_token(SyntaxKind::Identifier as u16, start_pos, end_pos)
     }
 
     /// Enhanced parse_expected for better error recovery in type annotation contexts
@@ -8590,14 +8596,18 @@ impl ParserState {
                 SyntaxKind::GreaterThanToken => {
                     // For missing > in type arguments, if we see statement starters or closing tokens,
                     // it's likely a type parsing error that shouldn't cascade
-                    if self.is_statement_start() || self.is_token(SyntaxKind::CloseBraceToken)
-                        || self.is_token(SyntaxKind::CloseParenToken) || self.is_token(SyntaxKind::CloseBracketToken)
+                    if self.is_statement_start()
+                        || self.is_token(SyntaxKind::CloseBraceToken)
+                        || self.is_token(SyntaxKind::CloseParenToken)
+                        || self.is_token(SyntaxKind::CloseBracketToken)
                     {
                         return true;
                     }
                     false
                 }
-                SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken | SyntaxKind::CloseBraceToken => {
+                SyntaxKind::CloseParenToken
+                | SyntaxKind::CloseBracketToken
+                | SyntaxKind::CloseBraceToken => {
                     // In type contexts, if we see statement starters, suppress the error
                     if self.is_statement_start() || self.is_token(SyntaxKind::SemicolonToken) {
                         true

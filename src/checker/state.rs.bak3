@@ -5458,7 +5458,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the enum type itself (e.g., `MyEnum`) rather than just STRING or NUMBER.
     /// This is used when enum members are accessed through namespace exports.
     fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
-        self.enum_member_type_from_decl(
+        crate::checker::type_checking::CheckerStateExt::enum_member_type_from_decl(
             self,
             member_decl,
         )
@@ -5710,13 +5710,13 @@ impl<'a> CheckerState<'a> {
     }
 
     fn class_symbol_from_type_annotation(&self, type_idx: NodeIndex) -> Option<SymbolId> {
-        self.class_symbol_from_type_annotation(
+        crate::checker::type_checking::CheckerStateExt::class_symbol_from_type_annotation(
             self, type_idx,
         )
     }
 
     fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
-        self.assignment_target_class_symbol(
+        crate::checker::type_checking::CheckerStateExt::assignment_target_class_symbol(
             self, left_idx,
         )
     }
@@ -6541,7 +6541,7 @@ impl<'a> CheckerState<'a> {
 
     // Delegate to type_checking::CheckerStateExt
     fn refine_var_decl_type(&self, prev_type: TypeId, current_type: TypeId) -> TypeId {
-        self.refine_var_decl_type(
+        crate::checker::type_checking::CheckerStateExt::refine_var_decl_type(
             self,
             prev_type,
             current_type,
@@ -8120,7 +8120,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
     #[allow(dead_code)] // Infrastructure for symbol merging validation
     fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
-        self.can_merge_symbols(
+        crate::checker::type_checking::CheckerStateExt::can_merge_symbols(
             self,
             existing_flags,
             new_flags,
@@ -12364,14 +12364,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn implicit_any_return_display(&self, return_type: TypeId) -> String {
-        self.implicit_any_return_display(
+        crate::checker::type_checking::CheckerStateExt::implicit_any_return_display(
             self,
             return_type,
         )
     }
 
     fn should_report_implicit_any_return(&self, return_type: TypeId) -> bool {
-        self.should_report_implicit_any_return(
+        crate::checker::type_checking::CheckerStateExt::should_report_implicit_any_return(
             self,
             return_type,
         )
@@ -12428,7 +12428,7 @@ impl<'a> CheckerState<'a> {
         member_idx: NodeIndex,
         _property_name: &str,
     ) -> bool {
-        self.is_derived_property_redeclaration(
+        crate::checker::type_checking::CheckerStateExt::is_derived_property_redeclaration(
             self,
             member_idx,
             _property_name,

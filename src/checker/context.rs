@@ -70,7 +70,16 @@ pub enum ScriptTarget {
 impl ScriptTarget {
     /// Check if this target supports ES2015+ features (Promise, Map, Set, Symbol, etc.)
     pub fn supports_es2015(&self) -> bool {
-        matches!(self, Self::ES2015 | Self::ES2016 | Self::ES2017 | Self::ES2018 | Self::ES2019 | Self::ES2020 | Self::ESNext)
+        matches!(
+            self,
+            Self::ES2015
+                | Self::ES2016
+                | Self::ES2017
+                | Self::ES2018
+                | Self::ES2019
+                | Self::ES2020
+                | Self::ESNext
+        )
     }
 }
 
@@ -818,11 +827,11 @@ impl<'a> CheckerContext<'a> {
         // Pre-ES2015 global types that are commonly used
         // These are always available in lib.d.ts but should emit TS2318 when @noLib is enabled
         match name {
-            "Object" | "Function" | "Array" | "String" | "Number" | "Boolean" | "Date" | "RegExp"
-            | "Error" | "Math" | "JSON" | "console" | "window" | "document" | "ArrayBuffer"
-            | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray" | "Int16Array"
-            | "Uint16Array" | "Int32Array" | "Uint32Array" | "Float32Array" | "Float64Array"
-            | "this" | "globalThis" => true,
+            "Object" | "Function" | "Array" | "String" | "Number" | "Boolean" | "Date"
+            | "RegExp" | "Error" | "Math" | "JSON" | "console" | "window" | "document"
+            | "ArrayBuffer" | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray"
+            | "Int16Array" | "Uint16Array" | "Int32Array" | "Uint32Array" | "Float32Array"
+            | "Float64Array" | "this" | "globalThis" => true,
             _ => false,
         }
     }
@@ -838,8 +847,8 @@ impl<'a> CheckerContext<'a> {
 
         // Most pre-ES2015 globals are available in ES3/ES5
         match name {
-            "Promise" | "Map" | "Set" | "WeakMap" | "WeakSet" | "Proxy" | "Reflect"
-            | "Symbol" | "Iterator" | "Iterable" => Some("ES2015"),
+            "Promise" | "Map" | "Set" | "WeakMap" | "WeakSet" | "Proxy" | "Reflect" | "Symbol"
+            | "Iterator" | "Iterable" => Some("ES2015"),
             "AsyncFunction" | "SharedArrayBuffer" | "Atomics" => Some("ES2017"),
             "AsyncGenerator" | "AsyncGeneratorFunction" => Some("ES2018"),
             "BigInt" | "BigInt64Array" | "BigUint64Array" => Some("ES2020"),

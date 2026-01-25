@@ -55,7 +55,7 @@ pub mod symbol_resolver;
 pub mod tuple_type;
 pub mod type_checking;
 pub mod type_computation;
-pub mod type_computing_visitor;
+// pub mod type_computing_visitor; // TODO: module not found
 pub mod type_parameter;
 pub mod type_query;
 pub mod types;
@@ -66,19 +66,19 @@ mod contextual_typing_tests;
 #[cfg(test)]
 mod control_flow_tests;
 #[cfg(test)]
+mod global_type_tests;
+#[cfg(test)]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
 mod spread_rest_tests;
 #[cfg(test)]
-mod symbol_resolver_stability_tests;
-#[cfg(test)]
 mod stability_validation_tests;
 #[cfg(test)]
-mod value_usage_tests;
+mod symbol_resolver_stability_tests;
 #[cfg(test)]
 mod ts2304_tests;
 #[cfg(test)]
-mod global_type_tests;
+mod value_usage_tests;
 
 // Re-export key types
 pub use arena::TypeArena;

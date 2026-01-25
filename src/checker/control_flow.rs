@@ -3739,7 +3739,9 @@ if (typeof x === "string") {
         // Get the if condition (typeof x === "string")
         let condition_idx = get_if_condition(arena, root, 1);
         let condition_node = arena.get(condition_idx).expect("condition node");
-        let binary = arena.get_binary_expr(condition_node).expect("binary condition");
+        let binary = arena
+            .get_binary_expr(condition_node)
+            .expect("binary condition");
         let target_idx = binary.left; // This is 'x'
 
         // The narrowing happens at the condition
@@ -3799,7 +3801,9 @@ if (typeof x === "string") {
         // Get the if condition (typeof x === "string")
         let condition_idx = get_if_condition(arena, root, 1);
         let condition_node = arena.get(condition_idx).expect("condition node");
-        let binary = arena.get_binary_expr(condition_node).expect("binary condition");
+        let binary = arena
+            .get_binary_expr(condition_node)
+            .expect("binary condition");
         let target_idx = binary.left; // This is 'x'
 
         // Get the variable declaration to verify it's const
