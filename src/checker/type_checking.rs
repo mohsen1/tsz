@@ -414,6 +414,10 @@ impl<'a> CheckerState<'a> {
         let right_raw = self.get_type_of_node(right_idx);
         let right_type = self.resolve_type_query_type(right_raw);
 
+        // Remove freshness from RHS since it's being assigned to a variable
+        // Object literals lose freshness when assigned, allowing width subtyping thereafter
+        self.ctx.freshness_tracker.remove_freshness(right_raw);
+
         self.ctx.contextual_type = prev_context;
 
         self.ensure_application_symbols_resolved(right_type);
@@ -532,6 +536,10 @@ impl<'a> CheckerState<'a> {
 
         let right_raw = self.get_type_of_node(right_idx);
         let right_type = self.resolve_type_query_type(right_raw);
+
+        // Remove freshness from RHS since it's being assigned to a variable
+        // Object literals lose freshness when assigned, allowing width subtyping thereafter
+        self.ctx.freshness_tracker.remove_freshness(right_raw);
 
         self.ctx.contextual_type = prev_context;
 
