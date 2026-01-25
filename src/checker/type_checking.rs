@@ -11110,4 +11110,74 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+
+    // ============================================================================
+    // Section 58: Enum Type Utilities
+    // ============================================================================
+
+    /// Get enum member type by property name.
+    ///
+    /// This function resolves the type of an enum member accessed by name.
+    /// It searches through all enum declarations for the symbol to find
+    /// a matching member name and returns the enum type (not the primitive).
+    ///
+    /// ## Parameters:
+    /// - `sym_id`: The enum symbol ID
+    /// - `property_name`: The member property name to search for
+    ///
+    /// ## Returns:
+    /// - `Some(TypeId)`: The enum type (as a Ref to the enum symbol)
+    /// - `None`: If the symbol is not an enum or member not found
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// enum Color {
+    ///   Red,
+    ///   Green,
+    ///   Blue
+    /// }
+    /// type T = Color["Red"];  // Returns the enum type Color
+    /// ```
+    ///
+    /// Note: This returns the enum type itself, not STRING or NUMBER,
+    /// which allows proper enum assignability checking.
+    pub(crate) fn enum_member_type_for_name(
+        &self,
+        sym_id: SymbolId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::ENUM == 0 {
+            return None;
+        }
+
+        // Check if the property exists in this enum
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(enum_decl) = self.ctx.arena.get_enum(node) else {
+                continue;
+            };
+            for &member_idx in &enum_decl.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+                    continue;
+                };
+                if let Some(name) = self.get_property_name(member.name)
+                    && name == property_name
+                {
+                    // Return the enum type itself, not just STRING or NUMBER
+                    // This allows proper enum assignability checking
+                    return Some(self.ctx.types.intern(crate::solver::TypeKey::Ref(
+                        crate::solver::SymbolRef(sym_id.0),
+                    )));
+                }
+            }
+        }
+
+        None
+    }
 }
