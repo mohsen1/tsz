@@ -29,6 +29,7 @@ use std::collections::HashSet;
 // Type Checking Methods
 // =============================================================================
 
+#[allow(dead_code)]
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Utility Methods
@@ -2090,7 +2091,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if export modifier is present
         mods.nodes.iter().any(|&mod_idx| {
-            self.ctx.arena.get(mod_idx).map_or(false, |mod_node| {
+            self.ctx.arena.get(mod_idx).is_some_and(|mod_node| {
                 mod_node.kind == SyntaxKind::ExportKeyword as u16
             })
         })
@@ -2395,6 +2396,7 @@ impl<'a> CheckerState<'a> {
 // Statement Validation
 // =============================================================================
 
+#[allow(dead_code)]
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Return Statement Validation
@@ -5726,7 +5728,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if export modifier is present
         mods.nodes.iter().any(|&mod_idx| {
-            self.ctx.arena.get(mod_idx).map_or(false, |mod_node| {
+            self.ctx.arena.get(mod_idx).is_some_and(|mod_node| {
                 mod_node.kind == SyntaxKind::ExportKeyword as u16
             })
         })

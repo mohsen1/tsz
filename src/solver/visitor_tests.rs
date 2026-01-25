@@ -1,7 +1,6 @@
 //! Tests for the Type Visitor Pattern implementation.
 
 use super::*;
-use crate::solver::visitor::*;
 
 // =============================================================================
 // TypeKind Tests

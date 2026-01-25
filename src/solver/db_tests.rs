@@ -3,7 +3,6 @@ use crate::solver::SalsaDatabase;
 use crate::solver::{
     LiteralValue, QueryCache, QueryDatabase, TypeDatabase, TypeId, TypeInterner, TypeKey,
 };
-use std::sync::Arc;
 
 #[test]
 fn type_database_interns_and_looks_up() {

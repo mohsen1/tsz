@@ -247,6 +247,7 @@ impl<'a> TypeLowering<'a> {
 
     /// Reset the operation counter (for testing purposes)
     #[cfg(test)]
+    #[allow(dead_code)]
     fn reset_operations(&self) {
         *self.operations.borrow_mut() = 0;
         *self.limit_exceeded.borrow_mut() = false;

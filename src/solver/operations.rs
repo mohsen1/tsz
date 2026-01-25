@@ -24,6 +24,8 @@
 //! - `binary_ops`: Binary operation evaluation (+, -, *, /, etc.)
 
 // Re-exports from extracted modules
+// Note: These are intentionally pub re-exported for external API use
+#[allow(unused_imports)]
 pub use crate::solver::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 
 use crate::interner::Atom;

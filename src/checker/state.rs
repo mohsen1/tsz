@@ -2666,7 +2666,7 @@ impl<'a> CheckerState<'a> {
                 member_sym_id_from_symbol = Some(member_id);
             }
             // If not found in direct exports, check for re-exports
-            else if let Some(ref exports) = symbol.exports {
+            else if let Some(ref _exports) = symbol.exports {
                 // The member might be re-exported from another module
                 // Check if this symbol has an import_module (it's an imported namespace)
                 if let Some(ref module_specifier) = symbol.import_module {
@@ -5649,6 +5649,7 @@ impl<'a> CheckerState<'a> {
     // Note: class_symbol_from_expression, class_symbol_from_type_annotation,
     // assignment_target_class_symbol, and class_constructor_access_level are in type_checking.rs
 
+    #[allow(dead_code)]
     fn class_constructor_access_level_impl(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::CLASS == 0 {
@@ -6211,7 +6212,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .any(|source_prop| !target_props.iter().any(|p| p.name == source_prop.name))
             }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeKey::ObjectWithIndex(_shape_id)) => {
                 // ObjectWithIndex always has an index signature, accepts any properties
                 return false;
             }
@@ -6944,6 +6945,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn substitute_this_type(&mut self, type_id: TypeId, this_type: TypeId) -> TypeId {
         use rustc_hash::FxHashMap;
 
@@ -6951,6 +6953,7 @@ impl<'a> CheckerState<'a> {
         self.substitute_this_type_inner(type_id, this_type, &mut cache)
     }
 
+    #[allow(dead_code)]
     fn substitute_this_type_inner(
         &mut self,
         type_id: TypeId,
@@ -8427,7 +8430,7 @@ impl<'a> CheckerState<'a> {
                     .and_then(|enum_decl| enum_decl.modifiers.as_ref())
                     .map(|modifiers| {
                         modifiers.nodes.iter().any(|&mod_idx| {
-                            self.ctx.arena.get(mod_idx).map_or(false, |mod_node| {
+                            self.ctx.arena.get(mod_idx).is_some_and(|mod_node| {
                                 mod_node.kind == crate::scanner::SyntaxKind::ConstKeyword as u16
                             })
                         })
@@ -9497,6 +9500,7 @@ impl<'a> CheckerState<'a> {
     /// Emits TS2461 if the type is not array-like, iterable, or a string.
     /// Look up a property type in a type for destructuring purposes.
     /// Returns (type_id, property_exists) where property_exists indicates if the property was found.
+    #[allow(dead_code)]
     fn lookup_destructuring_property_type(
         &self,
         parent_type: TypeId,
@@ -9740,7 +9744,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeKey::ObjectWithIndex(_shape_id)) => {
                 // ObjectWithIndex always has an index signature, accepts any properties
                 return;
             }
@@ -12233,9 +12237,10 @@ impl<'a> CheckerState<'a> {
     /// Check setter parameter constraints (1052, 1053).
     /// - A 'set' accessor parameter cannot have an initializer
     /// - A 'set' accessor cannot have rest parameter
-    // Promise/async type checking methods moved to promise_checker.rs
-    // The lower_type_with_bindings helper remains here as it requires
-    // access to private resolver methods.
+    ///
+    /// Promise/async type checking methods moved to promise_checker.rs
+    /// The lower_type_with_bindings helper remains here as it requires
+    /// access to private resolver methods.
 
     /// Lower a type node with type parameter bindings.
     ///
