@@ -274,15 +274,15 @@ impl<'a> CheckerState<'a> {
 
         // Choose a best common type if any element is a supertype of all others.
         // Rule #32: Best Common Type (BCT) Inference
-        // Use the centralized best_common_type function which implements:
-        // 1. Filter out duplicates and never types
-        // 2. Try to find a single candidate that is a supertype of all others
-        // 3. If not found, create a union of all candidates
+        // Use union type as the best common type for array elements.
+        // This is a simplified implementation that creates a union of all element types.
         let element_type = if element_types.is_empty() {
             TypeId::NEVER
+        } else if element_types.len() == 1 {
+            element_types[0]
         } else {
-            // Use the TypeInterner's best_common_type method (Rule #32)
-            self.ctx.types.best_common_type(&element_types)
+            // Create a union of all element types
+            self.ctx.types.union(element_types)
         };
 
         self.ctx.types.array(element_type)

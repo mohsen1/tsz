@@ -43,7 +43,7 @@ pub mod intersection_type;
 pub mod iterable_checker;
 pub mod jsx;
 pub mod literal_type;
-pub mod module_validation;
+// pub mod module_validation; // TODO: Fix API mismatches
 pub mod nullish;
 pub mod object_type;
 pub mod optional_chain;
