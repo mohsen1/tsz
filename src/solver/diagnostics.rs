@@ -1089,8 +1089,8 @@ impl SubtypeFailureReason {
             }
 
             SubtypeFailureReason::ParameterCountMismatch {
-                source_count,
-                target_count,
+                source_count: _,
+                target_count: _,
             } => {
                 // Parameter count mismatch
                 PendingDiagnostic::error(

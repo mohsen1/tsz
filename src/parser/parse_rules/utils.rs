@@ -26,7 +26,7 @@ pub use self::token_validation::*;
 /// self.current_token = current;
 /// result
 /// ```
-pub fn look_ahead_is<F>(scanner: &mut ScannerState, current_token: SyntaxKind, check: F) -> bool
+pub fn look_ahead_is<F>(scanner: &mut ScannerState, _current_token: SyntaxKind, check: F) -> bool
 where
     F: FnOnce(SyntaxKind) -> bool,
 {
@@ -399,7 +399,7 @@ pub fn look_ahead_is_const_enum(scanner: &mut ScannerState, current_token: Synta
 /// This is a two-token look-ahead: skip 'import', check for identifier, then check for '='.
 pub fn look_ahead_is_import_equals(
     scanner: &mut ScannerState,
-    current_token: SyntaxKind,
+    _current_token: SyntaxKind,
     is_identifier_fn: impl FnOnce(SyntaxKind) -> bool,
 ) -> bool {
     let snapshot = scanner.save_state();

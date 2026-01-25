@@ -123,6 +123,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// 4. **Write type compatibility**: For mutable properties with different write types,
     ///    target's write type must be subtype of source's (contravariance for writes)
+    ///
     /// Check property compatibility between source and target properties.
     ///
     /// This implements **Rule #26: Split Accessors (Getter/Setter Variance)**.
