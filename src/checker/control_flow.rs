@@ -2114,6 +2114,15 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
+        // Special case for unknown: instanceof narrows to object type
+        // This handles cases like: if (error instanceof Error) where error: unknown
+        if type_id == TypeId::UNKNOWN {
+            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
+                return instance_type;
+            }
+            return TypeId::OBJECT;
+        }
+
         if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
             let narrowing = NarrowingContext::new(self.interner);
             return narrowing.narrow_to_type(type_id, instance_type);
