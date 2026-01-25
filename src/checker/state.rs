@@ -6440,8 +6440,19 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if source object literal has properties that don't exist in target.
+    /// This implements the "freshness" tracking for excess property checking.
+    /// Only fresh object literals (directly created literals) trigger excess property checks.
+    /// Once assigned to a variable, objects lose freshness and allow width subtyping.
     fn object_literal_has_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::TypeKey;
+
+        // Only check excess properties for FRESH object literals
+        // This is the key TypeScript behavior:
+        // - const p: Point = {x: 1, y: 2, z: 3}  // ERROR: 'z' is excess (fresh)
+        // - const obj = {x: 1, y: 2, z: 3}; p = obj;  // OK: obj loses freshness
+        if !self.ctx.freshness_tracker.should_check_excess_properties(source) {
+            return false;
+        }
 
         let source_shape = match self.ctx.types.lookup(source) {
             Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
@@ -9537,6 +9548,11 @@ impl<'a> CheckerState<'a> {
                         checker.ctx.contextual_type = Some(declared_type);
                     }
                     let init_type = checker.get_type_of_node(var_decl.initializer);
+
+                    // Remove freshness from the initializer type since it's being assigned to a variable
+                    // Object literals lose freshness when assigned, allowing width subtyping thereafter
+                    checker.ctx.freshness_tracker.remove_freshness(init_type);
+
                     checker.ctx.contextual_type = prev_context;
 
                     // Check assignability (skip for 'any' since anything is assignable to any)
@@ -9595,6 +9611,10 @@ impl<'a> CheckerState<'a> {
             // No type annotation - infer from initializer
             if !var_decl.initializer.is_none() {
                 let init_type = checker.get_type_of_node(var_decl.initializer);
+
+                // Remove freshness from the initializer type since it's being assigned to a variable
+                checker.ctx.freshness_tracker.remove_freshness(init_type);
+
                 if let Some(literal_type) =
                     checker.literal_type_from_initializer(var_decl.initializer)
                 {
