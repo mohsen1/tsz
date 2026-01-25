@@ -813,7 +813,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This function handles cases where a namespace member is re-exported from
     /// another module using `export { foo } from './bar'` or `export * from './bar'`.
-    fn resolve_reexported_member_symbol(
+    pub(crate) fn resolve_reexported_member_symbol(
         &self,
         module_specifier: &str,
         member_name: &str,

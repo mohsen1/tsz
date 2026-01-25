@@ -136,9 +136,10 @@ pub const MAX_TREE_WALK_ITERATIONS: usize = 10_000;
 pub const MAX_TYPE_RESOLUTION_OPS: u32 = 500_000;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum EnumKind {
+pub enum EnumKind {
     Numeric,
     String,
+    Mixed,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -5375,14 +5376,7 @@ impl<'a> CheckerState<'a> {
     // Type Relations (uses solver::CompatChecker for assignability)
     // =========================================================================
 
-    // Delegate to type_checking::CheckerStateExt
-    fn enum_symbol_from_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        self.enum_symbol_from_type(type_id)
-    }
-
-    fn enum_symbol_from_value_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        self.enum_symbol_from_value_type(type_id)
-    }
+    // Note: enum_symbol_from_type and enum_symbol_from_value_type are defined in type_checking.rs
 
     fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         use crate::solver::{IndexSignature, ObjectShape, PropertyInfo};
@@ -5396,6 +5390,11 @@ impl<'a> CheckerState<'a> {
         let member_type = match self.enum_kind(sym_id) {
             Some(EnumKind::String) => TypeId::STRING,
             Some(EnumKind::Numeric) => TypeId::NUMBER,
+            Some(EnumKind::Mixed) => {
+                // Mixed enums have both string and numeric members
+                // Fall back to NUMBER for type compatibility
+                TypeId::NUMBER
+            }
             None => {
                 // Return UNKNOWN instead of ANY for enum without explicit kind
                 TypeId::UNKNOWN
@@ -5449,20 +5448,7 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.object(properties))
     }
 
-    // Delegate to type_checking::CheckerStateExt
-    fn enum_kind(&self, sym_id: SymbolId) -> Option<EnumKind> {
-        self.enum_kind(sym_id)
-    }
-
-    /// Get the type of an enum member by finding its parent enum.
-    /// Returns the enum type itself (e.g., `MyEnum`) rather than just STRING or NUMBER.
-    /// This is used when enum members are accessed through namespace exports.
-    fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
-        self.enum_member_type_from_decl(
-            self,
-            member_decl,
-        )
-    }
+    // Note: enum_kind and enum_member_type_from_decl are defined in type_checking.rs
 
     fn enum_assignability_override(
         &self,
@@ -5704,24 +5690,10 @@ impl<'a> CheckerState<'a> {
     // NOTE: private_brand_assignability_override moved to solver/compat.rs
     // It only needs TypeDatabase, not checker context, so it lives in the solver layer.
 
-    // Delegate to type_checking::CheckerStateExt
-    fn class_symbol_from_expression(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
-        self.class_symbol_from_expression(expr_idx)
-    }
+    // Note: class_symbol_from_expression, class_symbol_from_type_annotation,
+    // assignment_target_class_symbol, and class_constructor_access_level are in type_checking.rs
 
-    fn class_symbol_from_type_annotation(&self, type_idx: NodeIndex) -> Option<SymbolId> {
-        self.class_symbol_from_type_annotation(
-            self, type_idx,
-        )
-    }
-
-    fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
-        self.assignment_target_class_symbol(
-            self, left_idx,
-        )
-    }
-
-    fn class_constructor_access_level(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
+    fn class_constructor_access_level_impl(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::CLASS == 0 {
             return None;
@@ -6539,14 +6511,7 @@ impl<'a> CheckerState<'a> {
             && self.is_assignable_to(current_type, prev_type)
     }
 
-    // Delegate to type_checking::CheckerStateExt
-    fn refine_var_decl_type(&self, prev_type: TypeId, current_type: TypeId) -> TypeId {
-        self.refine_var_decl_type(
-            self,
-            prev_type,
-            current_type,
-        )
-    }
+    // Note: refine_var_decl_type is in type_checking.rs
 
     /// Check if source type is assignable to ANY member of a target union.
     ///
@@ -8116,16 +8081,7 @@ impl<'a> CheckerState<'a> {
     /// Enhanced to provide suggestions for similar names, import suggestions, and
     /// library change suggestions for ES2015+ types.
 
-    /// Check if two symbol declarations can merge (for TS2403 checking).
-    /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
-    #[allow(dead_code)] // Infrastructure for symbol merging validation
-    fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
-        self.can_merge_symbols(
-            self,
-            existing_flags,
-            new_flags,
-        )
-    }
+    // Note: can_merge_symbols is in type_checking.rs
 
     /// Check if a type name is a built-in mapped type utility.
     /// These are standard TypeScript utility types that transform other types.
@@ -9652,9 +9608,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if we should emit a "property does not exist" error for the given type in destructuring.
     /// Returns false for any, unknown, or types that don't have concrete shapes.
-    fn should_emit_property_not_exist_for_destructuring(&self, type_id: TypeId) -> bool {
-        self.should_emit_property_not_exist_for_destructuring(type_id)
-    }
+    // Note: should_emit_property_not_exist_for_destructuring is in type_checking.rs
 
     /// Get the expected type for a binding element from its parent type.
     pub(crate) fn get_binding_element_type(
@@ -10009,7 +9963,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the class name from a variable declaration that initializes to `new ClassName()`.
-    fn get_class_name_from_var_decl(&self, decl_idx: NodeIndex) -> Option<String> {
+    // get_class_name_from_var_decl is in type_checking.rs - this is an older impl to be removed
+    #[allow(dead_code)]
+    fn get_class_name_from_var_decl_old(&self, decl_idx: NodeIndex) -> Option<String> {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return None;
         };
@@ -10049,7 +10005,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a property is readonly in a class declaration (by looking at AST).
-    fn is_class_property_readonly(&self, class_name: &str, prop_name: &str) -> bool {
+    // is_class_property_readonly is in type_checking.rs - this is an older impl to be removed
+    #[allow(dead_code)]
+    fn is_class_property_readonly_old(&self, class_name: &str, prop_name: &str) -> bool {
         // Find the class declaration by name
         if let Some(sym_id) = self.ctx.binder.file_locals.get(class_name)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -10093,8 +10051,9 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a property is marked readonly in a type.
-    fn is_property_readonly(&self, type_id: TypeId, prop_name: &str) -> bool {
+    // is_property_readonly is in type_checking.rs - this delegates to QueryDatabase
+    #[allow(dead_code)]
+    fn is_property_readonly_state(&self, type_id: TypeId, prop_name: &str) -> bool {
         use crate::solver::QueryDatabase;
 
         self.ctx.types.is_property_readonly(type_id, prop_name)
@@ -10748,18 +10707,7 @@ impl<'a> CheckerState<'a> {
         !self.type_includes_undefined(prop_type)
     }
 
-    // Delegate to type_checking::CheckerStateExt
-    fn class_has_base(&self, class: &crate::parser::node::ClassData) -> bool {
-        self.class_has_base(class)
-    }
-
-    fn type_includes_undefined(&self, type_id: TypeId) -> bool {
-        self.type_includes_undefined(type_id)
-    }
-
-    fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
-        self.find_constructor_body(members)
-    }
+    // Note: class_has_base, type_includes_undefined, find_constructor_body are in type_checking.rs
 
     /// Check for TS2565: Properties used before being assigned in the constructor.
     ///
@@ -12357,25 +12305,7 @@ impl<'a> CheckerState<'a> {
         lowering.lower_type(type_node)
     }
 
-    // Delegate to type_checking::CheckerStateExt
-    #[allow(dead_code)] // Infrastructure for type checking
-    fn type_contains_any(&self, type_id: TypeId) -> bool {
-        self.type_contains_any(type_id)
-    }
-
-    fn implicit_any_return_display(&self, return_type: TypeId) -> String {
-        self.implicit_any_return_display(
-            self,
-            return_type,
-        )
-    }
-
-    fn should_report_implicit_any_return(&self, return_type: TypeId) -> bool {
-        self.should_report_implicit_any_return(
-            self,
-            return_type,
-        )
-    }
+    // Note: type_contains_any, implicit_any_return_display, should_report_implicit_any_return are in type_checking.rs
 
     pub(crate) fn maybe_report_implicit_any_return(
         &mut self,
@@ -12421,23 +12351,5 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a property in a derived class is redeclaring a base class property
-    #[allow(dead_code)] // Infrastructure for class inheritance checking
-    fn is_derived_property_redeclaration(
-        &self,
-        member_idx: NodeIndex,
-        _property_name: &str,
-    ) -> bool {
-        self.is_derived_property_redeclaration(
-            self,
-            member_idx,
-            _property_name,
-        )
-    }
-
-    /// Find the containing class for a member node by walking up the parent chain
-    #[allow(dead_code)] // Infrastructure for class member resolution
-    fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
-        self.find_containing_class(_member_idx)
-    }
+    // Note: is_derived_property_redeclaration, find_containing_class are in type_checking.rs
 }

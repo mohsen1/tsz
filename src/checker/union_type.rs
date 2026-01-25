@@ -59,20 +59,6 @@ impl<'a> CheckerState<'a> {
     // Union Type Analysis
     // =========================================================================
 
-    /// Check if a type is a member of a union type.
-    ///
-    /// Returns true if the given member type is in the union.
-    pub fn union_contains(&self, union_type: TypeId, member: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(union_type) {
-            let members = self.ctx.types.type_list(list_id);
-            members.contains(&member)
-        } else {
-            false
-        }
-    }
-
     /// Check if a union type contains only primitive types.
     ///
     /// Returns true if all union members are primitive types
@@ -91,9 +77,17 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a union type contains a specific type.
     ///
-    /// This is a convenience wrapper around `union_contains`.
+    /// Calls the primary union_contains implementation in type_checking.rs.
     pub fn union_has_type(&self, union_type: TypeId, target: TypeId) -> bool {
-        self.union_contains(union_type, target)
+        // Use the primary implementation defined in type_checking.rs
+        use crate::solver::TypeKey;
+
+        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(union_type) {
+            let members = self.ctx.types.type_list(list_id);
+            members.contains(&target)
+        } else {
+            false
+        }
     }
 
     /// Check if a union type contains null or undefined.
