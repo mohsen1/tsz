@@ -254,18 +254,14 @@ pub mod diagnostic_messages {
         "Type '{0}' must have a '[Symbol.asyncIterator]()' method that returns an async iterator.";
 
     // Delete operator errors
-    pub const DELETE_OPERAND_CANNOT_BE_VARIABLE: &str =
-        "The operand of a delete operator cannot be a variable, function, or parameter in strict mode.";
+    pub const DELETE_OPERAND_CANNOT_BE_VARIABLE: &str = "The operand of a delete operator cannot be a variable, function, or parameter in strict mode.";
 
     // Instanceof operator errors
-    pub const RIGHT_HAND_SIDE_OF_INSTANCEOF_NOT_CONSTRUCTIBLE: &str =
-        "The right-hand side of an 'instanceof' expression must be of type 'any' or an object type with a constructor signature.";
+    pub const RIGHT_HAND_SIDE_OF_INSTANCEOF_NOT_CONSTRUCTIBLE: &str = "The right-hand side of an 'instanceof' expression must be of type 'any' or an object type with a constructor signature.";
 
     // In operator errors
-    pub const LEFT_SIDE_OF_IN_NOT_STRING: &str =
-        "The left-hand side of an 'in' expression must be of type 'any', 'string', 'number', or 'symbol'.";
-    pub const RIGHT_SIDE_OF_IN_NOT_OBJECT: &str =
-        "The right-hand side of an 'in' expression must be of type 'any', an object type or a type parameter.";
+    pub const LEFT_SIDE_OF_IN_NOT_STRING: &str = "The left-hand side of an 'in' expression must be of type 'any', 'string', 'number', or 'symbol'.";
+    pub const RIGHT_SIDE_OF_IN_NOT_OBJECT: &str = "The right-hand side of an 'in' expression must be of type 'any', an object type or a type parameter.";
 }
 
 /// TypeScript diagnostic error codes.

@@ -18,7 +18,9 @@ use std::collections::HashSet;
 impl<'a> CheckerState<'a> {
     /// Check if adding a module to the resolution path would create a cycle.
     fn would_create_cycle(&self, module: &str) -> bool {
-        self.ctx.import_resolution_stack.contains(&module.to_string())
+        self.ctx
+            .import_resolution_stack
+            .contains(&module.to_string())
     }
 
     /// Check if a module specifier is valid and emit appropriate TS2307 errors.
@@ -32,7 +34,11 @@ impl<'a> CheckerState<'a> {
     /// ## Returns:
     /// - `true` if the module is valid (exists or is ambient)
     /// - `false` if the module is not found (TS2307 already emitted)
-    pub(crate) fn validate_module_exists(&mut self, module_name: &str, import_node: NodeIndex) -> bool {
+    pub(crate) fn validate_module_exists(
+        &mut self,
+        module_name: &str,
+        import_node: NodeIndex,
+    ) -> bool {
         if !self.ctx.report_unresolved_imports {
             return true; // Skip validation if not reporting unresolved imports
         }
@@ -50,7 +56,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if this is a shorthand ambient module
-        if self.ctx.binder.shorthand_ambient_modules.contains(module_name) {
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
             return true;
         }
 
@@ -99,11 +110,17 @@ impl<'a> CheckerState<'a> {
             if let Some(import_clause) = self.ctx.arena.get_import_clause(*named_bindings) {
                 // Check named imports
                 if let Some(named_bindings_node) = import_clause.named_bindings {
-                    if let Some(named_imports) = self.ctx.arena.get_named_imports(named_bindings_node) {
+                    if let Some(named_imports) =
+                        self.ctx.arena.get_named_imports(named_bindings_node)
+                    {
                         for &import_specifier_idx in &named_imports.elements {
-                            if let Some(import_specifier) = self.ctx.arena.get_import_specifier(import_specifier_idx) {
+                            if let Some(import_specifier) =
+                                self.ctx.arena.get_import_specifier(import_specifier_idx)
+                            {
                                 // Get the property name (what's being imported)
-                                let import_name = if let Some(prop_name) = import_specifier.property_name {
+                                let import_name = if let Some(prop_name) =
+                                    import_specifier.property_name
+                                {
                                     if let Some(ident) = self.ctx.arena.get_identifier(&prop_name) {
                                         &ident.escaped_text
                                     } else {
@@ -112,7 +129,9 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     // No property name means it's not renamed
                                     if let Some(name_node) = import_specifier.name {
-                                        if let Some(ident) = self.ctx.arena.get_identifier(&name_node) {
+                                        if let Some(ident) =
+                                            self.ctx.arena.get_identifier(&name_node)
+                                        {
                                             &ident.escaped_text
                                         } else {
                                             continue;
@@ -142,11 +161,12 @@ impl<'a> CheckerState<'a> {
 
                 // Check default import
                 if let Some(name_node) = import_clause.name {
-                    let default_name = if let Some(ident) = self.ctx.arena.get_identifier(&name_node) {
-                        &ident.escaped_text
-                    } else {
-                        return;
-                    };
+                    let default_name =
+                        if let Some(ident) = self.ctx.arena.get_identifier(&name_node) {
+                            &ident.escaped_text
+                        } else {
+                            return;
+                        };
 
                     // Check if "default" is exported from the module
                     if !module_exports.contains_key("default") {
@@ -212,19 +232,11 @@ impl<'a> CheckerState<'a> {
         // Check if we've already visited this module in the current chain
         if visited.contains(module_name) {
             // Found a cycle!
-            let cycle_path: Vec<&str> = visited.iter().chain(std::iter::once(module_name)).collect();
+            let cycle_path: Vec<&str> =
+                visited.iter().chain(std::iter::once(module_name)).collect();
             let cycle_str = cycle_path.join(" -> ");
-            let message = format!(
-                "{}: {}",
-                diagnostic_messages::CANNOT_FIND_MODULE,
-                cycle_str
-            );
-            self.error(
-                0,
-                0,
-                message,
-                diagnostic_codes::CANNOT_FIND_MODULE,
-            );
+            let message = format!("{}: {}", diagnostic_messages::CANNOT_FIND_MODULE, cycle_str);
+            self.error(0, 0, message, diagnostic_codes::CANNOT_FIND_MODULE);
             return;
         }
 
@@ -264,9 +276,7 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         import_name: &str,
     ) -> bool {
-        use crate::checker::types::diagnostics::{
-            diagnostic_codes, diagnostic_messages,
-        };
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         // Get the module's exports
         let module_exports = match self.ctx.binder.module_exports.get(module_name) {
@@ -278,8 +288,15 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = module_exports.get(import_name) {
             if let Some(symbol) = self.ctx.binder.get_symbol(*sym_id) {
                 // Check if this is a value-only symbol
-                let has_value = symbol.flags & (symbol_flags::FUNCTION | symbol_flags::LET | symbol_flags::CONST | symbol_flags::VAR) != 0;
-                let has_type = symbol.flags & (symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS) != 0;
+                let has_value = symbol.flags
+                    & (symbol_flags::FUNCTION
+                        | symbol_flags::LET
+                        | symbol_flags::CONST
+                        | symbol_flags::VAR)
+                    != 0;
+                let has_type = symbol.flags
+                    & (symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)
+                    != 0;
 
                 if has_value && !has_type {
                     // This is a value-only import used with `import type`

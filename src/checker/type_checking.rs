@@ -64,7 +64,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// This helper eliminates the repeated pattern of matching declaration kinds
     /// and extracting their modifiers. Used in has_export_modifier and similar functions.
-    pub(crate) fn get_declaration_modifiers(&self, node: &crate::parser::node::Node) -> Option<&crate::parser::NodeList> {
+    pub(crate) fn get_declaration_modifiers(
+        &self,
+        node: &crate::parser::node::Node,
+    ) -> Option<&crate::parser::NodeList> {
         use crate::parser::syntax_kind_ext;
         match node.kind {
             syntax_kind_ext::FUNCTION_DECLARATION => self
@@ -110,7 +113,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// This helper eliminates the repeated pattern of matching member kinds
     /// and extracting their modifiers.
-    pub(crate) fn get_member_modifiers(&self, node: &crate::parser::node::Node) -> Option<&crate::parser::NodeList> {
+    pub(crate) fn get_member_modifiers(
+        &self,
+        node: &crate::parser::node::Node,
+    ) -> Option<&crate::parser::NodeList> {
         use crate::parser::syntax_kind_ext;
         match node.kind {
             syntax_kind_ext::PROPERTY_DECLARATION => self
@@ -136,24 +142,21 @@ impl<'a> CheckerState<'a> {
     ///
     /// This helper eliminates the repeated pattern of matching member kinds
     /// and extracting their name nodes.
-    pub(crate) fn get_member_name_node(&self, node: &crate::parser::node::Node) -> Option<NodeIndex> {
+    pub(crate) fn get_member_name_node(
+        &self,
+        node: &crate::parser::node::Node,
+    ) -> Option<NodeIndex> {
         use crate::parser::syntax_kind_ext;
         match node.kind {
-            syntax_kind_ext::PROPERTY_DECLARATION => self
-                .ctx
-                .arena
-                .get_property_decl(node)
-                .map(|p| p.name),
-            syntax_kind_ext::METHOD_DECLARATION => self
-                .ctx
-                .arena
-                .get_method_decl(node)
-                .map(|m| m.name),
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
-                .ctx
-                .arena
-                .get_accessor(node)
-                .map(|a| a.name),
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                self.ctx.arena.get_property_decl(node).map(|p| p.name)
+            }
+            syntax_kind_ext::METHOD_DECLARATION => {
+                self.ctx.arena.get_method_decl(node).map(|m| m.name)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                self.ctx.arena.get_accessor(node).map(|a| a.name)
+            }
             _ => None,
         }
     }
@@ -162,7 +165,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// This helper eliminates the repeated pattern of matching declaration kinds
     /// and extracting their name nodes.
-    pub(crate) fn get_declaration_name(&self, node: &crate::parser::node::Node) -> Option<NodeIndex> {
+    pub(crate) fn get_declaration_name(
+        &self,
+        node: &crate::parser::node::Node,
+    ) -> Option<NodeIndex> {
         use crate::parser::syntax_kind_ext;
         match node.kind {
             syntax_kind_ext::VARIABLE_DECLARATION => self
@@ -170,31 +176,17 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_variable_declaration(node)
                 .map(|v| v.name),
-            syntax_kind_ext::FUNCTION_DECLARATION => self
-                .ctx
-                .arena
-                .get_function(node)
-                .map(|f| f.name),
-            syntax_kind_ext::CLASS_DECLARATION => self
-                .ctx
-                .arena
-                .get_class(node)
-                .map(|c| c.name),
-            syntax_kind_ext::INTERFACE_DECLARATION => self
-                .ctx
-                .arena
-                .get_interface(node)
-                .map(|i| i.name),
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                .ctx
-                .arena
-                .get_type_alias(node)
-                .map(|t| t.name),
-            syntax_kind_ext::ENUM_DECLARATION => self
-                .ctx
-                .arena
-                .get_enum(node)
-                .map(|e| e.name),
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.ctx.arena.get_function(node).map(|f| f.name)
+            }
+            syntax_kind_ext::CLASS_DECLARATION => self.ctx.arena.get_class(node).map(|c| c.name),
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.ctx.arena.get_interface(node).map(|i| i.name)
+            }
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.ctx.arena.get_type_alias(node).map(|t| t.name)
+            }
+            syntax_kind_ext::ENUM_DECLARATION => self.ctx.arena.get_enum(node).map(|e| e.name),
             _ => None,
         }
     }
@@ -231,20 +223,28 @@ impl<'a> CheckerState<'a> {
     /// This helper eliminates the repeated pattern of checking for identifier
     /// and extracting escaped_text.
     pub(crate) fn get_identifier_text(&self, node: &crate::parser::node::Node) -> Option<String> {
-        self.ctx.arena.get_identifier(node)
+        self.ctx
+            .arena
+            .get_identifier(node)
             .map(|ident| ident.escaped_text.clone())
     }
 
     /// Get identifier text from a node index, if it's an identifier.
     pub(crate) fn get_identifier_text_from_idx(&self, idx: NodeIndex) -> Option<String> {
-        self.ctx.arena.get(idx)
+        self.ctx
+            .arena
+            .get(idx)
             .and_then(|node| self.get_identifier_text(&node))
     }
 
     /// Generic helper to check if modifiers include a specific keyword.
     ///
     /// This eliminates the duplicated pattern of checking for specific modifier keywords.
-    pub(crate) fn has_modifier_kind(&self, modifiers: &Option<crate::parser::NodeList>, kind: SyntaxKind) -> bool {
+    pub(crate) fn has_modifier_kind(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+        kind: SyntaxKind,
+    ) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
@@ -330,11 +330,7 @@ impl<'a> CheckerState<'a> {
     ///     }
     /// }
     /// ```
-    pub(crate) fn for_each_call_child<F>(
-        &self,
-        node: &crate::parser::node::Node,
-        mut f: F,
-    ) -> bool
+    pub(crate) fn for_each_call_child<F>(&self, node: &crate::parser::node::Node, mut f: F) -> bool
     where
         F: FnMut(NodeIndex),
     {
@@ -475,7 +471,9 @@ impl<'a> CheckerState<'a> {
         left_type: TypeId,
         right_type: TypeId,
     ) {
-        use crate::checker::types::diagnostics::{diagnostic_codes, Diagnostic, DiagnosticCategory};
+        use crate::checker::types::diagnostics::{
+            Diagnostic, DiagnosticCategory, diagnostic_codes,
+        };
 
         let left_is_valid = self.is_arithmetic_operand(left_type);
         let right_is_valid = self.is_arithmetic_operand(right_type);
@@ -1318,7 +1316,12 @@ impl<'a> CheckerState<'a> {
 
         // Check for circular re-exports
         if self.would_create_cycle(module_name) {
-            let cycle_path: Vec<&str> = self.ctx.import_resolution_stack.iter().chain(std::iter::once(module_name)).collect();
+            let cycle_path: Vec<&str> = self
+                .ctx
+                .import_resolution_stack
+                .iter()
+                .chain(std::iter::once(module_name))
+                .collect();
             let cycle_str = cycle_path.join(" -> ");
             let message = format!("Circular re-export detected: {}", cycle_str);
             self.error_at_node(
@@ -2085,8 +2088,9 @@ impl<'a> CheckerState<'a> {
 
         // Check if export modifier is present
         mods.nodes.iter().any(|&mod_idx| {
-            self.ctx.arena.get(mod_idx)
-                .map_or(false, |mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
+            self.ctx.arena.get(mod_idx).map_or(false, |mod_node| {
+                mod_node.kind == SyntaxKind::ExportKeyword as u16
+            })
         })
     }
 
@@ -2231,7 +2235,12 @@ impl<'a> CheckerState<'a> {
         // Check for circular imports by tracking the resolution path
         if self.would_create_cycle(module_name) {
             // Emit TS2307 for circular import
-            let cycle_path: Vec<&str> = self.ctx.import_resolution_stack.iter().chain(std::iter::once(module_name)).collect();
+            let cycle_path: Vec<&str> = self
+                .ctx
+                .import_resolution_stack
+                .iter()
+                .chain(std::iter::once(module_name))
+                .collect();
             let cycle_str = cycle_path.join(" -> ");
             let message = format!("Circular import detected: {}", cycle_str);
             self.error_at_node(
@@ -2334,26 +2343,16 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         visited: &mut HashSet<String>,
     ) {
-        use crate::checker::types::diagnostics::{
-            diagnostic_codes, diagnostic_messages,
-        };
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         // Check if we've already visited this module in the current chain
         if visited.contains(module_name) {
             // Found a cycle!
-            let cycle_path: Vec<&str> = visited.iter().chain(std::iter::once(module_name)).collect();
+            let cycle_path: Vec<&str> =
+                visited.iter().chain(std::iter::once(module_name)).collect();
             let cycle_str = cycle_path.join(" -> ");
-            let message = format!(
-                "{}: {}",
-                diagnostic_messages::CANNOT_FIND_MODULE,
-                cycle_str
-            );
-            self.error(
-                0,
-                0,
-                message,
-                diagnostic_codes::CANNOT_FIND_MODULE,
-            );
+            let message = format!("{}: {}", diagnostic_messages::CANNOT_FIND_MODULE, cycle_str);
+            self.error(0, 0, message, diagnostic_codes::CANNOT_FIND_MODULE);
             return;
         }
 
@@ -2380,7 +2379,9 @@ impl<'a> CheckerState<'a> {
 
     /// Check if adding a module to the resolution path would create a cycle.
     fn would_create_cycle(&self, module: &str) -> bool {
-        self.ctx.import_resolution_stack.contains(&module.to_string())
+        self.ctx
+            .import_resolution_stack
+            .contains(&module.to_string())
     }
 }
 
@@ -5719,8 +5720,9 @@ impl<'a> CheckerState<'a> {
 
         // Check if export modifier is present
         mods.nodes.iter().any(|&mod_idx| {
-            self.ctx.arena.get(mod_idx)
-                .map_or(false, |mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
+            self.ctx.arena.get(mod_idx).map_or(false, |mod_node| {
+                mod_node.kind == SyntaxKind::ExportKeyword as u16
+            })
         })
     }
 
@@ -8225,11 +8227,13 @@ impl<'a> CheckerState<'a> {
                 && let Some(member_id) = exports.get(property_name)
             {
                 // Follow re-export chains to get the actual symbol
-                let resolved_member_id = if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
+                let resolved_member_id = if let Some(member_symbol) =
+                    self.ctx.binder.get_symbol(member_id)
                     && member_symbol.flags & symbol_flags::ALIAS != 0
                 {
                     let mut visited_aliases = Vec::new();
-                    self.resolve_alias_symbol(member_id, &mut visited_aliases).unwrap_or(member_id)
+                    self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                        .unwrap_or(member_id)
                 } else {
                     member_id
                 };
@@ -8247,9 +8251,11 @@ impl<'a> CheckerState<'a> {
             // This handles cases like: export { foo } from './bar'
             if let Some(ref module_specifier) = symbol.import_module {
                 let mut visited_aliases = Vec::new();
-                if let Some(reexported_sym) =
-                    self.resolve_reexported_member_symbol(module_specifier, property_name, &mut visited_aliases)
-                {
+                if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
+                    module_specifier,
+                    property_name,
+                    &mut visited_aliases,
+                ) {
                     if let Some(member_symbol) = self.ctx.binder.get_symbol(reexported_sym)
                         && member_symbol.flags & symbol_flags::VALUE == 0
                         && member_symbol.flags & symbol_flags::ALIAS == 0
@@ -8262,7 +8268,7 @@ impl<'a> CheckerState<'a> {
 
             if symbol.flags & symbol_flags::ENUM != 0
                 && let Some(member_type) =
-                self.enum_member_type_for_name(SymbolId(sym_id), property_name)
+                    self.enum_member_type_for_name(SymbolId(sym_id), property_name)
             {
                 return Some(member_type);
             }
@@ -8292,11 +8298,13 @@ impl<'a> CheckerState<'a> {
             && let Some(member_id) = exports.get(property_name)
         {
             // Follow re-export chains to get the actual symbol
-            let resolved_member_id = if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
+            let resolved_member_id = if let Some(member_symbol) =
+                self.ctx.binder.get_symbol(member_id)
                 && member_symbol.flags & symbol_flags::ALIAS != 0
             {
                 let mut visited_aliases = Vec::new();
-                self.resolve_alias_symbol(member_id, &mut visited_aliases).unwrap_or(member_id)
+                self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                    .unwrap_or(member_id)
             } else {
                 member_id
             };
@@ -8314,9 +8322,11 @@ impl<'a> CheckerState<'a> {
         // This handles cases like: export { foo } from './bar'
         if let Some(ref module_specifier) = symbol.import_module {
             let mut visited_aliases = Vec::new();
-            if let Some(reexported_sym) =
-                self.resolve_reexported_member_symbol(module_specifier, property_name, &mut visited_aliases)
-            {
+            if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
+                module_specifier,
+                property_name,
+                &mut visited_aliases,
+            ) {
                 if let Some(member_symbol) = self.ctx.binder.get_symbol(reexported_sym)
                     && member_symbol.flags & symbol_flags::VALUE == 0
                     && member_symbol.flags & symbol_flags::ALIAS == 0
@@ -8391,11 +8401,13 @@ impl<'a> CheckerState<'a> {
             };
 
             // Follow alias chains to determine if the ultimate target is type-only
-            let resolved_member_id = if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
+            let resolved_member_id = if let Some(member_symbol) =
+                self.ctx.binder.get_symbol(member_id)
                 && member_symbol.flags & symbol_flags::ALIAS != 0
             {
                 let mut visited_aliases = Vec::new();
-                self.resolve_alias_symbol(member_id, &mut visited_aliases).unwrap_or(member_id)
+                self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                    .unwrap_or(member_id)
             } else {
                 member_id
             };
@@ -8405,7 +8417,8 @@ impl<'a> CheckerState<'a> {
                 None => return false,
             };
 
-            let has_value = (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
+            let has_value =
+                (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
             let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
             return has_type && !has_value;
         }
@@ -10203,7 +10216,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        fn parse_type(checker: &mut crate::checker::state::CheckerState, text: &str, pos: &mut usize) -> Option<TypeId> {
+        fn parse_type(
+            checker: &mut crate::checker::state::CheckerState,
+            text: &str,
+            pos: &mut usize,
+        ) -> Option<TypeId> {
             skip_ws(text, pos);
             if text[*pos..].starts_with("function") {
                 return parse_function_type(checker, text, pos);
@@ -10345,7 +10362,10 @@ impl<'a> CheckerState<'a> {
     /// Find the constructor body in a class member list.
     ///
     /// Returns the body node of the first constructor member that has a body.
-    pub(crate) fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
+    pub(crate) fn find_constructor_body(
+        &self,
+        members: &crate::parser::NodeList,
+    ) -> Option<NodeIndex> {
         for &member_idx in &members.nodes {
             let Some(node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -10526,7 +10546,10 @@ impl<'a> CheckerState<'a> {
     /// Get the class symbol from a type annotation node.
     ///
     /// Handles type queries like `typeof MyClass`.
-    pub(crate) fn class_symbol_from_type_annotation(&self, type_idx: NodeIndex) -> Option<SymbolId> {
+    pub(crate) fn class_symbol_from_type_annotation(
+        &self,
+        type_idx: NodeIndex,
+    ) -> Option<SymbolId> {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return None;
         };
@@ -10581,7 +10604,10 @@ impl<'a> CheckerState<'a> {
     /// Get the access level of a class constructor.
     ///
     /// Returns None if the symbol is not a class or has no constructor.
-    pub(crate) fn class_constructor_access_level(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
+    pub(crate) fn class_constructor_access_level(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<MemberAccessLevel> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::CLASS == 0 {
             return None;
@@ -10909,11 +10935,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a class property is readonly.
     ///
     /// Returns true if the property has a readonly modifier.
-    pub(crate) fn is_class_property_readonly(
-        &self,
-        class_name: &str,
-        prop_name: &str,
-    ) -> bool {
+    pub(crate) fn is_class_property_readonly(&self, class_name: &str, prop_name: &str) -> bool {
         // Find the class symbol
         let class_sym = self
             .ctx
@@ -10929,10 +10951,27 @@ impl<'a> CheckerState<'a> {
             })?;
 
         // Get the class declaration
-        let decl_idx = if !self.ctx.binder.get_symbol(class_sym).unwrap().value_declaration.is_none() {
-            self.ctx.binder.get_symbol(class_sym).unwrap().value_declaration
+        let decl_idx = if !self
+            .ctx
+            .binder
+            .get_symbol(class_sym)
+            .unwrap()
+            .value_declaration
+            .is_none()
+        {
+            self.ctx
+                .binder
+                .get_symbol(class_sym)
+                .unwrap()
+                .value_declaration
         } else {
-            *self.ctx.binder.get_symbol(class_sym).unwrap().declarations.first()?
+            *self
+                .ctx
+                .binder
+                .get_symbol(class_sym)
+                .unwrap()
+                .declarations
+                .first()?
         };
 
         let class_node = self.ctx.arena.get(decl_idx)?;

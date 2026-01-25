@@ -1206,7 +1206,14 @@ impl<'a> CheckerState<'a> {
         // This handles cases like: export { foo } from './bar'
         if let Some(ref module_specifier) = left_symbol.import_module {
             let mut visited_aliases = Vec::new();
-            if self.resolve_reexported_member_symbol(module_specifier, right_name, &mut visited_aliases).is_some() {
+            if self
+                .resolve_reexported_member_symbol(
+                    module_specifier,
+                    right_name,
+                    &mut visited_aliases,
+                )
+                .is_some()
+            {
                 return false;
             }
         }

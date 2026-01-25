@@ -159,7 +159,9 @@ impl crate::solver::db::TypeDatabase for SalsaDatabase {
     }
 
     fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
-        self.storage.interner_ref().object_property_index(shape_id, name)
+        self.storage
+            .interner_ref()
+            .object_property_index(shape_id, name)
     }
 
     fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
@@ -213,9 +215,7 @@ impl crate::solver::db::TypeDatabase for SalsaDatabase {
     }
 
     fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
-        self.storage
-            .interner_ref()
-            .union3(first, second, third)
+        self.storage.interner_ref().union3(first, second, third)
     }
 
     fn intersection(&self, members: Vec<TypeId>) -> TypeId {
@@ -223,9 +223,7 @@ impl crate::solver::db::TypeDatabase for SalsaDatabase {
     }
 
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
-        self.storage
-            .interner_ref()
-            .intersection2(left, right)
+        self.storage.interner_ref().intersection2(left, right)
     }
 
     fn array(&self, element: TypeId) -> TypeId {
@@ -318,10 +316,7 @@ mod tests {
         let result2 = db.lookup(TypeId::NUMBER);
 
         assert_eq!(result1, result2);
-        assert_eq!(
-            result1,
-            Some(TypeKey::Intrinsic(IntrinsicKind::Number))
-        );
+        assert_eq!(result1, Some(TypeKey::Intrinsic(IntrinsicKind::Number)));
     }
 
     /// Test type evaluation query.

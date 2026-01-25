@@ -40,12 +40,19 @@ where
 }
 
 /// Look ahead to check if current token is followed by one of multiple tokens.
-pub fn look_ahead_is_any_of(scanner: &mut ScannerState, current_token: SyntaxKind, kinds: &[SyntaxKind]) -> bool {
+pub fn look_ahead_is_any_of(
+    scanner: &mut ScannerState,
+    current_token: SyntaxKind,
+    kinds: &[SyntaxKind],
+) -> bool {
     look_ahead_is(scanner, current_token, |token| kinds.contains(&token))
 }
 
 /// Look ahead to check if "async" is followed by a declaration keyword.
-pub fn look_ahead_is_async_declaration(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
+pub fn look_ahead_is_async_declaration(
+    scanner: &mut ScannerState,
+    current_token: SyntaxKind,
+) -> bool {
     look_ahead_is(scanner, current_token, |token| {
         matches!(
             token,
@@ -60,7 +67,10 @@ pub fn look_ahead_is_async_declaration(scanner: &mut ScannerState, current_token
 }
 
 /// Look ahead to check if "abstract" is followed by a declaration keyword.
-pub fn look_ahead_is_abstract_declaration(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
+pub fn look_ahead_is_abstract_declaration(
+    scanner: &mut ScannerState,
+    current_token: SyntaxKind,
+) -> bool {
     look_ahead_is(scanner, current_token, |token| {
         matches!(
             token,
@@ -74,7 +84,10 @@ pub fn look_ahead_is_abstract_declaration(scanner: &mut ScannerState, current_to
 }
 
 /// Look ahead to check if "accessor" is followed by a declaration keyword.
-pub fn look_ahead_is_accessor_keyword(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
+pub fn look_ahead_is_accessor_keyword(
+    scanner: &mut ScannerState,
+    current_token: SyntaxKind,
+) -> bool {
     look_ahead_is(scanner, current_token, |token| {
         matches!(
             token,
@@ -256,85 +269,85 @@ mod token_validation {
         )
     }
 
-/// Check if a token is a valid property name.
-pub fn is_property_name(token: SyntaxKind) -> bool {
-    matches!(
-        token,
-        SyntaxKind::Identifier
-            | SyntaxKind::StringLiteral
-            | SyntaxKind::NumericLiteral
-            | SyntaxKind::BigIntLiteral
-            | SyntaxKind::OpenBracketToken
-            | SyntaxKind::BreakKeyword
-            | SyntaxKind::CaseKeyword
-            | SyntaxKind::CatchKeyword
-            | SyntaxKind::ClassKeyword
-            | SyntaxKind::ConstKeyword
-            | SyntaxKind::ContinueKeyword
-            | SyntaxKind::DebuggerKeyword
-            | SyntaxKind::DefaultKeyword
-            | SyntaxKind::DeleteKeyword
-            | SyntaxKind::DoKeyword
-            | SyntaxKind::ElseKeyword
-            | SyntaxKind::EnumKeyword
-            | SyntaxKind::ExportKeyword
-            | SyntaxKind::ExtendsKeyword
-            | SyntaxKind::FalseKeyword
-            | SyntaxKind::FinallyKeyword
-            | SyntaxKind::ForKeyword
-            | SyntaxKind::FunctionKeyword
-            | SyntaxKind::IfKeyword
-            | SyntaxKind::ImportKeyword
-            | SyntaxKind::InKeyword
-            | SyntaxKind::InstanceOfKeyword
-            | SyntaxKind::NewKeyword
-            | SyntaxKind::NullKeyword
-            | SyntaxKind::ReturnKeyword
-            | SyntaxKind::SuperKeyword
-            | SyntaxKind::SwitchKeyword
-            | SyntaxKind::ThisKeyword
-            | SyntaxKind::ThrowKeyword
-            | SyntaxKind::TrueKeyword
-            | SyntaxKind::TryKeyword
-            | SyntaxKind::TypeOfKeyword
-            | SyntaxKind::VarKeyword
-            | SyntaxKind::VoidKeyword
-            | SyntaxKind::WhileKeyword
-            | SyntaxKind::WithKeyword
-            | SyntaxKind::ConstructorKeyword
-            | SyntaxKind::InterfaceKeyword
-            | SyntaxKind::ReadonlyKeyword
-            | SyntaxKind::TypeKeyword
-            | SyntaxKind::AbstractKeyword
-            | SyntaxKind::AccessorKeyword
-            | SyntaxKind::AsyncKeyword
-            | SyntaxKind::AwaitKeyword
-            | SyntaxKind::DeclareKeyword
-            | SyntaxKind::InferKeyword
-            | SyntaxKind::IsKeyword
-            | SyntaxKind::KeyOfKeyword
-            | SyntaxKind::ModuleKeyword
-            | SyntaxKind::NamespaceKeyword
-            | SyntaxKind::NeverKeyword
-            | SyntaxKind::OutKeyword
-            | SyntaxKind::ProtectedKeyword
-            | SyntaxKind::PublicKeyword
-            | SyntaxKind::PrivateKeyword
-            | SyntaxKind::OverrideKeyword
-            | SyntaxKind::StaticKeyword
-            | SyntaxKind::FromKeyword
-            | SyntaxKind::AsKeyword
-            | SyntaxKind::UsingKeyword
-            | SyntaxKind::GetKeyword
-            | SyntaxKind::SetKeyword
-            | SyntaxKind::AssertsKeyword
-            | SyntaxKind::AssertKeyword
-            | SyntaxKind::GlobalKeyword
-            | SyntaxKind::RequireKeyword
-            | SyntaxKind::SatisfiesKeyword
-            | SyntaxKind::IntrinsicKeyword
-    )
-}
+    /// Check if a token is a valid property name.
+    pub fn is_property_name(token: SyntaxKind) -> bool {
+        matches!(
+            token,
+            SyntaxKind::Identifier
+                | SyntaxKind::StringLiteral
+                | SyntaxKind::NumericLiteral
+                | SyntaxKind::BigIntLiteral
+                | SyntaxKind::OpenBracketToken
+                | SyntaxKind::BreakKeyword
+                | SyntaxKind::CaseKeyword
+                | SyntaxKind::CatchKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::ContinueKeyword
+                | SyntaxKind::DebuggerKeyword
+                | SyntaxKind::DefaultKeyword
+                | SyntaxKind::DeleteKeyword
+                | SyntaxKind::DoKeyword
+                | SyntaxKind::ElseKeyword
+                | SyntaxKind::EnumKeyword
+                | SyntaxKind::ExportKeyword
+                | SyntaxKind::ExtendsKeyword
+                | SyntaxKind::FalseKeyword
+                | SyntaxKind::FinallyKeyword
+                | SyntaxKind::ForKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::IfKeyword
+                | SyntaxKind::ImportKeyword
+                | SyntaxKind::InKeyword
+                | SyntaxKind::InstanceOfKeyword
+                | SyntaxKind::NewKeyword
+                | SyntaxKind::NullKeyword
+                | SyntaxKind::ReturnKeyword
+                | SyntaxKind::SuperKeyword
+                | SyntaxKind::SwitchKeyword
+                | SyntaxKind::ThisKeyword
+                | SyntaxKind::ThrowKeyword
+                | SyntaxKind::TrueKeyword
+                | SyntaxKind::TryKeyword
+                | SyntaxKind::TypeOfKeyword
+                | SyntaxKind::VarKeyword
+                | SyntaxKind::VoidKeyword
+                | SyntaxKind::WhileKeyword
+                | SyntaxKind::WithKeyword
+                | SyntaxKind::ConstructorKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::TypeKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::AwaitKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::InferKeyword
+                | SyntaxKind::IsKeyword
+                | SyntaxKind::KeyOfKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::NamespaceKeyword
+                | SyntaxKind::NeverKeyword
+                | SyntaxKind::OutKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::FromKeyword
+                | SyntaxKind::AsKeyword
+                | SyntaxKind::UsingKeyword
+                | SyntaxKind::GetKeyword
+                | SyntaxKind::SetKeyword
+                | SyntaxKind::AssertsKeyword
+                | SyntaxKind::AssertKeyword
+                | SyntaxKind::GlobalKeyword
+                | SyntaxKind::RequireKeyword
+                | SyntaxKind::SatisfiesKeyword
+                | SyntaxKind::IntrinsicKeyword
+        )
+    }
 }
 
 /// Check if a token is a literal.
@@ -352,7 +365,10 @@ pub fn is_literal(token: SyntaxKind) -> bool {
 }
 
 /// Look ahead to check if "namespace"/"module" starts a declaration.
-pub fn look_ahead_is_module_declaration(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
+pub fn look_ahead_is_module_declaration(
+    scanner: &mut ScannerState,
+    current_token: SyntaxKind,
+) -> bool {
     look_ahead_is(scanner, current_token, |token| {
         matches!(
             token,
@@ -362,19 +378,30 @@ pub fn look_ahead_is_module_declaration(scanner: &mut ScannerState, current_toke
 }
 
 /// Look ahead to check if "type" starts a type alias declaration.
-pub fn look_ahead_is_type_alias_declaration(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
-    look_ahead_is(scanner, current_token, |token| token == SyntaxKind::Identifier)
+pub fn look_ahead_is_type_alias_declaration(
+    scanner: &mut ScannerState,
+    current_token: SyntaxKind,
+) -> bool {
+    look_ahead_is(scanner, current_token, |token| {
+        token == SyntaxKind::Identifier
+    })
 }
 
 /// Look ahead to check if we have "const enum".
 pub fn look_ahead_is_const_enum(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
-    look_ahead_is(scanner, current_token, |token| token == SyntaxKind::EnumKeyword)
+    look_ahead_is(scanner, current_token, |token| {
+        token == SyntaxKind::EnumKeyword
+    })
 }
 
 /// Look ahead to check if we have "import identifier =" (import equals).
 ///
 /// This is a two-token look-ahead: skip 'import', check for identifier, then check for '='.
-pub fn look_ahead_is_import_equals(scanner: &mut ScannerState, current_token: SyntaxKind, is_identifier_fn: impl FnOnce(SyntaxKind) -> bool) -> bool {
+pub fn look_ahead_is_import_equals(
+    scanner: &mut ScannerState,
+    current_token: SyntaxKind,
+    is_identifier_fn: impl FnOnce(SyntaxKind) -> bool,
+) -> bool {
     let snapshot = scanner.save_state();
 
     // Skip 'import'

@@ -5,8 +5,10 @@
 //! 2. Correct diagnostic collection for DiagnosticTracer
 //! 3. Identical logic between fast and diagnostic paths
 
-use crate::solver::diagnostics::{SubtypeTracer, FastTracer, DiagnosticTracer, SubtypeFailureReason};
 use crate::interner::Atom;
+use crate::solver::diagnostics::{
+    DiagnosticTracer, FastTracer, SubtypeFailureReason, SubtypeTracer,
+};
 use crate::solver::types::TypeId;
 
 #[test]
@@ -14,11 +16,9 @@ fn test_fast_tracer_stops_immediately() {
     let mut tracer = FastTracer;
 
     // FastTracer should always return false (stop checking)
-    let result = tracer.on_mismatch(|| {
-        SubtypeFailureReason::TypeMismatch {
-            source_type: TypeId::NUMBER,
-            target_type: TypeId::STRING,
-        }
+    let result = tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch {
+        source_type: TypeId::NUMBER,
+        target_type: TypeId::STRING,
     });
 
     assert!(!result, "FastTracer should return false to stop checking");
@@ -45,19 +45,23 @@ fn test_diagnostic_tracer_collects_failure() {
     let mut tracer = DiagnosticTracer::new();
 
     // Collect a failure
-    let result = tracer.on_mismatch(|| {
-        SubtypeFailureReason::TypeMismatch {
-            source_type: TypeId::NUMBER,
-            target_type: TypeId::STRING,
-        }
+    let result = tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch {
+        source_type: TypeId::NUMBER,
+        target_type: TypeId::STRING,
     });
 
-    assert!(!result, "DiagnosticTracer should return false to stop checking");
+    assert!(
+        !result,
+        "DiagnosticTracer should return false to stop checking"
+    );
     assert!(tracer.has_failure(), "Should have collected a failure");
 
     let failure = tracer.take_failure().expect("Should have a failure");
     match failure {
-        SubtypeFailureReason::TypeMismatch { source_type, target_type } => {
+        SubtypeFailureReason::TypeMismatch {
+            source_type,
+            target_type,
+        } => {
             assert_eq!(source_type, TypeId::NUMBER);
             assert_eq!(target_type, TypeId::STRING);
         }
@@ -70,19 +74,15 @@ fn test_diagnostic_tracer_only_collects_first_failure() {
     let mut tracer = DiagnosticTracer::new();
 
     // Collect first failure
-    tracer.on_mismatch(|| {
-        SubtypeFailureReason::TypeMismatch {
-            source_type: TypeId::NUMBER,
-            target_type: TypeId::STRING,
-        }
+    tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch {
+        source_type: TypeId::NUMBER,
+        target_type: TypeId::STRING,
     });
 
     // Try to collect second failure (should be ignored)
-    tracer.on_mismatch(|| {
-        SubtypeFailureReason::LiteralTypeMismatch {
-            source_type: TypeId::TRUE_LITERAL,
-            target_type: TypeId::FALSE_LITERAL,
-        }
+    tracer.on_mismatch(|| SubtypeFailureReason::LiteralTypeMismatch {
+        source_type: TypeId::TRUE_LITERAL,
+        target_type: TypeId::FALSE_LITERAL,
     });
 
     let failure = tracer.take_failure().expect("Should have a failure");
@@ -98,18 +98,19 @@ fn test_diagnostic_tracer_only_collects_first_failure() {
 fn test_diagnostic_tracer_can_take_failure() {
     let mut tracer = DiagnosticTracer::new();
 
-    tracer.on_mismatch(|| {
-        SubtypeFailureReason::MissingProperty {
-            property_name: Atom::from("name"),
-            source_type: TypeId::ANY,
-            target_type: TypeId::OBJECT,
-        }
+    tracer.on_mismatch(|| SubtypeFailureReason::MissingProperty {
+        property_name: Atom::from("name"),
+        source_type: TypeId::ANY,
+        target_type: TypeId::OBJECT,
     });
 
     assert!(tracer.has_failure());
 
     let failure = tracer.take_failure();
-    assert!(failure.is_some(), "Should return Some failure on first take");
+    assert!(
+        failure.is_some(),
+        "Should return Some failure on first take"
+    );
     assert!(!tracer.has_failure(), "Should have no failure after take");
 
     let failure2 = tracer.take_failure();
@@ -119,7 +120,10 @@ fn test_diagnostic_tracer_can_take_failure() {
 #[test]
 fn test_diagnostic_tracer_default() {
     let tracer: DiagnosticTracer = Default::default();
-    assert!(!tracer.has_failure(), "Default tracer should have no failure");
+    assert!(
+        !tracer.has_failure(),
+        "Default tracer should have no failure"
+    );
 }
 
 #[test]
@@ -131,18 +135,18 @@ fn test_nested_failure_reasons() {
         target_type: TypeId::STRING,
     });
 
-    tracer.on_mismatch(|| {
-        SubtypeFailureReason::PropertyTypeMismatch {
-            property_name: Atom::from("age"),
-            source_property_type: TypeId::STRING,
-            target_property_type: TypeId::NUMBER,
-            nested_reason: Some(nested_reason),
-        }
+    tracer.on_mismatch(|| SubtypeFailureReason::PropertyTypeMismatch {
+        property_name: Atom::from("age"),
+        source_property_type: TypeId::STRING,
+        target_property_type: TypeId::NUMBER,
+        nested_reason: Some(nested_reason),
     });
 
     let failure = tracer.take_failure().expect("Should have a failure");
     match failure {
-        SubtypeFailureReason::PropertyTypeMismatch { nested_reason: n, .. } => {
+        SubtypeFailureReason::PropertyTypeMismatch {
+            nested_reason: n, ..
+        } => {
             assert!(n.is_some(), "Should have nested reason");
         }
         _ => panic!("Wrong failure type"),
@@ -216,11 +220,7 @@ fn test_all_failure_reasons() {
 fn test_tracer_pattern_with_conditional_check() {
     // Simulate a realistic subtype check with early exit
 
-    fn check_subtype<T: SubtypeTracer>(
-        source: TypeId,
-        target: TypeId,
-        tracer: &mut T,
-    ) -> bool {
+    fn check_subtype<T: SubtypeTracer>(source: TypeId, target: TypeId, tracer: &mut T) -> bool {
         // Fast path: same type
         if source == target {
             return true;
@@ -250,7 +250,10 @@ fn test_tracer_pattern_with_conditional_check() {
 
     let failure = diag_tracer.take_failure().expect("Should have failure");
     match failure {
-        SubtypeFailureReason::TypeMismatch { source_type, target_type } => {
+        SubtypeFailureReason::TypeMismatch {
+            source_type,
+            target_type,
+        } => {
             assert_eq!(source_type, TypeId::NUMBER);
             assert_eq!(target_type, TypeId::STRING);
         }
@@ -272,5 +275,8 @@ fn test_tracer_prevents_closure_allocation_on_fast_path() {
         }
     });
 
-    assert_eq!(allocation_count, 0, "Closure should not be called on fast path");
+    assert_eq!(
+        allocation_count, 0,
+        "Closure should not be called on fast path"
+    );
 }
