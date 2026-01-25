@@ -31,7 +31,7 @@ where
     F: FnOnce(SyntaxKind) -> bool,
 {
     let snapshot = scanner.save_state();
-    let next = scanner.next_token();
+    let next = scanner.scan();
 
     let result = check(next);
 
@@ -201,7 +201,7 @@ mod token_validation {
                 | SyntaxKind::FalseKeyword
                 | SyntaxKind::NullKeyword
                 | SyntaxKind::UndefinedKeyword
-                | SyntaxKind::ThisType
+                | SyntaxKind::ThisKeyword
                 | SyntaxKind::OpenParenToken
                 | SyntaxKind::OpenBracketToken
                 | SyntaxKind::LessThanToken
@@ -238,7 +238,7 @@ mod token_validation {
                 | SyntaxKind::IfKeyword
                 | SyntaxKind::ImportKeyword
                 | SyntaxKind::InKeyword
-                | SyntaxKind::InstanceofKeyword
+                | SyntaxKind::InstanceOfKeyword
                 | SyntaxKind::NewKeyword
                 | SyntaxKind::NullKeyword
                 | SyntaxKind::ReturnKeyword
@@ -248,7 +248,7 @@ mod token_validation {
                 | SyntaxKind::ThrowKeyword
                 | SyntaxKind::TrueKeyword
                 | SyntaxKind::TryKeyword
-                | SyntaxKind::TypeofKeyword
+                | SyntaxKind::TypeOfKeyword
                 | SyntaxKind::VarKeyword
                 | SyntaxKind::VoidKeyword
                 | SyntaxKind::WhileKeyword
@@ -264,7 +264,7 @@ pub fn is_property_name(token: SyntaxKind) -> bool {
             | SyntaxKind::StringLiteral
             | SyntaxKind::NumericLiteral
             | SyntaxKind::BigIntLiteral
-            | SyntaxKind::ComputedPropertyName
+            | SyntaxKind::OpenBracketToken
             | SyntaxKind::BreakKeyword
             | SyntaxKind::CaseKeyword
             | SyntaxKind::CatchKeyword
@@ -286,7 +286,7 @@ pub fn is_property_name(token: SyntaxKind) -> bool {
             | SyntaxKind::IfKeyword
             | SyntaxKind::ImportKeyword
             | SyntaxKind::InKeyword
-            | SyntaxKind::InstanceofKeyword
+            | SyntaxKind::InstanceOfKeyword
             | SyntaxKind::NewKeyword
             | SyntaxKind::NullKeyword
             | SyntaxKind::ReturnKeyword
@@ -296,7 +296,7 @@ pub fn is_property_name(token: SyntaxKind) -> bool {
             | SyntaxKind::ThrowKeyword
             | SyntaxKind::TrueKeyword
             | SyntaxKind::TryKeyword
-            | SyntaxKind::TypeofKeyword
+            | SyntaxKind::TypeOfKeyword
             | SyntaxKind::VarKeyword
             | SyntaxKind::VoidKeyword
             | SyntaxKind::WhileKeyword
@@ -316,7 +316,7 @@ pub fn is_property_name(token: SyntaxKind) -> bool {
             | SyntaxKind::ModuleKeyword
             | SyntaxKind::NamespaceKeyword
             | SyntaxKind::NeverKeyword
-            | SyntaxKind::OutOfKeyword
+            | SyntaxKind::OutKeyword
             | SyntaxKind::ProtectedKeyword
             | SyntaxKind::PublicKeyword
             | SyntaxKind::PrivateKeyword
@@ -378,7 +378,7 @@ pub fn look_ahead_is_import_equals(scanner: &mut ScannerState, current_token: Sy
     let snapshot = scanner.save_state();
 
     // Skip 'import'
-    let next1 = scanner.next_token();
+    let next1 = scanner.scan();
 
     // Check for identifier or keyword that can be used as identifier
     if !is_identifier_fn(next1) {
@@ -387,7 +387,7 @@ pub fn look_ahead_is_import_equals(scanner: &mut ScannerState, current_token: Sy
     }
 
     // Skip identifier, check for '='
-    let next2 = scanner.next_token();
+    let next2 = scanner.scan();
     let is_equals = next2 == SyntaxKind::EqualsToken;
 
     scanner.restore_state(snapshot);

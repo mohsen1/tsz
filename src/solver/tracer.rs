@@ -352,7 +352,7 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     /// Get apparent primitive shape for a type key.
     fn apparent_primitive_shape_for_key(&self, key: &TypeKey) -> Option<ObjectShapeId> {
         match key {
-            TypeKey::Intrinsic(IntrinsicType::String) | TypeKey::Intrinsic(IntrinsicType::Number) => {
+            TypeKey::Intrinsic(IntrinsicKind::String) | TypeKey::Intrinsic(IntrinsicKind::Number) => {
                 // These have apparent shapes like { toString(): string, etc. }
                 // For now, return None
                 None
@@ -364,32 +364,32 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     /// Check intrinsic subtype relationship.
     fn check_intrinsic_with_tracer<T: SubtypeTracer>(
         &mut self,
-        source: IntrinsicType,
-        target: IntrinsicType,
+        source: IntrinsicKind,
+        target: IntrinsicKind,
         source_id: TypeId,
         target_id: TypeId,
         tracer: &mut T,
     ) -> bool {
         let is_subtype = match (source, target) {
-            (IntrinsicType::Any, _) | (_, IntrinsicType::Any) => true,
-            (IntrinsicType::Unknown, _) | (_, IntrinsicType::Unknown) => true,
-            (IntrinsicType::Never, _) | (_, IntrinsicType::Never) => source == target,
-            (IntrinsicType::Void, IntrinsicType::Void) => true,
-            (IntrinsicType::Void, IntrinsicType::Any) => true,
-            (IntrinsicType::Null, IntrinsicType::Null) => true,
-            (IntrinsicType::Undefined, IntrinsicType::Undefined) => true,
-            (IntrinsicType::String, IntrinsicType::String) => true,
-            (IntrinsicType::String, IntrinsicType::Any) => true,
-            (IntrinsicType::Number, IntrinsicType::Number) => true,
-            (IntrinsicType::Number, IntrinsicType::Any) => true,
-            (IntrinsicType::Boolean, IntrinsicType::Boolean) => true,
-            (IntrinsicType::Boolean, IntrinsicType::Any) => true,
-            (IntrinsicType::BigInt, IntrinsicType::BigInt) => true,
-            (IntrinsicType::BigInt, IntrinsicType::Any) => true,
-            (IntrinsicType::Symbol, IntrinsicType::Symbol) => true,
-            (IntrinsicType::Symbol, IntrinsicType::Any) => true,
-            (IntrinsicType::Object, IntrinsicType::Object) => true,
-            (IntrinsicType::Object, IntrinsicType::Any) => true,
+            (IntrinsicKind::Any, _) | (_, IntrinsicKind::Any) => true,
+            (IntrinsicKind::Unknown, _) | (_, IntrinsicKind::Unknown) => true,
+            (IntrinsicKind::Never, _) | (_, IntrinsicKind::Never) => source == target,
+            (IntrinsicKind::Void, IntrinsicKind::Void) => true,
+            (IntrinsicKind::Void, IntrinsicKind::Any) => true,
+            (IntrinsicKind::Null, IntrinsicKind::Null) => true,
+            (IntrinsicKind::Undefined, IntrinsicKind::Undefined) => true,
+            (IntrinsicKind::String, IntrinsicKind::String) => true,
+            (IntrinsicKind::String, IntrinsicKind::Any) => true,
+            (IntrinsicKind::Number, IntrinsicKind::Number) => true,
+            (IntrinsicKind::Number, IntrinsicKind::Any) => true,
+            (IntrinsicKind::Boolean, IntrinsicKind::Boolean) => true,
+            (IntrinsicKind::Boolean, IntrinsicKind::Any) => true,
+            (IntrinsicKind::Bigint, IntrinsicKind::Bigint) => true,
+            (IntrinsicKind::Bigint, IntrinsicKind::Any) => true,
+            (IntrinsicKind::Symbol, IntrinsicKind::Symbol) => true,
+            (IntrinsicKind::Symbol, IntrinsicKind::Any) => true,
+            (IntrinsicKind::Object, IntrinsicKind::Object) => true,
+            (IntrinsicKind::Object, IntrinsicKind::Any) => true,
             _ => false,
         };
 
@@ -407,16 +407,16 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     fn check_literal_to_intrinsic_with_tracer<T: SubtypeTracer>(
         &mut self,
         lit: &LiteralValue,
-        target: IntrinsicType,
+        target: IntrinsicKind,
         source_id: TypeId,
         target_id: TypeId,
         tracer: &mut T,
     ) -> bool {
         let is_subtype = match (lit, target) {
-            (LiteralValue::String(_), IntrinsicType::String) => true,
-            (LiteralValue::Number(_), IntrinsicType::Number) => true,
-            (LiteralValue::Boolean(_), IntrinsicType::Boolean) => true,
-            (LiteralValue::BigInt(_), IntrinsicType::BigInt) => true,
+            (LiteralValue::String(_), IntrinsicKind::String) => true,
+            (LiteralValue::Number(_), IntrinsicKind::Number) => true,
+            (LiteralValue::Boolean(_), IntrinsicKind::Boolean) => true,
+            (LiteralValue::BigInt(_), IntrinsicKind::Bigint) => true,
             _ => false,
         };
 
@@ -501,8 +501,8 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     /// Check function subtype relationship.
     fn check_function_with_tracer<T: SubtypeTracer>(
         &mut self,
-        source_func: &FunctionType,
-        target_func: &FunctionType,
+        source_func: &FunctionShape,
+        target_func: &FunctionShape,
         source_id: TypeId,
         target_id: TypeId,
         tracer: &mut T,
@@ -680,17 +680,17 @@ mod tests {
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
         // Same type
-        let string_type = interner.intern_intrinsic(IntrinsicType::String);
+        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
         let mut fast = FastTracer;
         assert!(checker.check_subtype_with_tracer(string_type, string_type, &mut fast));
 
         // Subtype relationship
-        let any_type = interner.intern_intrinsic(IntrinsicType::Any);
+        let any_type = interner.intern_intrinsic(IntrinsicKind::Any);
         let mut fast = FastTracer;
         assert!(checker.check_subtype_with_tracer(string_type, any_type, &mut fast));
 
         // Not a subtype
-        let number_type = interner.intern_intrinsic(IntrinsicType::Number);
+        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
         let mut fast = FastTracer;
         assert!(!checker.check_subtype_with_tracer(string_type, number_type, &mut fast));
     }
@@ -702,8 +702,8 @@ mod tests {
         let resolver = NoopResolver;
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
-        let string_type = interner.intern_intrinsic(IntrinsicType::String);
-        let number_type = interner.intern_intrinsic(IntrinsicType::Number);
+        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
+        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
 
         let mut diag = DiagnosticTracer::new();
         checker.check_subtype_with_tracer(string_type, number_type, &mut diag);
@@ -729,8 +729,8 @@ mod tests {
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
         // string | number
-        let string_type = interner.intern_intrinsic(IntrinsicType::String);
-        let number_type = interner.intern_intrinsic(IntrinsicType::Number);
+        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
+        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
         let union_type = interner.intern_union(&[string_type, number_type]);
 
         // string <: string | number (should pass)
@@ -738,7 +738,7 @@ mod tests {
         assert!(checker.check_subtype_with_tracer(string_type, union_type, &mut fast));
 
         // boolean <: string | number (should fail)
-        let bool_type = interner.intern_intrinsic(IntrinsicType::Boolean);
+        let bool_type = interner.intern_intrinsic(IntrinsicKind::Boolean);
         let mut diag = DiagnosticTracer::new();
         assert!(!checker.check_subtype_with_tracer(bool_type, union_type, &mut diag));
         assert!(diag.has_failure());
@@ -753,10 +753,10 @@ mod tests {
             .with_strict_function_types(true);
 
         // (x: string) => number
-        let string_type = interner.intern_intrinsic(IntrinsicType::String);
-        let number_type = interner.intern_intrinsic(IntrinsicType::Number);
+        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
+        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
 
-        let func1 = FunctionType {
+        let func1 = FunctionShape {
             params: vec![string_type],
             return_type: number_type,
             type_params: None,
@@ -778,8 +778,8 @@ mod tests {
         let resolver = NoopResolver;
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
-        let string_type = interner.intern_intrinsic(IntrinsicType::String);
-        let number_type = interner.intern_intrinsic(IntrinsicType::Number);
+        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
+        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
 
         // Warm up
         let mut fast = FastTracer;

@@ -3,8 +3,9 @@
 //! This module contains extracted parsing logic organized by category.
 //! Each module focuses on a specific aspect of parsing (expressions, statements, etc.)
 
-mod expressions;
+// expressions module has incompatible API - commented out until fixed
+// mod expressions;
 mod utils;
 
-pub use expressions::*;
+// pub use expressions::*;
 pub use utils::*;

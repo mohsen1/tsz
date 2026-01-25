@@ -15,7 +15,7 @@
 use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::parser::NodeIndex;
-use crate::solver::TypeId;
+use crate::solver::{TypeId, TypeKey};
 
 // =============================================================================
 // Iterable Type Checking Methods
