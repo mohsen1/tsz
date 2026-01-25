@@ -3143,29 +3143,21 @@ impl<'a> CheckerState<'a> {
                     return self.get_type_of_symbol(sym_id);
                 }
 
-                // Check if global is available but we couldn't resolve it
-                let has_global_type = self
-                    .ctx
-                    .binder
-                    .get_global_type_with_libs(name, &lib_binders)
-                    .is_some();
-                if has_global_type || self.ctx.has_name_in_lib(name) {
-                    // Global is available - return ANY to allow property access
-                    // This is a fallback when we can't resolve the symbol properly
-                    TypeId::ANY
+                // Global type lookup failed - emit TS2318/TS2583 error
+                // This is the key fix: when get_global_type_with_libs fails, we must emit an error
+                // instead of falling back to ANY or checking has_name_in_lib (which can be inaccurate)
+                use crate::lib_loader;
+                if lib_loader::is_es2015_plus_type(name) {
+                    // ES2015+ type not available - emit TS2583 with library suggestion
+                    self.error_cannot_find_global_type(name, idx);
+                } else if self.ctx.is_known_global_type(name) {
+                    // Known global type not available (e.g., @noLib) - emit TS2318
+                    self.error_cannot_find_global_type(name, idx);
                 } else {
-                    // Global is not available - emit appropriate error
-                    // Use TS2583 for ES2015+ types, TS2304 for other globals
-                    use crate::lib_loader;
-                    if lib_loader::is_es2015_plus_type(name) {
-                        // ES2015+ type not available - suggest changing lib
-                        self.error_cannot_find_global_type(name, idx);
-                    } else {
-                        // Standard global not available
-                        self.error_cannot_find_name_at(name, idx);
-                    }
-                    TypeId::ERROR
+                    // Unknown name - emit TS2304
+                    self.error_cannot_find_name_at(name, idx);
                 }
+                TypeId::ERROR
             }
             _ => {
                 // Check if we're inside a class and the name matches a static member (error 2662)
