@@ -1144,8 +1144,8 @@ impl<'a> CheckerState<'a> {
         let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
         let type_str = formatter.format(type_id);
 
-        let message = diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE
-            .replace("{0}", &type_str);
+        let message =
+            diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE.replace("{0}", &type_str);
 
         self.ctx.diagnostics.push(Diagnostic {
             code: diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
@@ -1507,10 +1507,7 @@ impl<'a> CheckerState<'a> {
     /// Emitted when a value (like a variable or literal) is used where it's not permitted.
     pub fn error_value_cannot_be_used_here_at(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
-                &[name],
-            );
+            let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[name]);
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
                 category: DiagnosticCategory::Error,

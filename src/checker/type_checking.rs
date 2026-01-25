@@ -7262,21 +7262,31 @@ impl<'a> CheckerState<'a> {
     /// Reports the appropriate error code based on the nullable cause type.
     /// When the node is directly a `null` or `undefined` keyword, emits TS18050.
     pub(crate) fn report_possibly_nullish_object(&mut self, idx: NodeIndex, cause: TypeId) {
-        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
         use crate::scanner::SyntaxKind;
 
         // Check if the node is directly a null or undefined keyword - emit TS18050
         if let Some(node) = self.ctx.arena.get(idx) {
             if node.kind == SyntaxKind::NullKeyword as u16 {
-                let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["null"]);
+                let message =
+                    format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["null"]);
                 self.error_at_node(idx, &message, diagnostic_codes::VALUE_CANNOT_BE_USED_HERE);
                 return;
             }
             if node.kind == SyntaxKind::Identifier as u16 {
                 if let Some(ident) = self.ctx.arena.get_identifier(node) {
                     if ident.escaped_text == "undefined" {
-                        let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["undefined"]);
-                        self.error_at_node(idx, &message, diagnostic_codes::VALUE_CANNOT_BE_USED_HERE);
+                        let message = format_message(
+                            diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
+                            &["undefined"],
+                        );
+                        self.error_at_node(
+                            idx,
+                            &message,
+                            diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                        );
                         return;
                     }
                 }
