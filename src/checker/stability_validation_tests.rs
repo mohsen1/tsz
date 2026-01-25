@@ -18,13 +18,21 @@ fn test_comma_separated_boolean_options() {
     "#;
 
     let result = CheckerState::parse_test_option_bool(text, "@strict");
-    assert_eq!(result, Some(true), "Should parse first value from comma-separated list");
+    assert_eq!(
+        result,
+        Some(true),
+        "Should parse first value from comma-separated list"
+    );
 
     let result = CheckerState::parse_test_option_bool(text, "@noimplicitany");
     assert_eq!(result, Some(false), "Should parse first value");
 
     let result = CheckerState::parse_test_option_bool(text, "@strictnullchecks");
-    assert_eq!(result, Some(true), "Should parse first value from multiple commas");
+    assert_eq!(
+        result,
+        Some(true),
+        "Should parse first value from multiple commas"
+    );
 }
 
 #[test]
@@ -48,8 +56,14 @@ fn test_recursive_type_depth_limit() {
     use crate::solver::instantiate::MAX_INSTANTIATION_DEPTH;
 
     // Verify the limit is set to a reasonable value
-    assert!(MAX_INSTANTIATION_DEPTH <= 100, "Instantiation depth should be <= 100");
-    assert!(MAX_INSTANTIATION_DEPTH >= 20, "Instantiation depth should be >= 20");
+    assert!(
+        MAX_INSTANTIATION_DEPTH <= 100,
+        "Instantiation depth should be <= 100"
+    );
+    assert!(
+        MAX_INSTANTIATION_DEPTH >= 20,
+        "Instantiation depth should be >= 20"
+    );
 
     // The limit prevents infinite recursion in type instantiation
     // When exceeded, TypeId::ERROR is returned instead of crashing
@@ -69,8 +83,14 @@ fn test_tree_walk_iteration_limit() {
     // Validates that tree-walking loops have iteration limits
     use crate::checker::state::MAX_TREE_WALK_ITERATIONS;
 
-    assert!(MAX_TREE_WALK_ITERATIONS <= 50_000, "Tree walk limit should be <= 50000");
-    assert!(MAX_TREE_WALK_ITERATIONS >= 1_000, "Tree walk limit should be >= 1000");
+    assert!(
+        MAX_TREE_WALK_ITERATIONS <= 50_000,
+        "Tree walk limit should be <= 50000"
+    );
+    assert!(
+        MAX_TREE_WALK_ITERATIONS >= 1_000,
+        "Tree walk limit should be >= 1000"
+    );
 }
 
 #[test]
@@ -78,8 +98,14 @@ fn test_type_lowering_operation_limit() {
     // Validates that type lowering has operation limits
     use crate::solver::lower::MAX_LOWERING_OPERATIONS;
 
-    assert!(MAX_LOWERING_OPERATIONS <= 1_000_000, "Lowering ops should be <= 1M");
-    assert!(MAX_LOWERING_OPERATIONS >= 10_000, "Lowering ops should be >= 10K");
+    assert!(
+        MAX_LOWERING_OPERATIONS <= 1_000_000,
+        "Lowering ops should be <= 1M"
+    );
+    assert!(
+        MAX_LOWERING_OPERATIONS >= 10_000,
+        "Lowering ops should be >= 10K"
+    );
 }
 
 #[test]
@@ -87,6 +113,12 @@ fn test_constraint_recursion_depth_limit() {
     // Validates that constraint collection has recursion limits
     use crate::solver::operations::MAX_CONSTRAINT_RECURSION_DEPTH;
 
-    assert!(MAX_CONSTRAINT_RECURSION_DEPTH <= 200, "Constraint depth should be <= 200");
-    assert!(MAX_CONSTRAINT_RECURSION_DEPTH >= 50, "Constraint depth should be >= 50");
+    assert!(
+        MAX_CONSTRAINT_RECURSION_DEPTH <= 200,
+        "Constraint depth should be <= 200"
+    );
+    assert!(
+        MAX_CONSTRAINT_RECURSION_DEPTH >= 50,
+        "Constraint depth should be >= 50"
+    );
 }

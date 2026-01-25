@@ -43,10 +43,10 @@ fn test_mapped_type_as_never_skips_property() {
 
     // Create the conditional: P extends K ? never : P
     let conditional_type = ConditionalType {
-        check_type: TypeId::TYPE_PARAM, // P
+        check_type: TypeId::TYPE_PARAM,   // P
         extends_type: TypeId::TYPE_PARAM, // K
-        true_type: TypeId::NEVER,          // never - skip property
-        false_type: TypeId::TYPE_PARAM,    // P - keep property
+        true_type: TypeId::NEVER,         // never - skip property
+        false_type: TypeId::TYPE_PARAM,   // P - keep property
         distributed_type_param: None,
     };
 
@@ -57,7 +57,7 @@ fn test_mapped_type_as_never_skips_property() {
         type_param: type_param_k,
         constraint: keyof_t,
         name_type: Some(cond_id), // Key remapping
-        template: TypeId::ERROR,    // Placeholder
+        template: TypeId::ERROR,  // Placeholder
         optional_modifier: None,
         readonly_modifier: None,
     };

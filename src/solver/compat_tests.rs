@@ -5332,7 +5332,10 @@ fn test_best_common_type_with_literal_widening() {
 
     // Should be a union of both types
     let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
-    assert_eq!(bct, expected, "BCT of number and string should be their union");
+    assert_eq!(
+        bct, expected,
+        "BCT of number and string should be their union"
+    );
 }
 
 // =============================================================================

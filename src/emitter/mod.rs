@@ -55,6 +55,9 @@ pub use comments::{
     CommentKind, CommentRange, get_leading_comment_ranges, get_trailing_comment_ranges,
 };
 
+// Re-export common types used by emitter and related modules
+pub use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
+
 // =============================================================================
 // Emitter Options
 // =============================================================================
@@ -1574,7 +1577,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-
     // =========================================================================
     // Source File
     // =========================================================================
@@ -1781,7 +1783,6 @@ impl<'a> Printer<'a> {
             }
         }
     }
-
 }
 
 // =============================================================================

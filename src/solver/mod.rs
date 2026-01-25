@@ -93,11 +93,15 @@ mod lawyer_tests;
 #[cfg(test)]
 mod lower_tests;
 #[cfg(test)]
+mod mapped_key_remap_tests;
+#[cfg(test)]
 mod narrowing_tests;
 #[cfg(test)]
 mod operations_tests;
 #[cfg(test)]
 mod subtype_tests;
+#[cfg(test)]
+mod template_expansion_tests;
 #[cfg(test)]
 mod tracer_tests;
 #[cfg(test)]
@@ -108,7 +112,3 @@ mod types_tests;
 mod union_tests;
 #[cfg(test)]
 mod visitor_tests;
-#[cfg(test)]
-mod mapped_key_remap_tests;
-#[cfg(test)]
-mod template_expansion_tests;

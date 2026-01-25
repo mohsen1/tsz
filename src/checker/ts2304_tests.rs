@@ -27,12 +27,12 @@ fn test_ts2304_emitted_for_undefined_name() {
 
     // Verify TS2304 was emitted
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2304_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2304)
-        .collect();
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
 
-    assert!(!ts2304_errors.is_empty(), "Expected TS2304 error for undefinedName");
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 error for undefinedName"
+    );
 }
 
 #[test]
@@ -49,19 +49,20 @@ fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
     let root = parser.parse_source_file();
 
     // Bind with lib symbols merged
-    ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    ctx.binder
+        .bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     let mut checker = ctx.checker();
     checker.check_source_file(root);
 
     // Verify TS2304 was NOT emitted for console
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2304_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2304)
-        .collect();
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
 
-    assert!(ts2304_errors.is_empty(), "Should NOT have TS2304 error for console when lib.d.ts is loaded");
+    assert!(
+        ts2304_errors.is_empty(),
+        "Should NOT have TS2304 error for console when lib.d.ts is loaded"
+    );
 }
 
 #[test]
@@ -83,12 +84,12 @@ fn test_ts2304_emitted_for_console_without_lib() {
 
     // Verify TS2304 was emitted for console
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2304_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2304)
-        .collect();
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
 
-    assert!(!ts2304_errors.is_empty(), "Expected TS2304 error for console when lib.d.ts is not loaded");
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 error for console when lib.d.ts is not loaded"
+    );
 }
 
 #[test]
@@ -112,12 +113,12 @@ fn test_any_poisoning_eliminated() {
 
     // Verify TS2304 was emitted for Array
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2304_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2304)
-        .collect();
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
 
-    assert!(!ts2304_errors.is_empty(), "Expected TS2304 error for Array when lib.d.ts is not loaded (any poisoning eliminated)");
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 error for Array when lib.d.ts is not loaded (any poisoning eliminated)"
+    );
 }
 
 #[test]
@@ -135,21 +136,22 @@ fn test_any_poisoning_fix_console_returns_void_not_any() {
     let root = parser.parse_source_file();
 
     // Bind with lib symbols merged
-    ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    ctx.binder
+        .bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     let mut checker = ctx.checker();
     checker.check_source_file(root);
 
     // Verify TS2322 was emitted (type mismatch), not TS2304
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2322_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .collect();
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
 
     // The fix should cause TS2322 (type mismatch) because console.log returns void
     // Before the fix, console was "any" and this would not error
-    assert!(!ts2322_errors.is_empty(), "Expected TS2322 error (void not assignable to string) - proves console is not 'any'");
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Expected TS2322 error (void not assignable to string) - proves console is not 'any'"
+    );
 }
 
 #[test]
@@ -165,18 +167,19 @@ fn test_any_poisoning_fix_array_typed_correctly() {
     let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    ctx.binder
+        .bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     checker.check_source_file(root);
 
     // Verify TS2322 was emitted
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2322_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .collect();
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
 
-    assert!(!ts2322_errors.is_empty(), "Expected TS2322 error - proves Array is properly typed, not 'any'");
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Expected TS2322 error - proves Array is properly typed, not 'any'"
+    );
 }
 
 #[test]
@@ -192,18 +195,19 @@ fn test_any_poisoning_fix_promise_typed_correctly() {
     let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    ctx.binder
+        .bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     checker.check_source_file(root);
 
     // Verify TS2322 was emitted
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2322_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .collect();
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
 
-    assert!(!ts2322_errors.is_empty(), "Expected TS2322 error - proves Promise is properly typed, not 'any'");
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Expected TS2322 error - proves Promise is properly typed, not 'any'"
+    );
 }
 
 #[test]
@@ -219,18 +223,19 @@ fn test_any_poisoning_fix_math_returns_number() {
     let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    ctx.binder
+        .bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     checker.check_source_file(root);
 
     // Verify TS2322 was emitted
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2322_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .collect();
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
 
-    assert!(!ts2322_errors.is_empty(), "Expected TS2322 error - proves Math.abs returns number, not 'any'");
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Expected TS2322 error - proves Math.abs returns number, not 'any'"
+    );
 }
 
 #[test]
@@ -248,18 +253,19 @@ fn test_any_poisoning_fix_multiple_globals() {
     let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    ctx.binder
+        .bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     checker.check_source_file(root);
 
     // Verify TS2322 errors were emitted for all three
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2322_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .collect();
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
 
-    assert!(ts2322_errors.len() >= 3, "Expected at least 3 TS2322 errors - proves globals are properly typed");
+    assert!(
+        ts2322_errors.len() >= 3,
+        "Expected at least 3 TS2322 errors - proves globals are properly typed"
+    );
 }
 
 #[test]
@@ -275,16 +281,17 @@ fn test_any_poisoning_fix_undefined_global_emits_ts2304() {
     let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    ctx.binder
+        .bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
     checker.check_source_file(root);
 
     // Verify TS2304 was emitted
     let diagnostics = &checker.ctx.diagnostics;
-    let ts2304_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2304)
-        .collect();
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
 
-    assert!(!ts2304_errors.is_empty(), "Expected TS2304 error for truly undefined global");
+    assert!(
+        !ts2304_errors.is_empty(),
+        "Expected TS2304 error for truly undefined global"
+    );
 }
