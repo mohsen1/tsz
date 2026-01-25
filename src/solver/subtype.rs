@@ -12,7 +12,7 @@
 
 use crate::interner::Atom;
 use crate::solver::AssignabilityChecker;
-use crate::solver::diagnostics::{SubtypeTracer, FastTracer, DiagnosticTracer, SubtypeFailureReason};
+use crate::solver::diagnostics::{SubtypeTracer, FastTracer, DiagnosticTracer};
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
 use crate::solver::utils;

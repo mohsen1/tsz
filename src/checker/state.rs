@@ -815,7 +815,7 @@ impl<'a> CheckerState<'a> {
                     if !is_valid {
                         // Emit TS2362 for invalid increment/decrement operand
                         if let Some(loc) = self.get_source_location(unary.expression) {
-                            use crate::checker::types::diagnostics::{diagnostic_codes, Diagnostic};
+                            use crate::checker::types::diagnostics::{diagnostic_codes, Diagnostic, DiagnosticCategory};
                             self.ctx.diagnostics.push(Diagnostic {
                                 code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
                                 category: DiagnosticCategory::Error,

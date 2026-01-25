@@ -15,7 +15,7 @@
 use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::parser::NodeIndex;
-use crate::solver::TypeId;
+use crate::solver::{TypeId, TypeKey};
 
 // =============================================================================
 // Iterable Type Checking Methods
@@ -81,10 +81,12 @@ impl<'a> CheckerState<'a> {
                 self.object_has_iterator_method(shape_id)
             }
             // Application types (Set<T>, Map<K, V>, etc.) - check if base type has iterator
-            Some(TypeKey::Application(base, _args)) => {
+            Some(TypeKey::Application(app_id)) => {
+                // Get the application to check its base type
+                let app = self.ctx.types.type_application(app_id);
                 // Check if the base type is iterable
                 // This handles Set<T>, Map<K, V>, ReadonlyArray<T>, etc.
-                self.is_iterable_type(base)
+                self.is_iterable_type(app.base)
             }
             // Type parameters - conservatively assume not iterable unless we can prove otherwise
             Some(TypeKey::TypeParameter(_)) => false,
@@ -115,23 +117,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check call signatures - if object is callable, check if it's a generator
-        for &sig_id in &shape.call_signatures {
-            if let Some(TypeKey::Function(func_id)) = self.ctx.types.lookup(sig_id) {
-                let func_shape = self.ctx.types.function_shape(func_id);
-                // Generator functions return iterators
-                // Check if return type has 'next' method (heuristic for iterator)
-                if let Some(TypeKey::Object(ret_shape_id)) = self.ctx.types.lookup(func_shape.return_type) {
-                    let ret_shape = self.ctx.types.object_shape(ret_shape_id);
-                    for prop in &ret_shape.properties {
-                        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                        if prop_name.as_ref() == "next" {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
+        // TODO: Check call signatures for generators when CallableShape is implemented
 
         false
     }
