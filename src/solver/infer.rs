@@ -1185,12 +1185,14 @@ impl<'a> InferenceContext<'a> {
         hierarchy.push(ty);
 
         // Get the type key
-        let type_key = self.interner.lookup(ty)?;
+        let Some(type_key) = self.interner.lookup(ty) else {
+            return;
+        };
 
         match type_key {
             // For class/interface types, collect extends clauses
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.interner.callable_shape(*shape_id);
+            TypeKey::Callable(shape_id) => {
+                let _shape = self.interner.callable_shape(shape_id);
 
                 // Check for base class (extends clause)
                 // In callable shapes, this is stored in the base_class property
@@ -1198,8 +1200,8 @@ impl<'a> InferenceContext<'a> {
                     self.collect_class_hierarchy(base_type, hierarchy);
                 }
             }
-            Some(TypeKey::Object(shape_id)) => {
-                let shape = self.interner.object_shape(*shape_id);
+            TypeKey::Object(shape_id) => {
+                let _shape = self.interner.object_shape(shape_id);
 
                 // Check for base class (extends clause)
                 if let Some(base_type) = self.get_extends_clause(ty) {
