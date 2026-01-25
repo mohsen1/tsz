@@ -793,28 +793,22 @@ impl TypeVisitor for TypeCollector {
 
 ## Known Gaps
 
-### ⚠️ GAP: Freshness/Excess Property Checks (Rule #4)
+### ✅ FIXED: Freshness/Excess Property Checks (Rule #4)
 
-```rust
-// FreshnessTracker exists but not integrated with type lowering
-```
+FreshnessTracker is now integrated with excess property checking in `check_object_literal_excess_properties`.
+Only fresh object literals (direct object literal expressions) trigger excess property errors.
 
-**Impact**: May not catch excess properties in object literals
+### ✅ FIXED: Keyof Contravariance (Rule #30)
 
-### ⚠️ GAP: Keyof Contravariance (Rule #30)
+Union inversion is correctly implemented in `evaluate_rules/keyof.rs`:
+- `keyof (A | B) = (keyof A) & (keyof B)` - distributive contravariance
+- `keyof (A & B) = (keyof A) | (keyof B)` - covariance
 
-```rust
-// Union inversion incomplete for keyof
-// keyof (A | B) should equal (keyof A) & (keyof B)
-```
+### ✅ FIXED: Array-to-Tuple Rejection (Rule #15)
 
-### ⚠️ GAP: Array-to-Tuple Rejection (Rule #15)
-
-```rust
-// Tuple-to-array works, but array-to-tuple incomplete
-let arr: string[] = ["a", "b"];
-let tuple: [string, string] = arr;  // Should error
-```
+Array-to-tuple rejection is correctly implemented in `subtype_rules/tuples.rs`:
+- Arrays (`T[]`) are NOT assignable to tuple types
+- Exception: `never[]` can be assigned to tuples that allow empty
 
 ### ⚠️ GAP: CFA Invalidation in Closures (Rule #42)
 
@@ -830,13 +824,12 @@ function f(x: string | null) {
 }
 ```
 
-### ⚠️ GAP: Tracer Module (`mod.rs:37`)
+### ✅ FIXED: Tracer Module (`mod.rs:37`)
 
-```rust
-// mod tracer;  // TODO: Fix type mismatches
-```
-
-**Impact**: Diagnostic tracing disabled
+The tracer module is now enabled and working. Fixed type mismatches:
+- Updated function/tuple/object parameter types to use shape IDs
+- Fixed union/intersection to use TypeListId
+- Corrected intrinsic subtype checking for `any <: never`
 
 ### ⚠️ GAP: Template Literal Cross-Product (Rule #38)
 
