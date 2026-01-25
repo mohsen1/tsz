@@ -32,6 +32,7 @@ mod operations;
 pub mod salsa_db;
 mod subtype;
 mod subtype_rules;
+pub mod tracer;
 mod types;
 pub mod unsoundness_audit;
 mod utils;
