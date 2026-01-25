@@ -324,6 +324,11 @@ pub struct CheckerContext<'a> {
     /// Used to check if await expressions are within async context (TS1359).
     pub async_depth: u32,
 
+    /// Closure depth - tracks nesting of function expressions, arrow functions, and method expressions.
+    /// Used to apply Rule #42: CFA Invalidation in Closures.
+    /// When > 0, mutable variables (let/var) lose narrowing in closures.
+    pub inside_closure_depth: u32,
+
     /// Fuel counter for type resolution operations.
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
