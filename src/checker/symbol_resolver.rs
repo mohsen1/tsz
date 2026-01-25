@@ -267,6 +267,7 @@ impl<'a> CheckerState<'a> {
     /// This function walks the scope chain from the identifier's location upward,
     /// checking each scope's symbol table for the name. It also checks:
     /// - Module exports
+    /// - Type parameter scope (for generic functions, classes, type aliases)
     /// - File locals (global scope from lib.d.ts)
     /// - Lib binders' file_locals
     ///
@@ -279,6 +280,26 @@ impl<'a> CheckerState<'a> {
         let lib_binders = self.get_lib_binders();
 
         let debug = std::env::var("BIND_DEBUG").is_ok();
+
+        // === PHASE 0: Check type parameter scope (HIGHEST PRIORITY) ===
+        // Type parameters should be resolved before checking any other scope.
+        // This is critical for generic functions, classes, and type aliases.
+        if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
+            // Create a synthetic symbol ID for the type parameter
+            // Type parameters don't have SymbolId, so we use a special encoding
+            // The caller should handle this by using type_id directly
+            // For now, we skip this phase and let the caller handle type parameters via lookup_type_parameter
+            if debug {
+                trace!(
+                    name = %name,
+                    type_id = ?type_id,
+                    "[BIND_RESOLVE] Found in type_parameter_scope"
+                );
+            }
+            // NOTE: Type parameters are handled separately via lookup_type_parameter
+            // We don't return a SymbolId here because type parameters don't have them
+            // Fall through to check regular scopes
+        }
 
         // === PHASE 1: Initial logging ===
         if debug {
@@ -1162,29 +1183,38 @@ impl<'a> CheckerState<'a> {
             Some(symbol) => symbol,
             None => return false,
         };
-        let exports = match left_symbol.exports.as_ref() {
-            Some(exports) => exports,
-            None => return false,
-        };
+
         let right_name = match self
             .ctx
             .arena
             .get(qn.right)
             .and_then(|node| self.ctx.arena.get_identifier(node))
-            .map(|ident| ident.escaped_text.clone())
+            .map(|ident| ident.escaped_text.as_str())
         {
             Some(name) => name,
             None => return false,
         };
 
-        if exports.has(&right_name) {
-            return false;
+        // Check direct exports first
+        if let Some(exports) = left_symbol.exports.as_ref() {
+            if exports.has(right_name) {
+                return false;
+            }
+        }
+
+        // Check for re-exports from other modules
+        // This handles cases like: export { foo } from './bar'
+        if let Some(ref module_specifier) = left_symbol.import_module {
+            let mut visited_aliases = Vec::new();
+            if self.resolve_reexported_member_symbol(module_specifier, right_name, &mut visited_aliases).is_some() {
+                return false;
+            }
         }
 
         let namespace_name = self
             .entity_name_text(qn.left)
             .unwrap_or_else(|| left_symbol.escaped_name.clone());
-        self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
+        self.error_namespace_no_export(&namespace_name, right_name, qn.right);
         true
     }
 

@@ -1282,7 +1282,29 @@ impl<'a> CheckerState<'a> {
     ///
     /// This walks backwards through the control flow graph to determine what
     /// type guards (typeof, null checks, etc.) have been applied.
+    ///
+    /// ## Rule #42: CFA Invalidation in Closures
+    ///
+    /// When accessing a variable inside a closure (function expression or arrow function):
+    /// - If the variable is `let` or `var` (mutable): Reset to declared type (ignore outer narrowing)
+    /// - If the variable is `const` (immutable): Maintain narrowing (safe)
+    ///
+    /// This prevents unsound assumptions where a mutable variable's type is narrowed
+    /// in the outer scope but the closure captures the variable and might execute
+    /// after the variable has been reassigned to a different type.
     pub(crate) fn apply_flow_narrowing(&self, idx: NodeIndex, declared_type: TypeId) -> TypeId {
+        // Get the symbol for this identifier
+        let sym_id = match self.get_symbol_for_identifier(idx) {
+            Some(sym) => sym,
+            None => return declared_type,
+        };
+
+        // Check if we're inside a closure and if the variable is mutable
+        if self.is_inside_closure() && self.is_mutable_binding(sym_id) {
+            // Rule #42: Reset narrowing for mutable bindings in closures
+            return declared_type;
+        }
+
         // Get the flow node for this identifier usage
         let flow_node = match self.ctx.binder.get_node_flow(idx) {
             Some(flow) => flow,
@@ -1306,6 +1328,112 @@ impl<'a> CheckerState<'a> {
         analyzer.get_flow_type(idx, declared_type, flow_node)
     }
 
+    /// Get the symbol for an identifier node.
+    ///
+    /// Returns None if the node is not an identifier or has no symbol.
+    fn get_symbol_for_identifier(&self, idx: NodeIndex) -> Option<SymbolId> {
+        use crate::scanner::SyntaxKind;
+
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        self.ctx.binder.get_node_symbol(idx)
+    }
+
+    /// Check if we're currently inside a closure (function expression or arrow function).
+    ///
+    /// This is used to apply Rule #42: CFA Invalidation in Closures.
+    ///
+    /// Returns true if inside a function expression, arrow function, or method expression.
+    fn is_inside_closure(&self) -> bool {
+        self.ctx.inside_closure_depth > 0
+    }
+
+    /// Check if a binding is mutable (let/var) vs immutable (const).
+    ///
+    /// This determines whether Rule #42 applies: mutable bindings lose narrowing
+    /// in closures, while const bindings maintain narrowing.
+    ///
+    /// ## Detection Strategy:
+    ///
+    /// 1. Get the value declaration for the symbol
+    /// 2. Check if it's a VariableDeclaration
+    /// 3. Look at the parent VariableStatement's modifiers
+    /// 4. If ConstKeyword is present → const (immutable)
+    /// 5. If LetKeyword or no const modifier → let/var (mutable)
+    ///
+    /// Returns true for let/var (mutable), false for const (immutable).
+    fn is_mutable_binding(&self, sym_id: SymbolId) -> bool {
+        use crate::parser::syntax_kind_ext;
+        use crate::scanner::SyntaxKind;
+
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(sym) => sym,
+            None => return true, // Assume mutable if we can't determine
+        };
+
+        // Check the value declaration
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return true; // Assume mutable if no declaration
+        }
+
+        let decl_node = match self.ctx.arena.get(decl_idx) {
+            Some(node) => node,
+            None => return true,
+        };
+
+        // Check if this is a VariableDeclaration
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            // Not a variable declaration (e.g., parameter, import)
+            // Parameters are effectively mutable for narrowing purposes
+            return true;
+        }
+
+        // Check the parent VariableStatement for the ConstKeyword modifier
+        let parent = match self.ctx.arena.get_extended(decl_idx) {
+            Some(ext) => ext.parent,
+            None => return true,
+        };
+
+        if parent.is_none() {
+            return true;
+        }
+
+        let parent_node = match self.ctx.arena.get(parent) {
+            Some(node) => node,
+            None => return true,
+        };
+
+        // Check if the parent is a VariableStatement
+        if parent_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            // Could be a FOR_OF, FOR_IN, etc. - assume mutable
+            return true;
+        }
+
+        // Check the modifiers on the VariableStatement
+        let var_stmt = match self.ctx.arena.get_variable(parent_node) {
+            Some(stmt) => stmt,
+            None => return true,
+        };
+
+        if let Some(ref modifiers) = var_stmt.modifiers {
+            // Check if any modifier is ConstKeyword
+            for &mod_idx in &modifiers.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                    if mod_node.kind == SyntaxKind::ConstKeyword as u16 {
+                        return false; // const - immutable
+                    }
+                }
+            }
+        }
+
+        // No const modifier found - it's let or var (mutable)
+        true
+    }
+
     /// Check flow-aware usage of a variable (definite assignment + type narrowing).
     ///
     /// This is the main entry point for flow analysis when variables are used.
@@ -1323,6 +1451,10 @@ impl<'a> CheckerState<'a> {
     /// - If definitely assigned, applies flow-based type narrowing
     /// - typeof guards, discriminant checks, null checks refine types
     /// - Returns narrowed type for precise type checking
+    ///
+    /// ## Rule #42 Integration:
+    /// - If inside a closure and variable is mutable (let/var): Returns declared type
+    /// - If inside a closure and variable is const: Applies narrowing
     pub fn check_flow_usage(
         &mut self,
         idx: NodeIndex,

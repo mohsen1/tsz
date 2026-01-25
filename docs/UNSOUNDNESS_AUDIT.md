@@ -7,10 +7,10 @@ This document provides an analysis of the TypeScript compatibility layer impleme
 | Metric | Value |
 |--------|-------|
 | **Total Rules** | 44 |
-| **Fully Implemented** | 28 (63.6%) |
-| **Partially Implemented** | 9 (20.5%) |
+| **Fully Implemented** | 29 (65.9%) |
+| **Partially Implemented** | 8 (18.2%) |
 | **Not Implemented** | 7 (15.9%) |
-| **Overall Completion** | 73.9% |
+| **Overall Completion** | 75.0% |
 
 ## Phase Breakdown
 
@@ -19,7 +19,7 @@ This document provides an analysis of the TypeScript compatibility layer impleme
 | **Phase 1** | Hello World (Bootstrapping) | 100% (5/5 rules) |
 | **Phase 2** | Business Logic (Common Patterns) | 80% (4/5 rules) |
 | **Phase 3** | Library (Complex Types) | 80% (4/5 rules) |
-| **Phase 4** | Feature (Edge Cases) | 68% (15/29 rules) |
+| **Phase 4** | Feature (Edge Cases) | 69% (16/29 rules) |
 
 ## Running the Audit
 
@@ -77,6 +77,7 @@ cargo run --bin audit_unsoundness -- --status missing
 | 37 | `unique symbol` | P4 | `subtype.rs` | `TypeKey::UniqueSymbol` handling |
 | 40 | Distributivity Disabling | P3 | `lower.rs`, `conditional.rs` | `[T]` tuple wrapping prevents distribution |
 | 41 | Key Remapping (`as never`) | P3 | `mapped.rs` | `as never` filters properties (Omit utility) |
+| 42 | CFA Invalidation in Closures | P4 | `flow_analysis.rs`, `function_type.rs`, `context.rs` | `inside_closure_depth` tracking, `is_mutable_binding()` check |
 | 43 | Abstract Class Instantiation | P4 | `class_type.rs`, `state.rs` | `abstract_constructor_types` tracking |
 
 | # | Rule | Phase | Files | Notes |
@@ -120,7 +121,7 @@ cargo run --bin audit_unsoundness -- --status missing
 | 31 | Base Constraint Assignability | P4 | Type parameter checking partial |
 | 33 | Object vs Primitive boxing | P4 | `Intrinsic::Number` vs `Ref(Symbol::Number)` distinction |
 
-### ❌ Remaining Missing Rules (7)
+### ❌ Remaining Missing Rules (6)
 
 | # | Rule | Phase | Description |
 |---|------|-------|-------------|
@@ -129,7 +130,6 @@ cargo run --bin audit_unsoundness -- --status missing
 | 36 | JSX Intrinsic Lookup | P4 | Case-sensitive tag resolution |
 | 38 | Correlated Unions | P4 | Cross-product limitation |
 | 39 | `import type` Erasure | P4 | Value vs type space check |
-| 42 | CFA Invalidation in Closures | P4 | Narrowing reset for mutable bindings |
 | 44 | Module Augmentation Merging | P4 | Interface merging across modules |
 
 ## Key Interdependencies
@@ -187,10 +187,6 @@ Estimated test coverage by rule:
 5. **Implement Rule #22** (Template String Expansion Limits):
    - Add cardinality check for template literal unions
    - Prevents performance issues with large unions
-
-6. **Implement Rule #42** (CFA Invalidation in Closures):
-   - Reset narrowing for mutable bindings in closures
-   - Important for correct flow analysis
 
 ## Architecture Notes
 

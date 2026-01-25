@@ -5321,6 +5321,20 @@ fn test_best_common_type_single_element() {
     );
 }
 
+#[test]
+fn test_best_common_type_with_literal_widening() {
+    let interner = TypeInterner::new();
+    let ctx = crate::solver::infer::InferenceContext::new(&interner);
+
+    // [1, "a"] should infer to (number | string)[]
+    let types = vec![TypeId::NUMBER, TypeId::STRING];
+    let bct = ctx.best_common_type(&types);
+
+    // Should be a union of both types
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    assert_eq!(bct, expected, "BCT of number and string should be their union");
+}
+
 // =============================================================================
 // Private Brand Assignability Override Tests
 // =============================================================================

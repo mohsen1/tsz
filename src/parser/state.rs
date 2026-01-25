@@ -8562,7 +8562,67 @@ impl ParserState {
             }
         }
 
+        // Additional error recovery: if we're at a clear statement boundary or EOF,
+        // return an error node instead of emitting TS1005
+        if self.is_statement_start() || self.is_token(SyntaxKind::EndOfFileToken) {
+            self.error_type_expected();
+            return self.error_node();
+        }
+
         self.parse_conditional_type()
+    }
+
+    /// Create an error node for recovery when type parsing fails
+    fn error_node(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let end_pos = start_pos;
+        self.arena.add_token(SyntaxKind::Identifier as u16, start_pos, end_pos)
+    }
+
+    /// Enhanced parse_expected for better error recovery in type annotation contexts
+    fn parse_expected_in_type_context(&mut self, kind: SyntaxKind) -> bool {
+        if self.is_token(kind) {
+            self.next_token();
+            true
+        } else {
+            // Enhanced error recovery for type contexts - be more permissive
+            let should_suppress = match kind {
+                SyntaxKind::GreaterThanToken => {
+                    // For missing > in type arguments, if we see statement starters or closing tokens,
+                    // it's likely a type parsing error that shouldn't cascade
+                    if self.is_statement_start() || self.is_token(SyntaxKind::CloseBraceToken)
+                        || self.is_token(SyntaxKind::CloseParenToken) || self.is_token(SyntaxKind::CloseBracketToken)
+                    {
+                        return true;
+                    }
+                    false
+                }
+                SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken | SyntaxKind::CloseBraceToken => {
+                    // In type contexts, if we see statement starters, suppress the error
+                    if self.is_statement_start() || self.is_token(SyntaxKind::SemicolonToken) {
+                        true
+                    } else if self.scanner.has_preceding_line_break() {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                SyntaxKind::ColonToken => {
+                    // For missing colon in type annotations, be more permissive
+                    if self.is_statement_start() {
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+
+            if !should_suppress {
+                self.error_token_expected(Self::token_to_string(kind));
+            }
+            false
+        }
     }
 
     /// Parse return type, which may be a type predicate (x is T) or a regular type

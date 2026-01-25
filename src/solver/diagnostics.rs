@@ -271,6 +271,13 @@ pub enum SubtypeFailureReason {
         source_type: TypeId,
         target_type: TypeId,
     },
+    /// Recursion limit exceeded during type checking.
+    RecursionLimitExceeded,
+    /// Parameter count mismatch.
+    ParameterCountMismatch {
+        source_count: usize,
+        target_count: usize,
+    },
 }
 
 /// Diagnostic severity level.
@@ -837,8 +844,6 @@ pub struct PendingDiagnosticBuilder;
 // SubtypeFailureReason to PendingDiagnostic Conversion
 // =============================================================================
 
-use crate::solver::subtype::SubtypeFailureReason;
-
 impl SubtypeFailureReason {
     /// Convert this failure reason to a PendingDiagnostic.
     ///
@@ -1072,6 +1077,25 @@ impl SubtypeFailureReason {
                 PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
                     vec![(*source_type).into(), (*target_type).into()],
+                )
+            }
+
+            SubtypeFailureReason::RecursionLimitExceeded => {
+                // Recursion limit - use the source/target from the call site
+                PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                )
+            }
+
+            SubtypeFailureReason::ParameterCountMismatch {
+                source_count,
+                target_count,
+            } => {
+                // Parameter count mismatch
+                PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
                 )
             }
         }
