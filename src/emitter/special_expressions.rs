@@ -5,6 +5,7 @@
 
 use super::Printer;
 use crate::parser::node::Node;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -63,17 +64,74 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     /// Emit a decorator: @expression
+    ///
+    /// For ES6+ targets, decorators are emitted as native `@expression` syntax.
+    /// For ES5 targets, decorators should be downleveled using the `__decorate` helper,
+    /// but this requires class-level coordination. Standalone decorator emission
+    /// in ES5 mode is handled here by emitting a warning comment.
+    ///
+    /// Note: Full decorator ES5 lowering is handled at the class level by collecting
+    /// decorators and emitting `__decorate([...], Class, "member", descriptor)` calls
+    /// after the class definition.
     pub(super) fn emit_decorator(&mut self, node: &Node) {
-        // In ES5 mode, decorators are not supported - skip them entirely
-        if self.ctx.target_es5 {
-            return;
-        }
-
         let Some(decorator) = self.arena.get_decorator(node) else {
             return;
         };
 
+        // In ES5 mode, standalone decorator nodes should not be emitted directly.
+        // Decorator lowering is handled at the class level via __decorate helper.
+        // If we encounter a decorator here in ES5 mode, emit a warning comment.
+        if self.ctx.target_es5 {
+            // Get decorator expression text for the warning
+            let decorator_text = self.get_decorator_text(decorator.expression);
+            eprintln!(
+                "Warning: Decorator @{} skipped in ES5 mode - decorator lowering not fully implemented",
+                decorator_text
+            );
+            self.write("/* @");
+            self.write(&decorator_text);
+            self.write(" - ES5 decorator lowering not implemented */");
+            return;
+        }
+
+        // ES6+ native decorator syntax
         self.write("@");
         self.emit(decorator.expression);
+    }
+
+    /// Get a string representation of a decorator expression for diagnostics
+    fn get_decorator_text(&self, expr_idx: crate::parser::NodeIndex) -> String {
+        if expr_idx.is_none() {
+            return "unknown".to_string();
+        }
+
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return "unknown".to_string();
+        };
+
+        // Handle common cases: identifier, call expression
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(ident) = self.arena.get_identifier(expr_node) {
+                    return ident.escaped_text.clone();
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.arena.get_call_expr(expr_node) {
+                    let callee_text = self.get_decorator_text(call.expression);
+                    return format!("{}(...)", callee_text);
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(expr_node) {
+                    let obj_text = self.get_decorator_text(access.expression);
+                    let prop_text = self.get_decorator_text(access.name_or_argument);
+                    return format!("{}.{}", obj_text, prop_text);
+                }
+            }
+            _ => {}
+        }
+
+        "expression".to_string()
     }
 }
