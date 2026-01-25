@@ -779,6 +779,49 @@ impl<'a> CheckerContext<'a> {
         false
     }
 
+    /// Check if a name is a known global type that should emit TS2318/TS2583 when missing.
+    /// This helps distinguish between "unknown name" (TS2304) and "missing global type" (TS2318/TS2583).
+    pub fn is_known_global_type(&self, name: &str) -> bool {
+        use crate::lib_loader;
+
+        // ES2015+ types
+        if lib_loader::is_es2015_plus_type(name) {
+            return true;
+        }
+
+        // Pre-ES2015 global types that are commonly used
+        // These are always available in lib.d.ts but should emit TS2318 when @noLib is enabled
+        match name {
+            "Object" | "Function" | "Array" | "String" | "Number" | "Boolean" | "Date" | "RegExp"
+            | "Error" | "Math" | "JSON" | "console" | "window" | "document" | "ArrayBuffer"
+            | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray" | "Int16Array"
+            | "Uint16Array" | "Int32Array" | "Uint32Array" | "Float32Array" | "Float64Array"
+            | "this" | "globalThis" => true,
+            _ => false,
+        }
+    }
+
+    /// Check if a global type is missing due to insufficient ES version support.
+    /// Returns the minimum ES version required for this type, or None if not applicable.
+    pub fn get_required_es_version_for_global(&self, name: &str) -> Option<&'static str> {
+        use crate::lib_loader;
+
+        if lib_loader::is_es2015_plus_type(name) {
+            return Some("ES2015");
+        }
+
+        // Most pre-ES2015 globals are available in ES3/ES5
+        match name {
+            "Promise" | "Map" | "Set" | "WeakMap" | "WeakSet" | "Proxy" | "Reflect"
+            | "Symbol" | "Iterator" | "Iterable" => Some("ES2015"),
+            "AsyncFunction" | "SharedArrayBuffer" | "Atomics" => Some("ES2017"),
+            "AsyncGenerator" | "AsyncGeneratorFunction" => Some("ES2018"),
+            "BigInt" | "BigInt64Array" | "BigUint64Array" => Some("ES2020"),
+            "FinalizationRegistry" | "WeakRef" => Some("ES2021"),
+            _ => None,
+        }
+    }
+
     /// Check if a modifier list contains a specific modifier kind.
     pub fn has_modifier(&self, modifiers: &Option<crate::parser::NodeList>, kind: u16) -> bool {
         if let Some(mods) = modifiers {
