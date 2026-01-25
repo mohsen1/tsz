@@ -4421,6 +4421,35 @@ impl<'a> CheckerState<'a> {
                     return (TypeId::ANY, Vec::new());
                 }
 
+                // Check if this is a namespace import (import * as ns)
+                // Namespace imports have import_name set to None and should return all exports as an object
+                if symbol.import_name.is_none() {
+                    // This is a namespace import: import * as ns from 'module'
+                    // Create an object type containing all module exports
+                    if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name) {
+                        use crate::solver::PropertyInfo;
+                        let mut props: Vec<PropertyInfo> = Vec::new();
+                        for (name, &export_sym_id) in exports_table.iter() {
+                            let prop_type = self.get_type_of_symbol(export_sym_id);
+                            let name_atom = self.ctx.types.intern_string(name);
+                            props.push(PropertyInfo {
+                                name: name_atom,
+                                type_id: prop_type,
+                                write_type: prop_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                            });
+                        }
+                        let module_type = self.ctx.types.object(props);
+                        return (module_type, Vec::new());
+                    }
+                    // Module not found - emit TS2307 error and return ERROR
+                    self.emit_module_not_found_error(module_name, value_decl);
+                    return (TypeId::ERROR, Vec::new());
+                }
+
+                // This is a named import: import { X } from 'module'
                 // Use import_name if set (for renamed imports), otherwise use escaped_name
                 let export_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
                 if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name)
