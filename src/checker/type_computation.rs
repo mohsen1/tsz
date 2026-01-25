@@ -284,6 +284,30 @@ impl<'a> CheckerState<'a> {
             }
             // Unary + and - return number unless contextual typing expects a numeric literal.
             k if k == SyntaxKind::PlusToken as u16 || k == SyntaxKind::MinusToken as u16 => {
+                // Get operand type for validation
+                let operand_type = self.get_type_of_node(unary.operand);
+
+                // Check if operand is valid for unary + and - (number, bigint, any, or enum)
+                use crate::solver::BinaryOpEvaluator;
+                let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                let is_valid = evaluator.is_arithmetic_operand(operand_type);
+
+                if !is_valid {
+                    // Emit TS2362 for invalid unary + or - operand
+                    if let Some(loc) = self.get_source_location(unary.operand) {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            category: DiagnosticCategory::Error,
+                            message_text: "The operand of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                    }
+                }
+
                 if let Some(literal_type) = self.literal_type_from_initializer(idx)
                     && self.contextual_literal_type(literal_type).is_some()
                 {
@@ -292,7 +316,33 @@ impl<'a> CheckerState<'a> {
                 TypeId::NUMBER
             }
             // ~ returns number
-            k if k == SyntaxKind::TildeToken as u16 => TypeId::NUMBER,
+            k if k == SyntaxKind::TildeToken as u16 => {
+                // Get operand type for validation
+                let operand_type = self.get_type_of_node(unary.operand);
+
+                // Check if operand is valid for bitwise NOT (number, bigint, any, or enum)
+                use crate::solver::BinaryOpEvaluator;
+                let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                let is_valid = evaluator.is_arithmetic_operand(operand_type);
+
+                if !is_valid {
+                    // Emit TS2362 for invalid ~ operand
+                    if let Some(loc) = self.get_source_location(unary.operand) {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            category: DiagnosticCategory::Error,
+                            message_text: "The operand of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                    }
+                }
+
+                TypeId::NUMBER
+            }
             // ++ and -- require numeric operand
             k if k == SyntaxKind::PlusPlusToken as u16
                 || k == SyntaxKind::MinusMinusToken as u16 =>
