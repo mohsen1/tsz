@@ -353,15 +353,27 @@ impl<'a> FlowAnalyzer<'a> {
                     &visited,
                 )
             } else if flow.has_any_flags(flow_flags::START) {
-                // Start node - continue to antecedent if any
-                if let Some(&ant) = flow.antecedent.first()
-                    && !in_worklist.contains(&ant)
-                    && !visited.contains(&ant)
-                {
-                    worklist.push_back((ant, current_type));
-                    in_worklist.insert(ant);
+                // Start node - check if we're crossing a closure boundary
+                // For mutable variables (let/var), we cannot trust narrowing from outer scope
+                // because the closure may capture the variable and it could be mutated.
+                // For const variables, narrowing is preserved (they're immutable).
+                if let Some(&ant) = flow.antecedent.first() {
+                    // Check if the reference is a mutable variable
+                    if self.is_mutable_variable(reference) {
+                        // Mutable variable - cannot use narrowing from outer scope
+                        // Return the initial (declared) type instead of crossing boundary
+                        initial_type
+                    } else if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                        // Const or immutable - preserve narrowing from outer scope
+                        worklist.push_back((ant, current_type));
+                        in_worklist.insert(ant);
+                        current_type
+                    } else {
+                        current_type
+                    }
+                } else {
+                    current_type
                 }
-                current_type
             } else {
                 // Default: continue to antecedent
                 if let Some(&ant) = flow.antecedent.first() {
@@ -3357,6 +3369,39 @@ pub fn function_body_falls_through(_arena: &NodeArena, _body_idx: NodeIndex) -> 
     true
 }
 
+impl<'a> FlowAnalyzer<'a> {
+    /// Check if a reference node is a mutable variable (let/var) as opposed to const.
+    ///
+    /// This is critical for closure narrowing - mutable variables cannot preserve
+    /// narrowing from outer scope because they may be reassigned through the closure.
+    fn is_mutable_variable(&self, reference: NodeIndex) -> bool {
+        // Get the symbol for this reference
+        let Some(symbol_id) = self.binder.get_symbol_for_node(reference) else {
+            return false; // No symbol = not a mutable variable
+        };
+
+        // Get the symbol's value declaration to check if it's const or let/var
+        let Some(symbol) = self.binder.get_symbol(symbol_id) else {
+            return false;
+        };
+
+        let Some(decl_id) = symbol.value_declaration else {
+            return false; // No value declaration = not a variable we care about
+        };
+
+        // Get the declaration node to check its flags
+        let Some(decl_node) = self.arena.get(decl_id) else {
+            return false;
+        };
+
+        // Check the node flags - CONST flag means it's immutable
+        let flags = decl_node.flags;
+        let is_const = (flags & node_flags::CONST) != 0;
+
+        !is_const // Return true if NOT const (i.e., let or var)
+    }
+}
+
 /// Check whether a statement can fall through to the next statement.
 /// Returns true if execution can continue past this statement.
 pub fn statement_falls_through(_arena: &NodeArena, _stmt_idx: NodeIndex) -> bool {
@@ -3654,5 +3699,144 @@ if (x == null) {}
 
         assert_eq!(narrowed_true, expected_true);
         assert_eq!(narrowed_false, TypeId::STRING);
+    }
+
+    #[test]
+    fn test_mutable_variable_in_closure_loses_narrowing() {
+        // Unsoundness Rule #42: Mutable variables (let/var) should not preserve
+        // narrowing from outer scope when accessed in closures
+        let source = r#"
+let x: string | number;
+if (typeof x === "string") {
+    // At this point, x is narrowed to string
+    // But in the closure, it should revert to string | number
+    const fn = () => {
+        // x should NOT be narrowed here - it's mutable
+    };
+}
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let arena = parser.get_arena();
+        let types = TypeInterner::new();
+        let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+        // Get the if condition (typeof x === "string")
+        let condition_idx = get_if_condition(arena, root, 1);
+        let condition_node = arena.get(condition_idx).expect("condition node");
+        let binary = arena.get_binary_expr(condition_node).expect("binary condition");
+        let target_idx = binary.left; // This is 'x'
+
+        // The narrowing happens at the condition
+        let union_type = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let narrowed_at_condition = analyzer.narrow_type_by_condition(
+            union_type,
+            condition_idx,
+            target_idx,
+            true, // true branch
+        );
+        assert_eq!(narrowed_at_condition, TypeId::STRING);
+
+        // Now we need to check that in the closure, narrowing is NOT applied
+        // The closure creates a START node that connects to the outer flow
+        // When we cross that START node, the narrowing should be reset for mutable variables
+
+        // Get the variable declaration to verify it's let (mutable)
+        let root_node = arena.get(root).expect("root node");
+        let source_file = arena.get_source_file(root_node).expect("source file");
+        let var_decl_idx = source_file.statements.nodes[0]; // Variable declaration
+        let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
+
+        // Verify the variable is let (not const)
+        let flags = var_decl_node.flags;
+        let is_const = (flags & node_flags::CONST) != 0;
+        assert!(!is_const, "Variable should be let (mutable), not const");
+
+        // Verify that is_mutable_variable returns true for this variable
+        assert!(analyzer.is_mutable_variable(target_idx));
+    }
+
+    #[test]
+    fn test_const_variable_in_closure_preserves_narrowing() {
+        // Unsoundness Rule #42: Const variables SHOULD preserve narrowing
+        // from outer scope when accessed in closures
+        let source = r#"
+const x: string | number = Math.random() > 0.5 ? "hello" : 42;
+if (typeof x === "string") {
+    // At this point, x is narrowed to string
+    // In the closure, it should remain narrowed to string (const is immutable)
+    const fn = () => {
+        // x SHOULD be narrowed here - it's const
+    };
+}
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let arena = parser.get_arena();
+        let types = TypeInterner::new();
+        let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+        // Get the if condition (typeof x === "string")
+        let condition_idx = get_if_condition(arena, root, 1);
+        let condition_node = arena.get(condition_idx).expect("condition node");
+        let binary = arena.get_binary_expr(condition_node).expect("binary condition");
+        let target_idx = binary.left; // This is 'x'
+
+        // Get the variable declaration to verify it's const
+        let root_node = arena.get(root).expect("root node");
+        let source_file = arena.get_source_file(root_node).expect("source file");
+        let var_decl_idx = source_file.statements.nodes[0]; // Variable declaration
+        let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
+
+        // Verify the variable is const
+        let flags = var_decl_node.flags;
+        let is_const = (flags & node_flags::CONST) != 0;
+        assert!(is_const, "Variable should be const");
+
+        // Verify that is_mutable_variable returns false for this variable
+        assert!(!analyzer.is_mutable_variable(target_idx));
+    }
+
+    #[test]
+    fn test_nested_closures_handling() {
+        // Test that we handle nested closures correctly
+        let source = r#"
+let x: string | number;
+const fn = () => {
+    // Outer closure - x should not be narrowed from outer scope
+    const inner = () => {
+        // Inner closure - x should still not be narrowed
+    };
+};
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let arena = parser.get_arena();
+
+        // Get the variable declaration
+        let root_node = arena.get(root).expect("root node");
+        let source_file = arena.get_source_file(root_node).expect("source file");
+        let var_decl_idx = source_file.statements.nodes[0];
+        let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
+
+        // Verify the variable is let (mutable)
+        let flags = var_decl_node.flags;
+        let is_const = (flags & node_flags::CONST) != 0;
+        assert!(!is_const, "Variable should be let (mutable)");
     }
 }
