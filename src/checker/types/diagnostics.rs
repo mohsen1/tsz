@@ -252,6 +252,20 @@ pub mod diagnostic_messages {
     /// TS2504: Type must have Symbol.asyncIterator
     pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR: &str =
         "Type '{0}' must have a '[Symbol.asyncIterator]()' method that returns an async iterator.";
+
+    // Delete operator errors
+    pub const DELETE_OPERAND_CANNOT_BE_VARIABLE: &str =
+        "The operand of a delete operator cannot be a variable, function, or parameter in strict mode.";
+
+    // Instanceof operator errors
+    pub const RIGHT_HAND_SIDE_OF_INSTANCEOF_NOT_CONSTRUCTIBLE: &str =
+        "The right-hand side of an 'instanceof' expression must be of type 'any' or an object type with a constructor signature.";
+
+    // In operator errors
+    pub const LEFT_SIDE_OF_IN_NOT_STRING: &str =
+        "The left-hand side of an 'in' expression must be of type 'any', 'string', 'number', or 'symbol'.";
+    pub const RIGHT_SIDE_OF_IN_NOT_OBJECT: &str =
+        "The right-hand side of an 'in' expression must be of type 'any', an object type or a type parameter.";
 }
 
 /// TypeScript diagnostic error codes.
@@ -325,6 +339,14 @@ pub mod diagnostic_codes {
 
     // Delete expression errors
     pub const DELETE_OPERAND_MUST_BE_OPTIONAL: u32 = 2703; // The operand of a 'delete' operation must be optional.
+    pub const DELETE_OPERAND_CANNOT_BE_VARIABLE: u32 = 1103; // The operand of a delete operator cannot be a variable, function, or parameter in strict mode.
+
+    // Instanceof operator errors
+    pub const RIGHT_HAND_SIDE_OF_INSTANCEOF_NOT_CONSTRUCTIBLE: u32 = 2358; // The right-hand side of an 'instanceof' expression must be of type 'any' or an object type with a constructor signature.
+
+    // In operator errors
+    pub const LEFT_SIDE_OF_IN_NOT_STRING: u32 = 2360; // The left-hand side of an 'in' expression must be of type 'any', 'string', 'number', or 'symbol'.
+    pub const RIGHT_SIDE_OF_IN_NOT_OBJECT: u32 = 2361; // The right-hand side of an 'in' expression must be of type 'any', an object type or a type parameter.
 
     // Import/Export errors
     pub const IMPORT_ASSIGNMENT_CANNOT_BE_USED_WITH_ESM: u32 = 1202; // Import assignment cannot be used when targeting ECMAScript modules.
