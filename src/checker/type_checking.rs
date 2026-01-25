@@ -8057,12 +8057,77 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use crate::solver::{SymbolRef, TypeKey};
 
-        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) else {
-            return None;
-        };
+        // Handle Ref types (direct namespace/module references)
+        if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) {
+            let symbol = self.ctx.binder.get_symbol(SymbolId(sym_id))?;
+            if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
+                return None;
+            }
 
-        let symbol = self.ctx.binder.get_symbol(SymbolId(sym_id))?;
-        if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
+            // Check direct exports first
+            if let Some(exports) = symbol.exports.as_ref()
+                && let Some(member_id) = exports.get(property_name)
+            {
+                // Follow re-export chains to get the actual symbol
+                let resolved_member_id = if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
+                    && member_symbol.flags & symbol_flags::ALIAS != 0
+                {
+                    let mut visited_aliases = Vec::new();
+                    self.resolve_alias_symbol(member_id, &mut visited_aliases).unwrap_or(member_id)
+                } else {
+                    member_id
+                };
+
+                if let Some(member_symbol) = self.ctx.binder.get_symbol(resolved_member_id)
+                    && member_symbol.flags & symbol_flags::VALUE == 0
+                    && member_symbol.flags & symbol_flags::ALIAS == 0
+                {
+                    return None;
+                }
+                return Some(self.get_type_of_symbol(resolved_member_id));
+            }
+
+            // Check for re-exports from other modules
+            // This handles cases like: export { foo } from './bar'
+            if let Some(ref module_specifier) = symbol.import_module {
+                let mut visited_aliases = Vec::new();
+                if let Some(reexported_sym) =
+                    self.resolve_reexported_member_symbol(module_specifier, property_name, &mut visited_aliases)
+                {
+                    if let Some(member_symbol) = self.ctx.binder.get_symbol(reexported_sym)
+                        && member_symbol.flags & symbol_flags::VALUE == 0
+                        && member_symbol.flags & symbol_flags::ALIAS == 0
+                    {
+                        return None;
+                    }
+                    return Some(self.get_type_of_symbol(reexported_sym));
+                }
+            }
+
+            if symbol.flags & symbol_flags::ENUM != 0
+                && let Some(member_type) =
+                self.enum_member_type_for_name(SymbolId(sym_id), property_name)
+            {
+                return Some(member_type);
+            }
+
+            return None;
+        }
+
+        // Handle Callable types from merged class+namespace or function+namespace symbols
+        // When a class/function merges with a namespace, the type is a Callable with
+        // properties containing the namespace exports
+        if let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(object_type) {
+            let shape = self.ctx.types.callable_shape(shape_id);
+
+            // Check if the callable has the property as a member (from namespace merge)
+            for prop in &shape.properties {
+                let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+                if prop_name.as_ref() == property_name {
+                    return Some(prop.type_id);
+                }
+            }
+
             return None;
         }
 
@@ -8193,47 +8258,67 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::solver::{SymbolRef, TypeKey};
 
-        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) else {
-            return false;
-        };
+        // Handle Ref types (direct namespace/module references)
+        if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) {
+            let symbol = match self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+                Some(symbol) => symbol,
+                None => return false,
+            };
 
-        let symbol = match self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-            Some(symbol) => symbol,
-            None => return false,
-        };
+            if symbol.flags & symbol_flags::MODULE == 0 {
+                return false;
+            }
 
-        if symbol.flags & symbol_flags::MODULE == 0 {
+            let exports = match symbol.exports.as_ref() {
+                Some(exports) => exports,
+                None => return false,
+            };
+
+            let member_id = match exports.get(property_name) {
+                Some(member_id) => member_id,
+                None => return false,
+            };
+
+            // Follow alias chains to determine if the ultimate target is type-only
+            let resolved_member_id = if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
+                && member_symbol.flags & symbol_flags::ALIAS != 0
+            {
+                let mut visited_aliases = Vec::new();
+                self.resolve_alias_symbol(member_id, &mut visited_aliases).unwrap_or(member_id)
+            } else {
+                member_id
+            };
+
+            let member_symbol = match self.ctx.binder.get_symbol(resolved_member_id) {
+                Some(member_symbol) => member_symbol,
+                None => return false,
+            };
+
+            let has_value = (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
+            let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+            return has_type && !has_value;
+        }
+
+        // Handle Callable types from merged class+namespace or function+namespace symbols
+        // For merged symbols, the namespace exports are stored as properties on the Callable
+        if let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(object_type) {
+            let shape = self.ctx.types.callable_shape(shape_id);
+
+            // Check if the property exists in the callable's properties
+            for prop in &shape.properties {
+                let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+                if prop_name.as_ref() == property_name {
+                    // Found the property - now check if it's type-only
+                    // For merged symbols, properties from namespace exports should have value members
+                    // We need to look at the type to determine if it's type-only
+                    return self.is_type_only_type(prop.type_id);
+                }
+            }
+
             return false;
         }
 
-        let exports = match symbol.exports.as_ref() {
-            Some(exports) => exports,
-            None => return false,
-        };
-
-        let member_id = match exports.get(property_name) {
-            Some(member_id) => member_id,
-            None => return false,
-        };
-
-        // Follow alias chains to determine if the ultimate target is type-only
-        let resolved_member_id = if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
-            && member_symbol.flags & symbol_flags::ALIAS != 0
-        {
-            let mut visited_aliases = Vec::new();
-            self.resolve_alias_symbol(member_id, &mut visited_aliases).unwrap_or(member_id)
-        } else {
-            member_id
-        };
-
-        let member_symbol = match self.ctx.binder.get_symbol(resolved_member_id) {
-            Some(member_symbol) => member_symbol,
-            None => return false,
-        };
-
-        let has_value = (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
-        let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
-        has_type && !has_value
+        false
     }
 
     /// Check if an alias symbol resolves to a type-only symbol.
@@ -8290,6 +8375,25 @@ impl<'a> CheckerState<'a> {
         let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
         let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
         has_type && !has_value
+    }
+
+    /// Check if a type is type-only (has no runtime value).
+    ///
+    /// This is used for merged class+namespace symbols where namespace exports
+    /// are stored as properties on the Callable type.
+    fn is_type_only_type(&self, type_id: TypeId) -> bool {
+        use crate::solver::{SymbolRef, TypeKey};
+
+        // Check if this is a Ref to a type-only symbol
+        if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+                let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
+                let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+                return has_type && !has_value;
+            }
+        }
+
+        false
     }
 
     /// Check if a symbol is type-only (from `import type`).
