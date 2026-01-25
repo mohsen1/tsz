@@ -384,12 +384,23 @@ impl<'a> CheckerState<'a> {
 
         // Infer from initializer
         if !var_decl.initializer.is_none() {
-            return self.get_type_of_node(var_decl.initializer);
-        }
+            let init_type = self.get_type_of_node(var_decl.initializer);
 
-        // No initializer - use UNKNOWN to enforce strict checking
-        // This requires explicit type annotation or prevents unsafe usage
-        TypeId::UNKNOWN
+            // Rule #10: Literal Widening
+            // For mutable bindings (let/var), widen literals to their primitive type
+            // For const bindings, preserve literal types (unless in array/object context)
+            if !self.is_const_variable_declaration(idx) {
+                // let/var: widen literals
+                return self.widen_literal_type(init_type);
+            }
+
+            // const: preserve literal type
+            init_type
+        } else {
+            // No initializer - use UNKNOWN to enforce strict checking
+            // This requires explicit type annotation or prevents unsafe usage
+            TypeId::UNKNOWN
+        }
     }
 
     /// Get the type of an assignment target without definite assignment checks.
