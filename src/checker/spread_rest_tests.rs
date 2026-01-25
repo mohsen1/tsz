@@ -231,6 +231,12 @@ add(...args);  // Should emit TS2345
 
     let diagnostics = check_source(source);
 
+    // Debug: print all diagnostics
+    eprintln!("=== test_spread_in_function_call_with_wrong_types diagnostics ===");
+    for d in &diagnostics {
+        eprintln!("  code: {}, message: {}", d.code, d.message);
+    }
+
     // Should emit TS2345 (for function arguments) - the spread array has type (string | number)[]
     // which is not assignable to number parameters
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();

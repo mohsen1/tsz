@@ -4,17 +4,44 @@
 //! - TS2318: Cannot find global type (for @noLib or pre-ES2015 types)
 //! - TS2583: Cannot find name - suggests changing target library (for ES2015+ types)
 //!
-//! Note: These tests use TestContext::new_without_lib() to simulate missing lib.d.ts
+//! Note: These tests simulate missing lib.d.ts by not loading lib files.
 
+use crate::binder::BinderState;
+use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
+use crate::parser::ParserState;
+use crate::solver::TypeInterner;
 use crate::test_fixtures::TestContext;
 
-/// Helper function to create a checker without lib.d.ts and check source code
+/// Helper function to create a checker without lib.d.ts and check source code.
+/// This creates the checker with the parser's arena directly to ensure proper node resolution.
 fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
-    let mut ctx = TestContext::new_without_lib();
-    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    ctx.binder.bind_source_file(parser.get_arena(), root);
-    let mut checker = ctx.checker();
+
+    // No parse errors expected in these tests
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    // Don't merge any lib symbols - simulates @noLib
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions::default();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),  // Use parser's arena directly
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    // Don't set lib_contexts - no lib files loaded
+
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
@@ -135,14 +162,50 @@ fn test_console_emits_ts2304_without_lib() {
 
 // Tests with lib.d.ts loaded - these should NOT emit errors
 
-/// Helper function to create a checker WITH lib.d.ts and check source code
+/// Helper function to create a checker WITH lib.d.ts and check source code.
+/// This creates the checker with the parser's arena directly and loads lib files.
 fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
-    let mut ctx = TestContext::new();
-    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    use std::sync::Arc;
+
+    let ctx = TestContext::new();  // This loads lib files
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    ctx.binder
-        .bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-    let mut checker = ctx.checker();
+
+    // No parse errors expected in these tests
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions::default();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),  // Use parser's arena directly
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    // Set lib contexts for global symbol resolution
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
