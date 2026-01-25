@@ -125,8 +125,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     LiteralValue::BigInt(_) => TypeId::BIGINT,
                     LiteralValue::Boolean(_) => TypeId::BOOLEAN,
                 };
+                // Fast path: exact primitive match
                 if member == primitive_type {
                     return SubtypeResult::True;
+                }
+                // Also check if the literal is a subtype of this member via literal-to-intrinsic widening
+                // This handles cases like "hello" <: (string | { toString(): string })
+                // We only do this extra check for intrinsic types to avoid redundant subtype checks
+                if matches!(self.interner.lookup(member), Some(TypeKey::Intrinsic(_))) {
+                    if self.check_subtype(source, member).is_true() {
+                        return SubtypeResult::True;
+                    }
                 }
             }
             // Optimization: For union sources, check if any member matches directly
