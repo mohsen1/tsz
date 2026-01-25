@@ -4641,64 +4641,13 @@ impl<'a> CheckerState<'a> {
         refined_return
     }
 
+    // Delegate to type_checking::CheckerStateExt
     fn function_decl_from_callee(&self, callee_idx: NodeIndex) -> Option<NodeIndex> {
-        let node = self.ctx.arena.get(callee_idx)?;
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        let sym_id = self.resolve_identifier_symbol(callee_idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-
-        for &decl_idx in &symbol.declarations {
-            let node = self.ctx.arena.get(decl_idx)?;
-            let func = self.ctx.arena.get_function(node)?;
-            if !func.body.is_none() {
-                return Some(decl_idx);
-            }
-        }
-
-        if !symbol.value_declaration.is_none() {
-            let decl_idx = symbol.value_declaration;
-            let node = self.ctx.arena.get(decl_idx)?;
-            let func = self.ctx.arena.get_function(node)?;
-            if !func.body.is_none() {
-                return Some(decl_idx);
-            }
-        }
-
-        None
+        crate::checker::type_checking::CheckerStateExt::function_decl_from_callee(self, callee_idx)
     }
 
     fn returned_class_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
-        if body_idx.is_none() {
-            return None;
-        }
-        let node = self.ctx.arena.get(body_idx)?;
-        if node.kind != syntax_kind_ext::BLOCK {
-            return self.class_expression_from_expr(body_idx);
-        }
-        let block = self.ctx.arena.get_block(node)?;
-        for &stmt_idx in &block.statements.nodes {
-            let stmt = self.ctx.arena.get(stmt_idx)?;
-            if stmt.kind != syntax_kind_ext::RETURN_STATEMENT {
-                continue;
-            }
-            let ret = self.ctx.arena.get_return_statement(stmt)?;
-            if ret.expression.is_none() {
-                continue;
-            }
-            if let Some(expr_idx) = self.class_expression_from_expr(ret.expression) {
-                return Some(expr_idx);
-            }
-            let expr_node = self.ctx.arena.get(ret.expression)?;
-            if let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                && let Some(class_idx) =
-                    self.class_declaration_from_identifier_in_block(block, &ident.escaped_text)
-            {
-                return Some(class_idx);
-            }
-        }
-        None
+        crate::checker::type_checking::CheckerStateExt::returned_class_expression(self, body_idx)
     }
 
     fn class_declaration_from_identifier_in_block(
@@ -4706,43 +4655,11 @@ impl<'a> CheckerState<'a> {
         block: &crate::parser::node::BlockData,
         name: &str,
     ) -> Option<NodeIndex> {
-        for &stmt_idx in &block.statements.nodes {
-            let stmt = self.ctx.arena.get(stmt_idx)?;
-            if stmt.kind != syntax_kind_ext::CLASS_DECLARATION {
-                continue;
-            }
-            let class = self.ctx.arena.get_class(stmt)?;
-            if class.name.is_none() {
-                continue;
-            }
-            let name_node = self.ctx.arena.get(class.name)?;
-            let ident = self.ctx.arena.get_identifier(name_node)?;
-            if ident.escaped_text == name {
-                return Some(stmt_idx);
-            }
-        }
-        None
+        crate::checker::type_checking::CheckerStateExt::class_declaration_from_identifier_in_block(self, block, name)
     }
 
     fn class_expression_from_expr(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = expr_idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return None;
-            }
-            let node = self.ctx.arena.get(current)?;
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                let paren = self.ctx.arena.get_parenthesized(node)?;
-                current = paren.expression;
-                continue;
-            }
-            if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
-                return Some(current);
-            }
-            return None;
-        }
+        crate::checker::type_checking::CheckerStateExt::class_expression_from_expr(self, expr_idx)
     }
 
     fn mixin_base_param_index(
@@ -5477,33 +5394,13 @@ impl<'a> CheckerState<'a> {
     // Type Relations (uses solver::CompatChecker for assignability)
     // =========================================================================
 
+    // Delegate to type_checking::CheckerStateExt
     fn enum_symbol_from_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        use crate::solver::{SymbolRef, TypeKey};
-
-        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id) else {
-            return None;
-        };
-        let symbol = self.ctx.binder.get_symbol(SymbolId(sym_id))?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
-            return None;
-        }
-        Some(SymbolId(sym_id))
+        crate::checker::type_checking::CheckerStateExt::enum_symbol_from_type(self, type_id)
     }
 
     fn enum_symbol_from_value_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        use crate::solver::{SymbolRef, TypeKey};
-
-        let sym_id = match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Ref(SymbolRef(sym_id))) => sym_id,
-            Some(TypeKey::TypeQuery(SymbolRef(sym_id))) => sym_id,
-            _ => return None,
-        };
-
-        let symbol = self.ctx.binder.get_symbol(SymbolId(sym_id))?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
-            return None;
-        }
-        Some(SymbolId(sym_id))
+        crate::checker::type_checking::CheckerStateExt::enum_symbol_from_value_type(self, type_id)
     }
 
     fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
@@ -5571,93 +5468,16 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.object(properties))
     }
 
+    // Delegate to type_checking::CheckerStateExt
     fn enum_kind(&self, sym_id: SymbolId) -> Option<EnumKind> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
-            return None;
-        }
-
-        let decl_idx = if !symbol.value_declaration.is_none() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
-        let node = self.ctx.arena.get(decl_idx)?;
-        let enum_decl = self.ctx.arena.get_enum(node)?;
-
-        let mut saw_string = false;
-        for &member_idx in &enum_decl.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
-                continue;
-            };
-            if member.initializer.is_none() {
-                continue;
-            }
-            let Some(init_node) = self.ctx.arena.get(member.initializer) else {
-                continue;
-            };
-            if init_node.kind == SyntaxKind::StringLiteral as u16
-                || init_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-            {
-                saw_string = true;
-                break;
-            }
-        }
-
-        if saw_string {
-            Some(EnumKind::String)
-        } else {
-            Some(EnumKind::Numeric)
-        }
+        crate::checker::type_checking::CheckerStateExt::enum_kind(self, sym_id)
     }
 
     /// Get the type of an enum member by finding its parent enum.
     /// Returns the enum type itself (e.g., `MyEnum`) rather than just STRING or NUMBER.
     /// This is used when enum members are accessed through namespace exports.
     fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
-        // Get the extended node to find parent
-        let Some(ext) = self.ctx.arena.get_extended(member_decl) else {
-            return TypeId::ERROR; // Missing extended node data - propagate error
-        };
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return TypeId::ERROR; // Missing parent - propagate error
-        }
-
-        // Walk up to find the enum declaration
-        let mut current = parent_idx;
-        let max_depth = 10; // Prevent infinite loops
-        for _ in 0..max_depth {
-            let Some(parent_node) = self.ctx.arena.get(current) else {
-                break;
-            };
-
-            // Found the enum declaration
-            if parent_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                // Find the symbol for this enum declaration
-                if let Some(sym_id) = self.ctx.binder.get_node_symbol(current) {
-                    // Return the enum type itself
-                    return self.ctx.types.intern(crate::solver::TypeKey::Ref(
-                        crate::solver::SymbolRef(sym_id.0),
-                    ));
-                }
-                break;
-            }
-
-            // Move to parent
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            current = ext.parent;
-            if current.is_none() {
-                break;
-            }
-        }
-
-        TypeId::ANY
+        crate::checker::type_checking::CheckerStateExt::enum_member_type_from_decl(self, member_decl)
     }
 
     fn enum_assignability_override(
@@ -5900,66 +5720,17 @@ impl<'a> CheckerState<'a> {
     // NOTE: private_brand_assignability_override moved to solver/compat.rs
     // It only needs TypeDatabase, not checker context, so it lives in the solver layer.
 
+    // Delegate to type_checking::CheckerStateExt
     fn class_symbol_from_expression(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return None;
-        };
-        if node.kind == SyntaxKind::Identifier as u16 {
-            let sym_id = self.resolve_identifier_symbol(expr_idx)?;
-            let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            if symbol.flags & symbol_flags::CLASS != 0 {
-                return Some(sym_id);
-            }
-        }
-        None
+        crate::checker::type_checking::CheckerStateExt::class_symbol_from_expression(self, expr_idx)
     }
 
     fn class_symbol_from_type_annotation(&self, type_idx: NodeIndex) -> Option<SymbolId> {
-        let Some(node) = self.ctx.arena.get(type_idx) else {
-            return None;
-        };
-        if node.kind != syntax_kind_ext::TYPE_QUERY {
-            return None;
-        }
-        let query = self.ctx.arena.get_type_query(node)?;
-        self.class_symbol_from_expression(query.expr_name)
+        crate::checker::type_checking::CheckerStateExt::class_symbol_from_type_annotation(self, type_idx)
     }
 
     fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
-        let Some(node) = self.ctx.arena.get(left_idx) else {
-            return None;
-        };
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        let sym_id = self.resolve_identifier_symbol(left_idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS != 0 {
-            return Some(sym_id);
-        }
-        if symbol.flags
-            & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
-            == 0
-        {
-            return None;
-        }
-        if symbol.value_declaration.is_none() {
-            return None;
-        }
-        let decl_node = self.ctx.arena.get(symbol.value_declaration)?;
-        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-        if !var_decl.type_annotation.is_none()
-            && let Some(class_sym) =
-                self.class_symbol_from_type_annotation(var_decl.type_annotation)
-        {
-            return Some(class_sym);
-        }
-        if !var_decl.initializer.is_none()
-            && let Some(class_sym) = self.class_symbol_from_expression(var_decl.initializer)
-        {
-            return Some(class_sym);
-        }
-        None
+        crate::checker::type_checking::CheckerStateExt::assignment_target_class_symbol(self, left_idx)
     }
 
     fn class_constructor_access_level(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
@@ -6776,13 +6547,9 @@ impl<'a> CheckerState<'a> {
             && self.is_assignable_to(current_type, prev_type)
     }
 
+    // Delegate to type_checking::CheckerStateExt
     fn refine_var_decl_type(&self, prev_type: TypeId, current_type: TypeId) -> TypeId {
-        if matches!(prev_type, TypeId::ANY | TypeId::ERROR)
-            && !matches!(current_type, TypeId::ANY | TypeId::ERROR)
-        {
-            return current_type;
-        }
-        prev_type
+        crate::checker::type_checking::CheckerStateExt::refine_var_decl_type(self, prev_type, current_type)
     }
 
     /// Check if source type is assignable to ANY member of a target union.
@@ -8357,50 +8124,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
     #[allow(dead_code)] // Infrastructure for symbol merging validation
     fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
-        // Interface can merge with interface
-        if (existing_flags & symbol_flags::INTERFACE) != 0
-            && (new_flags & symbol_flags::INTERFACE) != 0
-        {
-            return true;
-        }
-
-        // Class can merge with interface
-        if ((existing_flags & symbol_flags::CLASS) != 0
-            && (new_flags & symbol_flags::INTERFACE) != 0)
-            || ((existing_flags & symbol_flags::INTERFACE) != 0
-                && (new_flags & symbol_flags::CLASS) != 0)
-        {
-            return true;
-        }
-
-        // Namespace/module can merge with namespace/module
-        if (existing_flags & symbol_flags::MODULE) != 0 && (new_flags & symbol_flags::MODULE) != 0 {
-            return true;
-        }
-
-        // Namespace can merge with class, function, or enum
-        if (existing_flags & symbol_flags::MODULE) != 0
-            && (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
-                != 0
-        {
-            return true;
-        }
-        if (new_flags & symbol_flags::MODULE) != 0
-            && (existing_flags
-                & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
-                != 0
-        {
-            return true;
-        }
-
-        // Function overloads
-        if (existing_flags & symbol_flags::FUNCTION) != 0
-            && (new_flags & symbol_flags::FUNCTION) != 0
-        {
-            return true;
-        }
-
-        false
+        crate::checker::type_checking::CheckerStateExt::can_merge_symbols(self, existing_flags, new_flags)
     }
 
     /// Check if a type name is a built-in mapped type utility.
@@ -9929,34 +9653,7 @@ impl<'a> CheckerState<'a> {
     /// Check if we should emit a "property does not exist" error for the given type in destructuring.
     /// Returns false for any, unknown, or types that don't have concrete shapes.
     fn should_emit_property_not_exist_for_destructuring(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
-            return false;
-        }
-
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        match type_key {
-            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => true,
-            TypeKey::Union(list_id) => {
-                // For unions, emit error if any member is a concrete object
-                let types = self.ctx.types.type_list(list_id);
-                types
-                    .iter()
-                    .any(|&t| self.should_emit_property_not_exist_for_destructuring(t))
-            }
-            TypeKey::Intersection(list_id) => {
-                // For intersections, all members should be concrete objects
-                let types = self.ctx.types.type_list(list_id);
-                types
-                    .iter()
-                    .all(|&t| self.should_emit_property_not_exist_for_destructuring(t))
-            }
-            _ => false,
-        }
+        crate::checker::type_checking::CheckerStateExt::should_emit_property_not_exist_for_destructuring(self, type_id)
     }
 
     /// Get the expected type for a binding element from its parent type.
@@ -11037,53 +10734,17 @@ impl<'a> CheckerState<'a> {
         !self.type_includes_undefined(prop_type)
     }
 
+    // Delegate to type_checking::CheckerStateExt
     fn class_has_base(&self, class: &crate::parser::node::ClassData) -> bool {
-        use crate::scanner::SyntaxKind;
-
-        let Some(ref heritage_clauses) = class.heritage_clauses else {
-            return false;
-        };
-
-        for &clause_idx in &heritage_clauses.nodes {
-            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
-                continue;
-            };
-            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
-                continue;
-            };
-            if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
-                return true;
-            }
-        }
-
-        false
+        crate::checker::type_checking::CheckerStateExt::class_has_base(self, class)
     }
 
     fn type_includes_undefined(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::UNDEFINED {
-            return true;
-        }
-
-        // Check if the type is a union containing undefined
-        self.union_contains(type_id, TypeId::UNDEFINED)
+        crate::checker::type_checking::CheckerStateExt::type_includes_undefined(self, type_id)
     }
 
     fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
-        for &member_idx in &members.nodes {
-            let Some(node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if node.kind != syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            let Some(ctor) = self.ctx.arena.get_constructor(node) else {
-                continue;
-            };
-            if !ctor.body.is_none() {
-                return Some(ctor.body);
-            }
-        }
-        None
+        crate::checker::type_checking::CheckerStateExt::find_constructor_body(self, members)
     }
 
     /// Check for TS2565: Properties used before being assigned in the constructor.
@@ -12682,180 +12343,18 @@ impl<'a> CheckerState<'a> {
         lowering.lower_type(type_node)
     }
 
+    // Delegate to type_checking::CheckerStateExt
     #[allow(dead_code)] // Infrastructure for type checking
     fn type_contains_any(&self, type_id: TypeId) -> bool {
-        let mut visited = Vec::new();
-        self.type_contains_any_inner(type_id, &mut visited)
-    }
-
-    #[allow(dead_code)] // Infrastructure for type checking
-    fn type_contains_any_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
-        use crate::solver::{TemplateSpan, TypeKey};
-
-        if type_id == TypeId::ANY {
-            return true;
-        }
-        if visited.contains(&type_id) {
-            return false;
-        }
-        visited.push(type_id);
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(elem)) => self.type_contains_any_inner(elem, visited),
-            Some(TypeKey::Tuple(list_id)) => self
-                .ctx
-                .types
-                .tuple_list(list_id)
-                .iter()
-                .any(|elem| self.type_contains_any_inner(elem.type_id, visited)),
-            Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => self
-                .ctx
-                .types
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.type_contains_any_inner(member, visited)),
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                if shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_any_inner(prop.type_id, visited))
-                {
-                    return true;
-                }
-                if let Some(ref index) = shape.string_index
-                    && self.type_contains_any_inner(index.value_type, visited)
-                {
-                    return true;
-                }
-                if let Some(ref index) = shape.number_index
-                    && self.type_contains_any_inner(index.value_type, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::Function(shape_id)) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                self.type_contains_any_inner(shape.return_type, visited)
-            }
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape
-                    .call_signatures
-                    .iter()
-                    .any(|sig| self.type_contains_any_inner(sig.return_type, visited))
-                {
-                    return true;
-                }
-                if shape
-                    .construct_signatures
-                    .iter()
-                    .any(|sig| self.type_contains_any_inner(sig.return_type, visited))
-                {
-                    return true;
-                }
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_any_inner(prop.type_id, visited))
-            }
-            Some(TypeKey::Application(app_id)) => {
-                let app = self.ctx.types.type_application(app_id);
-                if self.type_contains_any_inner(app.base, visited) {
-                    return true;
-                }
-                app.args
-                    .iter()
-                    .any(|&arg| self.type_contains_any_inner(arg, visited))
-            }
-            Some(TypeKey::Conditional(cond_id)) => {
-                let cond = self.ctx.types.conditional_type(cond_id);
-                self.type_contains_any_inner(cond.check_type, visited)
-                    || self.type_contains_any_inner(cond.extends_type, visited)
-                    || self.type_contains_any_inner(cond.true_type, visited)
-                    || self.type_contains_any_inner(cond.false_type, visited)
-            }
-            Some(TypeKey::Mapped(mapped_id)) => {
-                let mapped = self.ctx.types.mapped_type(mapped_id);
-                if self.type_contains_any_inner(mapped.constraint, visited) {
-                    return true;
-                }
-                if let Some(name_type) = mapped.name_type
-                    && self.type_contains_any_inner(name_type, visited)
-                {
-                    return true;
-                }
-                self.type_contains_any_inner(mapped.template, visited)
-            }
-            Some(TypeKey::IndexAccess(base, index)) => {
-                self.type_contains_any_inner(base, visited)
-                    || self.type_contains_any_inner(index, visited)
-            }
-            Some(TypeKey::TemplateLiteral(template_id)) => self
-                .ctx
-                .types
-                .template_list(template_id)
-                .iter()
-                .any(|span| match span {
-                    TemplateSpan::Type(span_type) => {
-                        self.type_contains_any_inner(*span_type, visited)
-                    }
-                    _ => false,
-                }),
-            Some(TypeKey::KeyOf(inner)) | Some(TypeKey::ReadonlyType(inner)) => {
-                self.type_contains_any_inner(inner, visited)
-            }
-            Some(TypeKey::TypeParameter(info)) => {
-                if let Some(constraint) = info.constraint
-                    && self.type_contains_any_inner(constraint, visited)
-                {
-                    return true;
-                }
-                if let Some(default) = info.default
-                    && self.type_contains_any_inner(default, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::Infer(info)) => {
-                if let Some(constraint) = info.constraint
-                    && self.type_contains_any_inner(constraint, visited)
-                {
-                    return true;
-                }
-                if let Some(default) = info.default
-                    && self.type_contains_any_inner(default, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::TypeQuery(_))
-            | Some(TypeKey::UniqueSymbol(_))
-            | Some(TypeKey::ThisType)
-            | Some(TypeKey::Ref(_))
-            | Some(TypeKey::Literal(_))
-            | Some(TypeKey::Intrinsic(_))
-            | Some(TypeKey::StringIntrinsic { .. })
-            | Some(TypeKey::Error)
-            | None => false,
-        }
+        crate::checker::type_checking::CheckerStateExt::type_contains_any(self, type_id)
     }
 
     fn implicit_any_return_display(&self, return_type: TypeId) -> String {
-        if self.is_null_or_undefined_only(return_type) {
-            return "any".to_string();
-        }
-        self.format_type(return_type)
+        crate::checker::type_checking::CheckerStateExt::implicit_any_return_display(self, return_type)
     }
 
     fn should_report_implicit_any_return(&self, return_type: TypeId) -> bool {
-        // Only report when return type is exactly 'any', not when it contains 'any' somewhere.
-        // For example, Promise<void> should not trigger TS7010 even if Promise's definition
-        // contains 'any' in its type structure.
-        return_type == TypeId::ANY || self.is_null_or_undefined_only(return_type)
+        crate::checker::type_checking::CheckerStateExt::should_report_implicit_any_return(self, return_type)
     }
 
     pub(crate) fn maybe_report_implicit_any_return(
@@ -12909,32 +12408,12 @@ impl<'a> CheckerState<'a> {
         member_idx: NodeIndex,
         _property_name: &str,
     ) -> bool {
-        // Find the containing class for this member
-        if let Some(class_idx) = self.find_containing_class(member_idx)
-            && let Some(class_node) = self.ctx.arena.get(class_idx)
-            && let Some(class_data) = self.ctx.arena.get_class(class_node)
-        {
-            // Check if this class has a base class (extends clause)
-            if self.class_has_base(class_data) {
-                // In derived classes, properties need definite assignment
-                // unless they have explicit initializers or definite assignment assertion
-                // This catches cases like: class B extends A { property: any; }
-                return true;
-            }
-        }
-        false
+        crate::checker::type_checking::CheckerStateExt::is_derived_property_redeclaration(self, member_idx, _property_name)
     }
 
     /// Find the containing class for a member node by walking up the parent chain
     #[allow(dead_code)] // Infrastructure for class member resolution
     fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
-        // Check if this member is directly in a class
-        // Since we don't have parent pointers, we need to search through classes
-        // This is a simplified approach - in a full implementation we'd maintain parent links
-
-        // For now, assume the member is in a class context if we're checking properties
-        // The actual class detection would require traversing the full AST
-        // This is sufficient for the TS2524 definite assignment checking we need
-        None // Simplified implementation - could be enhanced with full parent tracking
+        crate::checker::type_checking::CheckerStateExt::find_containing_class(self, _member_idx)
     }
 }
