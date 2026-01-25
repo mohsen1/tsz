@@ -5863,7 +5863,7 @@ const s3 = Symbol(42);"#;
     let lib_file = lib_file.unwrap();
 
     let mut binder = BinderState::new();
-    binder.merge_lib_symbols(&[lib_file.clone()]);
+    binder.merge_lib_symbols(std::slice::from_ref(&lib_file));
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5907,7 +5907,7 @@ fn test_symbol_constructor_too_many_args() {
     let lib_file = lib_file.unwrap();
 
     let mut binder = BinderState::new();
-    binder.merge_lib_symbols(&[lib_file.clone()]);
+    binder.merge_lib_symbols(std::slice::from_ref(&lib_file));
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13356,17 +13356,15 @@ x;
     let root_node = arena.get(root).expect("root node");
     let source_file = arena.get_source_file(root_node).expect("source file");
 
-    let expr_stmt_idx = source_file
+    let expr_stmt_idx = *source_file
         .statements
         .nodes
         .iter()
-        .copied()
-        .filter(|&idx| {
+        .rfind(|&&idx| {
             arena
                 .get(idx)
                 .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
-        .next_back()
         .expect("expression statement");
     let expr_stmt = arena
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
@@ -13419,17 +13417,15 @@ x;
     let root_node = arena.get(root).expect("root node");
     let source_file = arena.get_source_file(root_node).expect("source file");
 
-    let expr_stmt_idx = source_file
+    let expr_stmt_idx = *source_file
         .statements
         .nodes
         .iter()
-        .copied()
-        .filter(|&idx| {
+        .rfind(|&&idx| {
             arena
                 .get(idx)
                 .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
-        .next_back()
         .expect("expression statement");
     let expr_stmt = arena
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
@@ -13480,17 +13476,15 @@ x;
     let root_node = arena.get(root).expect("root node");
     let source_file = arena.get_source_file(root_node).expect("source file");
 
-    let expr_stmt_idx = source_file
+    let expr_stmt_idx = *source_file
         .statements
         .nodes
         .iter()
-        .copied()
-        .filter(|&idx| {
+        .rfind(|&&idx| {
             arena
                 .get(idx)
                 .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
-        .next_back()
         .expect("expression statement");
     let expr_stmt = arena
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
@@ -15742,6 +15736,7 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
 /// TypeScript allows a property to have different types for reading (Getter) vs writing (Setter).
 /// - `get x(): string`
 /// - `set x(v: string | number)`
+///
 /// The property `x` is effectively `string` (covariant) for reads, and `string | number` (contravariant) for writes.
 ///
 /// Subtyping rules for split accessors:
@@ -22889,10 +22884,6 @@ function func(x: I) {
 
     // The test passes if we get here without crashing
     // (private field access across interface boundaries should produce errors, but no crash)
-    assert!(
-        true,
-        "Interface extending class should not cause recursion crash"
-    );
 }
 
 #[test]
@@ -27704,7 +27695,7 @@ function booleanInstance(bool: Boolean): boolean {
     binder.bind_source_file(parser.get_arena(), root);
 
     // Merge lib symbols into the binder (clone to retain ownership)
-    binder.merge_lib_symbols(&[lib_file.clone()]);
+    binder.merge_lib_symbols(std::slice::from_ref(&lib_file));
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -31610,7 +31601,7 @@ class MyClass {
     );
     checker.check_source_file(root);
 
-    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let _codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
 
     // Filter to only TS2300 errors for the "method" identifier
     let ts2300_method_errors: Vec<_> = checker

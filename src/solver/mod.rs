@@ -62,53 +62,36 @@ pub use subtype::*;
 pub use types::*;
 pub use unsoundness_audit::*;
 
+// Test modules: Some are loaded by their source files via #[path = "..."] declarations.
+// Only include modules here that aren't loaded elsewhere to avoid duplicate_mod warnings.
 #[cfg(test)]
 mod bidirectional_tests;
-#[cfg(test)]
-mod callable_tests;
-#[cfg(test)]
-mod compat_tests;
-#[cfg(test)]
-mod contextual_tests;
-#[cfg(test)]
-mod db_tests;
-#[cfg(test)]
-mod diagnostics_tests;
-#[cfg(test)]
-mod evaluate_tests;
-#[cfg(test)]
-mod index_signature_tests;
-#[cfg(test)]
-mod infer_tests;
-#[cfg(test)]
-mod instantiate_tests;
+// callable_tests: loaded from subtype.rs
+// compat_tests: loaded from compat.rs
+// contextual_tests: loaded from contextual.rs
+// db_tests: loaded from db.rs
+// diagnostics_tests: loaded from diagnostics.rs
+// evaluate_tests: loaded from evaluate.rs
+// index_signature_tests: loaded from subtype.rs
+// infer_tests: loaded from infer.rs
+// instantiate_tests: loaded from instantiate.rs
 #[cfg(test)]
 mod integration_tests;
-#[cfg(test)]
-mod intern_tests;
+// intern_tests: loaded from intern.rs
 #[cfg(test)]
 mod intersection_union_tests;
-#[cfg(test)]
-mod lawyer_tests;
-#[cfg(test)]
-mod lower_tests;
-// #[cfg(test)]
-// mod mapped_key_remap_tests; // TODO: Fix API mismatches (TypeId::TYPE_PARAM, keyof, etc.)
-#[cfg(test)]
-mod narrowing_tests;
-#[cfg(test)]
-mod operations_tests;
-#[cfg(test)]
-mod subtype_tests;
+// lawyer_tests: loaded from lawyer.rs
+// lower_tests: loaded from lower.rs
+// mapped_key_remap_tests: TODO: Fix API mismatches (TypeId::TYPE_PARAM, keyof, etc.)
+// narrowing_tests: loaded from narrowing.rs
+// operations_tests: loaded from operations.rs
+// subtype_tests: loaded from subtype.rs
 #[cfg(test)]
 mod template_expansion_tests;
-// #[cfg(test)]
-// mod tracer_tests; // TODO: Fix tracer module first
+// tracer_tests: TODO: Fix tracer module first
 #[cfg(test)]
 mod type_law_tests;
-#[cfg(test)]
-mod types_tests;
-#[cfg(test)]
-mod union_tests;
+// types_tests: loaded from types.rs
+// union_tests: loaded from subtype.rs
 #[cfg(test)]
 mod visitor_tests;

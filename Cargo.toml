@@ -15,6 +15,7 @@ required-features = ["cli"]
 default = ["cli"]
 cli = []
 enforce_docker_tests = []
+experimental_salsa = []
 
 [dependencies]
 anyhow = "1.0"

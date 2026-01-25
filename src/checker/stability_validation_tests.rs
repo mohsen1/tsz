@@ -6,6 +6,8 @@
 //! 3. Operation limits prevent OOM
 //! 4. Type resolution limits prevent timeouts
 
+#![allow(clippy::assertions_on_constants)]
+
 use crate::checker::CheckerState;
 
 #[test]
