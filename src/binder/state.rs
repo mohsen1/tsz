@@ -1561,16 +1561,31 @@ impl BinderState {
                 }
             }
 
-            // Await/yield expressions
-            k if k == syntax_kind_ext::AWAIT_EXPRESSION
-                || k == syntax_kind_ext::YIELD_EXPRESSION
-                || k == syntax_kind_ext::NON_NULL_EXPRESSION =>
-            {
+            // Non-null expression - just bind the inner expression
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
                 if node.has_data()
                     && let Some(unary) = arena.unary_exprs_ex.get(node.data_index as usize)
                 {
                     self.bind_node(arena, unary.expression);
                 }
+            }
+
+            // Await expression (via unary_exprs_ex) - create flow node for async suspension point
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION && node.has_data() => {
+                if let Some(unary) = arena.unary_exprs_ex.get(node.data_index as usize) {
+                    self.bind_node(arena, unary.expression);
+                }
+                let flow = self.create_flow_await_point(idx);
+                self.current_flow = flow;
+            }
+
+            // Yield expression (via unary_exprs_ex) - create flow node for generator suspension point
+            k if k == syntax_kind_ext::YIELD_EXPRESSION && node.has_data() => {
+                if let Some(unary) = arena.unary_exprs_ex.get(node.data_index as usize) {
+                    self.bind_node(arena, unary.expression);
+                }
+                let flow = self.create_flow_yield_point(idx);
+                self.current_flow = flow;
             }
 
             // Type assertions / as / satisfies
@@ -1702,16 +1717,32 @@ impl BinderState {
                 self.bind_function_expression(arena, node, idx);
             }
 
-            // Typeof, void, await, yield expressions - record flow and traverse into operand
+            // Typeof, void expressions - record flow and traverse into operand
             k if k == syntax_kind_ext::TYPE_OF_EXPRESSION
-                || k == syntax_kind_ext::VOID_EXPRESSION
-                || k == syntax_kind_ext::AWAIT_EXPRESSION
-                || k == syntax_kind_ext::YIELD_EXPRESSION =>
+                || k == syntax_kind_ext::VOID_EXPRESSION =>
             {
                 self.record_flow(idx);
                 if let Some(unary) = arena.get_unary_expr(node) {
                     self.bind_node(arena, unary.operand);
                 }
+            }
+
+            // Await expression - create specific flow node for async suspension point
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
+                if let Some(unary) = arena.get_unary_expr(node) {
+                    self.bind_node(arena, unary.operand);
+                }
+                let flow = self.create_flow_await_point(idx);
+                self.current_flow = flow;
+            }
+
+            // Yield expression - create specific flow node for generator suspension point
+            k if k == syntax_kind_ext::YIELD_EXPRESSION => {
+                if let Some(unary) = arena.get_unary_expr(node) {
+                    self.bind_node(arena, unary.operand);
+                }
+                let flow = self.create_flow_yield_point(idx);
+                self.current_flow = flow;
             }
 
             // Identifier references - record current flow for type narrowing queries
@@ -3356,12 +3387,24 @@ impl BinderState {
                 // Always bind the exported expression/declaration so inner references are visited.
                 self.bind_node(arena, export.export_clause);
 
-                // Best-effort: if the default export is an identifier referring to an existing
-                // local symbol (e.g. `export default CONFIG;`), mark that symbol as exported so
-                // cross-file import resolution can see it.
-                //
-                // This is intentionally conservative and doesn't attempt to synthesize a separate
-                // "default" export symbol yet.
+                // Synthesize a "default" export symbol for cross-file import resolution.
+                // This enables `import X from './file'` to resolve the default export.
+                let default_sym_id = self.symbols.alloc(
+                    symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
+                    "default".to_string(),
+                );
+                if let Some(default_sym) = self.symbols.get_mut(default_sym_id) {
+                    default_sym.is_exported = true;
+                    default_sym.is_type_only = export_type_only;
+                    default_sym.declarations.push(export.export_clause);
+                    default_sym.value_declaration = export.export_clause;
+                }
+                // Add to file_locals so it can be found during import resolution
+                self.file_locals.set("default".to_string(), default_sym_id);
+                self.node_symbols
+                    .insert(export.export_clause.0, default_sym_id);
+
+                // Also mark the underlying local symbol as exported if it exists
                 if let Some(name) = self.get_identifier_name(arena, export.export_clause) {
                     if let Some(sym_id) = self
                         .current_scope
@@ -4110,6 +4153,30 @@ impl BinderState {
         let id = self.flow_nodes.alloc(flow_flags::ARRAY_MUTATION);
         if let Some(node) = self.flow_nodes.get_mut(id) {
             node.node = call;
+            if !self.current_flow.is_none() {
+                node.antecedent.push(self.current_flow);
+            }
+        }
+        id
+    }
+
+    /// Create a flow node for await expression (async suspension point).
+    fn create_flow_await_point(&mut self, await_expr: NodeIndex) -> FlowNodeId {
+        let id = self.flow_nodes.alloc(flow_flags::AWAIT_POINT);
+        if let Some(node) = self.flow_nodes.get_mut(id) {
+            node.node = await_expr;
+            if !self.current_flow.is_none() {
+                node.antecedent.push(self.current_flow);
+            }
+        }
+        id
+    }
+
+    /// Create a flow node for yield expression (generator suspension point).
+    fn create_flow_yield_point(&mut self, yield_expr: NodeIndex) -> FlowNodeId {
+        let id = self.flow_nodes.alloc(flow_flags::YIELD_POINT);
+        if let Some(node) = self.flow_nodes.get_mut(id) {
+            node.node = yield_expr;
             if !self.current_flow.is_none() {
                 node.antecedent.push(self.current_flow);
             }
