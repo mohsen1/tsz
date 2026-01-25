@@ -80,6 +80,12 @@ impl<'a> CheckerState<'a> {
                 // Check if object has a [Symbol.iterator] method or 'next' method
                 self.object_has_iterator_method(shape_id)
             }
+            // Application types (Set<T>, Map<K, V>, etc.) - check if base type has iterator
+            Some(TypeKey::Application(base, _args)) => {
+                // Check if the base type is iterable
+                // This handles Set<T>, Map<K, V>, ReadonlyArray<T>, etc.
+                self.is_iterable_type(base)
+            }
             // Type parameters - conservatively assume not iterable unless we can prove otherwise
             Some(TypeKey::TypeParameter(_)) => false,
             // Functions, classes without Symbol.iterator are not iterable
