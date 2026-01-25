@@ -3844,6 +3844,7 @@ impl<'a> CheckerState<'a> {
 
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
+        // For application types, check if the base type is a constructor type
         match self.ctx.types.lookup(type_id) {
             Some(TypeKey::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint {
@@ -3855,6 +3856,45 @@ impl<'a> CheckerState<'a> {
             Some(TypeKey::Intersection(members)) => {
                 let member_types = self.ctx.types.type_list(members);
                 member_types.iter().any(|&m| self.is_constructor_type(m))
+            }
+            Some(TypeKey::Application(app_id)) => {
+                // For type applications like Ctor<{}>, check if the base type is a constructor
+                // This handles cases like:
+                //   type Constructor<T> = new (...args: any[]) => T;
+                //   function f<T extends Constructor<{}>>(x: T) {
+                //     class C extends x {}  // x should be valid here
+                //   }
+                // Only check the base - don't recurse further to avoid infinite loops
+                let app = self.ctx.types.type_application(app_id);
+                // Check if base is a Ref to a type alias with constructor type body
+                if let Some(TypeKey::Ref(symbol_ref)) = self.ctx.types.lookup(app.base) {
+                    use crate::binder::SymbolId;
+                    let sym_id = SymbolId(symbol_ref.0);
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        if let Some(decl_idx) = symbol.declarations.first().copied() {
+                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                if decl_node.kind
+                                    == crate::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                {
+                                    if let Some(alias) = self.ctx.arena.get_type_alias(decl_node) {
+                                        if let Some(body_node) =
+                                            self.ctx.arena.get(alias.type_node)
+                                        {
+                                            // Constructor type syntax: new (...args) => T
+                                            if body_node.kind
+                                                == crate::parser::syntax_kind_ext::CONSTRUCTOR_TYPE
+                                            {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Also check if base is directly a Callable with construct signatures
+                self.has_construct_sig(app.base)
             }
             _ => false,
         }

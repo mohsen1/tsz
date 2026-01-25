@@ -1794,12 +1794,10 @@ impl<'a> CheckerState<'a> {
                 let mut instance_types: Vec<TypeId> = Vec::new();
 
                 for &member in members.iter() {
-                    if let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(member) {
-                        let shape = self.ctx.types.callable_shape(shape_id);
-                        // Get the return type from the first construct signature
-                        if let Some(sig) = shape.construct_signatures.first() {
-                            instance_types.push(sig.return_type);
-                        }
+                    // Try to get construct signatures from the member, handling various type representations
+                    let construct_sig_return = self.get_construct_signature_return_type(member);
+                    if let Some(return_type) = construct_sig_return {
+                        instance_types.push(return_type);
                     }
                 }
 
@@ -1955,6 +1953,60 @@ impl<'a> CheckerState<'a> {
                     .any(|&member| self.type_contains_abstract_class(member))
             }
             _ => false,
+        }
+    }
+
+    /// Get the return type of a construct signature from a type.
+    ///
+    /// This handles various type representations:
+    /// - Direct Callable with construct signatures
+    /// - Ref to class symbols (typeof Class)
+    /// - TypeQuery (typeof expressions)
+    ///
+    /// Returns None if the type doesn't have construct signatures.
+    fn get_construct_signature_return_type(&self, type_id: TypeId) -> Option<TypeId> {
+        use crate::binder::SymbolId;
+        use crate::solver::{SymbolRef, TypeKey};
+
+        let Some(type_key) = self.ctx.types.lookup(type_id) else {
+            return None;
+        };
+
+        match type_key {
+            TypeKey::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                shape
+                    .construct_signatures
+                    .first()
+                    .map(|sig| sig.return_type)
+            }
+            TypeKey::Ref(SymbolRef(sym_id)) => {
+                // Ref to a symbol - get the symbol's type which should be a Callable
+                // This handles cases like `typeof M1` where M1 is a class
+                let symbol_id = SymbolId(sym_id);
+                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    // Check if this is a class symbol
+                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+                        // For class symbols, the instance type is what we want
+                        // The construct signature returns the instance type
+                        // We create a Ref to this symbol as the instance type
+                        return Some(self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id))));
+                    }
+                }
+                None
+            }
+            TypeKey::TypeQuery(SymbolRef(sym_id)) => {
+                // TypeQuery is `typeof ClassName` - the return type is an instance of the class
+                let symbol_id = SymbolId(sym_id);
+                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+                        // Return a Ref to the class as the instance type
+                        return Some(self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id))));
+                    }
+                }
+                None
+            }
+            _ => None,
         }
     }
 
