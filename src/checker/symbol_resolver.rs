@@ -1162,29 +1162,38 @@ impl<'a> CheckerState<'a> {
             Some(symbol) => symbol,
             None => return false,
         };
-        let exports = match left_symbol.exports.as_ref() {
-            Some(exports) => exports,
-            None => return false,
-        };
+
         let right_name = match self
             .ctx
             .arena
             .get(qn.right)
             .and_then(|node| self.ctx.arena.get_identifier(node))
-            .map(|ident| ident.escaped_text.clone())
+            .map(|ident| ident.escaped_text.as_str())
         {
             Some(name) => name,
             None => return false,
         };
 
-        if exports.has(&right_name) {
-            return false;
+        // Check direct exports first
+        if let Some(exports) = left_symbol.exports.as_ref() {
+            if exports.has(right_name) {
+                return false;
+            }
+        }
+
+        // Check for re-exports from other modules
+        // This handles cases like: export { foo } from './bar'
+        if let Some(ref module_specifier) = left_symbol.import_module {
+            let mut visited_aliases = Vec::new();
+            if self.resolve_reexported_member_symbol(module_specifier, right_name, &mut visited_aliases).is_some() {
+                return false;
+            }
         }
 
         let namespace_name = self
             .entity_name_text(qn.left)
             .unwrap_or_else(|| left_symbol.escaped_name.clone());
-        self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
+        self.error_namespace_no_export(&namespace_name, right_name, qn.right);
         true
     }
 
