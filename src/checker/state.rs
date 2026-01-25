@@ -10241,9 +10241,22 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else {
-                    if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
-                        // Check for literals - emit TS2507 for extends clauses
-                        let literal_type_name: Option<&str> = match expr_node.kind {
+                    // Could not resolve as a heritage symbol - check if it's an identifier
+                    // that references a value with a constructor type
+                    let is_valid_constructor = if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                        && expr_node.kind == SyntaxKind::Identifier as u16
+                    {
+                        // Try to get the type of the expression to check if it's a constructor
+                        let expr_type = self.get_type_of_node(expr_idx);
+                        self.is_constructor_type(expr_type)
+                    } else {
+                        false
+                    };
+
+                    if !is_valid_constructor {
+                        if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
+                            // Check for literals - emit TS2507 for extends clauses
+                            let literal_type_name: Option<&str> = match expr_node.kind {
                             k if k == SyntaxKind::NullKeyword as u16 => Some("null"),
                             k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
                             k if k == SyntaxKind::TrueKeyword as u16 => Some("true"),
@@ -10307,6 +10320,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         self.error_cannot_find_name_at(&name, expr_idx);
+                    }
                     }
                 }
             }

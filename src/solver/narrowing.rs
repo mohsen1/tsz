@@ -292,6 +292,13 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
+        // Special case: unknown can be narrowed to any type through type guards
+        // This handles cases like: if (typeof x === "string") where x: unknown
+        if source_type == TypeId::UNKNOWN {
+            trace!("Narrowing unknown to specific type via type guard");
+            return target_type;
+        }
+
         // If source is a union, filter members
         if let Some(TypeKey::Union(members)) = self.interner.lookup(source_type) {
             let members = self.interner.type_list(members);
