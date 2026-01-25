@@ -13,6 +13,7 @@ use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
+use crate::solver::lawyer::FreshnessTracker;
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
@@ -330,6 +331,10 @@ pub struct CheckerContext<'a> {
 
     /// Whether type resolution fuel was exhausted (for timeout detection).
     pub fuel_exhausted: RefCell<bool>,
+
+    /// Freshness tracker for object literal excess property checking.
+    /// Tracks which object literals are "fresh" and should trigger excess property checks.
+    pub freshness_tracker: FreshnessTracker,
 }
 
 /// Context for a lib file (arena + binder) for global type resolution.
@@ -399,6 +404,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
+            freshness_tracker: FreshnessTracker::new(),
         }
     }
 
@@ -459,6 +465,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
+            freshness_tracker: FreshnessTracker::new(),
         }
     }
 
@@ -521,6 +528,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
+            freshness_tracker: FreshnessTracker::new(),
         }
     }
 
@@ -582,6 +590,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
+            freshness_tracker: FreshnessTracker::new(),
         }
     }
 
