@@ -37,6 +37,29 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing node - propagate error
         };
 
+        // Determine if this is a function expression or arrow function (a closure)
+        let is_closure = matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+        );
+
+        // Rule #42: Increment closure depth when entering a function expression or arrow function
+        // This causes mutable variables (let/var) to lose narrowing inside the closure
+        if is_closure {
+            self.ctx.inside_closure_depth += 1;
+        }
+
+        // Helper macro to decrement closure depth before returning
+        // This ensures we properly track closure depth even on early returns
+        macro_rules! return_with_cleanup {
+            ($expr:expr) => {{
+                if is_closure {
+                    self.ctx.inside_closure_depth -= 1;
+                }
+                $expr
+            }};
+        }
+
         let (type_parameters, parameters, type_annotation, body, name_node, name_for_error) =
             if let Some(func) = self.ctx.arena.get_function(node) {
                 let name_node = if func.name.is_none() {
@@ -67,7 +90,7 @@ impl<'a> CheckerState<'a> {
                     self.property_name_for_error(method.name),
                 )
             } else {
-                return TypeId::ERROR; // Missing function/method data - propagate error
+                return return_with_cleanup!(TypeId::ERROR); // Missing function/method data - propagate error
             };
 
         // Function declarations don't report implicit any for parameters (handled by check_statement)
@@ -413,7 +436,7 @@ impl<'a> CheckerState<'a> {
 
         self.pop_type_parameters(type_param_updates);
 
-        self.ctx.types.function(shape)
+        return_with_cleanup!(self.ctx.types.function(shape))
     }
 
     // =========================================================================
