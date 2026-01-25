@@ -4,6 +4,10 @@
 //! - Plain objects with named properties
 //! - Objects with index signatures (string and number)
 //! - Property compatibility (optional, readonly, type, write_type)
+//! - **Rule #26**: Split Accessors (Getter/Setter Variance)
+//!   - Read types are covariant: source.read <: target.read
+//!   - Write types are contravariant: target.write <: source.write
+//!   - Readonly target properties only check read type (no write access)
 //! - Private brand checking for nominal class typing
 
 use crate::interner::Atom;
@@ -119,6 +123,55 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// 4. **Write type compatibility**: For mutable properties with different write types,
     ///    target's write type must be subtype of source's (contravariance for writes)
+    /// Check property compatibility between source and target properties.
+    ///
+    /// This implements **Rule #26: Split Accessors (Getter/Setter Variance)**.
+    ///
+    /// ## Split Accessor Variance
+    ///
+    /// Properties can have different types for reading (getter) vs writing (setter):
+    /// ```typescript
+    /// class C {
+    ///   private _x: string | number;
+    ///   get x(): string { return this._x as string; }
+    ///   set x(v: string | number) { this._x = v; }
+    /// }
+    /// ```
+    ///
+    /// In this example, reading `x` yields `string`, but writing accepts `string | number`.
+    ///
+    /// ## Subtyping Rules
+    ///
+    /// For `source_prop <: target_prop`:
+    ///
+    /// 1. **Read types are COVARIANT**: `source.read <: target.read`
+    ///    - When reading from source, we get something that's safe to use as target's read type
+    ///
+    /// 2. **Write types are CONTRAVARIANT**: `target.write <: source.write`
+    ///    - When writing to target, we accept something that's also safe for source
+    ///    - This ensures source can accept everything target can write
+    ///
+    /// 3. **Readonly properties**: If target property is readonly, we only check read types
+    ///    - You can't write to a readonly target, so write type doesn't matter
+    ///
+    /// ## Example
+    ///
+    /// ```typescript
+    /// class Base {
+    ///   get x(): string { return "hello"; }
+    ///   set x(v: string | number) {}
+    /// }
+    ///
+    /// class Derived extends Base {
+    ///   get x(): string { return "world"; }  // OK: string <: string
+    ///   set x(v: string) {}  // OK: string <: string | number (contravariant)
+    /// }
+    /// ```
+    ///
+    /// ## Additional Checks
+    ///
+    /// - Optional properties: source optional can't satisfy target required
+    /// - Readonly properties: source readonly can't satisfy target mutable
     pub(crate) fn check_property_compatibility(
         &mut self,
         source: &PropertyInfo,
@@ -135,15 +188,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Property exists, check type compatibility
-        let source_type = self.optional_property_type(source);
-        let target_type = self.optional_property_type(target);
+        // Rule #26: Split Accessors (Getter/Setter Variance)
+        //
+        // Properties with split accessors (get/set) have different types for reading vs writing:
+        // - Read type (getter): covariant - source.read must be subtype of target.read
+        // - Write type (setter): contravariant - target.write must be subtype of source.write
+        //
+        // For readonly properties in target, we only check read type (no writes allowed)
+        // For mutable properties, we check both read and write types
+
+        // 1. Check READ type (covariant): source.read <: target.read
+        let source_read = self.optional_property_type(source);
+        let target_read = self.optional_property_type(target);
         let allow_bivariant = source.is_method || target.is_method;
 
         // Rule #26: Split Accessors - Covariant reads
         // Source read type must be subtype of target read type
         if !self
-            .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
+            .check_subtype_with_method_variance(source_read, target_read, allow_bivariant)
             .is_true()
         {
             return SubtypeResult::False;
@@ -155,6 +217,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !target.readonly {
             let source_write = self.optional_property_write_type(source);
             let target_write = self.optional_property_write_type(target);
+
+            // Contravariant writes: target.write must be subtype of source.write
+            // This ensures that anything we can write to target is also safe to write to source
             if !self
                 .check_subtype_with_method_variance(target_write, source_write, allow_bivariant)
                 .is_true()
