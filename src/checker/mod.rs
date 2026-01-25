@@ -54,6 +54,7 @@ pub mod symbol_resolver;
 pub mod tuple_type;
 pub mod type_checking;
 pub mod type_computation;
+pub mod type_computing_visitor;
 pub mod type_parameter;
 pub mod type_query;
 pub mod types;
