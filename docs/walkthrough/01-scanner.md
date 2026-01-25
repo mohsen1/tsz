@@ -140,9 +140,7 @@ Supports all JavaScript numeric formats:
 | Scientific | `1e10` | Contains `e` or `E` |
 | Separators | `1_000_000` | Underscores between digits |
 
-**⚠️ GAP: Numeric Separator Validation**
-- Invalid separators detected (`1__0`, `_1`, `1_`) but error recovery is basic
-- Edge cases with octal escapes in templates not fully handled
+Numeric separator validation fully detects invalid cases (`1__0`, `_1`, `1_`) and tracks the first error position with context about whether the separator is consecutive.
 
 ### String Literals
 
@@ -329,49 +327,44 @@ source_slice()         // Direct reference slicing
 
 ### ⚠️ GAP: Unicode Support
 
-**Location**: `scanner_impl.rs` - in `char_code_unchecked()`
+**Location**: `scanner_impl.rs` - in `is_identifier_start()`
 
 ```rust
 // Simplified check: all non-ASCII treated as potential identifier chars
-if ch > 127 { /* treat as identifier */ }
+ch > 127 // Unicode letter (simplified check)
 ```
 
 **Issue**: Should use proper Unicode category tables (`ID_Start`, `ID_Continue`)
 **Impact**: May incorrectly accept/reject some Unicode identifiers
 
-### ⚠️ GAP: Comment Nesting
+### ✅ FIXED: Octal Escapes in Templates
 
-**Location**: `scanner_impl.rs` - comment scanning logic
+**Location**: `scanner_impl.rs` - `scan_template_escape_sequence()`
+
+Octal escape sequences (`\0` followed by digits, `\1`-`\9`) in template literals now properly set the `ContainsInvalidEscape` flag. The scanner detects:
+- `\0` followed by a decimal digit (invalid)
+- `\1` through `\9` (always invalid in templates)
+
+### ✅ FIXED: Regex Flag Validation
+
+**Location**: `scanner_impl.rs` - `re_scan_slash_token()`
+
+Regex flag validation now detects:
+- **Duplicate flags**: `/foo/gg` → `RegexFlagError::Duplicate`
+- **Invalid flags**: `/foo/x` → `RegexFlagError::InvalidFlag`
+- **Incompatible flags**: `/foo/uv` → `RegexFlagError::IncompatibleFlags`
+
+Use `get_regex_flag_error()` and `get_regex_flag_error_pos()` to retrieve error information.
+
+### Note: Comment Nesting
+
+JavaScript/TypeScript does **not** support nested multi-line comments. The scanner's behavior of finding the first `*/` to close a `/* */` comment is correct:
 
 ```typescript
-/* outer /* inner */ */  // Edge case not fully handled
+/* outer /* inner */ */  // "outer /* inner" is the comment, " */" is code (syntax error)
 ```
 
-**Issue**: Simplified approach doesn't track nested `/* */`
-**Impact**: Rare edge case, but differs from TSC behavior
-
-### ⚠️ GAP: Octal Escapes in Templates
-
-**Location**: `scanner_impl.rs` - template escape handling
-
-```rust
-// Comment in code: "octal in template is complex"
-```
-
-**Issue**: Octal escape sequences in template literals not fully implemented
-**Impact**: May misparse legacy code with octal escapes
-
-### ⚠️ GAP: Regex Flag Validation
-
-**Location**: `scanner_impl.rs` - regex scanning
-
-```rust
-// Lists valid flags: g, i, m, s, u, v, y, d
-// But doesn't validate combinations or report errors
-```
-
-**Issue**: Invalid flag combinations accepted
-**Impact**: Should error on invalid regex flags
+This matches TSC behavior and the ECMAScript specification.
 
 ## Test Coverage
 
