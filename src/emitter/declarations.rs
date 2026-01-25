@@ -290,7 +290,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    #[allow(dead_code)] // Infrastructure for declaration emit
+    /// Emit an interface declaration (for .d.ts declaration emit mode)
     pub(super) fn emit_interface_declaration(&mut self, node: &Node) {
         let Some(interface) = self.arena.get_interface(node) else {
             return;
@@ -330,7 +330,7 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    #[allow(dead_code)] // Infrastructure for declaration emit
+    /// Emit a type alias declaration (for .d.ts declaration emit mode)
     pub(super) fn emit_type_alias_declaration(&mut self, node: &Node) {
         let Some(type_alias) = self.arena.get_type_alias(node) else {
             return;
