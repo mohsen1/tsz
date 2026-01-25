@@ -23,6 +23,7 @@ use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeId, TypePredicateTarget};
 use rustc_hash::FxHashSet;
+use std::collections::HashSet;
 
 // =============================================================================
 // Type Checking Methods

@@ -4,7 +4,7 @@
 //! parser/state.rs to reduce code duplication and improve maintainability.
 
 use crate::parser::{
-    NodeIndex,
+    NodeIndex, NodeList,
     node::{
         AccessExprData, BinaryExprData, CallExprData, FunctionData, IdentifierData,
         LiteralExprData, NodeArena, ParameterData, ParenthesizedData, TaggedTemplateData,
@@ -432,7 +432,8 @@ fn parse_tagged_template_expression(ctx: &mut ExpressionParseContext, tag: NodeI
         end_pos,
         TaggedTemplateData {
             tag,
-            template: Some(template),
+            type_arguments: None,
+            template,
         },
     )
 }
@@ -554,11 +555,15 @@ fn parse_function_expression(ctx: &mut ExpressionParseContext) -> NodeIndex {
         start_pos,
         end_pos,
         FunctionData {
-            name: None,
-            type_params: None,
-            parameters: None,
-            return_type: None,
-            body: None,
+            modifiers: None,
+            is_async: false,
+            asterisk_token: false,
+            name: NodeIndex::none(),
+            type_parameters: None,
+            parameters: NodeList::empty(),
+            type_annotation: NodeIndex::none(),
+            body: NodeIndex::none(),
+            equals_greater_than_token: false,
         },
     )
 }
