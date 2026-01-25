@@ -3376,7 +3376,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// narrowing from outer scope because they may be reassigned through the closure.
     fn is_mutable_variable(&self, reference: NodeIndex) -> bool {
         // Get the symbol for this reference
-        let Some(symbol_id) = self.binder.get_symbol_for_node(reference) else {
+        let Some(symbol_id) = self.binder.get_node_symbol(reference) else {
             return false; // No symbol = not a mutable variable
         };
 
@@ -3385,9 +3385,10 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
-        let Some(decl_id) = symbol.value_declaration else {
+        let decl_id = symbol.value_declaration;
+        if decl_id == NodeIndex::NONE {
             return false; // No value declaration = not a variable we care about
-        };
+        }
 
         // Get the declaration node to check its flags
         let Some(decl_node) = self.arena.get(decl_id) else {
@@ -3395,7 +3396,7 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         // Check the node flags - CONST flag means it's immutable
-        let flags = decl_node.flags;
+        let flags = decl_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
 
         !is_const // Return true if NOT const (i.e., let or var)
