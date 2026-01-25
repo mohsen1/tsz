@@ -11,7 +11,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! // Fast check (zero-cost)
 //! let mut fast_tracer = FastTracer;
 //! let is_subtype = checker.check_subtype_with_tracer(source, target, &mut fast_tracer);
@@ -24,17 +24,16 @@
 //! }
 //! ```
 
-use crate::interner::Atom;
 use crate::solver::TypeDatabase;
-use crate::solver::diagnostics::{
-    DiagnosticTracer, FastTracer, SubtypeFailureReason, SubtypeTracer,
-};
-use crate::solver::subtype::{
-    MAX_SUBTYPE_DEPTH, NoopResolver, SubtypeChecker, SubtypeResult, TypeResolver,
-};
+use crate::solver::diagnostics::{SubtypeFailureReason, SubtypeTracer};
+use crate::solver::subtype::{MAX_SUBTYPE_DEPTH, TypeResolver};
 use crate::solver::types::*;
 use std::collections::HashSet;
 
+#[cfg(test)]
+use crate::solver::diagnostics::{DiagnosticTracer, FastTracer};
+#[cfg(test)]
+use crate::solver::subtype::NoopResolver;
 #[cfg(test)]
 use crate::solver::TypeInterner;
 
@@ -54,7 +53,8 @@ const MAX_IN_PROGRESS_PAIRS: usize = 10_000;
 pub struct TracerSubtypeChecker<'a, R: TypeResolver> {
     /// Reference to the type database (interner).
     pub(crate) interner: &'a dyn TypeDatabase,
-    /// Reference to the type resolver.
+    /// Reference to the type resolver (for resolving Ref types).
+    #[allow(dead_code)]
     pub(crate) resolver: &'a R,
     /// Active subtype pairs being checked (for cycle detection).
     pub(crate) in_progress: HashSet<(TypeId, TypeId)>,
@@ -140,16 +140,26 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
         target: TypeId,
         tracer: &mut T,
     ) -> bool {
-        // Fast paths
+        // Fast paths - identity
         if source == target {
             return true;
         }
 
-        if source == TypeId::ANY || target == TypeId::ANY || target == TypeId::UNKNOWN {
+        // never is subtype of everything (bottom type)
+        if source == TypeId::NEVER {
             return true;
         }
 
-        if source == TypeId::NEVER {
+        // Only never is subtype of never
+        if target == TypeId::NEVER {
+            return tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        // Everything is subtype of any and unknown
+        if target == TypeId::ANY || target == TypeId::UNKNOWN {
             return true;
         }
 
@@ -159,14 +169,6 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
 
         if source_eval != source || target_eval != target {
             return self.check_subtype_with_tracer(source_eval, target_eval, tracer);
-        }
-
-        // Post-evaluation fast paths
-        if target == TypeId::NEVER {
-            return tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch {
-                source_type: source,
-                target_type: target,
-            });
         }
 
         if source == TypeId::ERROR || target == TypeId::ERROR {
@@ -247,14 +249,13 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
             }
         };
 
-        // Apparent primitive shape check
-        if let Some(shape) = self.apparent_primitive_shape_for_key(&source_key) {
+        // Apparent primitive shape check (for checking primitives against object interfaces)
+        if let Some(ref shape) = self.apparent_primitive_shape_for_key(&source_key) {
             match &target_key {
                 TypeKey::Object(t_shape_id) => {
                     let t_shape = self.interner.object_shape(*t_shape_id);
                     return self.check_object_with_tracer(
                         &shape.properties,
-                        None,
                         &t_shape.properties,
                         source,
                         target,
@@ -264,7 +265,7 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
                 TypeKey::ObjectWithIndex(t_shape_id) => {
                     let t_shape = self.interner.object_shape(*t_shape_id);
                     return self.check_object_with_index_with_tracer(
-                        &shape, None, &t_shape, source, target, tracer,
+                        shape, &t_shape, source, target, tracer,
                     );
                 }
                 _ => {}
@@ -283,28 +284,28 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
 
             (TypeKey::Literal(s), TypeKey::Literal(t)) => s == t,
 
-            (TypeKey::Union(members), _) => {
-                self.check_union_source_with_tracer(*members, target, &target_key, tracer)
+            (TypeKey::Union(members_id), _) => {
+                self.check_union_source_with_tracer(*members_id, target, &target_key, tracer)
             }
 
-            (_, TypeKey::Union(members)) => {
-                self.check_union_target_with_tracer(source, &source_key, *members, tracer)
+            (_, TypeKey::Union(members_id)) => {
+                self.check_union_target_with_tracer(source, &source_key, *members_id, tracer)
             }
 
-            (TypeKey::Intersection(members), _) => {
-                self.check_intersection_source_with_tracer(*members, target, tracer)
+            (TypeKey::Intersection(members_id), _) => {
+                self.check_intersection_source_with_tracer(*members_id, target, tracer)
             }
 
-            (_, TypeKey::Intersection(members)) => {
-                self.check_intersection_target_with_tracer(source, *members, tracer)
+            (_, TypeKey::Intersection(members_id)) => {
+                self.check_intersection_target_with_tracer(source, *members_id, tracer)
             }
 
-            (TypeKey::Function(source_func), TypeKey::Function(target_func)) => {
-                self.check_function_with_tracer(source_func, target_func, source, target, tracer)
+            (TypeKey::Function(source_func_id), TypeKey::Function(target_func_id)) => {
+                self.check_function_with_tracer(*source_func_id, *target_func_id, source, target, tracer)
             }
 
-            (TypeKey::Tuple(source_elems), TypeKey::Tuple(target_elems)) => {
-                self.check_tuple_with_tracer(source_elems, target_elems, source, target, tracer)
+            (TypeKey::Tuple(source_list_id), TypeKey::Tuple(target_list_id)) => {
+                self.check_tuple_with_tracer(*source_list_id, *target_list_id, source, target, tracer)
             }
 
             (TypeKey::Object(s_shape_id), TypeKey::Object(t_shape_id)) => {
@@ -312,7 +313,6 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 self.check_object_with_tracer(
                     &s_shape.properties,
-                    None,
                     &t_shape.properties,
                     source,
                     target,
@@ -324,7 +324,7 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
                 let s_shape = self.interner.object_shape(*s_shape_id);
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 self.check_object_with_index_with_tracer(
-                    &s_shape, None, &t_shape, source, target, tracer,
+                    &s_shape, &t_shape, source, target, tracer,
                 )
             }
 
@@ -332,8 +332,21 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
                 let s_shape = self.interner.object_shape(*s_shape_id);
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 self.check_object_with_index_with_tracer(
-                    &s_shape, None, &t_shape, source, target, tracer,
+                    &s_shape, &t_shape, source, target, tracer,
                 )
+            }
+
+            (TypeKey::ObjectWithIndex(s_shape_id), TypeKey::Object(t_shape_id)) => {
+                let s_shape = self.interner.object_shape(*s_shape_id);
+                let t_shape = self.interner.object_shape(*t_shape_id);
+                self.check_object_with_index_with_tracer(
+                    &s_shape, &t_shape, source, target, tracer,
+                )
+            }
+
+            (TypeKey::Array(source_elem), TypeKey::Array(target_elem)) => {
+                // Arrays are covariant
+                self.check_subtype_with_tracer(*source_elem, *target_elem, tracer)
             }
 
             _ => tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch {
@@ -357,16 +370,12 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     }
 
     /// Get apparent primitive shape for a type key.
-    fn apparent_primitive_shape_for_key(&self, key: &TypeKey) -> Option<ObjectShapeId> {
-        match key {
-            TypeKey::Intrinsic(IntrinsicKind::String)
-            | TypeKey::Intrinsic(IntrinsicKind::Number) => {
-                // These have apparent shapes like { toString(): string, etc. }
-                // For now, return None
-                None
-            }
-            _ => None,
-        }
+    /// Returns an ObjectShape for primitives that have apparent methods (e.g., String.prototype methods).
+    /// Currently returns None as apparent shapes are not yet implemented.
+    fn apparent_primitive_shape_for_key(&self, _key: &TypeKey) -> Option<ObjectShape> {
+        // TODO: Return apparent shapes for primitives (String, Number, etc.)
+        // For example, string has { toString(): string, valueOf(): string, ... }
+        None
     }
 
     /// Check intrinsic subtype relationship.
@@ -378,26 +387,25 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
         target_id: TypeId,
         tracer: &mut T,
     ) -> bool {
+        // Note: many cases are handled in fast paths before this function is called,
+        // but we still need to handle them here for completeness.
         let is_subtype = match (source, target) {
-            (IntrinsicKind::Any, _) | (_, IntrinsicKind::Any) => true,
-            (IntrinsicKind::Unknown, _) | (_, IntrinsicKind::Unknown) => true,
-            (IntrinsicKind::Never, _) | (_, IntrinsicKind::Never) => source == target,
-            (IntrinsicKind::Void, IntrinsicKind::Void) => true,
-            (IntrinsicKind::Void, IntrinsicKind::Any) => true,
-            (IntrinsicKind::Null, IntrinsicKind::Null) => true,
-            (IntrinsicKind::Undefined, IntrinsicKind::Undefined) => true,
-            (IntrinsicKind::String, IntrinsicKind::String) => true,
-            (IntrinsicKind::String, IntrinsicKind::Any) => true,
-            (IntrinsicKind::Number, IntrinsicKind::Number) => true,
-            (IntrinsicKind::Number, IntrinsicKind::Any) => true,
-            (IntrinsicKind::Boolean, IntrinsicKind::Boolean) => true,
-            (IntrinsicKind::Boolean, IntrinsicKind::Any) => true,
-            (IntrinsicKind::Bigint, IntrinsicKind::Bigint) => true,
-            (IntrinsicKind::Bigint, IntrinsicKind::Any) => true,
-            (IntrinsicKind::Symbol, IntrinsicKind::Symbol) => true,
-            (IntrinsicKind::Symbol, IntrinsicKind::Any) => true,
-            (IntrinsicKind::Object, IntrinsicKind::Object) => true,
-            (IntrinsicKind::Object, IntrinsicKind::Any) => true,
+            // Same type
+            (s, t) if s == t => true,
+            // never is subtype of everything (bottom type) - but this should be caught earlier
+            (IntrinsicKind::Never, _) => true,
+            // Only never is subtype of never
+            (_, IntrinsicKind::Never) => false,
+            // any is subtype of everything except never (already handled above)
+            (IntrinsicKind::Any, _) => true,
+            // Everything is subtype of any
+            (_, IntrinsicKind::Any) => true,
+            // Everything is subtype of unknown
+            (_, IntrinsicKind::Unknown) => true,
+            // unknown is only subtype of unknown/any (already handled)
+            (IntrinsicKind::Unknown, _) => false,
+            // Function is subtype of object
+            (IntrinsicKind::Function, IntrinsicKind::Object) => true,
             _ => false,
         };
 
@@ -441,12 +449,13 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     /// Check union source subtype (all members must be subtypes).
     fn check_union_source_with_tracer<T: SubtypeTracer>(
         &mut self,
-        members: &[TypeId],
+        members_id: TypeListId,
         target: TypeId,
-        target_key: &TypeKey,
+        _target_key: &TypeKey,
         tracer: &mut T,
     ) -> bool {
-        for &member in members {
+        let members = self.interner.type_list(members_id);
+        for &member in members.iter() {
             if !self.check_subtype_with_tracer(member, target, tracer) {
                 return false;
             }
@@ -458,11 +467,12 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     fn check_union_target_with_tracer<T: SubtypeTracer>(
         &mut self,
         source: TypeId,
-        source_key: &TypeKey,
-        members: &[TypeId],
+        _source_key: &TypeKey,
+        members_id: TypeListId,
         tracer: &mut T,
     ) -> bool {
-        for &member in members {
+        let members = self.interner.type_list(members_id);
+        for &member in members.iter() {
             if self.check_subtype_with_tracer(source, member, tracer) {
                 return true;
             }
@@ -477,12 +487,13 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     /// Check intersection source subtype.
     fn check_intersection_source_with_tracer<T: SubtypeTracer>(
         &mut self,
-        members: &[TypeId],
+        members_id: TypeListId,
         target: TypeId,
         tracer: &mut T,
     ) -> bool {
         // Source is intersection: at least one member must be subtype
-        for &member in members {
+        let members = self.interner.type_list(members_id);
+        for &member in members.iter() {
             if self.check_subtype_with_tracer(member, target, tracer) {
                 return true;
             }
@@ -494,11 +505,12 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     fn check_intersection_target_with_tracer<T: SubtypeTracer>(
         &mut self,
         source: TypeId,
-        members: &[TypeId],
+        members_id: TypeListId,
         tracer: &mut T,
     ) -> bool {
         // Target is intersection: source must be subtype of all members
-        for &member in members {
+        let members = self.interner.type_list(members_id);
+        for &member in members.iter() {
             if !self.check_subtype_with_tracer(source, member, tracer) {
                 return false;
             }
@@ -509,55 +521,72 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     /// Check function subtype relationship.
     fn check_function_with_tracer<T: SubtypeTracer>(
         &mut self,
-        source_func: &FunctionShape,
-        target_func: &FunctionShape,
-        source_id: TypeId,
-        target_id: TypeId,
+        source_shape_id: FunctionShapeId,
+        target_shape_id: FunctionShapeId,
+        _source_id: TypeId,
+        _target_id: TypeId,
         tracer: &mut T,
     ) -> bool {
-        // Check parameters
-        if source_func.params.len() != target_func.params.len() {
+        let source_func = self.interner.function_shape(source_shape_id);
+        let target_func = self.interner.function_shape(target_shape_id);
+
+        // Check parameters - target can have more required params than source
+        // (source is assignable if it accepts at least as many args as target requires)
+        let source_params = &source_func.params;
+        let target_params = &target_func.params;
+
+        // Count required params
+        let source_required = source_params.iter().filter(|p| !p.optional && !p.rest).count();
+        let target_required = target_params.iter().filter(|p| !p.optional && !p.rest).count();
+
+        // Source must accept at least as many required params as target
+        if source_required > target_required {
             return tracer.on_mismatch(|| SubtypeFailureReason::ParameterCountMismatch {
-                source_count: source_func.params.len(),
-                target_count: target_func.params.len(),
+                source_count: source_required,
+                target_count: target_required,
             });
         }
 
-        for (i, (s_param, t_param)) in source_func
-            .params
-            .iter()
-            .zip(target_func.params.iter())
-            .enumerate()
-        {
-            if self.strict_function_types {
-                // Contravariant: source param must be supertype of target param
-                if !self.check_subtype_with_tracer(*t_param, *s_param, tracer) {
+        // Check parameter types
+        let param_count = source_params.len().min(target_params.len());
+        for i in 0..param_count {
+            let s_param = &source_params[i];
+            let t_param = &target_params[i];
+
+            if self.strict_function_types && !source_func.is_method {
+                // Contravariant: target param must be subtype of source param
+                if !self.check_subtype_with_tracer(t_param.type_id, s_param.type_id, tracer) {
                     return tracer.on_mismatch(|| SubtypeFailureReason::ParameterTypeMismatch {
                         param_index: i,
-                        source_param: *s_param,
-                        target_param: *t_param,
+                        source_param: s_param.type_id,
+                        target_param: t_param.type_id,
                     });
                 }
             } else {
                 // Bivariant: params match in either direction
-                if !self.check_subtype_with_tracer(*s_param, *t_param, tracer) {
+                let forward = self.check_subtype_with_tracer(s_param.type_id, t_param.type_id, tracer);
+                let backward = self.check_subtype_with_tracer(t_param.type_id, s_param.type_id, tracer);
+                if !forward && !backward {
                     return tracer.on_mismatch(|| SubtypeFailureReason::ParameterTypeMismatch {
                         param_index: i,
-                        source_param: *s_param,
-                        target_param: *t_param,
+                        source_param: s_param.type_id,
+                        target_param: t_param.type_id,
                     });
                 }
             }
         }
 
         // Check return type (covariant)
-        if !self.check_subtype_with_tracer(source_func.return_type, target_func.return_type, tracer)
-        {
-            return tracer.on_mismatch(|| SubtypeFailureReason::ReturnTypeMismatch {
-                source_return: source_func.return_type,
-                target_return: target_func.return_type,
-                nested_reason: None,
-            });
+        // Special case: void return type accepts any return
+        if target_func.return_type != TypeId::VOID {
+            if !self.check_subtype_with_tracer(source_func.return_type, target_func.return_type, tracer)
+            {
+                return tracer.on_mismatch(|| SubtypeFailureReason::ReturnTypeMismatch {
+                    source_return: source_func.return_type,
+                    target_return: target_func.return_type,
+                    nested_reason: None,
+                });
+            }
         }
 
         true
@@ -566,25 +595,41 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     /// Check tuple subtype relationship.
     fn check_tuple_with_tracer<T: SubtypeTracer>(
         &mut self,
-        source_elems: &[TypeId],
-        target_elems: &[TypeId],
-        source_id: TypeId,
-        target_id: TypeId,
+        source_list_id: TupleListId,
+        target_list_id: TupleListId,
+        _source_id: TypeId,
+        _target_id: TypeId,
         tracer: &mut T,
     ) -> bool {
-        if source_elems.len() != target_elems.len() {
+        let source_elems = self.interner.tuple_list(source_list_id);
+        let target_elems = self.interner.tuple_list(target_list_id);
+
+        // Count required elements (non-optional, non-rest)
+        let source_required = source_elems.iter().filter(|e| !e.optional && !e.rest).count();
+        let target_required = target_elems.iter().filter(|e| !e.optional && !e.rest).count();
+
+        // Source must have at least as many required elements as target
+        if source_required < target_required {
             return tracer.on_mismatch(|| SubtypeFailureReason::TupleElementMismatch {
                 source_count: source_elems.len(),
                 target_count: target_elems.len(),
             });
         }
 
-        for (i, (s_elem, t_elem)) in source_elems.iter().zip(target_elems.iter()).enumerate() {
-            if !self.check_subtype_with_tracer(*s_elem, *t_elem, tracer) {
+        // Check element types for the overlapping portion
+        let check_count = source_elems.len().min(target_elems.len());
+        for i in 0..check_count {
+            let s_elem = &source_elems[i];
+            let t_elem = &target_elems[i];
+
+            // If target element is optional but source isn't, that's still OK
+            // If source element is optional but target requires it, check below
+
+            if !self.check_subtype_with_tracer(s_elem.type_id, t_elem.type_id, tracer) {
                 return tracer.on_mismatch(|| SubtypeFailureReason::TupleElementTypeMismatch {
                     index: i,
-                    source_element: *s_elem,
-                    target_element: *t_elem,
+                    source_element: s_elem.type_id,
+                    target_element: t_elem.type_id,
                 });
             }
         }
@@ -595,37 +640,45 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     /// Check object subtype relationship (properties only).
     fn check_object_with_tracer<T: SubtypeTracer>(
         &mut self,
-        source_props: &[(Atom, TypeId)],
-        _source_index: Option<&IndexSignature>,
-        target_props: &[(Atom, TypeId)],
+        source_props: &[PropertyInfo],
+        target_props: &[PropertyInfo],
         source_id: TypeId,
         target_id: TypeId,
         tracer: &mut T,
     ) -> bool {
-        // Build a set of target property names for fast lookup
-        let target_prop_names: std::collections::HashSet<_> =
-            target_props.iter().map(|(name, _)| name).collect();
+        // Check that all target properties exist in source with compatible types
+        for target_prop in target_props {
+            let source_prop = source_props.iter().find(|p| p.name == target_prop.name);
 
-        // Check that all target properties exist in source
-        for (target_name, target_type) in target_props {
-            let source_type = match source_props.iter().find(|(name, _)| name == target_name) {
-                Some((_, ty)) => *ty,
-                None => {
-                    return tracer.on_mismatch(|| SubtypeFailureReason::MissingProperty {
-                        property_name: *target_name,
-                        source_type: source_id,
-                        target_type: target_id,
-                    });
+            match source_prop {
+                Some(src_prop) => {
+                    // Check property type compatibility (covariant for read)
+                    if !self.check_subtype_with_tracer(src_prop.type_id, target_prop.type_id, tracer) {
+                        return tracer.on_mismatch(|| SubtypeFailureReason::PropertyTypeMismatch {
+                            property_name: target_prop.name,
+                            source_property_type: src_prop.type_id,
+                            target_property_type: target_prop.type_id,
+                            nested_reason: None,
+                        });
+                    }
+
+                    // Check optional compatibility: source optional cannot satisfy required target
+                    if src_prop.optional && !target_prop.optional {
+                        return tracer.on_mismatch(|| SubtypeFailureReason::OptionalPropertyRequired {
+                            property_name: target_prop.name,
+                        });
+                    }
                 }
-            };
-
-            if !self.check_subtype_with_tracer(source_type, *target_type, tracer) {
-                return tracer.on_mismatch(|| SubtypeFailureReason::PropertyTypeMismatch {
-                    property_name: *target_name,
-                    source_property_type: source_type,
-                    target_property_type: *target_type,
-                    nested_reason: None,
-                });
+                None => {
+                    // Property missing - error unless target property is optional
+                    if !target_prop.optional {
+                        return tracer.on_mismatch(|| SubtypeFailureReason::MissingProperty {
+                            property_name: target_prop.name,
+                            source_type: source_id,
+                            target_type: target_id,
+                        });
+                    }
+                }
             }
         }
 
@@ -636,7 +689,6 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
     fn check_object_with_index_with_tracer<T: SubtypeTracer>(
         &mut self,
         source_shape: &ObjectShape,
-        _source_index: Option<&IndexSignature>,
         target_shape: &ObjectShape,
         source_id: TypeId,
         target_id: TypeId,
@@ -645,7 +697,6 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
         // Check properties
         if !self.check_object_with_tracer(
             &source_shape.properties,
-            None,
             &target_shape.properties,
             source_id,
             target_id,
@@ -654,7 +705,46 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
             return false;
         }
 
-        // TODO: Check index signatures when the API is updated to use string_index/number_index
+        // Check string index signature compatibility
+        if let Some(ref target_idx) = target_shape.string_index {
+            match &source_shape.string_index {
+                Some(source_idx) => {
+                    if !self.check_subtype_with_tracer(source_idx.value_type, target_idx.value_type, tracer) {
+                        return tracer.on_mismatch(|| SubtypeFailureReason::IndexSignatureMismatch {
+                            index_kind: "string",
+                            source_value_type: source_idx.value_type,
+                            target_value_type: target_idx.value_type,
+                        });
+                    }
+                }
+                None => {
+                    // Source doesn't have string index but target does
+                    // All source properties must be compatible with target's index signature
+                    for prop in &source_shape.properties {
+                        if !self.check_subtype_with_tracer(prop.type_id, target_idx.value_type, tracer) {
+                            return tracer.on_mismatch(|| SubtypeFailureReason::IndexSignatureMismatch {
+                                index_kind: "string",
+                                source_value_type: prop.type_id,
+                                target_value_type: target_idx.value_type,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check number index signature compatibility
+        if let Some(ref target_idx) = target_shape.number_index {
+            if let Some(ref source_idx) = source_shape.number_index {
+                if !self.check_subtype_with_tracer(source_idx.value_type, target_idx.value_type, tracer) {
+                    return tracer.on_mismatch(|| SubtypeFailureReason::IndexSignatureMismatch {
+                        index_kind: "number",
+                        source_value_type: source_idx.value_type,
+                        target_value_type: target_idx.value_type,
+                    });
+                }
+            }
+        }
 
         true
     }
@@ -667,7 +757,6 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interner::Interner;
 
     /// Test that FastTracer returns correct boolean results
     #[test]
@@ -676,18 +765,18 @@ mod tests {
         let resolver = NoopResolver;
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
-        // Same type
-        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
+        // Same type - use built-in constants
+        let string_type = TypeId::STRING;
         let mut fast = FastTracer;
         assert!(checker.check_subtype_with_tracer(string_type, string_type, &mut fast));
 
         // Subtype relationship
-        let any_type = interner.intern_intrinsic(IntrinsicKind::Any);
+        let any_type = TypeId::ANY;
         let mut fast = FastTracer;
         assert!(checker.check_subtype_with_tracer(string_type, any_type, &mut fast));
 
         // Not a subtype
-        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
+        let number_type = TypeId::NUMBER;
         let mut fast = FastTracer;
         assert!(!checker.check_subtype_with_tracer(string_type, number_type, &mut fast));
     }
@@ -699,8 +788,8 @@ mod tests {
         let resolver = NoopResolver;
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
-        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
-        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
+        let string_type = TypeId::STRING;
+        let number_type = TypeId::NUMBER;
 
         let mut diag = DiagnosticTracer::new();
         checker.check_subtype_with_tracer(string_type, number_type, &mut diag);
@@ -729,16 +818,16 @@ mod tests {
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
         // string | number
-        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
-        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
-        let union_type = interner.intern_union(&[string_type, number_type]);
+        let string_type = TypeId::STRING;
+        let number_type = TypeId::NUMBER;
+        let union_type = interner.union(vec![string_type, number_type]);
 
         // string <: string | number (should pass)
         let mut fast = FastTracer;
         assert!(checker.check_subtype_with_tracer(string_type, union_type, &mut fast));
 
         // boolean <: string | number (should fail)
-        let bool_type = interner.intern_intrinsic(IntrinsicKind::Boolean);
+        let bool_type = TypeId::BOOLEAN;
         let mut diag = DiagnosticTracer::new();
         assert!(!checker.check_subtype_with_tracer(bool_type, union_type, &mut diag));
         assert!(diag.has_failure());
@@ -753,18 +842,27 @@ mod tests {
             TracerSubtypeChecker::new(&interner, &resolver).with_strict_function_types(true);
 
         // (x: string) => number
-        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
-        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
+        let string_type = TypeId::STRING;
+        let number_type = TypeId::NUMBER;
 
         let func1 = FunctionShape {
-            params: vec![string_type],
+            params: vec![ParamInfo {
+                name: None,
+                type_id: string_type,
+                optional: false,
+                rest: false,
+            }],
             return_type: number_type,
-            type_params: None,
+            type_params: Vec::new(),
+            this_type: None,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
         };
-        let func1_id = interner.intern_function(func1.clone());
+        let func1_id = interner.function(func1.clone());
 
-        // (x: string) => number
-        let func2_id = interner.intern_function(func1.clone());
+        // (x: string) => number (same type)
+        let func2_id = interner.function(func1);
 
         // Same function type should be compatible
         let mut fast = FastTracer;
@@ -778,8 +876,8 @@ mod tests {
         let resolver = NoopResolver;
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
-        let string_type = interner.intern_intrinsic(IntrinsicKind::String);
-        let number_type = interner.intern_intrinsic(IntrinsicKind::Number);
+        let string_type = TypeId::STRING;
+        let number_type = TypeId::NUMBER;
 
         // Warm up
         let mut fast = FastTracer;
@@ -816,7 +914,7 @@ mod tests {
         let resolver = NoopResolver;
         let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
 
-        // Test various type pairs
+        // Test various type pairs using built-in constants
         let test_cases = vec![
             (TypeId::STRING, TypeId::STRING, true),
             (TypeId::STRING, TypeId::NUMBER, false),
