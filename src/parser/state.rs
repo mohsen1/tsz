@@ -887,13 +887,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::EndOfFileToken) {
                 break;
             }
-            if self.is_token(SyntaxKind::SemicolonToken)
-                || self.is_token(SyntaxKind::CloseBraceToken)
-                || self.is_token(SyntaxKind::CloseParenToken)
-                || self.is_token(SyntaxKind::CloseBracketToken)
-                || self.is_token(SyntaxKind::CaseKeyword)
-                || self.is_token(SyntaxKind::DefaultKeyword)
-            {
+            if self.is_expression_boundary() {
                 break;
             }
             if self.is_binary_operator() {
@@ -903,6 +897,53 @@ impl ParserState {
                 break;
             }
             self.next_token();
+        }
+    }
+
+    /// Check if current token is at an expression boundary (a natural stopping point)
+    fn is_expression_boundary(&self) -> bool {
+        matches!(
+            self.token(),
+            SyntaxKind::SemicolonToken
+                | SyntaxKind::CloseBraceToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::CloseBracketToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::ColonToken
+                | SyntaxKind::CaseKeyword
+                | SyntaxKind::DefaultKeyword
+                | SyntaxKind::ElseKeyword
+                | SyntaxKind::WhileKeyword // for do-while
+                | SyntaxKind::AsKeyword
+                | SyntaxKind::SatisfiesKeyword
+        )
+    }
+
+    /// Create a missing expression placeholder for error recovery.
+    /// This allows the AST to remain structurally valid even when an expression is missing.
+    fn create_missing_expression(&mut self) -> NodeIndex {
+        let pos = self.token_pos();
+        // Create an identifier with empty text to represent missing expression
+        self.arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            pos,
+            pos,
+            IdentifierData {
+                escaped_text: String::new(),
+                original_text: None,
+                type_arguments: None,
+            },
+        )
+    }
+
+    /// Try to recover from a missing right-hand operand in a binary expression.
+    /// Returns a placeholder expression if recovery is possible.
+    fn try_recover_binary_rhs(&mut self) -> NodeIndex {
+        // If we're at an expression boundary after an operator, create a placeholder
+        if self.is_expression_boundary() || self.is_token(SyntaxKind::EndOfFileToken) {
+            self.create_missing_expression()
+        } else {
+            NodeIndex::NONE
         }
     }
 
@@ -6358,18 +6399,20 @@ impl ParserState {
 
             // Handle conditional expression
             if op == SyntaxKind::QuestionToken {
-                let when_true = self.parse_assignment_expression();
+                let mut when_true = self.parse_assignment_expression();
                 if when_true.is_none() {
                     // Emit TS1109 for incomplete conditional expression: condition ? [missing]
                     self.error_expression_expected();
-                    self.resync_to_next_expression_boundary();
+                    // Create placeholder for missing true branch
+                    when_true = self.create_missing_expression();
                 }
                 self.parse_expected(SyntaxKind::ColonToken);
-                let when_false = self.parse_assignment_expression();
+                let mut when_false = self.parse_assignment_expression();
                 if when_false.is_none() {
                     // Emit TS1109 for incomplete conditional expression: condition ? true : [missing]
                     self.error_expression_expected();
-                    self.resync_to_next_expression_boundary();
+                    // Create placeholder for missing false branch
+                    when_false = self.create_missing_expression();
                 }
                 let end_pos = self.token_end();
 
@@ -6411,11 +6454,17 @@ impl ParserState {
                     if result.is_none() {
                         // Emit TS1109 for incomplete assignment RHS: a = [missing]
                         self.error_expression_expected();
-                        self.resync_to_next_expression_boundary();
-                        // Break out of binary expression loop when parsing fails to prevent infinite loops
-                        return left;
+                        // Try to create a placeholder for missing RHS to maintain AST structure
+                        let recovered = self.try_recover_binary_rhs();
+                        if recovered.is_none() {
+                            self.resync_to_next_expression_boundary();
+                            // Break out of binary expression loop when parsing fails
+                            return left;
+                        }
+                        recovered
+                    } else {
+                        result
                     }
-                    result
                 } else {
                     let next_min = if op == SyntaxKind::AsteriskAsteriskToken {
                         precedence // right associative
@@ -6426,11 +6475,17 @@ impl ParserState {
                     if result.is_none() {
                         // Emit TS1109 for incomplete binary expression: a + [missing]
                         self.error_expression_expected();
-                        self.resync_to_next_expression_boundary();
-                        // Break out of binary expression loop when parsing fails to prevent infinite loops
-                        return left;
+                        // Try to create a placeholder for missing RHS to maintain AST structure
+                        let recovered = self.try_recover_binary_rhs();
+                        if recovered.is_none() {
+                            self.resync_to_next_expression_boundary();
+                            // Break out of binary expression loop when parsing fails
+                            return left;
+                        }
+                        recovered
+                    } else {
+                        result
                     }
-                    result
                 };
                 let end_pos = self.token_end();
 
@@ -10261,20 +10316,6 @@ impl ParserState {
         // In .ts files (non-JSX), always try to parse as type assertion first.
         // This will produce appropriate errors (e.g., TS1005 " '>' expected") for invalid JSX-like syntax.
         self.parse_type_assertion()
-    }
-
-    /// Check if this is a JSX fragment: <>
-    #[allow(dead_code)] // Infrastructure for JSX parsing
-    fn look_ahead_is_jsx_fragment(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        self.next_token(); // consume <
-        let is_fragment = self.is_token(SyntaxKind::GreaterThanToken);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_fragment
     }
 
     /// Parse a type assertion: <Type>expression
