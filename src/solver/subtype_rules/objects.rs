@@ -212,9 +212,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Rule #26: Split Accessors - Contravariant writes
-        // For mutable target properties, check write type compatibility
+        // For mutable target properties WITH DIFFERENT READ/WRITE TYPES, check write type compatibility
         // Target write type must be subtype of source write type (contravariance)
-        if !target.readonly {
+        //
+        // IMPORTANT: This contravariant check only applies to "split accessors" where the
+        // property has different types for reading vs writing (e.g., getter returns `string`,
+        // setter accepts `string | number`). For regular properties where read and write types
+        // are the same, TypeScript uses covariant checking for both.
+        //
+        // Without this condition, we would incorrectly reject valid assignments like:
+        // - { a: string } <: { a?: string } (required to optional)
+        // - { x: undefined } <: { x?: number } (undefined to optional)
+        let has_split_accessor =
+            source.write_type != source.type_id || target.write_type != target.type_id;
+
+        if !target.readonly && has_split_accessor {
             let source_write = self.optional_property_write_type(source);
             let target_write = self.optional_property_write_type(target);
 

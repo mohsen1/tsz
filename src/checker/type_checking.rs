@@ -8475,6 +8475,38 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Get the namespace name if the type is a namespace/module type.
+    ///
+    /// This function checks if a type is a reference to a namespace or module
+    /// and returns the namespace name if so.
+    ///
+    /// ## Returns:
+    /// - `Some(name)` if the type is a namespace/module reference
+    /// - `None` if the type is not a namespace/module
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// namespace NS { export const x = 1; }
+    /// // get_namespace_name(typeof NS) → Some("NS")
+    ///
+    /// const obj = { x: 1 };
+    /// // get_namespace_name(typeof obj) → None
+    /// ```
+    pub(crate) fn get_namespace_name(&self, type_id: TypeId) -> Option<String> {
+        use crate::solver::{SymbolRef, TypeKey};
+
+        if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+                // Check if this is a namespace/module symbol
+                if symbol.flags & (symbol_flags::MODULE | symbol_flags::NAMESPACE) != 0 {
+                    return Some(symbol.escaped_name.clone());
+                }
+            }
+        }
+
+        None
+    }
+
     /// Check if a symbol is type-only (from `import type`).
     ///
     /// This is used to allow type-only imports in type positions while

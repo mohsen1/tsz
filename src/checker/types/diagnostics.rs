@@ -110,6 +110,9 @@ pub mod diagnostic_messages {
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPES: &str =
         "Operator '{0}' cannot be applied to types '{1}' and '{2}'.";
 
+    // Value cannot be used here (18050)
+    pub const VALUE_CANNOT_BE_USED_HERE: &str = "The value '{0}' cannot be used here.";
+
     // Function/call errors
     pub const EXPECTED_ARGUMENTS: &str = "Expected {0} arguments, but got {1}.";
     pub const EXPECTED_AT_LEAST_ARGUMENTS: &str = "Expected at least {0} arguments, but got {1}.";
@@ -525,6 +528,7 @@ pub mod diagnostic_codes {
 
     // Target version errors (18xxx)
     pub const ACCESSOR_MODIFIER_ONLY_ES2015_PLUS: u32 = 18045; // Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher.
+    pub const VALUE_CANNOT_BE_USED_HERE: u32 = 18050; // The value '{0}' cannot be used here.
 
     // =========================================================================
     // Warning codes (4xxx - 6xxx)

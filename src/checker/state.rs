@@ -1859,12 +1859,9 @@ impl<'a> CheckerState<'a> {
         // Note: We use self.error() which already checks emitted_diagnostics for deduplication
         // The key is (start, code), so we won't emit duplicate errors at the same location
         // Emit the TS2307 error
-        self.error(
-            start,
-            length,
-            format!("Cannot find module '{}'", module_specifier),
-            diagnostic_codes::CANNOT_FIND_MODULE,
-        );
+        use crate::checker::types::diagnostics::{diagnostic_messages, format_message};
+        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_specifier]);
+        self.error(start, length, message, diagnostic_codes::CANNOT_FIND_MODULE);
     }
 
     pub(crate) fn apply_type_arguments_to_constructor_type(
