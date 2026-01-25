@@ -34,6 +34,7 @@ impl<'a> CheckerState<'a> {
     /// - Tuple type
     /// - Has a [Symbol.iterator] method
     /// - A union where all members are iterable
+    /// - An intersection where at least one member is iterable
     pub fn is_iterable_type(&self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
 
@@ -50,6 +51,8 @@ impl<'a> CheckerState<'a> {
             || type_id == TypeId::NULL
             || type_id == TypeId::UNDEFINED
             || type_id == TypeId::NEVER
+            || type_id == TypeId::SYMBOL
+            || type_id == TypeId::BIGINT
         {
             return false;
         }
@@ -68,22 +71,63 @@ impl<'a> CheckerState<'a> {
                 let members = self.ctx.types.type_list(members_id);
                 members.iter().all(|&m| self.is_iterable_type(m))
             }
+            Some(TypeKey::Intersection(members_id)) => {
+                // Intersection is iterable if at least one member is iterable
+                let members = self.ctx.types.type_list(members_id);
+                members.iter().any(|&m| self.is_iterable_type(m))
+            }
             Some(TypeKey::Object(shape_id)) => {
                 // Check if object has a [Symbol.iterator] method or 'next' method
-                let shape = self.ctx.types.object_shape(shape_id);
-                for prop in &shape.properties {
-                    let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                    // Check for [Symbol.iterator] or 'next' method (iterator protocol)
-                    if (prop_name.as_ref() == "[Symbol.iterator]" || prop_name.as_ref() == "next")
-                        && prop.is_method
-                    {
-                        return true;
-                    }
-                }
-                false
+                self.object_has_iterator_method(shape_id)
             }
+            // Type parameters - conservatively assume not iterable unless we can prove otherwise
+            Some(TypeKey::TypeParameter(_)) => false,
+            // Functions, classes without Symbol.iterator are not iterable
+            Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_)) => false,
             _ => false,
         }
+    }
+
+    /// Check if an object shape has a Symbol.iterator method.
+    fn object_has_iterator_method(&self, shape_id: crate::solver::ObjectShapeId) -> bool {
+        let shape = self.ctx.types.object_shape(shape_id);
+
+        // First check direct properties
+        for prop in &shape.properties {
+            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+            // Check for [Symbol.iterator] method (iterator protocol)
+            if prop_name.as_ref() == "[Symbol.iterator]" && prop.is_method {
+                return true;
+            }
+            // Also check for 'next' method (direct iterator, not iterable)
+            // This is a heuristic - if something has 'next' it might be an iterator
+            if prop_name.as_ref() == "next" && prop.is_method {
+                // Verify it's callable (function type)
+                if let Some(TypeKey::Function(_)) = self.ctx.types.lookup(prop.type_id) {
+                    return true;
+                }
+            }
+        }
+
+        // Check call signatures - if object is callable, check if it's a generator
+        for &sig_id in &shape.call_signatures {
+            if let Some(TypeKey::Function(func_id)) = self.ctx.types.lookup(sig_id) {
+                let func_shape = self.ctx.types.function_shape(func_id);
+                // Generator functions return iterators
+                // Check if return type has 'next' method (heuristic for iterator)
+                if let Some(TypeKey::Object(ret_shape_id)) = self.ctx.types.lookup(func_shape.return_type) {
+                    let ret_shape = self.ctx.types.object_shape(ret_shape_id);
+                    for prop in &ret_shape.properties {
+                        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+                        if prop_name.as_ref() == "next" {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Check if a type is async iterable (has Symbol.asyncIterator protocol).
