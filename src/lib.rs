@@ -412,6 +412,7 @@ impl CompilerOptions {
             strict_bind_call_apply: false,
             exact_optional_property_types: false,
             no_lib: false,
+            target: crate::checker::context::ScriptTarget::default(),
         }
     }
 }

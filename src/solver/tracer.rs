@@ -640,24 +640,7 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
             return false;
         }
 
-        // Check index signatures
-        if let (Some(source_idx), Some(target_idx)) = (&source_shape.index_signature, &target_shape.index_signature) {
-            if source_idx.key_kind != target_idx.key_kind {
-                return tracer.on_mismatch(|| SubtypeFailureReason::IndexSignatureMismatch {
-                    index_kind: if source_idx.key_kind == IndexKind::String { "string" } else { "number" },
-                    source_value_type: source_idx.value_type,
-                    target_value_type: target_idx.value_type,
-                });
-            }
-
-            if !self.check_subtype_with_tracer(source_idx.value_type, target_idx.value_type, tracer) {
-                return tracer.on_mismatch(|| SubtypeFailureReason::IndexSignatureMismatch {
-                    index_kind: if source_idx.key_kind == IndexKind::String { "string" } else { "number" },
-                    source_value_type: source_idx.value_type,
-                    target_value_type: target_idx.value_type,
-                });
-            }
-        }
+        // TODO: Check index signatures when the API is updated to use string_index/number_index
 
         true
     }
