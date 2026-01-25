@@ -1,31 +1,17 @@
 //! Tests for contextual typing and type inference
 
-use crate::binder::BinderState;
-use crate::checker::state::CheckerState;
-use crate::parser::NodeArena;
-use crate::parser::ParserState;
-use crate::solver::TypeInterner;
+use crate::checker::types::Diagnostic;
 use crate::test_fixtures::TestContext;
 
-/// Helper function to create a checker
-fn create_checker(source: &str) -> (TestContext, CheckerState) {
-    let arena = NodeArena::new();
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+/// Helper function to check source and return diagnostics
+fn check_source(source: &str) -> Vec<Diagnostic> {
+    let mut ctx = TestContext::new_without_lib();
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(&arena, root);
-
-    let types = TypeInterner::new();
-    let ctx = TestContext {
-        arena,
-        binder,
-        types,
-    };
-
+    ctx.binder.bind_source_file(parser.get_arena(), root);
     let mut checker = ctx.checker();
     checker.check_source_file(root);
-    (ctx, checker)
+    checker.ctx.diagnostics.clone()
 }
 
 #[test]
@@ -36,15 +22,10 @@ const strings = numbers.map(x => x.toString());
 // x should be inferred as number from the array
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322 - x should be correctly inferred as number
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for arrow function parameter inference, got {}",
@@ -60,15 +41,10 @@ const h: Handler = n => n.toString();
 // n should be inferred as number from the Handler type
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322 - n should be correctly inferred
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for arrow function with contextual type, got {}",
@@ -87,15 +63,10 @@ const p: Person = { name: "Alice", age: 30 };
 // Properties should be contextually typed
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for object literal property inference, got {}",
@@ -114,15 +85,10 @@ function getNumber(): number {
 }
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for return statement contextual typing, got {}",
@@ -138,15 +104,10 @@ x = Math.random() > 0.5 ? "hello" : "world";
 // Both branches should be contextually typed as string
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for ternary branch contextual typing, got {}",
@@ -162,15 +123,10 @@ const { x, y }: { x: number; y: number } = obj;
 // x and y should be contextually typed as number
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for destructuring contextual typing, got {}",
@@ -187,15 +143,10 @@ const doubled = numbers.map(x => x * 2);
 // x should be inferred as number from the array
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for arrow function return inference, got {}",
@@ -218,15 +169,10 @@ const calc: Calculator = {
 // Return type should be inferred as number
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for object literal method inference, got {}",
@@ -243,15 +189,10 @@ const arr2: string[] = ["a", "b", "c"];
 // Elements should be contextually typed as string
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for array literal contextual typing, got {}",
@@ -269,15 +210,10 @@ const result = identity("hello");
 // T should be inferred as string
 "#;
 
-    let (_ctx, checker) = create_checker(source);
+    let diagnostics = check_source(source);
 
     // Should NOT emit TS2322
-    let ts2322_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .count();
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 error for generic function contextual typing, got {}",

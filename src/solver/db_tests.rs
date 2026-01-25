@@ -1,6 +1,7 @@
+#[cfg(feature = "experimental_salsa")]
+use crate::solver::SalsaDatabase;
 use crate::solver::{
-    LiteralValue, QueryCache, QueryDatabase, SalsaDatabase, TypeDatabase, TypeId, TypeInterner,
-    TypeKey,
+    LiteralValue, QueryCache, QueryDatabase, TypeDatabase, TypeId, TypeInterner, TypeKey,
 };
 use std::sync::Arc;
 
@@ -49,6 +50,7 @@ fn query_cache_caches_evaluate_and_subtype() {
     assert_eq!(db.subtype_cache_len(), 1);
 }
 
+#[cfg(feature = "experimental_salsa")]
 #[test]
 fn salsa_database_implements_type_database() {
     let interner = Arc::new(TypeInterner::new());
@@ -67,6 +69,7 @@ fn salsa_database_implements_type_database() {
     }
 }
 
+#[cfg(feature = "experimental_salsa")]
 #[test]
 fn salsa_database_query_caching() {
     let interner = Arc::new(TypeInterner::new());
@@ -84,6 +87,7 @@ fn salsa_database_query_caching() {
     }
 }
 
+#[cfg(feature = "experimental_salsa")]
 #[test]
 fn salsa_database_coexists_with_legacy() {
     // Test that both implementations produce the same results

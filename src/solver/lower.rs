@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use crate::solver::TypeInterner;
 
 /// Maximum number of type lowering operations to prevent infinite loops
-const MAX_LOWERING_OPERATIONS: u32 = 100_000;
+pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 
 /// Type lowering context.
 /// Converts AST type nodes into interned TypeIds.

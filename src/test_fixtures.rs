@@ -81,10 +81,10 @@ impl TestContext {
 
         // Set lib contexts for global symbol resolution
         if !self.lib_files.is_empty() {
-            let lib_contexts: Vec<crate::binder::LibContext> = self
+            let lib_contexts: Vec<crate::checker::context::LibContext> = self
                 .lib_files
                 .iter()
-                .map(|lib| crate::binder::LibContext {
+                .map(|lib| crate::checker::context::LibContext {
                     arena: Arc::clone(&lib.arena),
                     binder: Arc::clone(&lib.binder),
                 })
@@ -108,10 +108,10 @@ impl TestContext {
 
         // Set lib contexts for global symbol resolution
         if !self.lib_files.is_empty() {
-            let lib_contexts: Vec<crate::binder::LibContext> = self
+            let lib_contexts: Vec<crate::checker::context::LibContext> = self
                 .lib_files
                 .iter()
-                .map(|lib| crate::binder::LibContext {
+                .map(|lib| crate::checker::context::LibContext {
                     arena: Arc::clone(&lib.arena),
                     binder: Arc::clone(&lib.binder),
                 })
@@ -135,10 +135,10 @@ impl TestContext {
 
         // Set lib contexts for global symbol resolution
         if !self.lib_files.is_empty() {
-            let lib_contexts: Vec<crate::binder::LibContext> = self
+            let lib_contexts: Vec<crate::checker::context::LibContext> = self
                 .lib_files
                 .iter()
-                .map(|lib| crate::binder::LibContext {
+                .map(|lib| crate::checker::context::LibContext {
                     arena: Arc::clone(&lib.arena),
                     binder: Arc::clone(&lib.binder),
                 })

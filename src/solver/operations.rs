@@ -41,7 +41,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 
 /// Maximum recursion depth for type constraint collection to prevent infinite loops.
-const MAX_CONSTRAINT_RECURSION_DEPTH: usize = 100;
+pub const MAX_CONSTRAINT_RECURSION_DEPTH: usize = 100;
 
 pub trait AssignabilityChecker {
     fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool;

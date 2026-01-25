@@ -18,7 +18,7 @@ use rustc_hash::FxHashMap;
 use crate::solver::TypeInterner;
 
 /// Maximum depth for recursive type instantiation.
-pub(crate) const MAX_INSTANTIATION_DEPTH: u32 = 50;
+pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
 
 /// A substitution map from type parameter names to concrete types.
 #[derive(Clone, Debug, Default)]
