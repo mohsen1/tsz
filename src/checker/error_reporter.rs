@@ -538,6 +538,11 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
+        // Suppress error if either type is ERROR - prevents cascading errors
+        if source == TypeId::ERROR || target == TypeId::ERROR {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -557,6 +562,12 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
+        // Suppress error if type is ERROR - prevents cascading errors
+        // e.g., if Promise is undefined (TS2583), don't also emit TS2339 for Promise.then
+        if type_id == TypeId::ERROR {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -571,6 +582,11 @@ impl<'a> CheckerState<'a> {
 
     /// Report an excess property error using solver diagnostics with source tracking.
     pub fn error_excess_property_at(&mut self, prop_name: &str, target: TypeId, idx: NodeIndex) {
+        // Suppress error if type is ERROR - prevents cascading errors
+        if target == TypeId::ERROR {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -1094,6 +1110,11 @@ impl<'a> CheckerState<'a> {
 
     /// Report a "type is not callable" error using solver diagnostics with source tracking.
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
+        // Suppress error if type is ERROR - prevents cascading errors
+        if type_id == TypeId::ERROR {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -1110,6 +1131,11 @@ impl<'a> CheckerState<'a> {
     /// This is specifically for class constructors called without 'new'.
     pub fn error_class_constructor_without_new_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         use crate::solver::TypeFormatter;
+
+        // Suppress error if type is ERROR - prevents cascading errors
+        if type_id == TypeId::ERROR {
+            return;
+        }
 
         let Some(loc) = self.get_source_location(idx) else {
             return;
@@ -1136,6 +1162,11 @@ impl<'a> CheckerState<'a> {
     /// This is for expressions used with `new` that don't have construct signatures.
     pub fn error_not_a_constructor_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         use crate::solver::TypeFormatter;
+
+        // Suppress error if type is ERROR - prevents cascading errors
+        if type_id == TypeId::ERROR {
+            return;
+        }
 
         let Some(loc) = self.get_source_location(idx) else {
             return;

@@ -66,6 +66,8 @@ mod contextual_typing_tests;
 #[cfg(test)]
 mod control_flow_tests;
 #[cfg(test)]
+mod error_cascade_tests;
+#[cfg(test)]
 mod global_type_tests;
 #[cfg(test)]
 mod no_filename_based_behavior_tests;
