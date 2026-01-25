@@ -1068,9 +1068,9 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .get_global_type_with_libs(name, &lib_binders)
                     {
-                        // Global type exists in lib binders - resolve it properly
+                        // Global type symbol exists in lib binders - try to resolve it
                         if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                            // Still process type arguments for validation
+                            // Successfully resolved - process type arguments and return
                             if let Some(args) = &type_ref.type_arguments {
                                 for &arg_idx in &args.nodes {
                                     let _ = self.get_type_from_type_node(arg_idx);
@@ -1078,11 +1078,14 @@ impl<'a> CheckerState<'a> {
                             }
                             return type_id;
                         }
+                        // Symbol exists but failed to resolve - this is an error condition
+                        // The type is declared but we couldn't get its TypeId, which shouldn't happen
+                        // Fall through to emit error below
                     }
                     // Fall back to resolve_lib_type_by_name for cases where type may exist
                     // but get_global_type_with_libs doesn't find it
                     if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                        // Still process type arguments for validation
+                        // Successfully resolved via alternate path
                         if let Some(args) = &type_ref.type_arguments {
                             for &arg_idx in &args.nodes {
                                 let _ = self.get_type_from_type_node(arg_idx);
