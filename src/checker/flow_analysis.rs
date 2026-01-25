@@ -1339,7 +1339,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        self.ctx.binder.get_symbol_for_node(idx)
+        self.ctx.binder.get_node_symbol(idx)
     }
 
     /// Check if we're currently inside a closure (function expression or arrow function).
