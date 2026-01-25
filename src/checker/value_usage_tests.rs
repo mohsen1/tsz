@@ -620,3 +620,116 @@ const result = MyEnum.A + MyEnum.B;  // OK: enum arithmetic is valid
         error_count
     );
 }
+
+#[test]
+fn test_null_property_access_emits_ts18050() {
+    // Test accessing property on null literal - should emit TS18050
+    let source = r#"
+const x = null.toString();  // TS18050: The value 'null' cannot be used here.
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should emit TS18050 for null.toString()
+    let ts18050_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18050)
+        .count();
+    assert!(
+        ts18050_count >= 1,
+        "Expected at least 1 TS18050 error for null property access, got {}",
+        ts18050_count
+    );
+}
+
+#[test]
+fn test_undefined_property_access_emits_ts18050() {
+    // Test accessing property on undefined - should emit TS18050
+    let source = r#"
+const x = undefined.toString();  // TS18050: The value 'undefined' cannot be used here.
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should emit TS18050 for undefined.toString()
+    let ts18050_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18050)
+        .count();
+    assert!(
+        ts18050_count >= 1,
+        "Expected at least 1 TS18050 error for undefined property access, got {}",
+        ts18050_count
+    );
+}
+
+#[test]
+fn test_string_subtraction_emits_ts2362() {
+    // Test string - string should emit TS2362
+    let source = r#"
+const a = "hello";
+const b = "world";
+const result = a - b;  // TS2362: left-hand side must be number/bigint/any/enum
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should emit TS2362 for string - string
+    let ts2362_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2362)
+        .count();
+    assert!(
+        ts2362_count >= 1,
+        "Expected at least 1 TS2362 error for string subtraction, got {}",
+        ts2362_count
+    );
+}
