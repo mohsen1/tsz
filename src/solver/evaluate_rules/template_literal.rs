@@ -47,8 +47,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 total_combinations = total_combinations.saturating_mul(span_count);
                 if total_combinations > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                    // Would exceed limit - return template literal as-is
-                    return self.interner().template_literal(span_list.to_vec());
+                    // Would exceed limit - widen to string (Rule #22: Template String Expansion Limits)
+                    // TypeScript aborts template literal expansion when cardinality > 100k
+                    eprintln!(
+                        "Template literal expansion aborted: would exceed limit of {} (computed {} combinations)",
+                        TEMPLATE_LITERAL_EXPANSION_LIMIT, total_combinations
+                    );
+                    return TypeId::STRING;
                 }
             }
         }
@@ -77,7 +82,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Check if expansion would exceed limit
                     let new_size = combinations.len().saturating_mul(string_values.len());
                     if new_size > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                        return self.interner().template_literal(span_list.to_vec());
+                        // Would exceed limit - widen to string (Rule #22: Template String Expansion Limits)
+                        eprintln!(
+                            "Template literal expansion aborted: would exceed limit of {} (computed {} combinations)",
+                            TEMPLATE_LITERAL_EXPANSION_LIMIT, new_size
+                        );
+                        return TypeId::STRING;
                     }
 
                     // Compute Cartesian product

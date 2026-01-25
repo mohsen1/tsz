@@ -107,3 +107,5 @@ mod union_tests;
 mod visitor_tests;
 #[cfg(test)]
 mod mapped_key_remap_tests;
+#[cfg(test)]
+mod template_expansion_tests;
