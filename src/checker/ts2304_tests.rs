@@ -38,8 +38,7 @@ fn test_ts2304_emitted_for_undefined_name() {
 #[test]
 fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
     // Create a test context WITH lib.d.ts
-    let ctx = TestContext::new();
-    let mut checker = ctx.checker();
+    let mut ctx = TestContext::new();
 
     // Parse code that references console (defined in lib.d.ts)
     let source = r#"
@@ -52,6 +51,7 @@ fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
     // Bind with lib symbols merged
     ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
+    let mut checker = ctx.checker();
     checker.check_source_file(root);
 
     // Verify TS2304 was NOT emitted for console
@@ -123,8 +123,7 @@ fn test_any_poisoning_eliminated() {
 #[test]
 fn test_any_poisoning_fix_console_returns_void_not_any() {
     // Create a test context WITH lib.d.ts
-    let ctx = TestContext::new();
-    let mut checker = ctx.checker();
+    let mut ctx = TestContext::new();
 
     // Parse code that tests console.log returns void, not any
     // This verifies the "Any poisoning" fix - console should have proper type
@@ -138,6 +137,7 @@ fn test_any_poisoning_fix_console_returns_void_not_any() {
     // Bind with lib symbols merged
     ctx.binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
 
+    let mut checker = ctx.checker();
     checker.check_source_file(root);
 
     // Verify TS2322 was emitted (type mismatch), not TS2304
@@ -155,8 +155,7 @@ fn test_any_poisoning_fix_console_returns_void_not_any() {
 #[test]
 fn test_any_poisoning_fix_array_typed_correctly() {
     // Create a test context WITH lib.d.ts
-    let ctx = TestContext::new();
-    let mut checker = ctx.checker();
+    let mut ctx = TestContext::new();
 
     // Parse code that tests Array is properly typed
     let source = r#"
@@ -183,8 +182,7 @@ fn test_any_poisoning_fix_array_typed_correctly() {
 #[test]
 fn test_any_poisoning_fix_promise_typed_correctly() {
     // Create a test context WITH lib.d.ts
-    let ctx = TestContext::new();
-    let mut checker = ctx.checker();
+    let mut ctx = TestContext::new();
 
     // Parse code that tests Promise is properly typed
     let source = r#"
@@ -211,8 +209,7 @@ fn test_any_poisoning_fix_promise_typed_correctly() {
 #[test]
 fn test_any_poisoning_fix_math_returns_number() {
     // Create a test context WITH lib.d.ts
-    let ctx = TestContext::new();
-    let mut checker = ctx.checker();
+    let mut ctx = TestContext::new();
 
     // Parse code that tests Math.abs returns number
     let source = r#"
@@ -239,8 +236,7 @@ fn test_any_poisoning_fix_math_returns_number() {
 #[test]
 fn test_any_poisoning_fix_multiple_globals() {
     // Create a test context WITH lib.d.ts
-    let ctx = TestContext::new();
-    let mut checker = ctx.checker();
+    let mut ctx = TestContext::new();
 
     // Parse code that tests multiple global symbols are properly typed
     let source = r#"
@@ -269,8 +265,7 @@ fn test_any_poisoning_fix_multiple_globals() {
 #[test]
 fn test_any_poisoning_fix_undefined_global_emits_ts2304() {
     // Create a test context WITH lib.d.ts
-    let ctx = TestContext::new();
-    let mut checker = ctx.checker();
+    let mut ctx = TestContext::new();
 
     // Parse code that references a truly undefined global
     let source = r#"
