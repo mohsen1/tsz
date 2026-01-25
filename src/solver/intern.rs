@@ -38,7 +38,7 @@ const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
 const SHARD_MASK: u32 = (SHARD_COUNT as u32) - 1;
 pub(crate) const PROPERTY_MAP_THRESHOLD: usize = 24;
 const TYPE_LIST_INLINE: usize = 8;
-pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 10000;
+pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
 
 type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 
@@ -1402,6 +1402,10 @@ impl TypeInterner {
             };
             total = total.saturating_mul(span_count);
             if total > TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                eprintln!(
+                    "Template literal expansion would exceed limit of {} (computed {} combinations)",
+                    TEMPLATE_LITERAL_EXPANSION_LIMIT, total
+                );
                 return true;
             }
         }
@@ -1484,6 +1488,10 @@ impl TypeInterner {
 
             // Safety check: should not exceed limit at this point, but verify
             if combinations.len() > TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                eprintln!(
+                    "Template literal expansion exceeded limit of {} (actual: {} combinations), widening to string",
+                    TEMPLATE_LITERAL_EXPANSION_LIMIT, combinations.len()
+                );
                 return TypeId::STRING;
             }
         }
