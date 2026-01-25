@@ -67,7 +67,7 @@ cargo run --bin audit_unsoundness -- --status missing
 | 20 | Object vs object vs {} | P1 | `compat.rs`, `subtype.rs` | All three variants: {} / object / Object |
 | 24 | Cross-Enum Incompatibility | P4 | `state.rs` | Nominal enum comparison |
 | 25 | Index Signature Consistency | P3 | `objects.rs` | Property-vs-index validation |
-| 26 | Split Accessors (Getter/Setter Variance) | P4 | `types.rs`, `objects.rs` | PropertyInfo has read_type and write_type |
+| 26 | Split Accessors (Getter/Setter Variance) | P4 | `types.rs`, `objects.rs` | Covariant reads + contravariant writes fully implemented |
 | 27 | Homomorphic Mapped Types over Primitives | P4 | `keyof.rs`, `apparent.rs`, `mapped.rs` | keyof of primitives calls apparent_primitive_keyof() |
 | 28 | Constructor Void Exception | P4 | `functions.rs` | `allow_void_return` in constructors |
 | 29 | Global `Function` Type | P4 | `subtype.rs`, `intrinsics.rs` | `is_callable_type()` |
@@ -97,7 +97,7 @@ cargo run --bin audit_unsoundness -- --status missing
 | 19 | Covariant `this` Types | P2 | `subtype.rs`, `functions.rs` | `type_contains_this_type()` detection |
 | 24 | Cross-Enum Incompatibility | P4 | `state.rs` | Nominal enum comparison |
 | 25 | Index Signature Consistency | P3 | `objects.rs` | Property-vs-index validation |
-| 26 | Split Accessors (Getter/Setter Variance) | P4 | `types.rs`, `objects.rs` | PropertyInfo has read_type and write_type |
+| 26 | Split Accessors (Getter/Setter Variance) | P4 | `types.rs`, `objects.rs` | Covariant reads + contravariant writes fully implemented |
 | 27 | Homomorphic Mapped Types over Primitives | P4 | `keyof.rs`, `apparent.rs`, `mapped.rs` | keyof of primitives calls apparent_primitive_keyof() |
 | 28 | Constructor Void Exception | P4 | `functions.rs` | `allow_void_return` in constructors |
 | 29 | Global `Function` Type | P4 | `subtype.rs`, `intrinsics.rs` | `is_callable_type()` |
