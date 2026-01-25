@@ -471,8 +471,10 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         // Spawn native binary
         const { spawn } = require('child_process');
         const args = filesToCheck.map(f => path.join(tmpDir, f));
+        // Run from project directory so CLI can find its built-in lib files
+        const projectDir = path.resolve(__dirname, '../..');
         const child = spawn(nativeBinaryPath, args, {
-          cwd: tmpDir,
+          cwd: projectDir,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
 
