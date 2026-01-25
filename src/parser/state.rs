@@ -8568,8 +8568,12 @@ impl ParserState {
         }
 
         // Additional error recovery: if we're at a clear statement boundary or EOF,
-        // return an error node instead of emitting TS1005
-        if self.is_statement_start() || self.is_token(SyntaxKind::EndOfFileToken) {
+        // and the token cannot start a type, return an error node.
+        // Note: We must check can_token_start_type() because identifiers are both
+        // statement starters AND valid type names (e.g., "let x: MyType = ...")
+        if !self.can_token_start_type()
+            && (self.is_statement_start() || self.is_token(SyntaxKind::EndOfFileToken))
+        {
             self.error_type_expected();
             return self.error_node();
         }

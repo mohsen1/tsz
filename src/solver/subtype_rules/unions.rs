@@ -502,6 +502,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !allow_bivariant {
             return self.check_subtype(source, target);
         }
+
+        // If we're already in bivariant mode, don't nest - just check normally
+        // This prevents infinite recursion when methods contain other methods
+        if !self.strict_function_types && self.allow_bivariant_param_count {
+            return self.check_subtype(source, target);
+        }
+
         let prev = self.strict_function_types;
         let prev_param_count = self.allow_bivariant_param_count;
         self.strict_function_types = false;
@@ -522,6 +529,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !allow_bivariant {
             return self.explain_failure(source, target);
         }
+
+        // If we're already in bivariant mode, don't nest - just check normally
+        // This prevents infinite recursion when methods contain other methods
+        if !self.strict_function_types && self.allow_bivariant_param_count {
+            return self.explain_failure(source, target);
+        }
+
         let prev = self.strict_function_types;
         let prev_param_count = self.allow_bivariant_param_count;
         self.strict_function_types = false;

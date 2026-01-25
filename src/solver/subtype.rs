@@ -356,6 +356,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::Provisional;
         }
 
+        // Also check the reversed pair to detect cycles in bivariant parameter checking.
+        // When checking bivariant parameters, we check both (A, B) and (B, A), which can
+        // create cross-recursion that the normal cycle detection doesn't catch.
+        let reversed_pair = (target, source);
+        if self.in_progress.contains(&reversed_pair) {
+            // We're in a cross-recursion cycle from bivariant checking
+            return SubtypeResult::Provisional;
+        }
+
         // Memory safety: limit the number of in-progress pairs to prevent unbounded growth
         if self.in_progress.len() >= MAX_IN_PROGRESS_PAIRS {
             // Too many pairs being tracked - likely pathological case

@@ -98,11 +98,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target_type: TypeId,
         is_method: bool,
     ) -> bool {
+        // Fast path: if types are identical, they're always compatible
+        if source_type == target_type {
+            return true;
+        }
+
         let contains_this =
             self.type_contains_this_type(source_type) || self.type_contains_this_type(target_type);
-
-        // Contravariant check: Target <: Source
-        let is_contravariant = self.check_subtype(target_type, source_type).is_true();
 
         // Methods are bivariant regardless of strict_function_types setting
         // UNLESS disable_method_bivariance is set
@@ -113,13 +115,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if contains_this {
                 return self.check_subtype(source_type, target_type).is_true();
             }
-            is_contravariant
+            // Contravariant check: Target <: Source
+            self.check_subtype(target_type, source_type).is_true()
         } else {
             // Bivariant: either direction works (Unsound, Legacy TS behavior)
-            if is_contravariant {
+            // Try contravariant first: Target <: Source
+            if self.check_subtype(target_type, source_type).is_true() {
                 return true;
             }
-            // Covariant check: Source <: Target
+            // If contravariant fails, try covariant: Source <: Target
             self.check_subtype(source_type, target_type).is_true()
         }
     }
