@@ -1490,7 +1490,8 @@ impl TypeInterner {
             if combinations.len() > TEMPLATE_LITERAL_EXPANSION_LIMIT {
                 eprintln!(
                     "Template literal expansion exceeded limit of {} (actual: {} combinations), widening to string",
-                    TEMPLATE_LITERAL_EXPANSION_LIMIT, combinations.len()
+                    TEMPLATE_LITERAL_EXPANSION_LIMIT,
+                    combinations.len()
                 );
                 return TypeId::STRING;
             }

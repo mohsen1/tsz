@@ -5377,11 +5377,11 @@ impl<'a> CheckerState<'a> {
 
     // Delegate to type_checking::CheckerStateExt
     fn enum_symbol_from_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        self.enum_symbol_from_type(type_id)
+        crate::checker::type_checking::CheckerStateExt::enum_symbol_from_type(self, type_id)
     }
 
     fn enum_symbol_from_value_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        self.enum_symbol_from_value_type(type_id)
+        crate::checker::type_checking::CheckerStateExt::enum_symbol_from_value_type(self, type_id)
     }
 
     fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
@@ -5451,14 +5451,14 @@ impl<'a> CheckerState<'a> {
 
     // Delegate to type_checking::CheckerStateExt
     fn enum_kind(&self, sym_id: SymbolId) -> Option<EnumKind> {
-        self.enum_kind(sym_id)
+        crate::checker::type_checking::CheckerStateExt::enum_kind(self, sym_id)
     }
 
     /// Get the type of an enum member by finding its parent enum.
     /// Returns the enum type itself (e.g., `MyEnum`) rather than just STRING or NUMBER.
     /// This is used when enum members are accessed through namespace exports.
     fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
-        self.enum_member_type_from_decl(
+        crate::checker::type_checking::CheckerStateExt::enum_member_type_from_decl(
             self,
             member_decl,
         )
@@ -5706,17 +5706,17 @@ impl<'a> CheckerState<'a> {
 
     // Delegate to type_checking::CheckerStateExt
     fn class_symbol_from_expression(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
-        self.class_symbol_from_expression(expr_idx)
+        crate::checker::type_checking::CheckerStateExt::class_symbol_from_expression(self, expr_idx)
     }
 
     fn class_symbol_from_type_annotation(&self, type_idx: NodeIndex) -> Option<SymbolId> {
-        self.class_symbol_from_type_annotation(
+        crate::checker::type_checking::CheckerStateExt::class_symbol_from_type_annotation(
             self, type_idx,
         )
     }
 
     fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
-        self.assignment_target_class_symbol(
+        crate::checker::type_checking::CheckerStateExt::assignment_target_class_symbol(
             self, left_idx,
         )
     }
@@ -6541,7 +6541,7 @@ impl<'a> CheckerState<'a> {
 
     // Delegate to type_checking::CheckerStateExt
     fn refine_var_decl_type(&self, prev_type: TypeId, current_type: TypeId) -> TypeId {
-        self.refine_var_decl_type(
+        crate::checker::type_checking::CheckerStateExt::refine_var_decl_type(
             self,
             prev_type,
             current_type,
@@ -8120,7 +8120,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
     #[allow(dead_code)] // Infrastructure for symbol merging validation
     fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
-        self.can_merge_symbols(
+        crate::checker::type_checking::CheckerStateExt::can_merge_symbols(
             self,
             existing_flags,
             new_flags,
@@ -9653,7 +9653,7 @@ impl<'a> CheckerState<'a> {
     /// Check if we should emit a "property does not exist" error for the given type in destructuring.
     /// Returns false for any, unknown, or types that don't have concrete shapes.
     fn should_emit_property_not_exist_for_destructuring(&self, type_id: TypeId) -> bool {
-        self.should_emit_property_not_exist_for_destructuring(type_id)
+        crate::checker::type_checking::CheckerStateExt::should_emit_property_not_exist_for_destructuring(self, type_id)
     }
 
     /// Get the expected type for a binding element from its parent type.
@@ -10750,15 +10750,15 @@ impl<'a> CheckerState<'a> {
 
     // Delegate to type_checking::CheckerStateExt
     fn class_has_base(&self, class: &crate::parser::node::ClassData) -> bool {
-        self.class_has_base(class)
+        crate::checker::type_checking::CheckerStateExt::class_has_base(self, class)
     }
 
     fn type_includes_undefined(&self, type_id: TypeId) -> bool {
-        self.type_includes_undefined(type_id)
+        crate::checker::type_checking::CheckerStateExt::type_includes_undefined(self, type_id)
     }
 
     fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
-        self.find_constructor_body(members)
+        crate::checker::type_checking::CheckerStateExt::find_constructor_body(self, members)
     }
 
     /// Check for TS2565: Properties used before being assigned in the constructor.
@@ -12360,18 +12360,18 @@ impl<'a> CheckerState<'a> {
     // Delegate to type_checking::CheckerStateExt
     #[allow(dead_code)] // Infrastructure for type checking
     fn type_contains_any(&self, type_id: TypeId) -> bool {
-        self.type_contains_any(type_id)
+        crate::checker::type_checking::CheckerStateExt::type_contains_any(self, type_id)
     }
 
     fn implicit_any_return_display(&self, return_type: TypeId) -> String {
-        self.implicit_any_return_display(
+        crate::checker::type_checking::CheckerStateExt::implicit_any_return_display(
             self,
             return_type,
         )
     }
 
     fn should_report_implicit_any_return(&self, return_type: TypeId) -> bool {
-        self.should_report_implicit_any_return(
+        crate::checker::type_checking::CheckerStateExt::should_report_implicit_any_return(
             self,
             return_type,
         )
@@ -12428,7 +12428,7 @@ impl<'a> CheckerState<'a> {
         member_idx: NodeIndex,
         _property_name: &str,
     ) -> bool {
-        self.is_derived_property_redeclaration(
+        crate::checker::type_checking::CheckerStateExt::is_derived_property_redeclaration(
             self,
             member_idx,
             _property_name,
@@ -12438,6 +12438,6 @@ impl<'a> CheckerState<'a> {
     /// Find the containing class for a member node by walking up the parent chain
     #[allow(dead_code)] // Infrastructure for class member resolution
     fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
-        self.find_containing_class(_member_idx)
+        crate::checker::type_checking::CheckerStateExt::find_containing_class(self, _member_idx)
     }
 }

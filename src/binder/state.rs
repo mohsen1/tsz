@@ -1128,7 +1128,12 @@ impl BinderState {
             // Declare the var symbol with FUNCTION_SCOPED_VARIABLE flag
             // This makes it accessible before its actual declaration point
             let is_exported = self.is_node_exported(arena, decl_idx);
-            let sym_id = self.declare_symbol(&name, symbol_flags::FUNCTION_SCOPED_VARIABLE, decl_idx, is_exported);
+            let sym_id = self.declare_symbol(
+                &name,
+                symbol_flags::FUNCTION_SCOPED_VARIABLE,
+                decl_idx,
+                is_exported,
+            );
 
             // Also add to persistent scope
             self.declare_in_persistent_scope(name, sym_id);

@@ -58,7 +58,11 @@ impl<'a> CheckerState<'a> {
                 && !self.type_contains_error(contextual)
                 && !self.is_assignable_to(when_true, contextual)
             {
-                self.error_type_not_assignable_with_reason_at(when_true, contextual, cond.when_true);
+                self.error_type_not_assignable_with_reason_at(
+                    when_true,
+                    contextual,
+                    cond.when_true,
+                );
             }
 
             // Check whenFalse branch against contextual type
@@ -71,7 +75,11 @@ impl<'a> CheckerState<'a> {
                 && !self.type_contains_error(contextual)
                 && !self.is_assignable_to(when_false, contextual)
             {
-                self.error_type_not_assignable_with_reason_at(when_false, contextual, cond.when_false);
+                self.error_type_not_assignable_with_reason_at(
+                    when_false,
+                    contextual,
+                    cond.when_false,
+                );
             }
 
             self.ctx.contextual_type = prev_context;
@@ -854,7 +862,9 @@ impl<'a> CheckerState<'a> {
                         k if k == SyntaxKind::CaretToken as u16 => "^",
                         k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<",
                         k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>",
-                        k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>",
+                        k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
+                            ">>>"
+                        }
                         _ => "?",
                     };
                     let result = evaluator.evaluate(left_type, right_type, op_str);
@@ -862,7 +872,9 @@ impl<'a> CheckerState<'a> {
                         BinaryOpResult::Success(result_type) => result_type,
                         BinaryOpResult::TypeError { .. } => {
                             // Emit appropriate error for arithmetic type mismatch
-                            self.emit_binary_operator_error(node_idx, left_idx, right_idx, left_type, right_type, op_str);
+                            self.emit_binary_operator_error(
+                                node_idx, left_idx, right_idx, left_type, right_type, op_str,
+                            );
                             TypeId::UNKNOWN
                         }
                     };
@@ -3238,7 +3250,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Then try lib binders directly (for lib_contexts path)
-                if let Some(sym_id) = self.ctx.binder.get_global_type_with_libs(name, &lib_binders) {
+                if let Some(sym_id) = self
+                    .ctx
+                    .binder
+                    .get_global_type_with_libs(name, &lib_binders)
+                {
                     return self.get_type_of_symbol(sym_id);
                 }
 
@@ -3250,15 +3266,21 @@ impl<'a> CheckerState<'a> {
                 // When lib files are loaded, the actual types will be used.
                 match name.as_str() {
                     // Browser globals (DOM API)
-                    "window" | "document" | "navigator" | "localStorage" | "sessionStorage" | "history" | "location" | "fetch" => {
+                    "window" | "document" | "navigator" | "localStorage" | "sessionStorage"
+                    | "history" | "location" | "fetch" => {
                         return TypeId::ANY;
                     }
                     // Node.js globals (CommonJS runtime)
-                    "global" | "process" | "Buffer" | "__dirname" | "__filename" | "path" | "fs" | "http" | "https" | "url" => {
+                    "global" | "process" | "Buffer" | "__dirname" | "__filename" | "path"
+                    | "fs" | "http" | "https" | "url" => {
                         return TypeId::ANY;
                     }
                     // Common constructor globals (ES2015+)
-                    "Object" | "Array" | "String" | "Number" | "Boolean" | "Function" | "Date" | "RegExp" | "Error" | "Promise" | "Map" | "Set" | "WeakMap" | "WeakSet" | "WeakRef" | "Proxy" | "Reflect" | "JSON" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray" | "Int16Array" | "Uint32Array" | "Float32Array" | "Float64Array" | "BigInt64Array" | "DataView" => {
+                    "Object" | "Array" | "String" | "Number" | "Boolean" | "Function" | "Date"
+                    | "RegExp" | "Error" | "Promise" | "Map" | "Set" | "WeakMap" | "WeakSet"
+                    | "WeakRef" | "Proxy" | "Reflect" | "JSON" | "Int8Array" | "Uint8Array"
+                    | "Uint8ClampedArray" | "Int16Array" | "Uint32Array" | "Float32Array"
+                    | "Float64Array" | "BigInt64Array" | "DataView" => {
                         return TypeId::ANY;
                     }
                     // Console (Node.js and browser)
@@ -3286,6 +3308,7 @@ impl<'a> CheckerState<'a> {
                         TypeId::ERROR
                     }
                 }
+            }
             _ => {
                 // Check if we're inside a class and the name matches a static member (error 2662)
                 // Clone values to avoid borrow issues
