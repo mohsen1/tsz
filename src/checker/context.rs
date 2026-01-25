@@ -311,6 +311,10 @@ pub struct CheckerContext<'a> {
     /// Resolved module specifiers for this file (multi-file CLI mode).
     pub resolved_modules: Option<HashSet<String>>,
 
+    /// Import resolution stack for circular import detection.
+    /// Tracks the chain of modules being resolved to detect circular dependencies.
+    pub import_resolution_stack: Vec<String>,
+
     /// Lib file contexts for global type resolution (lib.es5.d.ts, lib.dom.d.ts, etc.).
     /// Each entry is a (arena, binder) pair from a pre-parsed lib file.
     /// Used as a fallback when resolving type references not found in the main file.
@@ -404,6 +408,7 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: FxHashSet::default(),
             all_arenas: None,
             resolved_modules: None,
+            import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
@@ -465,6 +470,7 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: FxHashSet::default(),
             all_arenas: None,
             resolved_modules: None,
+            import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
@@ -528,6 +534,7 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: cache.private_constructor_types,
             all_arenas: None,
             resolved_modules: None,
+            import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
@@ -590,6 +597,7 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: cache.private_constructor_types,
             all_arenas: None,
             resolved_modules: None,
+            import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
