@@ -702,9 +702,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 // Error Explanation API
 // =============================================================================
 
-// Re-export SubtypeFailureReason from diagnostics module
-pub use crate::solver::diagnostics::SubtypeFailureReason;
-
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Explain why `source` is not assignable to `target`.
     ///
