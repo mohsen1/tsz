@@ -609,6 +609,43 @@ pub fn needs_async_helpers(&self) -> bool {
 }
 ```
 
+## Resolved Design Decisions
+
+### ✅ Decorator Emission (`special_expressions.rs`)
+
+Decorator handling in ES5 mode is now explicit rather than silent:
+
+```rust
+fn emit_decorator(&mut self, node: NodeIndex) {
+    if self.ctx.target_es5 {
+        // Get decorator expression text for the warning
+        let decorator_text = self.get_decorator_text(decorator.expression);
+        self.write("/* @");
+        self.write(&decorator_text);
+        self.write(" - ES5 decorator lowering not implemented */");
+        return;
+    }
+    // ES6+ native decorator syntax
+    self.write("@");
+    self.emit_node(decorator.expression);
+}
+```
+
+**Note**: Full decorator ES5 lowering requires class-level coordination with `__decorate` helper.
+This is documented behavior with visible output rather than silent skip.
+
+### ✅ Recursion Overflow Protection (`mod.rs`)
+
+```rust
+if self.emit_recursion_depth > MAX_EMIT_RECURSION_DEPTH {
+    self.writer.write("/* emit recursion limit exceeded */");
+    return;
+}
+```
+
+This is intentional safety behavior - very deep ASTs (>1000 levels) get a comment marker
+to prevent stack overflow. This is expected for pathological inputs.
+
 ## Known Gaps
 
 ### ⚠️ GAP: Interface & Type Alias Emission (`declarations.rs`)
@@ -621,20 +658,17 @@ fn emit_interface_declaration(&mut self, ...) { ... }
 fn emit_type_alias_declaration(&mut self, ...) { ... }
 ```
 
-**Note**: Types are stripped in JavaScript output - these are infrastructure only
+**Note**: Types are stripped in JavaScript output - these are infrastructure only for potential .d.ts emission
 
-### ⚠️ GAP: Decorator Emission (`special_expressions.rs`)
+### ⚠️ GAP: Decorator ES5 Full Lowering (`special_expressions.rs`)
 
-```rust
-fn emit_decorator(&mut self, node: NodeIndex) {
-    if self.ctx.target_es5 {
-        return;  // Skipped entirely in ES5 mode
-    }
-    // No ES5 equivalent lowering
-}
-```
+While standalone decorator emission now emits a warning, full ES5 lowering with `__decorate`
+helper is not implemented. Full support requires:
+- Collecting all decorators at class level
+- Emitting `__decorate([...], Class, "member", descriptor)` calls
+- Property descriptor generation
 
-**Impact**: Decorators not downleveled to ES5
+**Impact**: Decorators warn in ES5 mode; workaround is to use ES6+ target
 
 ### ⚠️ GAP: Export Assignment Suppression (`mod.rs`)
 
@@ -647,17 +681,6 @@ fn emit_decorator(&mut self, node: NodeIndex) {
 
 - Triple-slash directives filtered (`/// <reference`, `/// <amd`)
 - Comment tracking infrastructure-only
-
-### ⚠️ GAP: Recursion Overflow (`mod.rs`)
-
-```rust
-if self.emit_recursion_depth > MAX_EMIT_RECURSION_DEPTH {
-    self.writer.write("/* emit recursion limit exceeded */");
-    return;  // Silent failure with comment
-}
-```
-
-**Impact**: Very deep ASTs emit comment marker instead of code
 
 ## Performance Considerations
 

@@ -665,6 +665,59 @@ pub struct BinderState {
 }
 ```
 
+## Resolved Design Decisions
+
+### ✅ Default Export Handling (`state.rs`)
+
+Default export handling is fully implemented. When `export default X` is encountered:
+
+1. The exported expression/declaration is bound to visit inner references
+2. A synthetic "default" export symbol is created with `ALIAS | EXPORT_VALUE` flags
+3. The symbol is added to `file_locals` for cross-file import resolution
+4. The underlying local symbol (if any) is also marked as exported
+
+```rust
+// Synthesize a "default" export symbol for cross-file import resolution.
+// This enables `import X from './file'` to resolve the default export.
+let default_sym_id = self.symbols.alloc(
+    symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
+    "default".to_string(),
+);
+```
+
+### ✅ Flow Analysis - Await/Yield Points (`state.rs`)
+
+Await and yield expressions now properly generate flow nodes for control flow analysis:
+
+```rust
+// When binding await/yield expressions:
+// 1. Create appropriate flow node (AWAIT_POINT or YIELD_POINT)
+// 2. Link to current flow graph
+// 3. Traverse into the inner expression
+
+fn create_flow_await_point(&mut self, await_expr: NodeIndex) -> FlowNodeId {
+    let id = self.flow_nodes.alloc(flow_flags::AWAIT_POINT);
+    // ... link to antecedents ...
+}
+
+fn create_flow_yield_point(&mut self, yield_expr: NodeIndex) -> FlowNodeId {
+    let id = self.flow_nodes.alloc(flow_flags::YIELD_POINT);
+    // ... link to antecedents ...
+}
+```
+
+This enables control flow analysis to account for async suspension points in generators and async functions.
+
+### ✅ Local Symbol Shadowing (`state.rs`)
+
+Local declarations now properly shadow lib symbols. When a local declaration has the same name as a lib symbol:
+
+1. Check if existing symbol is from lib (using `CHECKER_SYMBOL_BASE` offset)
+2. If so, create a new local symbol that shadows the lib symbol
+3. Update scope to point to the local symbol
+
+This allows code like `const Array = []` to work correctly without conflicting with the global `Array` type.
+
 ## Known Gaps
 
 ### ⚠️ GAP: Import Resolution Requires External Setup
@@ -677,26 +730,6 @@ pub struct BinderState {
 ```
 
 **Impact**: Binder doesn't do file system resolution; requires external module resolver
-
-### ⚠️ GAP: Default Export Handling (`state.rs`)
-
-```rust
-// Best-effort only: export default CONFIG marks CONFIG as exported
-// Doesn't synthesize separate "default" export symbol
-// Comment: "intentionally conservative"
-```
-
-**Impact**: `import CONFIG from './file'` maps to "default" but no explicit symbol created
-
-### ⚠️ GAP: Flow Analysis - Await/Yield Points (`binder.rs`)
-
-```rust
-pub const AWAIT_POINT: u32 = 1 << 12;
-pub const YIELD_POINT: u32 = 1 << 13;
-```
-
-**Issue**: Flags defined but `bind_node()` doesn't generate await/yield flow nodes
-**Impact**: Control flow analysis may not account for async suspension points
 
 ### ⚠️ GAP: Array Mutation Flow (`state.rs`)
 
