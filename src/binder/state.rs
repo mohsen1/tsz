@@ -1570,18 +1570,18 @@ impl BinderState {
                 }
             }
 
-            // Await expression (via unary_exprs_ex) - create flow node for async suspension point
-            k if k == syntax_kind_ext::AWAIT_EXPRESSION && node.has_data() => {
-                if let Some(unary) = arena.unary_exprs_ex.get(node.data_index as usize) {
+            // Await expression - create flow node for async suspension point
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
+                if let Some(unary) = arena.get_unary_expr_ex(node) {
                     self.bind_node(arena, unary.expression);
                 }
                 let flow = self.create_flow_await_point(idx);
                 self.current_flow = flow;
             }
 
-            // Yield expression (via unary_exprs_ex) - create flow node for generator suspension point
-            k if k == syntax_kind_ext::YIELD_EXPRESSION && node.has_data() => {
-                if let Some(unary) = arena.unary_exprs_ex.get(node.data_index as usize) {
+            // Yield expression - create flow node for generator suspension point
+            k if k == syntax_kind_ext::YIELD_EXPRESSION => {
+                if let Some(unary) = arena.get_unary_expr_ex(node) {
                     self.bind_node(arena, unary.expression);
                 }
                 let flow = self.create_flow_yield_point(idx);
@@ -1725,24 +1725,6 @@ impl BinderState {
                 if let Some(unary) = arena.get_unary_expr(node) {
                     self.bind_node(arena, unary.operand);
                 }
-            }
-
-            // Await expression - create specific flow node for async suspension point
-            k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
-                if let Some(unary) = arena.get_unary_expr(node) {
-                    self.bind_node(arena, unary.operand);
-                }
-                let flow = self.create_flow_await_point(idx);
-                self.current_flow = flow;
-            }
-
-            // Yield expression - create specific flow node for generator suspension point
-            k if k == syntax_kind_ext::YIELD_EXPRESSION => {
-                if let Some(unary) = arena.get_unary_expr(node) {
-                    self.bind_node(arena, unary.operand);
-                }
-                let flow = self.create_flow_yield_point(idx);
-                self.current_flow = flow;
             }
 
             // Identifier references - record current flow for type narrowing queries
