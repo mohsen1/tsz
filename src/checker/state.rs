@@ -1008,8 +1008,13 @@ impl<'a> CheckerState<'a> {
                     let _ = self.resolve_qualified_name(type_name_idx);
                     return TypeId::ERROR;
                 };
-                // Note: We don't check value-only here because resolve_qualified_name will do it
-                // This prevents duplicate TS2749 errors
+                if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
+                    let name = self
+                        .entity_name_text(type_name_idx)
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    self.error_value_only_type_at(&name, type_name_idx);
+                    return TypeId::ERROR;
+                }
                 if let Some(args) = &type_ref.type_arguments {
                     if self.should_resolve_recursive_type_alias(sym_id, args) {
                         // Ensure the base type symbol is resolved first so its type params
@@ -1154,9 +1159,16 @@ impl<'a> CheckerState<'a> {
                 if !is_builtin_array
                     && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
                 {
-                    // Note: We don't check value-only here for simple identifiers because the
-                    // check happens later in resolve_type_reference_for_lowering. This prevents
-                    // duplicate TS2749 errors.
+                    // Check if this is a value-only symbol (but allow type-only imports)
+                    // Type-only imports (is_type_only = true) should resolve in type positions
+                    // even if they don't have a VALUE flag
+                    if (self.alias_resolves_to_value_only(sym_id)
+                        || self.symbol_is_value_only(sym_id))
+                        && !self.symbol_is_type_only(sym_id)
+                    {
+                        self.error_value_only_type_at(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
                     if let Some(args) = &type_ref.type_arguments
                         && self.should_resolve_recursive_type_alias(sym_id, args)
                     {

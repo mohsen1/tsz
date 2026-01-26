@@ -3907,6 +3907,34 @@ impl<'a> CheckerState<'a> {
                 // Also check if base is directly a Callable with construct signatures
                 self.has_construct_sig(app.base)
             }
+            // Ref to a symbol - check if it's a class symbol
+            // This handles cases like `class C extends MyClass` where MyClass is a class
+            // Note: We can't call get_type_of_symbol here because this is &self, not &mut self
+            // But class symbols are always constructor types, so we can return true directly
+            Some(TypeKey::Ref(symbol_ref)) => {
+                use crate::binder::SymbolId;
+                let symbol_id = SymbolId(symbol_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    // Check if this is a class symbol
+                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+                        // Class symbols have constructor types
+                        return true;
+                    }
+                }
+                // For other symbols (namespaces, enums, etc.), they're not constructors
+                false
+            }
+            // TypeQuery (typeof X) - similar to Ref
+            Some(TypeKey::TypeQuery(symbol_ref)) => {
+                use crate::binder::SymbolId;
+                let symbol_id = SymbolId(symbol_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+                        return true;
+                    }
+                }
+                false
+            }
             _ => false,
         }
     }
