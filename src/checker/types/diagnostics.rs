@@ -444,6 +444,7 @@ pub mod diagnostic_codes {
     // Destructuring errors
     pub const TYPE_IS_NOT_AN_ARRAY_TYPE: u32 = 2461; // Type '{0}' is not an array type.
     pub const TYPE_IS_NOT_AN_ARRAY_OR_DOES_NOT_HAVE_ITERATOR: u32 = 2548; // Type '{0}' is not an array type or does not have a '[Symbol.iterator]()' method that returns an iterator.
+    pub const TUPLE_INDEX_OUT_OF_BOUNDS: u32 = 2493; // Tuple type '{0}' of length '{1}' has no element at index '{2}'.
 
     // Index signature errors
     pub const INDEX_SIGNATURE_MISSING: u32 = 2329;
