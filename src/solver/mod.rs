@@ -34,7 +34,7 @@ mod operations;
 pub mod salsa_db;
 mod subtype;
 mod subtype_rules;
-// pub mod tracer; // TODO: Fix type mismatches
+pub mod tracer;
 mod types;
 pub mod unsoundness_audit;
 mod utils;
@@ -88,7 +88,7 @@ mod intersection_union_tests;
 // subtype_tests: loaded from subtype.rs
 #[cfg(test)]
 mod template_expansion_tests;
-// tracer_tests: TODO: Fix tracer module first
+// tracer_tests: tests are in tracer.rs module
 #[cfg(test)]
 mod type_law_tests;
 // types_tests: loaded from types.rs

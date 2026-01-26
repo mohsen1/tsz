@@ -9706,6 +9706,14 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::solver::TypeKey;
 
+        // Only check excess properties for FRESH object literals
+        // This is the key TypeScript behavior:
+        // - const p: Point = {x: 1, y: 2, z: 3}  // ERROR: 'z' is excess (fresh)
+        // - const obj = {x: 1, y: 2, z: 3}; p = obj;  // OK: obj loses freshness
+        if !self.ctx.freshness_tracker.should_check_excess_properties(source) {
+            return;
+        }
+
         // Get the properties of both types
         let source_shape = match self.ctx.types.lookup(source) {
             Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
