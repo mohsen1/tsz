@@ -15,7 +15,10 @@ impl<'a> Printer<'a> {
 
     /// Safely get a slice of text, returning empty string if out of bounds.
     /// This prevents panics from invalid string indices.
-    #[allow(dead_code)] // Infrastructure for safe text slicing
+    ///
+    /// Used for safe extraction of source text segments during emission,
+    /// particularly for comment extraction and source mapping.
+    #[allow(dead_code)] // Available for future use in comment extraction
     pub(super) fn safe_slice_text<'b>(&self, text: &'b str, start: u32, end: u32) -> &'b str {
         safe_slice::slice(text, start as usize, end as usize)
     }
@@ -146,7 +149,16 @@ impl<'a> Printer<'a> {
         };
 
         if let Some(expr) = self.arena.get_expr_type_args(node) {
+            // Emit the expression (e.g., Base or ns.Other)
             self.emit(expr.expression);
+            // Emit type arguments if present (e.g., <T>)
+            if let Some(ref type_args) = expr.type_arguments {
+                if !type_args.nodes.is_empty() {
+                    self.write("<");
+                    self.emit_comma_separated(&type_args.nodes);
+                    self.write(">");
+                }
+            }
         } else {
             self.emit(idx);
         }

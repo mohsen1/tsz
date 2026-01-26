@@ -209,8 +209,14 @@ pub struct Printer<'a> {
     /// Source text for source map generation (kept separate from comment emission).
     pub(super) source_map_text: Option<&'a str>,
 
-    /// Last processed position in source text for comment gap detection
-    #[allow(dead_code)] // Infrastructure for comment emission
+    /// Last processed position in source text for comment gap detection.
+    ///
+    /// This tracks the last source position that was processed, enabling detection
+    /// of comment gaps between statements. Used by fine-grained comment emission
+    /// to identify where comments should be inserted relative to emitted code.
+    ///
+    /// Note: Currently used for basic comment emission in emit_source_file.
+    /// Future improvements could use this for more precise comment positioning.
     pub(super) last_processed_pos: u32,
 
     /// Pending source position for mapping the next write.
@@ -1066,6 +1072,12 @@ impl<'a> Printer<'a> {
         // Recursion depth check to prevent infinite loops
         self.emit_recursion_depth += 1;
         if self.emit_recursion_depth > MAX_EMIT_RECURSION_DEPTH {
+            // Log a warning to stderr about the recursion limit being exceeded.
+            // This helps developers identify problematic deeply nested ASTs.
+            eprintln!(
+                "Warning: emit recursion limit ({}) exceeded at node kind={} pos={}",
+                MAX_EMIT_RECURSION_DEPTH, node.kind, node.pos
+            );
             self.write("/* emit recursion limit exceeded */");
             self.emit_recursion_depth -= 1;
             return;
@@ -1462,12 +1474,16 @@ impl<'a> Printer<'a> {
                 self.emit_enum_member(node);
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                // Interface declarations are TypeScript-only - skip for JavaScript
-                // self.emit_interface_declaration(node);
+                // Interface declarations are TypeScript-only - emit only in declaration mode (.d.ts)
+                if self.ctx.flags.in_declaration_emit {
+                    self.emit_interface_declaration(node);
+                }
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                // Type alias declarations are TypeScript-only - skip for JavaScript
-                // self.emit_type_alias_declaration(node);
+                // Type alias declarations are TypeScript-only - emit only in declaration mode (.d.ts)
+                if self.ctx.flags.in_declaration_emit {
+                    self.emit_type_alias_declaration(node);
+                }
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.emit_module_declaration(node, idx);
@@ -1753,6 +1769,8 @@ impl<'a> Printer<'a> {
                             if comment.has_trailing_new_line {
                                 self.write_line();
                             }
+                            // Track last processed position for gap detection
+                            self.last_processed_pos = comment.end;
                             comment_idx += 1;
                         } else {
                             // This comment is after the statement start, stop
@@ -1760,6 +1778,9 @@ impl<'a> Printer<'a> {
                         }
                     }
                 }
+
+                // Track that we've processed up to this statement's position
+                self.last_processed_pos = stmt_node.pos;
             }
 
             let before_len = self.writer.len();
@@ -1767,6 +1788,11 @@ impl<'a> Printer<'a> {
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 self.write_line();
+            }
+
+            // Update last processed position after emitting statement
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                self.last_processed_pos = stmt_node.end;
             }
         }
 
