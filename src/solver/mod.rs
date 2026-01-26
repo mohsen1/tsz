@@ -29,6 +29,7 @@ mod intern;
 mod lawyer;
 mod lower;
 mod narrowing;
+mod object_literal;
 mod operations;
 // salsa_db is feature-gated until salsa API is updated
 #[cfg(feature = "experimental_salsa")]
@@ -57,6 +58,7 @@ pub use intern::*;
 pub use lawyer::*;
 pub use lower::*;
 pub use narrowing::*;
+pub use object_literal::*;
 pub use operations::*;
 #[cfg(feature = "experimental_salsa")]
 pub use salsa_db::*;
