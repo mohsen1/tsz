@@ -88,21 +88,6 @@ impl<'a> StrictModesChecker<'a> {
         solver_narrowing::can_be_nullish(self.types, type_id)
     }
 
-    /// Check if a union type contains null or undefined
-    fn contains_nullable(&self, type_id: TypeId) -> bool {
-        let Some(type_key) = self.types.lookup(type_id) else {
-            return false;
-        };
-
-        match type_key {
-            TypeKey::Union(type_list_id) => {
-                let types = self.types.type_list(type_list_id);
-                types.iter().any(|&t| t == TypeId::NULL || t == TypeId::UNDEFINED)
-            }
-            _ => false,
-        }
-    }
-
     /// Get the non-nullable version of a type
     pub fn get_non_nullable_type(&self, type_id: TypeId) -> TypeId {
         if !self.strict_null_checks {

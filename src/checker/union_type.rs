@@ -90,22 +90,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a union type contains null or undefined.
-    ///
-    /// Returns true if the union includes null or undefined as a member.
-    pub fn union_is_nullable(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) {
-            let members = self.ctx.types.type_list(list_id);
-            members
-                .iter()
-                .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
-        } else {
-            false
-        }
-    }
-
     // =========================================================================
     // Union Type Manipulation
     // =========================================================================
