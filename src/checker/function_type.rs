@@ -544,9 +544,16 @@ impl<'a> CheckerState<'a> {
         }
         // TS18050: Cannot access properties on 'never' type (impossible union after narrowing)
         if object_type == TypeId::NEVER {
-            use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["never"]);
-            self.error_at_node(access.expression, &message, diagnostic_codes::VALUE_CANNOT_BE_USED_HERE);
+            use crate::checker::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+            let message =
+                format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["never"]);
+            self.error_at_node(
+                access.expression,
+                &message,
+                diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+            );
             return TypeId::NEVER;
         }
 
