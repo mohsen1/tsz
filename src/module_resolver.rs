@@ -352,6 +352,13 @@ pub struct ModuleResolver {
     custom_conditions: Vec<String>,
     /// Cache for package.json package type lookups
     package_type_cache: FxHashMap<PathBuf, Option<PackageType>>,
+    /// Cached package type for the current resolution
+    current_package_type: Option<PackageType>,
+}
+
+struct PathMappingAttempt {
+    resolved: Option<ResolvedModule>,
+    attempted: bool,
 }
 
 impl ModuleResolver {
@@ -370,6 +377,7 @@ impl ModuleResolver {
             dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
             custom_conditions: Vec::new(), // TODO: Add customConditions to ResolvedCompilerOptions
             package_type_cache: FxHashMap::default(),
+            current_package_type: None,
         }
     }
 
@@ -386,6 +394,7 @@ impl ModuleResolver {
             dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
             custom_conditions: Vec::new(),
             package_type_cache: FxHashMap::default(),
+            current_package_type: None,
         }
     }
 
@@ -401,6 +410,13 @@ impl ModuleResolver {
             .unwrap_or(Path::new("."))
             .to_path_buf();
         let containing_file_str = containing_file.display().to_string();
+
+        self.current_package_type = match self.resolution_kind {
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
+                self.get_package_type_for_dir(&containing_dir)
+            }
+            _ => None,
+        };
 
         // Check cache first
         let cache_key = (containing_dir.clone(), specifier.to_string());
@@ -516,6 +532,19 @@ impl ModuleResolver {
         // Step 1: Handle #-prefixed imports (package.json imports field)
         // This is a Node16/NodeNext feature for subpath imports
         if specifier.starts_with('#') {
+            if !matches!(
+                self.resolution_kind,
+                ModuleResolutionKind::Node
+                    | ModuleResolutionKind::Node16
+                    | ModuleResolutionKind::NodeNext
+                    | ModuleResolutionKind::Bundler
+            ) {
+                return Err(ResolutionFailure::NotFound {
+                    specifier: specifier.to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                });
+            }
             return self.resolve_package_imports(
                 specifier,
                 containing_dir,
@@ -526,10 +555,18 @@ impl ModuleResolver {
         }
 
         // Step 2: Try path mappings first (if configured)
-        if !self.path_mappings.is_empty()
-            && let Some(resolved) = self.try_path_mappings(specifier, containing_dir)
-        {
-            return Ok(resolved);
+        if !self.path_mappings.is_empty() {
+            let attempt = self.try_path_mappings(specifier, containing_dir);
+            if let Some(resolved) = attempt.resolved {
+                return Ok(resolved);
+            }
+            if attempt.attempted {
+                return Err(ResolutionFailure::PathMappingFailed {
+                    message: specifier.to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                });
+            }
         }
 
         // Step 3: Handle relative imports
@@ -547,7 +584,30 @@ impl ModuleResolver {
             return self.resolve_absolute(specifier, containing_file, specifier_span);
         }
 
-        // Step 5: Handle bare specifiers (npm packages)
+        // Step 5: Try baseUrl fallback for non-relative specifiers
+        if let Some(base_url) = &self.base_url {
+            let candidate = base_url.join(specifier);
+            if let Some(resolved) = self.try_file_or_directory(&candidate) {
+                return Ok(ResolvedModule {
+                    resolved_path: resolved.clone(),
+                    is_external: false,
+                    package_name: None,
+                    original_specifier: specifier.to_string(),
+                    extension: ModuleExtension::from_path(&resolved),
+                });
+            }
+        }
+
+        // Step 6: Classic resolution does not consult node_modules
+        if matches!(self.resolution_kind, ModuleResolutionKind::Classic) {
+            return Err(ResolutionFailure::NotFound {
+                specifier: specifier.to_string(),
+                containing_file: containing_file.to_string(),
+                span: specifier_span,
+            });
+        }
+
+        // Step 7: Handle bare specifiers (npm packages)
         self.resolve_bare_specifier(
             specifier,
             containing_dir,
@@ -696,7 +756,8 @@ impl ModuleResolver {
             ModuleResolutionKind::Bundler => {
                 conditions.push("browser");
             }
-            ModuleResolutionKind::Node
+            ModuleResolutionKind::Classic
+            | ModuleResolutionKind::Node
             | ModuleResolutionKind::Node16
             | ModuleResolutionKind::NodeNext => {
                 conditions.push("node");
@@ -723,7 +784,8 @@ impl ModuleResolver {
             ModuleResolutionKind::Bundler => {
                 conditions.push("node"); // Bundler can also use node exports
             }
-            ModuleResolutionKind::Node
+            ModuleResolutionKind::Classic
+            | ModuleResolutionKind::Node
             | ModuleResolutionKind::Node16
             | ModuleResolutionKind::NodeNext => {
                 conditions.push("browser"); // Node can use browser exports as last resort
@@ -734,13 +796,15 @@ impl ModuleResolver {
     }
 
     /// Try resolving through path mappings
-    fn try_path_mappings(&self, specifier: &str, containing_dir: &Path) -> Option<ResolvedModule> {
+    fn try_path_mappings(&self, specifier: &str, containing_dir: &Path) -> PathMappingAttempt {
         // Sort path mappings by specificity (most specific first)
         let mut sorted_mappings: Vec<_> = self.path_mappings.iter().collect();
         sorted_mappings.sort_by_key(|b| std::cmp::Reverse(b.specificity()));
 
+        let mut attempted = false;
         for mapping in sorted_mappings {
             if let Some(star_match) = mapping.match_specifier(specifier) {
+                attempted = true;
                 // Try each target path
                 for target in &mapping.targets {
                     let substituted = if target.contains('*') {
@@ -754,19 +818,25 @@ impl ModuleResolver {
                     let candidate = base.join(&substituted);
 
                     if let Some(resolved) = self.try_file_or_directory(&candidate) {
-                        return Some(ResolvedModule {
-                            resolved_path: resolved,
-                            is_external: false,
-                            package_name: None,
-                            original_specifier: specifier.to_string(),
-                            extension: ModuleExtension::from_path(&candidate),
-                        });
+                        return PathMappingAttempt {
+                            resolved: Some(ResolvedModule {
+                                resolved_path: resolved,
+                                is_external: false,
+                                package_name: None,
+                                original_specifier: specifier.to_string(),
+                                extension: ModuleExtension::from_path(&candidate),
+                            }),
+                            attempted,
+                        };
                     }
                 }
             }
         }
 
-        None
+        PathMappingAttempt {
+            resolved: None,
+            attempted,
+        }
     }
 
     /// Resolve a relative import
@@ -1307,34 +1377,54 @@ impl ModuleResolver {
 
     /// Try to resolve a file with various extensions
     fn try_file(&self, path: &Path) -> Option<PathBuf> {
-        // First, check if exact path exists
-        if path.exists() && path.is_file() {
-            return Some(path.to_path_buf());
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            if matches!(
+                self.resolution_kind,
+                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+            ) && let Some(rewritten) = node16_extension_substitution(path, extension)
+            {
+                for candidate in rewritten {
+                    if candidate.is_file() {
+                        return Some(candidate);
+                    }
+                }
+                return None;
+            }
+            if path.is_file() {
+                return Some(path.to_path_buf());
+            }
+            return None;
         }
 
-        // Try TypeScript extensions
-        for ext in &self.ts_extensions {
-            let with_ext = path.with_extension(ext.trim_start_matches('.'));
-            if with_ext.exists() && with_ext.is_file() {
+        let extensions = self.extension_candidates_for_resolution();
+        for ext in extensions {
+            let with_ext = path.with_extension(ext);
+            if with_ext.is_file() {
                 return Some(with_ext);
             }
         }
-
-        // Try .d.ts specifically (compound extension)
-        let dts = PathBuf::from(format!("{}.d.ts", path.display()));
-        if dts.exists() && dts.is_file() {
-            return Some(dts);
-        }
-
-        // Try JavaScript extensions
-        for ext in &self.js_extensions {
-            let with_ext = path.with_extension(ext.trim_start_matches('.'));
-            if with_ext.exists() && with_ext.is_file() {
+        for ext in extensions {
+            let with_ext = path.join("index").with_extension(ext);
+            if with_ext.is_file() {
                 return Some(with_ext);
             }
         }
 
         None
+    }
+
+    fn extension_candidates_for_resolution(&self) -> &'static [&'static str] {
+        match self.resolution_kind {
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
+                match self.current_package_type {
+                    Some(PackageType::Module) => &NODE16_MODULE_EXTENSION_CANDIDATES,
+                    Some(PackageType::CommonJs) => &NODE16_COMMONJS_EXTENSION_CANDIDATES,
+                    None => &TS_EXTENSION_CANDIDATES,
+                }
+            }
+            ModuleResolutionKind::Classic => &CLASSIC_EXTENSION_CANDIDATES,
+            _ => &TS_EXTENSION_CANDIDATES,
+        }
     }
 
     /// Try to resolve a path as a file or directory
@@ -1526,6 +1616,30 @@ fn apply_wildcard_substitution(target: &str, wildcard: &str) -> String {
     } else {
         target.to_string()
     }
+}
+
+const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
+const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
+    ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
+const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
+    ["cts", "d.cts", "ts", "tsx", "d.ts", "mts", "d.mts"];
+const CLASSIC_EXTENSION_CANDIDATES: [&str; 7] = TS_EXTENSION_CANDIDATES;
+
+fn node16_extension_substitution(path: &Path, extension: &str) -> Option<Vec<PathBuf>> {
+    let replacements: &[&str] = match extension {
+        "js" => &["ts", "tsx", "d.ts"],
+        "jsx" => &["tsx", "d.ts"],
+        "mjs" => &["mts", "d.mts"],
+        "cjs" => &["cts", "d.cts"],
+        _ => return None,
+    };
+
+    Some(
+        replacements
+            .iter()
+            .map(|ext| path.with_extension(ext))
+            .collect(),
+    )
 }
 
 /// Simplified package.json structure for resolution

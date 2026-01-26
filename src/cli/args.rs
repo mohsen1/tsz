@@ -1,6 +1,7 @@
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
+use crate::cli::config::ModuleResolutionKind;
 use crate::emitter::{ModuleKind, ScriptTarget};
 
 /// CLI arguments for the tsz binary.
@@ -788,6 +789,18 @@ pub enum ModuleResolution {
     NodeNext,
     /// Resolution for bundlers (Webpack, Rollup, esbuild, etc).
     Bundler,
+}
+
+impl ModuleResolution {
+    pub fn to_module_resolution_kind(self) -> ModuleResolutionKind {
+        match self {
+            ModuleResolution::Classic => ModuleResolutionKind::Classic,
+            ModuleResolution::Node10 => ModuleResolutionKind::Node,
+            ModuleResolution::Node16 => ModuleResolutionKind::Node16,
+            ModuleResolution::NodeNext => ModuleResolutionKind::NodeNext,
+            ModuleResolution::Bundler => ModuleResolutionKind::Bundler,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]

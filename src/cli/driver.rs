@@ -15,8 +15,9 @@ use crate::checker::types::diagnostics::{
 };
 use crate::cli::args::CliArgs;
 use crate::cli::config::{
-    JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions, TsConfig, load_tsconfig,
-    resolve_compiler_options,
+    JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions, TsConfig,
+    checker_target_from_emitter, load_tsconfig, resolve_compiler_options,
+    resolve_default_lib_files, resolve_lib_files,
 };
 use crate::cli::fs::{FileDiscoveryOptions, discover_ts_files, is_valid_module_file};
 use crate::declaration_emitter::DeclarationEmitter;
@@ -311,7 +312,7 @@ fn compile_inner(
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
-    apply_cli_overrides(&mut resolved, args);
+    apply_cli_overrides(&mut resolved, args)?;
 
     let base_dir = config_base_dir(&cwd, tsconfig_path.as_deref());
     let base_dir = canonicalize_or_owned(&base_dir);
@@ -373,8 +374,15 @@ fn compile_inner(
     let mut files_read: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
     files_read.sort();
 
+    let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
+    let lib_paths: Vec<PathBuf> = if resolved.checker.no_lib || disable_default_libs {
+        Vec::new()
+    } else {
+        resolved.lib_files.clone()
+    };
+
     let (program, dirty_paths) = if let Some(cache) = cache.as_deref_mut() {
-        let result = build_program_with_cache(sources, cache);
+        let result = build_program_with_cache(sources, cache, &lib_paths);
         (result.program, Some(result.dirty_paths))
     } else {
         let compile_inputs: Vec<(String, String)> = sources
@@ -388,13 +396,17 @@ fn compile_inner(
                 (source.path.to_string_lossy().into_owned(), text)
             })
             .collect();
-        (parallel::compile_files(compile_inputs), None)
+        (
+            parallel::compile_files_with_libs(compile_inputs, &lib_paths),
+            None,
+        )
     };
     if let Some(cache) = cache.as_deref_mut() {
         update_import_symbol_ids(&program, &resolved, &base_dir, cache);
     }
 
-    let mut diagnostics = collect_diagnostics(&program, &resolved, &base_dir, cache);
+    let lib_contexts = load_lib_files_for_contexts(&lib_paths);
+    let mut diagnostics = collect_diagnostics(&program, &resolved, &base_dir, cache, &lib_contexts);
     diagnostics.sort_by(|left, right| {
         left.file
             .cmp(&right.file)
@@ -456,6 +468,7 @@ struct BuildProgramResult {
 fn build_program_with_cache(
     sources: Vec<SourceEntry>,
     cache: &mut CompilationCache,
+    lib_paths: &[PathBuf],
 ) -> BuildProgramResult {
     let mut meta = Vec::with_capacity(sources.len());
     let mut to_parse = Vec::new();
@@ -500,8 +513,8 @@ fn build_program_with_cache(
         // This ensures global symbols like console, Array, Promise are available
         // during binding, which prevents "Any poisoning" where unresolved symbols
         // default to Any type instead of emitting TS2304 errors.
-        let lib_paths: Vec<&Path> = Vec::new(); // Empty = use defaults (lib.d.ts, lib.dom.d.ts)
-        parallel::parse_and_bind_parallel_with_lib_files(to_parse, &lib_paths)
+        let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
+        parallel::parse_and_bind_parallel_with_lib_files(to_parse, &lib_path_refs)
     };
 
     let mut parsed_map: HashMap<String, BindResult> = parsed_results
@@ -663,6 +676,60 @@ fn hash_text(text: &str) -> u64 {
 struct SourceEntry {
     path: PathBuf,
     text: Option<String>,
+}
+
+fn sources_have_no_default_lib(sources: &[SourceEntry]) -> bool {
+    sources.iter().any(source_has_no_default_lib)
+}
+
+fn source_has_no_default_lib(source: &SourceEntry) -> bool {
+    if let Some(text) = source.text.as_deref() {
+        return has_no_default_lib_directive(text);
+    }
+    let Ok(text) = std::fs::read_to_string(&source.path) else {
+        return false;
+    };
+    has_no_default_lib_directive(&text)
+}
+
+fn has_no_default_lib_directive(source: &str) -> bool {
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("///") {
+            if trimmed.is_empty() {
+                continue;
+            }
+            break;
+        }
+        if let Some(true) = parse_reference_no_default_lib_value(trimmed) {
+            return true;
+        }
+    }
+    false
+}
+
+fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
+    let needle = "no-default-lib";
+    let lower = line.to_ascii_lowercase();
+    let idx = lower.find(needle)?;
+    let mut rest = &line[idx + needle.len()..];
+    rest = rest.trim_start();
+    if !rest.starts_with('=') {
+        return None;
+    }
+    rest = rest[1..].trim_start();
+    let quote = rest.as_bytes().first().copied()?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    let rest = &rest[1..];
+    let end = rest.find(quote as char)?;
+    let value = rest[..end].trim();
+    match value.to_ascii_lowercase().as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 struct SourceReadResult {
@@ -1272,12 +1339,21 @@ fn resolve_module_specifier(
         return None;
     }
     let specifier = specifier.replace('\\', "/");
+    let resolution = options.effective_module_resolution();
     if specifier.starts_with('#') {
-        return resolve_package_imports_specifier(from_file, &specifier, base_dir, options);
+        if matches!(
+            resolution,
+            ModuleResolutionKind::Node
+                | ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        ) {
+            return resolve_package_imports_specifier(from_file, &specifier, base_dir, options);
+        }
+        return None;
     }
     let mut candidates = Vec::new();
 
-    let resolution = options.effective_module_resolution();
     let from_dir = from_file.parent().unwrap_or(base_dir);
     let package_type = match resolution {
         ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
@@ -1302,6 +1378,31 @@ fn resolve_module_specifier(
             options,
             package_type,
         ));
+    } else if matches!(resolution, ModuleResolutionKind::Classic) {
+        if let Some(paths) = options.paths.as_ref()
+            && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
+        {
+            path_mapping_attempted = true;
+            let base = options.base_url.as_deref().unwrap_or(from_dir);
+            for target in &mapping.targets {
+                let substituted = substitute_path_target(target, &wildcard);
+                let path = if Path::new(&substituted).is_absolute() {
+                    PathBuf::from(substituted)
+                } else {
+                    base.join(substituted)
+                };
+                candidates.extend(expand_module_path_candidates(&path, options, package_type));
+            }
+        }
+
+        if candidates.is_empty() {
+            let base = options.base_url.as_deref().unwrap_or(from_dir);
+            candidates.extend(expand_module_path_candidates(
+                &base.join(&specifier),
+                options,
+                package_type,
+            ));
+        }
     } else if let Some(base_url) = options.base_url.as_ref() {
         allow_node_modules = true;
         if let Some(paths) = options.paths.as_ref()
@@ -1544,7 +1645,8 @@ fn export_conditions(options: &ResolvedCompilerOptions) -> Vec<&'static str> {
 
     match resolution {
         ModuleResolutionKind::Bundler => push_condition(&mut conditions, "browser"),
-        ModuleResolutionKind::Node
+        ModuleResolutionKind::Classic
+        | ModuleResolutionKind::Node
         | ModuleResolutionKind::Node16
         | ModuleResolutionKind::NodeNext => {
             push_condition(&mut conditions, "node");
@@ -1573,7 +1675,8 @@ fn export_conditions(options: &ResolvedCompilerOptions) -> Vec<&'static str> {
             push_condition(&mut conditions, "require");
             push_condition(&mut conditions, "node");
         }
-        ModuleResolutionKind::Node
+        ModuleResolutionKind::Classic
+        | ModuleResolutionKind::Node
         | ModuleResolutionKind::Node16
         | ModuleResolutionKind::NodeNext => {
             push_condition(&mut conditions, "import");
@@ -2322,24 +2425,10 @@ fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
 
     let mut lib_contexts = Vec::new();
 
-    // If no lib files are specified, try to load the default lib.d.ts
-    let files_to_load = if lib_files.is_empty() {
-        // Try multiple default locations for lib.d.ts files
-        // Priority order:
-        // 1) TypeScript/tests/lib (git submodule - test fixtures)
-        // 2) TypeScript/node_modules/typescript/lib (compiler dependencies)
-        // 3) tests/lib (standalone setup)
-        let default_lib_paths = vec![
-            PathBuf::from("TypeScript/tests/lib/lib.d.ts"),
-            PathBuf::from("TypeScript/node_modules/typescript/lib/lib.d.ts"),
-            PathBuf::from("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-            PathBuf::from("tests/lib/lib.d.ts"),
-            PathBuf::from("tests/lib/lib.dom.d.ts"),
-        ];
-        default_lib_paths
-    } else {
-        lib_files.to_vec()
-    };
+    if lib_files.is_empty() {
+        return lib_contexts;
+    }
+    let files_to_load = lib_files.to_vec();
 
     for lib_path in files_to_load {
         // Skip if the file doesn't exist
@@ -2382,6 +2471,7 @@ fn collect_diagnostics(
     options: &ResolvedCompilerOptions,
     base_dir: &Path,
     cache: Option<&mut CompilationCache>,
+    lib_contexts: &[LibContext],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut used_paths = HashSet::new();
@@ -2398,9 +2488,6 @@ fn collect_diagnostics(
             file.file_name.clone(),
         );
     }
-
-    // Load lib.d.ts files for global symbol resolution (console, Array, Promise, etc.)
-    let lib_contexts: Vec<LibContext> = load_lib_files_for_contexts(&options.lib_files);
 
     for (file_idx, file) in program.files.iter().enumerate() {
         let file_path = PathBuf::from(&file.file_name);
@@ -2463,7 +2550,7 @@ fn collect_diagnostics(
         checker.ctx.report_unresolved_imports = true;
         // Set lib contexts for global symbol resolution (console, Array, Promise, etc.)
         if !lib_contexts.is_empty() {
-            checker.ctx.set_lib_contexts(lib_contexts.clone());
+            checker.ctx.set_lib_contexts(lib_contexts.to_vec());
         }
         let mut resolved_modules = HashSet::new();
         for (specifier, _) in &module_specifiers {
@@ -3415,12 +3502,16 @@ fn env_flag(name: &str) -> bool {
     matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
 }
 
-pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) {
+pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
     if let Some(target) = args.target {
         options.printer.target = target.to_script_target();
+        options.checker.target = checker_target_from_emitter(options.printer.target);
     }
     if let Some(module) = args.module {
         options.printer.module = module.to_module_kind();
+    }
+    if let Some(module_resolution) = args.module_resolution {
+        options.module_resolution = Some(module_resolution.to_module_resolution_kind());
     }
     if let Some(out_dir) = args.out_dir.as_ref() {
         options.out_dir = Some(out_dir.clone());
@@ -3460,4 +3551,18 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
             options.types_versions_compiler_version = Some(version.to_string());
         }
     }
+    if let Some(lib_list) = args.lib.as_ref() {
+        options.lib_files = resolve_lib_files(lib_list)?;
+        options.lib_is_default = false;
+    }
+    if args.no_lib {
+        options.checker.no_lib = true;
+        options.lib_files.clear();
+        options.lib_is_default = false;
+    }
+    if args.target.is_some() && options.lib_is_default && !options.checker.no_lib {
+        options.lib_files = resolve_default_lib_files(options.printer.target)?;
+    }
+
+    Ok(())
 }

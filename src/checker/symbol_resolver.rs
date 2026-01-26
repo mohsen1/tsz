@@ -955,9 +955,43 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the symbol ID if the resolved symbol has VALUE or ALIAS flags set.
     pub(crate) fn resolve_value_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
+        if let Some(node) = self.ctx.arena.get(idx) {
+            if node.kind == SyntaxKind::Identifier as u16
+                && let Some(sym_id) = self.resolve_identifier_symbol(idx)
+                && self.alias_resolves_to_type_only(sym_id)
+            {
+                return None;
+            }
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let mut current = idx;
+                loop {
+                    let Some(node) = self.ctx.arena.get(current) else {
+                        break;
+                    };
+                    if node.kind == SyntaxKind::Identifier as u16 {
+                        if let Some(sym_id) = self.resolve_identifier_symbol(current)
+                            && self.alias_resolves_to_type_only(sym_id)
+                        {
+                            return None;
+                        }
+                        break;
+                    }
+                    if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+                        break;
+                    }
+                    let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                        break;
+                    };
+                    current = qn.left;
+                }
+            }
+        }
         let sym_id = self.resolve_qualified_symbol(idx)?;
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        if symbol.is_type_only {
+            return None;
+        }
         if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
             Some(sym_id.0)
         } else {
