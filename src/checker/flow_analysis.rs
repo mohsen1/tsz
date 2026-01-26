@@ -32,7 +32,7 @@ use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::solver::TypeId;
+use crate::solver::{FlowFacts, FlowTypeEvaluator, TypeId};
 use rustc_hash::FxHashSet;
 
 // =============================================================================
@@ -1680,5 +1680,53 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         // TODO: Implement TDZ checking for heritage clauses
         false
+    }
+
+    // =========================================================================
+    // Integration with Solver's Flow Analysis
+    // =========================================================================
+
+    /// Create a flow type evaluator that uses the solver's type operations.
+    ///
+    /// This provides a bridge between the checker's flow analysis and the
+    /// solver's type narrowing capabilities.
+    pub(crate) fn create_flow_evaluator(&self) -> FlowTypeEvaluator {
+        FlowTypeEvaluator::new(self.ctx.types)
+    }
+
+    /// Create flow facts from the current flow state for a symbol.
+    ///
+    /// This extracts flow information (definite assignments, narrowings, TDZ)
+    /// and packages it into a FlowFacts structure that can be used by the solver.
+    ///
+    /// TODO: Implement full flow fact extraction from the flow graph
+    pub(crate) fn extract_flow_facts(&self, _sym_id: SymbolId, _usage_idx: NodeIndex) -> FlowFacts {
+        // For now, return empty flow facts
+        // A full implementation would:
+        // 1. Walk the flow graph backwards from the usage point
+        // 2. Collect type guard information (typeof checks, discriminant checks)
+        // 3. Track definite assignments on all paths
+        // 4. Detect TDZ violations
+        FlowFacts::new()
+    }
+
+    /// Apply solver-based flow narrowing to a type.
+    ///
+    /// This integrates with the solver's FlowTypeEvaluator to compute narrowed
+    /// types based on flow facts.
+    ///
+    /// TODO: Integrate with extract_flow_facts to provide real flow information
+    pub(crate) fn apply_solver_flow_narrowing(
+        &self,
+        declared_type: TypeId,
+        _sym_id: SymbolId,
+        _usage_idx: NodeIndex,
+    ) -> TypeId {
+        // For now, this is a placeholder that just returns the declared type
+        // A full implementation would:
+        // 1. Extract flow facts using extract_flow_facts
+        // 2. Create a FlowTypeEvaluator
+        // 3. Use compute_narrowed_type to get the narrowed type
+        declared_type
     }
 }
