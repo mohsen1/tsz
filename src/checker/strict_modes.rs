@@ -10,10 +10,10 @@
 //! - useUnknownInCatchVariables: catch variables as unknown
 //! - exactOptionalPropertyTypes: precise optional property handling
 
-use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
-use crate::solver::{TypeId, TypeInterner, TypeKey};
+use crate::parser::node::NodeArena;
 use crate::solver as solver_narrowing;
+use crate::solver::{TypeId, TypeInterner, TypeKey};
 
 /// Strict modes checker that applies various strict mode rules
 pub struct StrictModesChecker<'a> {
@@ -257,13 +257,22 @@ mod tests {
 
     #[test]
     fn test_function_type_result_eq() {
-        assert_eq!(FunctionTypeResult::Compatible, FunctionTypeResult::Compatible);
-        assert_ne!(FunctionTypeResult::Compatible, FunctionTypeResult::Incompatible);
+        assert_eq!(
+            FunctionTypeResult::Compatible,
+            FunctionTypeResult::Compatible
+        );
+        assert_ne!(
+            FunctionTypeResult::Compatible,
+            FunctionTypeResult::Incompatible
+        );
     }
 
     #[test]
     fn test_optional_property_result_eq() {
-        assert_eq!(OptionalPropertyResult::Allowed, OptionalPropertyResult::Allowed);
+        assert_eq!(
+            OptionalPropertyResult::Allowed,
+            OptionalPropertyResult::Allowed
+        );
         assert_ne!(
             OptionalPropertyResult::Allowed,
             OptionalPropertyResult::ExplicitUndefinedNotAllowed
@@ -275,16 +284,14 @@ mod tests {
         let arena = NodeArena::new();
         let types = TypeInterner::new();
         let checker = StrictModesChecker::new(
-            &arena,
-            &types,
-            true,  // strict_null_checks
-            true,  // strict_function_types
-            true,  // strict_bind_call_apply
-            true,  // strict_property_initialization
-            true,  // no_implicit_any
-            true,  // no_implicit_this
-            true,  // use_unknown_in_catch_variables
-            true,  // exact_optional_property_types
+            &arena, &types, true, // strict_null_checks
+            true, // strict_function_types
+            true, // strict_bind_call_apply
+            true, // strict_property_initialization
+            true, // no_implicit_any
+            true, // no_implicit_this
+            true, // use_unknown_in_catch_variables
+            true, // exact_optional_property_types
         );
 
         assert!(checker.requires_property_initialization());

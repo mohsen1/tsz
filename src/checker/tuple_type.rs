@@ -186,8 +186,8 @@ impl<'a> CheckerState<'a> {
     /// Returns true if both are tuples and have compatible element types.
     pub fn tuple_types_compatible(&mut self, tuple1: TypeId, tuple2: TypeId) -> bool {
         // Both must be tuples
-        let is_t1_tuple = matches!(self.ctx.types.lookup(tuple1), Some(TypeKey::Tuple(_)));
-        let is_t2_tuple = matches!(self.ctx.types.lookup(tuple2), Some(TypeKey::Tuple(_)));
+        let is_t1_tuple = crate::solver::type_queries::is_tuple_type(self.ctx.types, tuple1);
+        let is_t2_tuple = crate::solver::type_queries::is_tuple_type(self.ctx.types, tuple2);
 
         if !is_t1_tuple || !is_t2_tuple {
             return false;
@@ -202,7 +202,7 @@ impl<'a> CheckerState<'a> {
     /// This is a convenience wrapper that combines tuple type checking
     /// with element type assignability.
     pub fn is_tuple_assignable_to(&mut self, tuple_type: TypeId, target_type: TypeId) -> bool {
-        let is_tuple = matches!(self.ctx.types.lookup(tuple_type), Some(TypeKey::Tuple(_)));
+        let is_tuple = crate::solver::type_queries::is_tuple_type(self.ctx.types, tuple_type);
         if !is_tuple {
             return false;
         }

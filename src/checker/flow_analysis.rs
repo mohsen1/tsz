@@ -1690,7 +1690,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This provides a bridge between the checker's flow analysis and the
     /// solver's type narrowing capabilities.
-    pub(crate) fn create_flow_evaluator(&self) -> FlowTypeEvaluator {
+    pub(crate) fn create_flow_evaluator(&self) -> FlowTypeEvaluator<'_> {
         FlowTypeEvaluator::new(self.ctx.types)
     }
 
