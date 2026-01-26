@@ -224,6 +224,10 @@ function foo(
     );
 }
 
+// =============================================================================
+// Primitive Type Keywords Tests
+// =============================================================================
+
 #[test]
 fn test_void_return_type() {
     // void return type should be parsed correctly without TS1110/TS1109 errors
@@ -324,5 +328,256 @@ const arrow2: (x: number) => string = (x) => "";
         parser.get_diagnostics().is_empty(),
         "Expected no parser errors for primitive types in arrow functions, got {:?}",
         parser.get_diagnostics()
+    );
+}
+
+// =============================================================================
+// Incremental Parsing Tests
+// =============================================================================
+
+#[test]
+fn test_incremental_parse_from_middle_of_file() {
+    // Test parsing from an offset in the middle of a source file
+    let source = r#"const a = 1;
+const b = 2;
+function foo() {
+    return a + b;
+}
+const c = 3;"#;
+
+    // Parse from the start of "function foo()"
+    let offset = source.find("function").unwrap() as u32;
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let result = parser.parse_source_file_statements_from_offset(
+        "test.ts".to_string(),
+        source.to_string(),
+        offset,
+    );
+
+    // Should have parsed the remaining statements (function and const c)
+    assert!(
+        result.statements.len() >= 2,
+        "Expected at least 2 statements from offset, got {}",
+        result.statements.len()
+    );
+
+    // Should not produce errors for valid code
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no errors for incremental parse, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_incremental_parse_from_start() {
+    // Test incremental parsing from offset 0 (should be equivalent to full parse)
+    let source = r#"const x = 42;
+let y = "hello";"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let result = parser.parse_source_file_statements_from_offset(
+        "test.ts".to_string(),
+        source.to_string(),
+        0,
+    );
+
+    // Should have parsed both statements
+    assert_eq!(
+        result.statements.len(),
+        2,
+        "Expected 2 statements, got {}",
+        result.statements.len()
+    );
+
+    // reparse_start should be 0
+    assert_eq!(result.reparse_start, 0);
+
+    // Should not produce errors
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Expected no errors, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_incremental_parse_from_end() {
+    // Test incremental parsing from beyond the end of file
+    let source = "const x = 1;";
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let result = parser.parse_source_file_statements_from_offset(
+        "test.ts".to_string(),
+        source.to_string(),
+        1000, // Beyond EOF
+    );
+
+    // Should handle gracefully - clamped to source length
+    assert!(
+        result.statements.is_empty(),
+        "Expected no statements when starting at EOF"
+    );
+}
+
+#[test]
+fn test_incremental_parse_records_reparse_start() {
+    // Test that reparse_start is recorded correctly
+    let source = "const a = 1;\nconst b = 2;";
+    let offset = 13u32; // Start of "const b"
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let result = parser.parse_source_file_statements_from_offset(
+        "test.ts".to_string(),
+        source.to_string(),
+        offset,
+    );
+
+    // reparse_start should match the offset we provided
+    assert_eq!(
+        result.reparse_start, offset,
+        "Expected reparse_start to be {}, got {}",
+        offset, result.reparse_start
+    );
+}
+
+#[test]
+fn test_incremental_parse_with_syntax_error() {
+    // Test incremental parsing recovers from syntax errors
+    let source = r#"const a = 1;
+const b = ;
+const c = 3;"#;
+
+    // Parse from start of "const b = ;" (syntax error)
+    let offset = source.find("const b").unwrap() as u32;
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let result = parser.parse_source_file_statements_from_offset(
+        "test.ts".to_string(),
+        source.to_string(),
+        offset,
+    );
+
+    // Should still parse statements (with recovery)
+    assert!(
+        result.statements.len() >= 1,
+        "Expected at least 1 statement after recovery, got {}",
+        result.statements.len()
+    );
+
+    // Should produce an error for the syntax issue
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "Expected at least one diagnostic for syntax error"
+    );
+}
+
+// =============================================================================
+// Expression Statement Recovery Tests
+// =============================================================================
+
+#[test]
+fn test_incomplete_binary_expression_recovery() {
+    // Test recovery from incomplete binary expression: a +
+    let source = r#"const result = a +;
+const next = 1;"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should produce an error for missing RHS
+    let has_error = !parser.get_diagnostics().is_empty();
+    assert!(has_error, "Expected error for incomplete binary expression");
+
+    // Parser should recover and continue parsing
+    // The error count should be limited (no cascading errors)
+    let error_count = parser.get_diagnostics().len();
+    assert!(
+        error_count <= 2,
+        "Expected at most 2 errors for recovery, got {}",
+        error_count
+    );
+}
+
+#[test]
+fn test_incomplete_assignment_recovery() {
+    // Test recovery from incomplete assignment: x =
+    let source = r#"let x =;
+let y = 2;"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should produce an error for missing RHS
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "Expected error for incomplete assignment"
+    );
+
+    // Parser should recover - not too many errors
+    let error_count = parser.get_diagnostics().len();
+    assert!(
+        error_count <= 2,
+        "Expected at most 2 errors after recovery, got {}",
+        error_count
+    );
+}
+
+#[test]
+fn test_incomplete_conditional_expression_recovery() {
+    // Test recovery from incomplete conditional: a ? b :
+    let source = r#"const result = a ? b :;
+const next = 1;"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should produce error for missing false branch
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "Expected error for incomplete conditional"
+    );
+}
+
+#[test]
+fn test_expression_recovery_at_statement_boundary() {
+    // Test that parser properly recovers at statement boundaries
+    let source = r#"const a = 1 +
+const b = 2;"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should have errors but recover for next statement
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "Expected error for incomplete expression"
+    );
+}
+
+#[test]
+fn test_expression_recovery_preserves_valid_code() {
+    // Test that valid code after error is still parsed correctly
+    let source = r#"const bad = ;
+function validFunction() {
+    return 42;
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    // Should have error for bad assignment
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "Expected error for invalid assignment"
+    );
+
+    // Error count should be limited
+    let error_count = parser.get_diagnostics().len();
+    assert!(
+        error_count <= 2,
+        "Expected limited errors with recovery, got {}",
+        error_count
     );
 }
