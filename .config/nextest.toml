@@ -27,8 +27,16 @@ test-threads = "num-cpus"
 [profile.quick]
 slow-timeout = { period = "10s", terminate-after = 1 }
 fail-fast = true
-# Run fewer threads for better error messages
-test-threads = 4
+# Use all CPUs for maximum speed
+test-threads = "num-cpus"
+
+# Pre-commit profile - ultra fast, fail immediately
+[profile.precommit]
+slow-timeout = { period = "5s", terminate-after = 1 }
+fail-fast = true
+test-threads = "num-cpus"
+# Minimal output for speed
+status-level = "fail"
 
 # Long-running tests profile (for conformance tests)
 [profile.conformance]
