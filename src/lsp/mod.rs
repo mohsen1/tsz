@@ -2,6 +2,7 @@
 //!
 //! This module provides LSP features:
 //! - Go to Definition
+//! - Go to Type Definition
 //! - Find References
 //! - Completions
 //! - Hover
@@ -12,7 +13,10 @@
 //! - Rename
 //! - Semantic Tokens
 //! - Folding Ranges
-//! - (Future: Code Actions, Diagnostics, etc.)
+//! - Code Lens
+//! - Selection Range
+//! - Code Actions
+//! - Diagnostics
 //!
 //! Architecture:
 //! - Position utilities for line/column <-> offset conversion
@@ -75,3 +79,12 @@ pub use signature_help::{
     ParameterInformation, SignatureHelp, SignatureHelpProvider, SignatureInformation,
 };
 pub use symbols::DocumentSymbols;
+
+// Selection Range
+pub use selection_range::{SelectionRange, SelectionRangeProvider};
+
+// Type Definition
+pub use type_definition::TypeDefinitionProvider;
+
+// Code Lens
+pub use code_lens::{CodeLens, CodeLensCommand, CodeLensData, CodeLensKind, CodeLensProvider};

@@ -11,6 +11,11 @@ name = "tsz"
 path = "src/bin/tsz.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "tsz-lsp"
+path = "src/bin/tsz_lsp.rs"
+required-features = ["cli"]
+
 [features]
 default = ["cli"]
 cli = []
