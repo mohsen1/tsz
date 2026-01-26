@@ -1,15 +1,15 @@
 #!/bin/bash
-# Rust Test Runner - Optimized for speed
+# Rust Test Runner
 #
-# FAST by default: Runs tests directly without Docker for instant feedback.
-# Use --sandbox for isolated Docker testing (CI or memory-sensitive scenarios).
+# Runs tests in Docker by default for environment consistency (per AGENTS.md policy).
+# Use --no-sandbox for fast local development when Docker overhead is unacceptable.
 #
 # Usage:
-#   ./scripts/test.sh                      # Run all tests (fast, no Docker)
+#   ./scripts/test.sh                      # Run all tests in Docker (default)
 #   ./scripts/test.sh test_name            # Run specific test (pattern match)
-#   ./scripts/test.sh --quick              # Quick mode: fail-fast, best for precommit
-#   ./scripts/test.sh --quick test_name    # Quick mode with filter
-#   ./scripts/test.sh --sandbox            # Run in Docker sandbox
+#   ./scripts/test.sh --no-sandbox         # Fast mode: skip Docker for local dev
+#   ./scripts/test.sh --quick              # Quick mode: fail-fast, reduced threads
+#   ./scripts/test.sh --quick --no-sandbox # Fastest: no Docker + fail-fast
 #   ./scripts/test.sh --ignored            # Include ignored tests
 #   ./scripts/test.sh --timeout=60         # Kill after N seconds
 #   ./scripts/test.sh --rebuild            # Force rebuild Docker image
@@ -25,9 +25,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Parse arguments - fast path first
+# Parse arguments
 QUICK_MODE=false
-USE_DOCKER=false
+USE_DOCKER=true
 REBUILD=false
 CLEAN=false
 TEST_FILTER=""
