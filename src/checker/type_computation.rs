@@ -3325,11 +3325,9 @@ impl<'a> CheckerState<'a> {
                     if lib_loader::is_es2015_plus_type(name) {
                         // ES2015+ type not available - emit TS2583 with library suggestion
                         self.error_cannot_find_name_change_lib(name, idx);
-                    } else if self.ctx.is_known_global_type(name) {
-                        // Known global type not available (e.g., @noLib) - emit TS2318
-                        self.error_cannot_find_global_type(name, idx);
                     } else {
-                        // Other known global - emit TS2304
+                        // For VALUE globals (console, Math, JSON, etc.), emit TS2304
+                        // "Cannot find name" - same as TypeScript behavior
                         self.error_cannot_find_name_at(name, idx);
                     }
                     return TypeId::ERROR;
