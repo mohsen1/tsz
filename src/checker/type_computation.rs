@@ -525,16 +525,7 @@ impl<'a> CheckerState<'a> {
             .types
             .property_access_type(object_type, property_name)
         {
-            PropertyAccessResult::Success {
-                type_id,
-                from_index_signature,
-            } => {
-                if from_index_signature {
-                    self.error_property_not_exist_at(property_name, object_type, idx);
-                    return TypeId::ERROR;
-                }
-                type_id
-            }
+            PropertyAccessResult::Success { type_id, .. } => type_id,
             PropertyAccessResult::PropertyNotFound { .. } => {
                 // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
                 if !property_name.starts_with('#') {

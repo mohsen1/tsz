@@ -67,6 +67,21 @@ cd "$ROOT_DIR"
 wasm-pack build --target nodejs --out-dir pkg --release
 echo "✅ WASM built"
 
+LIB_SRC="$ROOT_DIR/TypeScript/lib"
+if [ -d "$LIB_SRC" ]; then
+    echo "📦 Copying TypeScript lib files (packaged)..."
+    rm -rf "$ROOT_DIR/pkg/lib"
+    mkdir -p "$ROOT_DIR/pkg/lib"
+    cp -R "$LIB_SRC/." "$ROOT_DIR/pkg/lib/"
+elif [ -d "$ROOT_DIR/TypeScript/src/lib" ]; then
+    echo "📦 Copying TypeScript lib files (source)..."
+    rm -rf "$ROOT_DIR/pkg/lib"
+    mkdir -p "$ROOT_DIR/pkg/lib"
+    cp -R "$ROOT_DIR/TypeScript/src/lib/." "$ROOT_DIR/pkg/lib/"
+else
+    echo "⚠️  TypeScript lib directory not found; skipping lib copy"
+fi
+
 # Build TypeScript runner
 echo ""
 echo "📦 Building conformance runner..."

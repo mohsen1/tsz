@@ -270,6 +270,10 @@ struct CompilerOptions {
     /// Specify module code generation (accepts string like "CommonJS" or numeric).
     #[serde(default, deserialize_with = "deserialize_target_or_module")]
     module: Option<u32>,
+
+    /// When true, do not include any library files.
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
+    no_lib: Option<bool>,
 }
 
 /// Deserialize a boolean option that can be a boolean, string, or comma-separated string.
@@ -454,6 +458,26 @@ impl CompilerOptions {
         self.resolve_bool(self.no_implicit_this, true)
     }
 
+    fn resolve_target(&self) -> crate::checker::context::ScriptTarget {
+        use crate::checker::context::ScriptTarget;
+
+        match self.target {
+            Some(0) => ScriptTarget::ES3,
+            Some(1) => ScriptTarget::ES5,
+            Some(2) => ScriptTarget::ES2015,
+            Some(3) => ScriptTarget::ES2016,
+            Some(4) => ScriptTarget::ES2017,
+            Some(5) => ScriptTarget::ES2018,
+            Some(6) => ScriptTarget::ES2019,
+            Some(7) => ScriptTarget::ES2020,
+            Some(8) => ScriptTarget::ESNext,
+            Some(9) => ScriptTarget::ESNext,
+            Some(99) => ScriptTarget::ESNext,
+            Some(_) => ScriptTarget::ESNext,
+            None => ScriptTarget::default(),
+        }
+    }
+
     /// Convert to CheckerOptions for type checking.
     pub fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
         let strict = self.strict.unwrap_or(false);
@@ -471,8 +495,8 @@ impl CompilerOptions {
             no_unchecked_indexed_access: false,
             strict_bind_call_apply: false,
             exact_optional_property_types: false,
-            no_lib: false,
-            target: crate::checker::context::ScriptTarget::default(),
+            no_lib: self.no_lib.unwrap_or(false),
+            target: self.resolve_target(),
         }
     }
 }
@@ -1802,8 +1826,7 @@ pub fn create_parser(file_name: String, source_text: String) -> Parser {
 // =============================================================================
 
 use crate::parallel::{
-    BindResult, MergedProgram, check_functions_parallel, merge_bind_results,
-    parse_and_bind_parallel,
+    BindResult, MergedProgram, check_files_parallel, merge_bind_results, parse_and_bind_parallel,
 };
 
 /// Result of checking a single file in a multi-file program
@@ -1857,6 +1880,8 @@ pub struct WasmProgram {
     bind_results: Option<Vec<BindResult>>,
     /// Lib files (lib.d.ts, lib.dom.d.ts, etc.) for global symbol resolution
     lib_files: Vec<(String, String)>,
+    /// Compiler options for type checking
+    compiler_options: CompilerOptions,
 }
 
 #[wasm_bindgen]
@@ -1869,6 +1894,7 @@ impl WasmProgram {
             lib_files: Vec::new(),
             merged: None,
             bind_results: None,
+            compiler_options: CompilerOptions::default(),
         }
     }
 
@@ -1915,6 +1941,27 @@ impl WasmProgram {
         self.lib_files.push((file_name, source_text));
     }
 
+    /// Set compiler options from JSON.
+    ///
+    /// # Arguments
+    /// * `options_json` - JSON string containing compiler options
+    #[wasm_bindgen(js_name = setCompilerOptions)]
+    pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
+        match serde_json::from_str::<CompilerOptions>(options_json) {
+            Ok(options) => {
+                self.compiler_options = options;
+                // Invalidate any previous compilation since options affect typing
+                self.merged = None;
+                self.bind_results = None;
+                Ok(())
+            }
+            Err(e) => Err(JsValue::from_str(&format!(
+                "Failed to parse compiler options: {}",
+                e
+            ))),
+        }
+    }
+
     /// Get the number of files in the program.
     #[wasm_bindgen(js_name = getFileCount)]
     pub fn get_file_count(&self) -> usize {
@@ -1955,10 +2002,8 @@ impl WasmProgram {
                 let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
                 let source_file_idx = lib_parser.parse_source_file();
 
-                if !lib_parser.get_diagnostics().is_empty() {
-                    // Parse errors in lib file - skip it
-                    return None;
-                }
+                // Keep lib files even with parse diagnostics.
+                // This matches tsc behavior and avoids missing global types.
 
                 let mut lib_binder = BinderState::new();
                 lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
@@ -1995,7 +2040,8 @@ impl WasmProgram {
         let merged = merge_bind_results(bind_results);
 
         // Type check all files in parallel
-        let check_result = check_functions_parallel(&merged);
+        let checker_options = self.compiler_options.to_checker_options();
+        let check_result = check_files_parallel(&merged, &checker_options, &lib_file_objects);
 
         // Build JSON result
         let mut file_results: Vec<FileCheckResultJson> = Vec::new();
@@ -2064,7 +2110,7 @@ impl WasmProgram {
         }
 
         // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
-        let lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
+        let mut lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
             .lib_files
             .iter()
             .filter_map(|(file_name, source_text)| {
@@ -2072,10 +2118,8 @@ impl WasmProgram {
                 let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
                 let source_file_idx = lib_parser.parse_source_file();
 
-                if !lib_parser.get_diagnostics().is_empty() {
-                    // Parse errors in lib file - skip it
-                    return None;
-                }
+                // Keep lib files even with parse diagnostics.
+                // This matches tsc behavior and avoids missing global types.
 
                 let mut lib_binder = BinderState::new();
                 lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
@@ -2090,6 +2134,14 @@ impl WasmProgram {
                 )))
             })
             .collect();
+
+        // Ensure default libs are loaded if none are provided and noLib is false
+        if lib_file_objects.is_empty() && self.compiler_options.no_lib != Some(true) {
+            // Fallback to embedded ES5 lib if no libs are provided explicitly
+            if let Some(lib) = lib_loader::load_default_lib_dts() {
+                lib_file_objects.push(lib);
+            }
+        }
 
         // Parse and bind all files in parallel with lib symbols
         let bind_results = if !lib_file_objects.is_empty() {
@@ -2109,7 +2161,8 @@ impl WasmProgram {
 
         // Merge and check
         let merged = merge_bind_results(bind_results);
-        let check_result = check_functions_parallel(&merged);
+        let checker_options = self.compiler_options.to_checker_options();
+        let check_result = check_files_parallel(&merged, &checker_options, &lib_file_objects);
 
         // Add check diagnostic codes
         for file_result in &check_result.file_results {
@@ -2136,7 +2189,7 @@ impl WasmProgram {
         }
 
         // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
-        let lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
+        let mut lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
             .lib_files
             .iter()
             .filter_map(|(file_name, source_text)| {
@@ -2144,10 +2197,8 @@ impl WasmProgram {
                 let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
                 let source_file_idx = lib_parser.parse_source_file();
 
-                if !lib_parser.get_diagnostics().is_empty() {
-                    // Parse errors in lib file - skip it
-                    return None;
-                }
+                // Keep lib files even with parse diagnostics.
+                // This matches tsc behavior and avoids missing global types.
 
                 let mut lib_binder = BinderState::new();
                 lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
@@ -2162,6 +2213,14 @@ impl WasmProgram {
                 )))
             })
             .collect();
+
+        // Ensure default libs are loaded if none are provided and noLib is false
+        if lib_file_objects.is_empty() && self.compiler_options.no_lib != Some(true) {
+            // Fallback to embedded ES5 lib if no libs are provided explicitly
+            if let Some(lib) = lib_loader::load_default_lib_dts() {
+                lib_file_objects.push(lib);
+            }
+        }
 
         // Parse and bind all files in parallel with lib symbols
         let bind_results = if !lib_file_objects.is_empty() {
@@ -2181,7 +2240,8 @@ impl WasmProgram {
 
         // Merge and check
         let merged = merge_bind_results(bind_results);
-        let check_result = check_functions_parallel(&merged);
+        let checker_options = self.compiler_options.to_checker_options();
+        let check_result = check_files_parallel(&merged, &checker_options, &lib_file_objects);
 
         // Add all check diagnostic codes
         for file_result in &check_result.file_results {

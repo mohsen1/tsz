@@ -388,26 +388,25 @@ These methods **cannot** move to solver:
 
 ```rust
 // solver/narrowing.rs - single source of truth
-pub fn is_nullish(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(type_id, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID)
-}
+pub fn is_nullish_type(types: &TypeInterner, type_id: TypeId) -> bool { ... }
 
-pub fn is_definitely_nullish(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // Check if type is ONLY null/undefined (not a union containing them)
-}
+pub fn type_contains_nullish(types: &TypeInterner, type_id: TypeId) -> bool { ... }
 
-pub fn can_be_nullish(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // Check if type could be null/undefined (including unions)
-}
+pub fn type_contains_undefined(types: &TypeInterner, type_id: TypeId) -> bool { ... }
 
-pub fn remove_nullish(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    // Return type with null/undefined removed
-}
+pub fn is_definitely_nullish(types: &TypeInterner, type_id: TypeId) -> bool { ... }
 
-pub fn type_contains_undefined(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // Check if undefined is in the type
-}
+pub fn can_be_nullish(types: &TypeInterner, type_id: TypeId) -> bool { ... }
+
+pub fn split_nullish_type(
+    types: &TypeInterner,
+    type_id: TypeId,
+) -> (Option<TypeId>, Option<TypeId>) { ... }
+
+pub fn remove_nullish(types: &TypeInterner, type_id: TypeId) -> TypeId { ... }
 ```
+
+**Status**: Implemented in `solver/narrowing.rs` with checker callers delegating.
 
 **Estimated Impact**: -200 lines of duplicate code
 

@@ -68,12 +68,42 @@ if [ "$USE_WASM" = true ]; then
     cd "$ROOT_DIR"
     wasm-pack build --target nodejs --out-dir pkg
     echo "✅ WASM built"
+
+    LIB_SRC="$ROOT_DIR/TypeScript/lib"
+    if [ -d "$LIB_SRC" ]; then
+        echo "📦 Copying TypeScript lib files (packaged)..."
+        rm -rf "$ROOT_DIR/pkg/lib"
+        mkdir -p "$ROOT_DIR/pkg/lib"
+        cp -R "$LIB_SRC/." "$ROOT_DIR/pkg/lib/"
+    elif [ -d "$ROOT_DIR/TypeScript/src/lib" ]; then
+        echo "📦 Copying TypeScript lib files (source)..."
+        rm -rf "$ROOT_DIR/pkg/lib"
+        mkdir -p "$ROOT_DIR/pkg/lib"
+        cp -R "$ROOT_DIR/TypeScript/src/lib/." "$ROOT_DIR/pkg/lib/"
+    else
+        echo "⚠️  TypeScript lib directory not found; skipping lib copy"
+    fi
 else
     echo ""
     echo "📦 Building native binary..."
     cd "$ROOT_DIR"
     cargo build --release --bin tsz
     echo "✅ Native binary built"
+
+    LIB_SRC="$ROOT_DIR/TypeScript/lib"
+    if [ -d "$LIB_SRC" ]; then
+        echo "📦 Copying TypeScript lib files (packaged)..."
+        rm -rf "$ROOT_DIR/target/release/lib"
+        mkdir -p "$ROOT_DIR/target/release/lib"
+        cp -R "$LIB_SRC/." "$ROOT_DIR/target/release/lib/"
+    elif [ -d "$ROOT_DIR/TypeScript/src/lib" ]; then
+        echo "📦 Copying TypeScript lib files (source)..."
+        rm -rf "$ROOT_DIR/target/release/lib"
+        mkdir -p "$ROOT_DIR/target/release/lib"
+        cp -R "$ROOT_DIR/TypeScript/src/lib/." "$ROOT_DIR/target/release/lib/"
+    else
+        echo "⚠️  TypeScript lib directory not found; skipping lib copy"
+    fi
 fi
 
 # Build TypeScript runner

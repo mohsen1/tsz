@@ -14,6 +14,7 @@
 
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
+use crate::solver as solver_narrowing;
 use crate::solver::TypeId;
 
 // =============================================================================
@@ -114,29 +115,14 @@ impl<'a> CheckerState<'a> {
     /// - Type is exactly `undefined`
     /// - Type is a union containing `null` or `undefined`
     pub fn is_nullish_type(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
-            return true;
-        }
-
-        // Check if it's a union containing null or undefined
-        self.type_contains_nullish(type_id)
+        solver_narrowing::is_nullish_type(&self.ctx.types, type_id)
     }
 
     /// Check if a type (possibly a union) contains null or undefined.
     ///
     /// Recursively checks union members for null or undefined types.
     pub fn type_contains_nullish(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members.iter().any(|&m| {
-                    m == TypeId::NULL || m == TypeId::UNDEFINED || self.type_contains_nullish(m)
-                })
-            }
-            _ => false,
-        }
+        solver_narrowing::type_contains_nullish(&self.ctx.types, type_id)
     }
 
     /// Remove null and undefined from a type (non-null assertion).
@@ -144,27 +130,7 @@ impl<'a> CheckerState<'a> {
     /// For `T | null | undefined`, returns `T`.
     /// For `T` where T is not nullish, returns `T` unchanged.
     pub fn non_null_type(&self, type_id: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                let non_nullish: Vec<TypeId> = members
-                    .iter()
-                    .filter(|&&m| m != TypeId::NULL && m != TypeId::UNDEFINED)
-                    .copied()
-                    .collect();
-
-                if non_nullish.is_empty() {
-                    TypeId::NEVER
-                } else if non_nullish.len() == 1 {
-                    non_nullish[0]
-                } else {
-                    self.ctx.types.union(non_nullish)
-                }
-            }
-            _ => type_id,
-        }
+        solver_narrowing::remove_nullish(&self.ctx.types, type_id)
     }
 
     // =========================================================================
