@@ -511,9 +511,27 @@ impl BinderState {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<SymbolId> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.resolve_import_with_reexports_inner(module_specifier, export_name, &mut visited)
+    }
+
+    /// Inner implementation with cycle detection for module re-exports.
+    fn resolve_import_with_reexports_inner(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(String, String)>,
+    ) -> Option<SymbolId> {
         let _span =
             span!(Level::DEBUG, "resolve_import_with_reexports", %module_specifier, %export_name)
                 .entered();
+
+        // Cycle detection: check if we've already visited this (module, export) pair
+        let key = (module_specifier.to_string(), export_name.to_string());
+        if visited.contains(&key) {
+            return None;
+        }
+        visited.insert(key);
 
         // First, check if it's a direct export from this module
         if let Some(module_table) = self.module_exports.get(module_specifier)
@@ -535,7 +553,7 @@ impl BinderState {
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> following named re-export from '{}', original name='{}'",
                     export_name, module_specifier, source_module, name_to_lookup
                 );
-                return self.resolve_import_with_reexports(source_module, name_to_lookup);
+                return self.resolve_import_with_reexports_inner(source_module, name_to_lookup, visited);
             }
         }
 
@@ -547,7 +565,7 @@ impl BinderState {
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> trying wildcard re-export from '{}'",
                     export_name, module_specifier, source_module
                 );
-                if let Some(result) = self.resolve_import_with_reexports(source_module, export_name)
+                if let Some(result) = self.resolve_import_with_reexports_inner(source_module, export_name, visited)
                 {
                     return Some(result);
                 }
