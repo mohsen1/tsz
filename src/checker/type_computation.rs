@@ -1125,6 +1125,7 @@ impl<'a> CheckerState<'a> {
     /// Get the element access type for array/tuple/object with index signatures.
     ///
     /// Computes the type when accessing an element using an index.
+    /// Uses ElementAccessEvaluator from solver for structured error handling.
     pub(crate) fn get_element_access_type(
         &mut self,
         object_type: TypeId,
@@ -1132,7 +1133,7 @@ impl<'a> CheckerState<'a> {
         literal_index: Option<usize>,
     ) -> TypeId {
         use crate::checker::state::EnumKind;
-        use crate::solver::QueryDatabase;
+        use crate::solver::element_access::{ElementAccessEvaluator, ElementAccessResult};
 
         let cache_key = (object_type, index_type, literal_index);
         if let Some(&cached) = self.ctx.element_access_type_cache.get(&cache_key) {
@@ -1142,6 +1143,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
+        // Normalize index type for enum values
         let solver_index_type = if let Some(index) = literal_index {
             self.ctx.types.literal_number(index as f64)
         } else if self
@@ -1154,18 +1156,38 @@ impl<'a> CheckerState<'a> {
             index_type
         };
 
-        let mut result = self.ctx.types.evaluate_index_access_with_options(
-            object_type,
-            solver_index_type,
-            self.ctx.no_unchecked_indexed_access(),
-        );
+        // Use ElementAccessEvaluator for structured results
+        let mut evaluator = ElementAccessEvaluator::new(self.ctx.types);
+        evaluator.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
 
-        // For element access expressions, `undefined` from the index-access evaluator
-        // corresponds to "missing" (e.g. no matching property/index signature). The checker
-        // is responsible for diagnostics; the value space should remain usable.
-        if result == TypeId::UNDEFINED {
-            result = TypeId::ANY;
-        }
+        let result =
+            match evaluator.resolve_element_access(object_type, solver_index_type, literal_index) {
+                ElementAccessResult::Success(ty) => {
+                    // UNDEFINED from evaluator means "not found" - fallback to ANY
+                    if ty == TypeId::UNDEFINED {
+                        TypeId::ANY
+                    } else {
+                        ty
+                    }
+                }
+                ElementAccessResult::IndexOutOfBounds {
+                    type_id: _,
+                    index: _,
+                    length: _,
+                } => {
+                    // TS2493 - Tuple index out of bounds (reported by caller via get_type_of_element_access)
+                    // Return ERROR here; diagnostic is handled at call site with node context
+                    TypeId::ERROR
+                }
+                ElementAccessResult::NotIndexable { .. } => {
+                    // Object is not indexable - return ERROR
+                    TypeId::ERROR
+                }
+                ElementAccessResult::NoIndexSignature { .. } => {
+                    // TS7053 - No index signature (reported by caller)
+                    TypeId::ANY
+                }
+            };
 
         self.ctx.element_access_type_set.remove(&cache_key);
         self.ctx.element_access_type_cache.insert(cache_key, result);
@@ -1724,7 +1746,9 @@ impl<'a> CheckerState<'a> {
         }
         // TS18050: Cannot construct 'never' type (impossible union after narrowing)
         if constructor_type == TypeId::NEVER {
-            use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            use crate::checker::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
             let message =
                 format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["never"]);
             self.error_at_node(

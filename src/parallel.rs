@@ -575,40 +575,40 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             let local_id = SymbolId(i as u32);
             if let Some(lib_sym) = lib_binder.symbols.get(local_id) {
                 // Check if a symbol with this name already exists (cross-lib merging)
-                let global_id = if let Some(&existing_id) = merged_symbols.get(&lib_sym.escaped_name)
-                {
-                    // Symbol already exists - check if we can merge
-                    if let Some(existing_sym) = global_symbols.get(existing_id) {
-                        if can_merge_symbols_cross_file(existing_sym.flags, lib_sym.flags) {
-                            // Merge: reuse existing symbol ID
-                            // Merge declarations from this lib
-                            if let Some(existing_mut) = global_symbols.get_mut(existing_id) {
-                                existing_mut.flags |= lib_sym.flags;
-                                for decl in &lib_sym.declarations {
-                                    if !existing_mut.declarations.contains(decl) {
-                                        existing_mut.declarations.push(*decl);
+                let global_id =
+                    if let Some(&existing_id) = merged_symbols.get(&lib_sym.escaped_name) {
+                        // Symbol already exists - check if we can merge
+                        if let Some(existing_sym) = global_symbols.get(existing_id) {
+                            if can_merge_symbols_cross_file(existing_sym.flags, lib_sym.flags) {
+                                // Merge: reuse existing symbol ID
+                                // Merge declarations from this lib
+                                if let Some(existing_mut) = global_symbols.get_mut(existing_id) {
+                                    existing_mut.flags |= lib_sym.flags;
+                                    for decl in &lib_sym.declarations {
+                                        if !existing_mut.declarations.contains(decl) {
+                                            existing_mut.declarations.push(*decl);
+                                        }
                                     }
                                 }
+                                existing_id
+                            } else {
+                                // Cannot merge - allocate new (shadowing)
+                                let new_id = global_symbols.alloc_from(lib_sym);
+                                merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
+                                new_id
                             }
-                            existing_id
                         } else {
-                            // Cannot merge - allocate new (shadowing)
+                            // Shouldn't happen - allocate new
                             let new_id = global_symbols.alloc_from(lib_sym);
                             merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
                             new_id
                         }
                     } else {
-                        // Shouldn't happen - allocate new
+                        // New symbol - allocate in global arena
                         let new_id = global_symbols.alloc_from(lib_sym);
                         merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
                         new_id
-                    }
-                } else {
-                    // New symbol - allocate in global arena
-                    let new_id = global_symbols.alloc_from(lib_sym);
-                    merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
-                    new_id
-                };
+                    };
 
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), global_id);
