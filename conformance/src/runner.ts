@@ -35,16 +35,16 @@ const DEFAULT_CONFIG: RunnerConfig = {
   maxTests: 500,
   verbose: false,
   categories: ['conformance', 'compiler', 'projects'],
-  workers: 2, // Conservative default to avoid OOM kills
+  workers: 8, // Optimized for better CPU utilization
   testTimeout: 10000,
   useWasm: true,
   nativeBinaryPath: path.resolve(__dirname, '../../target/release/tsz'),
 };
 
 // Recycle workers after this many tests to prevent memory leaks
-const TESTS_BEFORE_RECYCLE = 500;
-// Memory threshold in bytes - restart worker if it exceeds this (500MB)
-const MEMORY_THRESHOLD = 500 * 1024 * 1024;
+const TESTS_BEFORE_RECYCLE = 2000;
+// Memory threshold in bytes - restart worker if it exceeds this (2GB)
+const MEMORY_THRESHOLD = 2 * 1024 * 1024 * 1024;
 
 interface TestResult {
   tscCodes: number[];
@@ -93,48 +93,74 @@ function log(msg: string, color = ''): void {
   console.log(`${color}${msg}${colors.reset}`);
 }
 
-function collectTestFiles(dir: string, maxFiles: number): string[] {
+async function collectTestFiles(dir: string, maxFiles: number): Promise<string[]> {
   const files: string[] = [];
-  function walk(d: string): void {
+  const MAX_CONCURRENT = 16; // Process up to 16 directories in parallel
+
+  async function walk(d: string): Promise<void> {
     if (files.length >= maxFiles) return;
     try {
-      for (const entry of fs.readdirSync(d)) {
+      const entries = await fs.promises.readdir(d, { withFileTypes: true });
+      const dirs: string[] = [];
+
+      for (const entry of entries) {
         if (files.length >= maxFiles) break;
-        const p = path.join(d, entry);
-        const stat = fs.statSync(p);
-        if (stat.isDirectory()) walk(p);
-        else if (entry.endsWith('.ts') && !entry.endsWith('.d.ts')) files.push(p);
+        const p = path.join(d, entry.name);
+        if (entry.isDirectory()) {
+          dirs.push(p);
+        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+          files.push(p);
+        }
       }
-    } catch {}
+
+      // Process subdirectories in parallel batches
+      for (let i = 0; i < dirs.length && files.length < maxFiles; i += MAX_CONCURRENT) {
+        const batch = dirs.slice(i, i + MAX_CONCURRENT);
+        await Promise.all(batch.map(d => walk(d)));
+      }
+    } catch {
+      // Ignore errors (e.g., permission denied)
+    }
   }
-  walk(dir);
+
+  await walk(dir);
   return files;
 }
 
 // Specialized collector for projects directory
 // Projects are organized in subdirectories, with each subdir being a test case
 // We look for test files in each project subdirectory
-function collectProjectFiles(dir: string, maxFiles: number): string[] {
+async function collectProjectFiles(dir: string, maxFiles: number): Promise<string[]> {
   const files: string[] = [];
+  const MAX_CONCURRENT = 16;
 
-  function walk(d: string): void {
+  async function walk(d: string): Promise<void> {
     if (files.length >= maxFiles) return;
     try {
-      const entries = fs.readdirSync(d);
+      const entries = await fs.promises.readdir(d, { withFileTypes: true });
+      const dirs: string[] = [];
+
       for (const entry of entries) {
         if (files.length >= maxFiles) break;
-        const p = path.join(d, entry);
-        const stat = fs.statSync(p);
-        if (stat.isDirectory()) {
-          walk(p);
-        } else if (entry.endsWith('.ts') && !entry.endsWith('.d.ts')) {
+        const p = path.join(d, entry.name);
+        if (entry.isDirectory()) {
+          dirs.push(p);
+        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
           files.push(p);
         }
       }
-    } catch {}
+
+      // Process subdirectories in parallel batches
+      for (let i = 0; i < dirs.length && files.length < maxFiles; i += MAX_CONCURRENT) {
+        const batch = dirs.slice(i, i + MAX_CONCURRENT);
+        await Promise.all(batch.map(d => walk(d)));
+      }
+    } catch {
+      // Ignore errors
+    }
   }
 
-  walk(dir);
+  await walk(dir);
   return files;
 }
 
@@ -452,21 +478,30 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   log('║    High-Performance Parallel Conformance Test Runner     ║', colors.cyan);
   log('╚══════════════════════════════════════════════════════════╝', colors.cyan);
 
-  // Collect test files
+  // Collect test files in parallel across categories
   log(`\nCollecting test files...`, colors.cyan);
   const allTestFiles: string[] = [];
   const perCat = Math.ceil(cfg.maxTests / cfg.categories.length);
 
-  for (const cat of cfg.categories) {
+  // Collect files from all categories in parallel
+  const collectionPromises = cfg.categories.map(async (cat) => {
     const dir = path.join(cfg.testsBasePath, cat);
     if (fs.existsSync(dir)) {
       const remaining = cfg.maxTests - allTestFiles.length;
       // Use specialized collector for projects category
       const files = cat === 'projects'
-        ? collectProjectFiles(dir, Math.min(perCat, remaining))
-        : collectTestFiles(dir, Math.min(perCat, remaining));
+        ? await collectProjectFiles(dir, Math.min(perCat, remaining))
+        : await collectTestFiles(dir, Math.min(perCat, remaining));
+      return { category: cat, files };
+    }
+    return { category: cat, files: [] };
+  });
+
+  const results = await Promise.all(collectionPromises);
+  for (const { category, files } of results) {
+    if (files.length > 0) {
       allTestFiles.push(...files);
-      log(`  ${cat}: ${files.length} files`, colors.dim);
+      log(`  ${category}: ${files.length} files`, colors.dim);
     }
   }
 
