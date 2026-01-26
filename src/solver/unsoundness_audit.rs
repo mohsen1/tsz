@@ -1,7 +1,7 @@
 //! TypeScript Unsoundness Catalog Implementation Audit
 //!
 //! This module tracks the implementation status of all 44 TypeScript unsoundness
-//! rules from specs/TS_UNSOUNDNESS_CATALOG.md against the actual solver implementation.
+//! rules from docs/specs/TS_UNSOUNDNESS_CATALOG.md against the actual solver implementation.
 //!
 //! ## Audit Matrix
 //!

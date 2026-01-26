@@ -1130,5 +1130,4 @@ This architecture ensures tests are portable, maintainable, and clearly express 
 
 **Related Documents**:
 - `PROJECT_DIRECTION.md` - Overall project priorities and rules
-- `specs/ARCHITECTURE_CLEANUP.md` - Architecture cleanup documentation
-- `specs/DIAGNOSTICS.md` - Diagnostic implementation guidelines
+- `docs/DIAGNOSTICS.md` - Diagnostic implementation guidelines

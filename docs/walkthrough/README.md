@@ -165,8 +165,8 @@ These constants prevent pathological cases from causing hangs or OOM:
 ## Cross-References
 
 This documentation complements:
-- [specs/SOLVER.md](../specs/SOLVER.md) - Mathematical foundations of type solver
-- [specs/TS_UNSOUNDNESS_CATALOG.md](../specs/TS_UNSOUNDNESS_CATALOG.md) - TypeScript compatibility rules
+- [docs/SOLVER.md](../SOLVER.md) - Mathematical foundations of type solver
+- [docs/specs/TS_UNSOUNDNESS_CATALOG.md](../specs/TS_UNSOUNDNESS_CATALOG.md) - TypeScript compatibility rules
 - [docs/TYPE_VISITOR_PATTERN_GUIDE.md](../TYPE_VISITOR_PATTERN_GUIDE.md) - Visitor pattern usage
 - [PROJECT_DIRECTION.md](../../PROJECT_DIRECTION.md) - Conformance improvement plan
 - [AGENTS.md](../../AGENTS.md) - Architecture rules for contributors
