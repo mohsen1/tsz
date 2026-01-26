@@ -4,7 +4,7 @@ This document catalogs the Language Server Protocol (LSP) implementation status 
 
 ## Overview
 
-TSZ provides **LSP feature modules** rather than a standalone LSP server. These modules are designed for integration into external LSP server implementations (e.g., VS Code extensions, editor plugins via WASM).
+TSZ provides **LSP feature modules** and a basic **LSP server binary** (`tsz-lsp`). The feature modules can be used for WASM-based integrations (VS Code extensions, editor plugins), while the server binary provides a ready-to-use LSP implementation over stdio.
 
 ### Implementation Summary
 
@@ -294,35 +294,43 @@ Based on code review:
 
 ## Recommended Implementation Priority
 
-### Phase 1: Complete Core Features
+### Phase 1: Complete Partial Features ✅ (Mostly Done)
 
-1. **Selection Range** - Small scope, high value for editing
-2. **Signature Help for Member Calls** - Fix existing feature
-3. **Inlay Type Hints** - Complete partial implementation
+1. ~~**Selection Range**~~ - ✅ Implemented
+2. ~~**Type Definition**~~ - ✅ Implemented
+3. ~~**Code Lens**~~ - ✅ Implemented
+4. **Signature Help for Member Calls** - Fix existing feature (1 ignored test)
+5. **Inlay Type Hints** - Complete partial implementation (needs TypeInterner)
 
-### Phase 2: Missing Navigation
+### Phase 2: Type Checker Integration
 
-4. **Type Definition** - Important for type exploration
-5. **Call Hierarchy** - Understand call relationships
-6. **Workspace Symbols** - Search across project
+6. **Hover with Full Types** - Currently stubbed in tsz-lsp, needs TypeInterner
+7. **Full Completions** - Type-aware member suggestions
+8. **Semantic Tokens with Types** - Classify by inferred type
 
-### Phase 3: Refactoring
+### Phase 3: Missing Navigation
 
-7. **Extract Function/Method** - Common refactoring need
-8. **Implement Interface** - Productivity feature
-9. **Code Lens** - Nice-to-have
+9. **Call Hierarchy** - Understand call relationships
+10. **Type Hierarchy** - Navigate type inheritance
+11. **Workspace Symbols** - Search across project
 
-### Phase 4: Advanced Features
+### Phase 4: Refactoring
 
-10. **Type Hierarchy** - Complex but valuable
-11. **Linked Editing** - HTML/JSX tag renaming
-12. **Additional Code Actions** - Polish
+12. **Extract Function/Method** - Common refactoring need
+13. **Implement Interface** - Add missing members
+14. **Additional Code Actions** - See missing code actions list above
+
+### Phase 5: Advanced Features
+
+15. **Linked Editing** - HTML/JSX tag renaming
+16. **Document Links** - Clickable paths in comments
+17. **Inline Values** - Debug variable values
 
 ---
 
 ## File Reference
 
-All LSP modules are located in `/home/user/tsz/src/lsp/`:
+All LSP modules are located in `src/lsp/`:
 
 ```
 src/lsp/
@@ -337,20 +345,23 @@ src/lsp/
 ├── semantic_tokens.rs  # Syntax highlighting (~790 lines)
 ├── document_symbols.rs # File outline (~675 lines)
 ├── rename.rs           # Symbol rename (~615 lines)
+├── code_lens.rs        # Code lens (~550 lines) ✅ NEW
 ├── folding.rs          # Code folding (~535 lines)
 ├── hover.rs            # Hover information (~520 lines)
+├── type_definition.rs  # Type definition (~500 lines) ✅ NEW
 ├── highlighting.rs     # Document highlighting (~400 lines)
 ├── formatting.rs       # Code formatting (~400 lines)
+├── selection_range.rs  # Selection range (~350 lines) ✅ NEW
 ├── inlay_hints.rs      # Inlay hints (~305 lines)
 ├── position.rs         # Position utilities (~225 lines)
 ├── jsdoc.rs            # JSDoc parsing (~200 lines)
 ├── diagnostics.rs      # Error reporting (~165 lines)
 ├── utils.rs            # Shared utilities
 ├── symbols.rs          # Symbol definitions
-├── type_definition.rs  # STUB (2 lines)
-├── code_lens.rs        # STUB (2 lines)
-├── selection_range.rs  # STUB (2 lines)
 └── *_tests.rs          # Test files
+
+src/bin/
+└── tsz_lsp.rs          # LSP server binary (~800 lines) ✅ NEW
 ```
 
 ---
