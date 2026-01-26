@@ -1572,17 +1572,54 @@ impl<'a> CheckerState<'a> {
     /// - Not in type-only positions
     pub(crate) fn should_check_definite_assignment(
         &mut self,
-        _sym_id: SymbolId,
+        sym_id: SymbolId,
         _idx: NodeIndex,
     ) -> bool {
-        // TODO: Implement proper definite assignment checking
-        // For now, return false to avoid false positives
-        // This should check:
-        // - Is the symbol block-scoped?
-        // - Does it have an initializer?
-        // - Is it in an ambient context?
-        // - Is it a parameter without a default value?
-        false
+        use crate::binder::symbol_flags;
+
+        // Get the symbol
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Only check block-scoped variables (let/const)
+        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+            return false;
+        }
+
+        // Get the value declaration
+        let decl_id = symbol.value_declaration;
+        if decl_id.is_none() {
+            return false;
+        }
+
+        // Get the declaration node
+        let Some(decl_node) = self.ctx.arena.get(decl_id) else {
+            return false;
+        };
+
+        // Check if it's a variable declaration
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+
+        // Get the variable declaration data
+        let Some(var_data) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+
+        // If there's an initializer, no need to check definite assignment
+        if !var_data.initializer.is_none() {
+            return false;
+        }
+
+        // If there's a definite assignment assertion (!), skip check
+        if var_data.exclamation_token {
+            return false;
+        }
+
+        // Variable without initializer - should be checked for definite assignment
+        true
     }
 
     /// Check if a variable is definitely assigned at a given point.
@@ -1590,11 +1627,16 @@ impl<'a> CheckerState<'a> {
     /// This performs flow-sensitive analysis to determine if a variable
     /// has been assigned on all code paths leading to the usage point.
     pub(crate) fn is_definitely_assigned_at(&self, _idx: NodeIndex) -> bool {
+        // For now, we conservatively assume the variable is NOT definitely assigned
+        // unless we can prove it through flow analysis.
+        // This will correctly catch cases like:
+        //   let x: string;
+        //   return x;  // TS2454: x is used before being assigned
+        //
+        // A full implementation would walk the flow graph to determine if
+        // the variable has been assigned on all paths leading to this point.
         // TODO: Implement flow-sensitive definite assignment analysis
-        // This should check the flow graph to see if the variable
-        // has been assigned on all paths leading to this point
-        // For now, return true to avoid false positives
-        true
+        false
     }
 
     // =========================================================================

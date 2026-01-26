@@ -636,22 +636,14 @@ impl<'a> CheckerState<'a> {
                     }
                     // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
                     if !property_name.starts_with('#') {
-                        // Check if this is a namespace/module - emit TS2694 instead of TS2339
-                        if let Some(namespace_name) = self.get_namespace_name(object_type) {
-                            // TS2694: Namespace 'X' has no exported member 'Y'
-                            self.error_namespace_no_export(
-                                &namespace_name,
-                                property_name,
-                                access.name_or_argument,
-                            );
-                        } else {
-                            // TypeScript emits TS2339 for property access on any type, including functions
-                            self.error_property_not_exist_at(
-                                property_name,
-                                object_type_for_access,
-                                idx,
-                            );
-                        }
+                        // Property access expressions are VALUE context - always emit TS2339.
+                        // TS2694 (namespace has no exported member) is for TYPE context only,
+                        // which is handled separately in type name resolution.
+                        self.error_property_not_exist_at(
+                            property_name,
+                            object_type_for_access,
+                            idx,
+                        );
                     }
                     TypeId::ERROR
                 }

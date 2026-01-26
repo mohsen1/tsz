@@ -819,6 +819,30 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<SymbolId> {
+        let mut visited_modules = rustc_hash::FxHashSet::default();
+        self.resolve_reexported_member_symbol_inner(
+            module_specifier,
+            member_name,
+            visited_aliases,
+            &mut visited_modules,
+        )
+    }
+
+    /// Inner implementation with cycle detection for module re-exports.
+    fn resolve_reexported_member_symbol_inner(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+        visited_aliases: &mut Vec<SymbolId>,
+        visited_modules: &mut rustc_hash::FxHashSet<(String, String)>,
+    ) -> Option<SymbolId> {
+        // Cycle detection: check if we've already visited this (module, member) pair
+        let key = (module_specifier.to_string(), member_name.to_string());
+        if visited_modules.contains(&key) {
+            return None;
+        }
+        visited_modules.insert(key);
+
         // First, check if it's a direct export from this module
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
             if let Some(sym_id) = module_exports.get(member_name) {
@@ -830,10 +854,11 @@ impl<'a> CheckerState<'a> {
         if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
             if let Some((source_module, original_name)) = file_reexports.get(member_name) {
                 let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                return self.resolve_reexported_member_symbol(
+                return self.resolve_reexported_member_symbol_inner(
                     source_module,
                     name_to_lookup,
                     visited_aliases,
+                    visited_modules,
                 );
             }
         }
@@ -841,10 +866,11 @@ impl<'a> CheckerState<'a> {
         // Check for wildcard re-exports: `export * from 'bar'`
         if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
             for source_module in source_modules {
-                if let Some(sym_id) = self.resolve_reexported_member_symbol(
+                if let Some(sym_id) = self.resolve_reexported_member_symbol_inner(
                     source_module,
                     member_name,
                     visited_aliases,
+                    visited_modules,
                 ) {
                     return Some(sym_id);
                 }

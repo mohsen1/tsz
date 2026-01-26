@@ -47,56 +47,64 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
 }
 
 #[test]
-fn test_missing_promise_emits_ts2304_without_lib() {
-    // Without lib.d.ts, Promise should emit TS2304 (Cannot find name)
+fn test_missing_promise_emits_ts2583_without_lib() {
+    // Without lib.d.ts, Promise should emit TS2583 (Cannot find name - change lib)
     let diagnostics = check_without_lib("const p = new Promise<void>();");
 
-    // Should emit TS2304 for Promise when lib.d.ts is not loaded
-    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    // Should emit TS2583 for ES2015+ types like Promise when lib.d.ts is not loaded
+    // TypeScript emits: "Cannot find name 'Promise'. Do you need to change your target library?"
+    let ts2583_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2583).collect();
 
     assert!(
-        !ts2304_errors.is_empty(),
-        "Expected TS2304 error for Promise without lib.d.ts, got: {:?}",
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 error for Promise without lib.d.ts, got: {:?}",
         diagnostics
     );
 }
 
 #[test]
-fn test_missing_map_emits_ts2304_without_lib() {
+fn test_missing_map_emits_ts2583_without_lib() {
     let diagnostics = check_without_lib("const m = new Map<string, number>();");
 
-    // Should emit TS2304 for Map when lib.d.ts is not loaded
-    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    // Should emit TS2583 for ES2015+ types like Map when lib.d.ts is not loaded
+    // TypeScript emits: "Cannot find name 'Map'. Do you need to change your target library?"
+    let ts2583_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2583).collect();
 
     assert!(
-        !ts2304_errors.is_empty(),
-        "Expected TS2304 error for Map without lib.d.ts"
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 error for Map without lib.d.ts, got: {:?}",
+        diagnostics
     );
 }
 
 #[test]
-fn test_missing_set_emits_ts2304_without_lib() {
+fn test_missing_set_emits_ts2583_without_lib() {
     let diagnostics = check_without_lib("const s = new Set<number>();");
 
-    // Should emit TS2304 for Set when lib.d.ts is not loaded
-    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    // Should emit TS2583 for ES2015+ types like Set when lib.d.ts is not loaded
+    // TypeScript emits: "Cannot find name 'Set'. Do you need to change your target library?"
+    let ts2583_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2583).collect();
 
     assert!(
-        !ts2304_errors.is_empty(),
-        "Expected TS2304 error for Set without lib.d.ts"
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 error for Set without lib.d.ts, got: {:?}",
+        diagnostics
     );
 }
 
 #[test]
-fn test_missing_symbol_emits_ts2304_without_lib() {
+fn test_missing_symbol_emits_ts2585_without_lib() {
     let diagnostics = check_without_lib(r#"const s = Symbol("foo");"#);
 
-    // Should emit TS2304 for Symbol when lib.d.ts is not loaded
-    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    // Should emit TS2585 for Symbol when lib.d.ts is not loaded
+    // TypeScript emits: "'Symbol' only refers to a type, but is being used as a value here.
+    // Do you need to change your target library?"
+    let ts2585_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2585).collect();
 
     assert!(
-        !ts2304_errors.is_empty(),
-        "Expected TS2304 error for Symbol without lib.d.ts"
+        !ts2585_errors.is_empty(),
+        "Expected TS2585 error for Symbol without lib.d.ts, got: {:?}",
+        diagnostics
     );
 }
 
@@ -128,7 +136,7 @@ fn test_missing_regexp_emits_ts2304_without_lib() {
 }
 
 #[test]
-fn test_promise_type_reference_emits_ts2304_without_lib() {
+fn test_promise_type_reference_emits_ts2583_without_lib() {
     let diagnostics = check_without_lib(
         r#"
 function foo(): Promise<void> {
@@ -137,12 +145,13 @@ function foo(): Promise<void> {
 "#,
     );
 
-    // Should emit TS2304 for Promise in both type position and expression
-    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    // Should emit TS2583 for ES2015+ types like Promise when lib.d.ts is not loaded
+    // TypeScript emits: "Cannot find name 'Promise'. Do you need to change your target library?"
+    let ts2583_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2583).collect();
 
     assert!(
-        !ts2304_errors.is_empty(),
-        "Expected TS2304 errors for Promise without lib.d.ts, got: {:?}",
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 errors for Promise without lib.d.ts, got: {:?}",
         diagnostics
     );
 }
