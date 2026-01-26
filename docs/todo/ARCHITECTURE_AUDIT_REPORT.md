@@ -1389,7 +1389,7 @@ Files 2,000-5,000 lines:
 
 Given the current architecture, the recommended order to understand the codebase:
 
-1. `specs/` - Design documentation
+1. `docs/` - Design documentation
 2. `src/scanner.rs` - Token definitions
 3. `src/parser/node.rs` - AST node types
 4. `src/parser/base.rs` - Core parser types

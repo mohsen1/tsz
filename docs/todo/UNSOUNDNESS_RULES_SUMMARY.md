@@ -178,7 +178,7 @@ In sound type theory, this should be rejected (contravariant parameters). TypeSc
 
 | File | Purpose |
 |------|---------|
-| `specs/TS_UNSOUNDNESS_CATALOG.md` | Complete catalog of all 44 rules |
+| `docs/specs/TS_UNSOUNDNESS_CATALOG.md` | Complete catalog of all 44 rules |
 | `docs/UNSOUNDNESS_AUDIT.md` | Implementation status audit |
 | `src/solver/compat.rs` | Compatibility layer - applies unsound rules |
 | `src/solver/lawyer.rs` | `AnyPropagationRules` and `FreshnessTracker` |
@@ -191,9 +191,9 @@ In sound type theory, this should be rejected (contravariant parameters). TypeSc
 
 ## References
 
-- **TypeScript Unsoundness Catalog**: `specs/TS_UNSOUNDNESS_CATALOG.md` (531 lines, complete specification)
-- **Implementation Audit**: `docs/UNSOUNDNESS_AUDIT.md` (current status)
-- **Solver Architecture**: `specs/SOLVER.md` (Judge/Lawyer design)
+- **TypeScript Unsoundness Catalog**: `docs/specs/TS_UNSOUNDNESS_CATALOG.md` (531 lines, complete specification)
+- **Implementation Audit**: `docs/todo/UNSOUNDNESS_AUDIT.md` (current status)
+- **Solver Architecture**: `docs/SOLVER.md` (Judge/Lawyer design)
 
 ---
 

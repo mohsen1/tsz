@@ -1,6 +1,6 @@
 # TypeScript Unsoundness Catalog Implementation Audit
 
-This document provides an analysis of the TypeScript compatibility layer implementation against the 44 known unsoundness rules documented in `specs/TS_UNSOUNDNESS_CATALOG.md`.
+This document provides an analysis of the TypeScript compatibility layer implementation against the 44 known unsoundness rules documented in `docs/specs/TS_UNSOUNDNESS_CATALOG.md`.
 
 ## Quick Summary
 
@@ -211,8 +211,8 @@ The implementation follows the **Judge vs. Lawyer** architecture:
 
 ## References
 
-- TypeScript Unsoundness Catalog: `specs/TS_UNSOUNDNESS_CATALOG.md`
-- Solver Architecture: `specs/SOLVER.md`
+- TypeScript Unsoundness Catalog: `docs/specs/TS_UNSOUNDNESS_CATALOG.md`
+- Solver Architecture: `docs/SOLVER.md`
 - Implementation Phases: Catalog Section "Implementation Priority"
 
 ---

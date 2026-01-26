@@ -398,5 +398,5 @@ The Parser produces "Error Nodes" or "Missing Nodes" when syntax is invalid. The
 ## References
 
 - `AGENTS.md` - Architecture rules and compatibility requirements for this repo
-- `specs/SOLVER.md` - Solver design and Judge/Lawyer architecture
-- `specs/TS_UNSOUNDNESS_CATALOG.md` - Compatibility layer rules
+- `docs/SOLVER.md` - Solver design and Judge/Lawyer architecture
+- `docs/specs/TS_UNSOUNDNESS_CATALOG.md` - Compatibility layer rules

@@ -459,7 +459,7 @@ When fixing a gap:
 
 **See also**:
 - [PROJECT_DIRECTION.md](../../PROJECT_DIRECTION.md) - Conformance improvement plan
-- [specs/TS_UNSOUNDNESS_CATALOG.md](../../specs/TS_UNSOUNDNESS_CATALOG.md) - Full unsoundness catalog
+- [docs/specs/TS_UNSOUNDNESS_CATALOG.md](../specs/TS_UNSOUNDNESS_CATALOG.md) - Full unsoundness catalog
 - [AGENTS.md](../../AGENTS.md) - Contribution guidelines
 
 ---

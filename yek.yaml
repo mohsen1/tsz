@@ -16,7 +16,7 @@ ignore_patterns:
   - "**/*debug*.rs"
   - "LICENSE.txt"
   - "target/**"
-  - "specs/**"
+  - "docs/specs/**"
   - ".github/**"
   - "scripts/**"
   - "pkg/**"

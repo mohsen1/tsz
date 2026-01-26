@@ -27,7 +27,7 @@ The architecture demonstrates:
 
 The solver architecture is well-designed and grounded in solid theory:
 
-**Set-Theoretic Foundation** (`specs/SOLVER.md`):
+**Set-Theoretic Foundation** (`docs/SOLVER.md`):
 - Types as sets with coinduction for recursive types
 - TypeId/TypeKey interned representation
 - Judge vs Lawyer architecture for soundness/compatibility separation
@@ -133,7 +133,7 @@ All Phase 1 tasks completed (`docs/ARCHITECTURE_AUDIT_REPORT.md:12-21`):
 | TS2583 | 1,913x | Change target library? | MEDIUM |
 | TS2322 | 1,875x | Type not assignable (legitimate) | MEDIUM |
 
-**The "Poisoning Effect"** (`specs/DIAGNOSTICS.md:23-30`):
+**The "Poisoning Effect"** (`docs/DIAGNOSTICS.md:23-30`):
 1. Binder fails to load `lib.d.ts` correctly or merge scopes
 2. Standard globals (`console`, `Promise`, `Array`) become unresolved (TS2304)
 3. Solver defaults unresolved symbols to `Any`
@@ -161,7 +161,7 @@ All Phase 1 tasks completed (`docs/ARCHITECTURE_AUDIT_REPORT.md:12-21`):
 
 ### 4.1 Tracer Pattern ✅ **IMPLEMENTED**
 
-**Status** (`specs/WASM_ARCHITECTURE.md:211-268`):
+**Status** (`docs/WASM_ARCHITECTURE.md:211-268`):
 - **Documented**: ✅ Yes (aspirational design)
 - **Implemented**: ✅ Yes (commit `ee561f158`)
 - **Tests**: ✅ Yes (commit `f53d09404`, 250 lines of tests)
@@ -205,7 +205,7 @@ impl SubtypeTracer for DiagnosticTracer {
 
 ### 4.2 Emitter/Transform Separation ⚠️ **PARTIAL DEBT**
 
-**Status** (`specs/WASM_ARCHITECTURE.md:260-264`):
+**Status** (`docs/WASM_ARCHITECTURE.md:260-264`):
 - **Known Debt**: ⚠️ Transform pipeline still mixes lowering/printing
 - **Transform Pattern**: ✅ Consistent Transformer + IRPrinter architecture exists
 - **Remaining Issue**: Emitter still instantiates transform emitters directly (`src/emitter/mod.rs:32-34`)
@@ -214,7 +214,7 @@ impl SubtypeTracer for DiagnosticTracer {
 
 ### 4.3 Salsa Integration ⏳ **PREPARED BUT NOT STARTED**
 
-**Status** (`specs/SOLVER.md:979-1003`):
+**Status** (`docs/SOLVER.md:979-1003`):
 - **Design**: ✅ Complete (Phase 7.5 execution plan documented)
 - **Abstraction**: ✅ Ready (`TypeDatabase` trait allows swap)
 - **Implementation**: ❌ Not started
@@ -335,7 +335,7 @@ Target: Continue reducing `match node.kind` statements to < 20 total.
      - `Any poisoning` eliminated - TS2304 now properly emitted when lib not loaded
    - **Remaining**: Verify conformance test improvement, ensure WASM API loads lib by default
    - **Files**: `src/module_resolver.rs`, `src/checker/state.rs`, `src/binder/`
-   - **Reference**: `PROJECT_DIRECTION.md:24-43`, `specs/DIAGNOSTICS.md:23-30`
+   - **Reference**: `PROJECT_DIRECTION.md:24-43`, `docs/DIAGNOSTICS.md:23-30`
 
 2. **Complete Solver Subtype Decomposition** 🚧 **HIGH**
    - **Continue**: Extract remaining sections from `check_subtype_inner`
@@ -366,7 +366,7 @@ Target: Continue reducing `match node.kind` statements to < 20 total.
    - **Goal**: Unify fast checking and diagnostic reporting
    - **Impact**: Prevents logic drift, enables zero-cost abstractions
    - **Status**: ✅ Implemented (commit `ee561f158`)
-   - **Reference**: `specs/WASM_ARCHITECTURE.md:211-268`
+   - **Reference**: `docs/WASM_ARCHITECTURE.md:211-268`
 
 ### 6.3 Medium-Term Priorities (2-4 Months)
 
@@ -390,7 +390,7 @@ Target: Continue reducing `match node.kind` statements to < 20 total.
 10. **Salsa Integration** ⏳ **OPTIONAL**
     - **Status**: Architecture prepared, not blocking
     - **Benefit**: Incremental compilation, query caching
-    - **Reference**: `specs/SOLVER.md:979-1113`
+    - **Reference**: `docs/SOLVER.md:979-1113`
 
 11. **Parser State Decomposition** 🔴 **LOW PRIORITY**
     - **Size**: 10,762 lines with heavy duplication
@@ -505,10 +505,10 @@ Then continue **incremental refactoring** (solver → checker decomposition) whi
 - `docs/ARCHITECTURE_WORK_SUMMARY.md` - Refactoring progress tracking
 - `docs/UNSOUNDNESS_AUDIT.md` - Compatibility layer implementation status
 - `docs/TRANSFORM_ARCHITECTURE.md` - Transform system architecture
-- `specs/SOLVER.md` - Solver design document (1,116 lines)
-- `specs/WASM_ARCHITECTURE.md` - WASM build and runtime architecture
-- `specs/TS_UNSOUNDNESS_CATALOG.md` - 44 unsoundness rules catalog
-- `specs/DIAGNOSTICS.md` - Diagnostic code mapping
+- `docs/SOLVER.md` - Solver design document (1,116 lines)
+- `docs/WASM_ARCHITECTURE.md` - WASM build and runtime architecture
+- `docs/specs/TS_UNSOUNDNESS_CATALOG.md` - 44 unsoundness rules catalog
+- `docs/DIAGNOSTICS.md` - Diagnostic code mapping
 - `PROJECT_DIRECTION.md` - Current priorities and conformance status
 
 ---
