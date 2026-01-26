@@ -99,8 +99,25 @@ impl<'a> Printer<'a> {
         self.emit(decorator.expression);
     }
 
+    /// Maximum recursion depth for decorator text extraction to prevent stack overflow
+    const MAX_DECORATOR_TEXT_DEPTH: u32 = 10;
+
     /// Get a string representation of a decorator expression for diagnostics
     fn get_decorator_text(&self, expr_idx: crate::parser::NodeIndex) -> String {
+        self.get_decorator_text_with_depth(expr_idx, 0)
+    }
+
+    /// Get a string representation of a decorator expression with depth limiting
+    fn get_decorator_text_with_depth(
+        &self,
+        expr_idx: crate::parser::NodeIndex,
+        depth: u32,
+    ) -> String {
+        // Prevent unbounded recursion for deeply nested decorator expressions
+        if depth > Self::MAX_DECORATOR_TEXT_DEPTH {
+            return "...".to_string();
+        }
+
         if expr_idx.is_none() {
             return "unknown".to_string();
         }
@@ -118,14 +135,16 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = self.arena.get_call_expr(expr_node) {
-                    let callee_text = self.get_decorator_text(call.expression);
+                    let callee_text =
+                        self.get_decorator_text_with_depth(call.expression, depth + 1);
                     return format!("{}(...)", callee_text);
                 }
             }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(expr_node) {
-                    let obj_text = self.get_decorator_text(access.expression);
-                    let prop_text = self.get_decorator_text(access.name_or_argument);
+                    let obj_text = self.get_decorator_text_with_depth(access.expression, depth + 1);
+                    let prop_text =
+                        self.get_decorator_text_with_depth(access.name_or_argument, depth + 1);
                     return format!("{}.{}", obj_text, prop_text);
                 }
             }
