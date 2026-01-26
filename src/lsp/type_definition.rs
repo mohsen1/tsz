@@ -12,7 +12,7 @@ use crate::lsp::position::{LineMap, Location, Position, Range};
 use crate::lsp::resolver::ScopeWalker;
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::node::NodeArena;
-use crate::parser::{syntax_kind_ext, NodeIndex};
+use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
 /// Provider for Go to Type Definition.
@@ -102,9 +102,7 @@ impl<'a> TypeDefinitionProvider<'a> {
             }
 
             // Parameter: look for type annotation
-            k if k == syntax_kind_ext::PARAMETER => {
-                self.find_type_from_parameter(root, decl_idx)
-            }
+            k if k == syntax_kind_ext::PARAMETER => self.find_type_from_parameter(root, decl_idx),
 
             // Property declaration/signature: look for type annotation
             k if k == syntax_kind_ext::PROPERTY_DECLARATION
@@ -253,7 +251,11 @@ impl<'a> TypeDefinitionProvider<'a> {
     }
 
     /// Resolve a TypeReference node to its definition.
-    fn resolve_type_reference(&self, root: NodeIndex, type_ref: NodeIndex) -> Option<Vec<Location>> {
+    fn resolve_type_reference(
+        &self,
+        root: NodeIndex,
+        type_ref: NodeIndex,
+    ) -> Option<Vec<Location>> {
         // Find the identifier within the type reference
         let type_name_idx = self.find_type_name(type_ref)?;
 
@@ -459,7 +461,8 @@ mod type_definition_tests {
 
     #[test]
     fn test_type_definition_function_return() {
-        let source = "interface Result { ok: boolean; }\nfunction foo(): Result { return { ok: true }; }";
+        let source =
+            "interface Result { ok: boolean; }\nfunction foo(): Result { return { ok: true }; }";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
