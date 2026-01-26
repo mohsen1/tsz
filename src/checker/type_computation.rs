@@ -2851,14 +2851,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the type represents a callable function.
     pub fn is_function_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_function_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_function_type(self.ctx.types, ty)
     }
 
     /// Check if a type is an object type.
     ///
     /// Returns true if the type represents an object or class.
     pub fn is_object_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_object_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_object_type(self.ctx.types, ty)
     }
 
     /// Check if a type is an array type.
@@ -2875,70 +2875,70 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the type represents a tuple.
     pub fn is_tuple_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_tuple_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_tuple_type(self.ctx.types, ty)
     }
 
     /// Check if a type is a union type.
     ///
     /// Returns true if the type is a union of multiple types.
     pub fn is_union_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_union_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_union_type(self.ctx.types, ty)
     }
 
     /// Check if a type is an intersection type.
     ///
     /// Returns true if the type is an intersection of multiple types.
     pub fn is_intersection_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_intersection_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_intersection_type(self.ctx.types, ty)
     }
 
     /// Check if a type is a literal type.
     ///
     /// Returns true if the type is a specific literal value (string, number, boolean).
     pub fn is_literal_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_literal_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_literal_type(self.ctx.types, ty)
     }
 
     /// Check if a type is a generic type application.
     ///
     /// Returns true if the type is a parameterized generic like Map<K, V>.
     pub fn is_generic_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_generic_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_generic_type(self.ctx.types, ty)
     }
 
     /// Check if a type is a reference to another type.
     ///
     /// Returns true if the type is a type reference (interface, class, type alias).
     pub fn is_type_reference(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_type_reference(&self.ctx.types, ty)
+        crate::solver::type_queries::is_type_reference(self.ctx.types, ty)
     }
 
     /// Check if a type is a conditional type.
     ///
     /// Returns true if the type is a conditional type like T extends U ? X : Y.
     pub fn is_conditional_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_conditional_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_conditional_type(self.ctx.types, ty)
     }
 
     /// Check if a type is a mapped type.
     ///
     /// Returns true if the type is a mapped type like { [K in T]: U }.
     pub fn is_mapped_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_mapped_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_mapped_type(self.ctx.types, ty)
     }
 
     /// Check if a type is a template literal type.
     ///
     /// Returns true if the type is a template literal type like `foo${string}bar`.
     pub fn is_template_literal_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_template_literal_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_template_literal_type(self.ctx.types, ty)
     }
 
     /// Check if a type is a callable type.
     ///
     /// Returns true if the type represents a function or callable.
     pub fn is_callable_type(&self, ty: TypeId) -> bool {
-        crate::solver::type_queries::is_callable_type(&self.ctx.types, ty)
+        crate::solver::type_queries::is_callable_type(self.ctx.types, ty)
     }
 
     // =========================================================================

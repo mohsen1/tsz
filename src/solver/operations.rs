@@ -3202,28 +3202,19 @@ pub fn is_readonly_index_signature(
     wants_string: bool,
     wants_number: bool,
 ) -> bool {
-    match interner.lookup(type_id) {
-        Some(TypeKey::ReadonlyType(inner)) => {
-            if wants_number
-                && let Some(TypeKey::Array(_) | TypeKey::Tuple(_)) = interner.lookup(inner)
-            {
-                return true;
-            }
-            is_readonly_index_signature(interner, inner, wants_string, wants_number)
-        }
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            (wants_string && shape.string_index.as_ref().is_some_and(|idx| idx.readonly))
-                || (wants_number && shape.number_index.as_ref().is_some_and(|idx| idx.readonly))
-        }
-        Some(TypeKey::Union(types)) | Some(TypeKey::Intersection(types)) => {
-            let types = interner.type_list(types);
-            types
-                .iter()
-                .any(|t| is_readonly_index_signature(interner, *t, wants_string, wants_number))
-        }
-        _ => false,
+    use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
+
+    let resolver = IndexSignatureResolver::new(interner);
+
+    if wants_string && resolver.is_readonly(type_id, IndexKind::String) {
+        return true;
     }
+
+    if wants_number && resolver.is_readonly(type_id, IndexKind::Number) {
+        return true;
+    }
+
+    false
 }
 
 /// Check if a string represents a valid numeric property name.

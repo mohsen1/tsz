@@ -28,17 +28,20 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for regular object types.
     pub fn is_object_with_properties(&self, type_id: TypeId) -> bool {
-        matches!(self.ctx.types.lookup(type_id), Some(TypeKey::Object(_)))
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Object(_)) => true,
+            _ => false,
+        }
     }
 
     /// Check if a type is an object type with index signatures.
     ///
     /// Returns true for objects with string or number index signatures.
     pub fn is_object_with_index(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(TypeKey::ObjectWithIndex(_))
-        )
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::ObjectWithIndex(_)) => true,
+            _ => false,
+        }
     }
 
     /// Get the number of properties in an object type.
@@ -267,14 +270,8 @@ impl<'a> CheckerState<'a> {
     /// Returns true if both are objects and have compatible structure.
     pub fn object_types_compatible(&mut self, object1: TypeId, object2: TypeId) -> bool {
         // Both must be object types
-        let is_o1_object = matches!(
-            self.ctx.types.lookup(object1),
-            Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_))
-        );
-        let is_o2_object = matches!(
-            self.ctx.types.lookup(object2),
-            Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_))
-        );
+        let is_o1_object = crate::solver::type_queries::is_object_type(self.ctx.types, object1);
+        let is_o2_object = crate::solver::type_queries::is_object_type(self.ctx.types, object2);
 
         if !is_o1_object || !is_o2_object {
             return false;
@@ -289,10 +286,7 @@ impl<'a> CheckerState<'a> {
     /// This is a convenience wrapper that combines object type checking
     /// with structure compatibility.
     pub fn is_object_assignable_to(&mut self, object_type: TypeId, target_type: TypeId) -> bool {
-        let is_object = matches!(
-            self.ctx.types.lookup(object_type),
-            Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_))
-        );
+        let is_object = crate::solver::type_queries::is_object_type(self.ctx.types, object_type);
         if !is_object {
             return false;
         }

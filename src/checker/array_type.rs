@@ -28,7 +28,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for `T[]` types.
     pub fn is_mutable_array_type(&self, type_id: TypeId) -> bool {
-        matches!(self.ctx.types.lookup(type_id), Some(TypeKey::Array(_)))
+        crate::solver::type_queries::is_array_type(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
     pub fn is_union_array(&self, type_id: TypeId) -> bool {
         match self.ctx.types.lookup(type_id) {
             Some(TypeKey::Array(element_type)) => {
-                matches!(self.ctx.types.lookup(element_type), Some(TypeKey::Union(_)))
+                crate::solver::type_queries::is_union_type(self.ctx.types, element_type)
             }
             _ => false,
         }
@@ -133,7 +133,7 @@ impl<'a> CheckerState<'a> {
     pub fn is_homogeneous_array(&self, type_id: TypeId) -> bool {
         match self.ctx.types.lookup(type_id) {
             Some(TypeKey::Array(element_type)) => {
-                !matches!(self.ctx.types.lookup(element_type), Some(TypeKey::Union(_)))
+                !crate::solver::type_queries::is_union_type(self.ctx.types, element_type)
             }
             _ => false,
         }
@@ -147,7 +147,7 @@ impl<'a> CheckerState<'a> {
         match self.ctx.types.lookup(type_id) {
             Some(TypeKey::Array(element_type)) => {
                 // If element type is not a union, it's homogeneous
-                if !matches!(self.ctx.types.lookup(element_type), Some(TypeKey::Union(_))) {
+                if !crate::solver::type_queries::is_union_type(self.ctx.types, element_type) {
                     Some(element_type)
                 } else {
                     None
