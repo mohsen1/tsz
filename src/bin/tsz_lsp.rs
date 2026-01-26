@@ -817,27 +817,27 @@ fn main() -> Result<()> {
     let mut server = LspServer::new();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    let reader = BufReader::new(stdin.lock());
 
-    // Read LSP messages from stdin
-    let mut lines = reader.lines();
+    // Use a single BufReader for all reads to avoid losing buffered data
+    let mut reader = BufReader::new(stdin.lock());
+    let mut header_line = String::new();
 
     loop {
         // Read headers
         let mut content_length: Option<usize> = None;
 
         loop {
-            let line = match lines.next() {
-                Some(Ok(line)) => line,
-                Some(Err(e)) => {
-                    eprintln!("tsz-lsp: Error reading line: {}", e);
-                    return Err(e.into());
-                }
-                None => {
-                    eprintln!("tsz-lsp: EOF reached");
-                    return Ok(());
-                }
-            };
+            header_line.clear();
+            let bytes_read = reader
+                .read_line(&mut header_line)
+                .context("Failed to read header line")?;
+
+            if bytes_read == 0 {
+                eprintln!("tsz-lsp: EOF reached");
+                return Ok(());
+            }
+
+            let line = header_line.trim_end_matches(['\r', '\n']);
 
             if line.is_empty() {
                 break;
@@ -851,11 +851,9 @@ fn main() -> Result<()> {
         let content_length =
             content_length.ok_or_else(|| anyhow::anyhow!("Missing Content-Length header"))?;
 
-        // Read content
+        // Read content from the same BufReader to preserve buffered data
         let mut content = vec![0u8; content_length];
-        let stdin = std::io::stdin();
-        stdin
-            .lock()
+        reader
             .read_exact(&mut content)
             .context("Failed to read content")?;
 
