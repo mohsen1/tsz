@@ -553,7 +553,11 @@ impl BinderState {
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> following named re-export from '{}', original name='{}'",
                     export_name, module_specifier, source_module, name_to_lookup
                 );
-                return self.resolve_import_with_reexports_inner(source_module, name_to_lookup, visited);
+                return self.resolve_import_with_reexports_inner(
+                    source_module,
+                    name_to_lookup,
+                    visited,
+                );
             }
         }
 
@@ -565,7 +569,8 @@ impl BinderState {
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> trying wildcard re-export from '{}'",
                     export_name, module_specifier, source_module
                 );
-                if let Some(result) = self.resolve_import_with_reexports_inner(source_module, export_name, visited)
+                if let Some(result) =
+                    self.resolve_import_with_reexports_inner(source_module, export_name, visited)
                 {
                     return Some(result);
                 }
