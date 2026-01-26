@@ -3877,8 +3877,7 @@ impl<'a> CheckerState<'a> {
                                     == crate::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
                                 {
                                     if let Some(alias) = self.ctx.arena.get_type_alias(decl_node) {
-                                        if let Some(body_node) =
-                                            self.ctx.arena.get(alias.type_node)
+                                        if let Some(body_node) = self.ctx.arena.get(alias.type_node)
                                         {
                                             // Constructor type syntax: new (...args) => T
                                             if body_node.kind
