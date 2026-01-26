@@ -11,11 +11,14 @@
 //! This module extends CheckerState with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
+use crate::binder::SymbolId;
 use crate::checker::state::CheckerState;
 use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::solver::{CallableShape, ContextualTypeContext, TupleElement, TypeId, TypeKey};
+use crate::solver::{
+    CallableShape, ContextualTypeContext, SymbolRef, TupleElement, TypeId, TypeKey,
+};
 
 // =============================================================================
 // Type Computation Methods
@@ -2046,8 +2049,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// The emit_error parameter controls whether we emit TS2507 errors.
     fn get_construct_type_from_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::binder::SymbolId;
-        use crate::solver::{SymbolRef, TypeKey};
+        use crate::solver::TypeKey;
 
         let Some(type_key) = self.ctx.types.lookup(type_id) else {
             return None;
@@ -2132,6 +2134,7 @@ impl<'a> CheckerState<'a> {
             TypeKey::Application(_) => Some(type_id),
             // Object types might have construct signatures (for interface object types)
             TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => Some(type_id),
+            // All other types are not constructable
             _ => None,
         }
     }
