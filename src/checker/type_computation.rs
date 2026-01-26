@@ -1724,7 +1724,9 @@ impl<'a> CheckerState<'a> {
         }
         // TS18050: Cannot construct 'never' type (impossible union after narrowing)
         if constructor_type == TypeId::NEVER {
-            use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            use crate::checker::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
             let message =
                 format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["never"]);
             self.error_at_node(
@@ -1734,6 +1736,9 @@ impl<'a> CheckerState<'a> {
             );
             return TypeId::NEVER;
         }
+
+        // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
+        let constructor_type = self.evaluate_application_type(constructor_type);
 
         let construct_type = match self.ctx.types.lookup(constructor_type) {
             Some(TypeKey::Callable(shape_id)) => {
@@ -1777,8 +1782,11 @@ impl<'a> CheckerState<'a> {
                 let mut instance_types: Vec<TypeId> = Vec::new();
 
                 for &member in members.iter() {
-                    // Try to get construct signatures from the member, handling various type representations
-                    let construct_sig_return = self.get_construct_signature_return_type(member);
+                    // Evaluate Application types (e.g., Constructor<T>) to get their Callable shape
+                    let evaluated_member = self.evaluate_application_type(member);
+                    // Try to get construct signatures from the evaluated member
+                    let construct_sig_return =
+                        self.get_construct_signature_return_type(evaluated_member);
                     if let Some(return_type) = construct_sig_return {
                         instance_types.push(return_type);
                     }
@@ -1793,6 +1801,76 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Return intersection of all instance types
                     return self.ctx.types.intersection(instance_types);
+                }
+            }
+            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => {
+                // For type parameters with constructor constraints (e.g., T extends typeof Base),
+                // check the constraint for constructor signatures.
+                // This handles patterns like:
+                //   function f<T extends typeof Base>(ctor: T) {
+                //       return new ctor();  // Should work - T has construct signatures from Base
+                //   }
+                if let Some(constraint) = info.constraint {
+                    // Evaluate the constraint to resolve Application types like Constructor<T>
+                    let evaluated_constraint = self.evaluate_application_type(constraint);
+
+                    // Check if the evaluated constraint is an Intersection - handle it specially
+                    if let Some(TypeKey::Intersection(members_id)) =
+                        self.ctx.types.lookup(evaluated_constraint)
+                    {
+                        let members = self.ctx.types.type_list(members_id);
+                        let mut instance_types: Vec<TypeId> = Vec::new();
+
+                        for &member in members.iter() {
+                            // Resolve Refs (type alias references) to their actual types
+                            let resolved_member = self.resolve_type_for_property_access(member);
+                            // Then evaluate any Application types
+                            let evaluated_member = self.evaluate_application_type(resolved_member);
+                            let construct_sig_return =
+                                self.get_construct_signature_return_type(evaluated_member);
+                            if let Some(return_type) = construct_sig_return {
+                                instance_types.push(return_type);
+                            }
+                        }
+
+                        if instance_types.is_empty() {
+                            self.error_not_a_constructor_at(constructor_type, idx);
+                            return TypeId::ERROR;
+                        } else if instance_types.len() == 1 {
+                            return instance_types[0];
+                        } else {
+                            return self.ctx.types.intersection(instance_types);
+                        }
+                    }
+
+                    // For non-intersection constraints, get the construct type
+                    self.get_construct_type_from_type(evaluated_constraint)
+                } else {
+                    // No constraint - can't determine if it's a constructor
+                    None
+                }
+            }
+            Some(TypeKey::Union(members_id)) => {
+                // For union types, check if all members are constructors
+                // and return the union of their instance types
+                let members = self.ctx.types.type_list(members_id);
+                let mut instance_types: Vec<TypeId> = Vec::new();
+                let mut all_constructable = true;
+
+                for &member in members.iter() {
+                    let construct_sig_return = self.get_construct_signature_return_type(member);
+                    if let Some(return_type) = construct_sig_return {
+                        instance_types.push(return_type);
+                    } else {
+                        all_constructable = false;
+                        break;
+                    }
+                }
+
+                if all_constructable && !instance_types.is_empty() {
+                    Some(self.ctx.types.union(instance_types))
+                } else {
+                    None
                 }
             }
             _ => None,
@@ -1946,7 +2024,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// The emit_error parameter controls whether we emit TS2507 errors.
     fn get_construct_type_from_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::solver::TypeKey;
+        use crate::binder::SymbolId;
+        use crate::solver::{SymbolRef, TypeKey};
 
         let Some(type_key) = self.ctx.types.lookup(type_id) else {
             return None;
@@ -1974,8 +2053,63 @@ impl<'a> CheckerState<'a> {
                 }
             }
             TypeKey::Function(_) => Some(type_id),
-            // Ref and TypeQuery are not constructable on their own
-            // They should be resolved via get_type_of_symbol first
+            // Ref to a symbol - check if it's a class (class constructor type)
+            // or an interface with construct signatures
+            TypeKey::Ref(SymbolRef(sym_id)) => {
+                let symbol_id = SymbolId(sym_id);
+                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    // Class symbols are constructable - return the type as-is
+                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+                        return Some(type_id);
+                    }
+                    // Interface symbols might have construct signatures
+                    // Return the type for further checking by the caller
+                    if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
+                        return Some(type_id);
+                    }
+                }
+                None
+            }
+            // TypeQuery (typeof X) - check if X is a class
+            TypeKey::TypeQuery(SymbolRef(sym_id)) => {
+                let symbol_id = SymbolId(sym_id);
+                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    // typeof ClassName is the constructor type
+                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+                        return Some(type_id);
+                    }
+                }
+                None
+            }
+            // Type parameters - check the constraint
+            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+                if let Some(constraint) = info.constraint {
+                    self.get_construct_type_from_type(constraint)
+                } else {
+                    None
+                }
+            }
+            // Intersection - all members must be constructable, return intersection
+            TypeKey::Intersection(members_id) => {
+                let members = self.ctx.types.type_list(members_id);
+                let mut all_constructable = true;
+                for &member in members.iter() {
+                    if self.get_construct_type_from_type(member).is_none() {
+                        all_constructable = false;
+                        break;
+                    }
+                }
+                if all_constructable {
+                    Some(type_id)
+                } else {
+                    None
+                }
+            }
+            // Application (generic instantiation like Newable<T>) - return as-is
+            // The caller will check for construct signatures
+            TypeKey::Application(_) => Some(type_id),
+            // Object types might have construct signatures (for interface object types)
+            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => Some(type_id),
             _ => None,
         }
     }
