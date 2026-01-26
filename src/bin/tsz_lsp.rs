@@ -31,16 +31,20 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 
 use wasm::binder::BinderState;
-use wasm::lsp::{
-    CodeLensProvider, DocumentSymbolProvider, FindReferences,
-    GoToDefinition, Position, SelectionRangeProvider, TypeDefinitionProvider,
-};
 use wasm::lsp::position::LineMap;
+use wasm::lsp::{
+    CodeLensProvider, DocumentSymbolProvider, FindReferences, GoToDefinition, Position,
+    SelectionRangeProvider, TypeDefinitionProvider,
+};
 use wasm::parser::ParserState;
 
 /// TSZ Language Server
 #[derive(Parser, Debug)]
-#[command(name = "tsz-lsp", version, about = "TSZ Language Server Protocol Server")]
+#[command(
+    name = "tsz-lsp",
+    version,
+    about = "TSZ Language Server Protocol Server"
+)]
 struct Args {
     /// Communication mode (currently only stdio is supported)
     #[arg(long, default_value = "stdio")]
@@ -377,11 +381,7 @@ impl LspServer {
             }
             Some(method) if id.is_some() => {
                 // Unknown request - return method not found error
-                Some(self.make_error_response(
-                    id,
-                    -32601,
-                    format!("Method not found: {}", method),
-                ))
+                Some(self.make_error_response(id, -32601, format!("Method not found: {}", method)))
             }
             _ => None, // Unknown notification or malformed message
         }
@@ -408,7 +408,12 @@ impl LspServer {
         }
     }
 
-    fn make_error_response(&self, id: Option<Value>, code: i32, message: String) -> JsonRpcResponse {
+    fn make_error_response(
+        &self,
+        id: Option<Value>,
+        code: i32,
+        message: String,
+    ) -> JsonRpcResponse {
         JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             id: id.unwrap_or(Value::Null),
@@ -434,9 +439,18 @@ impl LspServer {
     fn handle_did_open(&mut self, params: Option<Value>) {
         if let Some(params) = params {
             if let (Some(uri), Some(text), Some(version)) = (
-                params.get("textDocument").and_then(|td| td.get("uri")).and_then(|u| u.as_str()),
-                params.get("textDocument").and_then(|td| td.get("text")).and_then(|t| t.as_str()),
-                params.get("textDocument").and_then(|td| td.get("version")).and_then(|v| v.as_i64()),
+                params
+                    .get("textDocument")
+                    .and_then(|td| td.get("uri"))
+                    .and_then(|u| u.as_str()),
+                params
+                    .get("textDocument")
+                    .and_then(|td| td.get("text"))
+                    .and_then(|t| t.as_str()),
+                params
+                    .get("textDocument")
+                    .and_then(|td| td.get("version"))
+                    .and_then(|v| v.as_i64()),
             ) {
                 self.documents.insert(
                     uri.to_string(),
@@ -449,9 +463,15 @@ impl LspServer {
     fn handle_did_change(&mut self, params: Option<Value>) {
         if let Some(params) = params {
             if let (Some(uri), Some(changes), Some(version)) = (
-                params.get("textDocument").and_then(|td| td.get("uri")).and_then(|u| u.as_str()),
+                params
+                    .get("textDocument")
+                    .and_then(|td| td.get("uri"))
+                    .and_then(|u| u.as_str()),
                 params.get("contentChanges").and_then(|c| c.as_array()),
-                params.get("textDocument").and_then(|td| td.get("version")).and_then(|v| v.as_i64()),
+                params
+                    .get("textDocument")
+                    .and_then(|td| td.get("version"))
+                    .and_then(|v| v.as_i64()),
             ) {
                 // Full sync mode - take the last change
                 if let Some(change) = changes.last() {
@@ -468,7 +488,11 @@ impl LspServer {
 
     fn handle_did_close(&mut self, params: Option<Value>) {
         if let Some(params) = params {
-            if let Some(uri) = params.get("textDocument").and_then(|td| td.get("uri")).and_then(|u| u.as_str()) {
+            if let Some(uri) = params
+                .get("textDocument")
+                .and_then(|td| td.get("uri"))
+                .and_then(|u| u.as_str())
+            {
                 self.documents.remove(uri);
             }
         }
@@ -489,14 +513,63 @@ impl LspServer {
         let _ = params;
 
         let keywords = vec![
-            "const", "let", "var", "function", "class", "interface", "type",
-            "enum", "import", "export", "return", "if", "else", "for", "while",
-            "switch", "case", "break", "continue", "try", "catch", "finally",
-            "throw", "new", "this", "super", "extends", "implements", "public",
-            "private", "protected", "static", "readonly", "abstract", "async",
-            "await", "yield", "typeof", "instanceof", "in", "of", "as", "is",
-            "true", "false", "null", "undefined", "void", "never", "any",
-            "unknown", "string", "number", "boolean", "object", "symbol", "bigint",
+            "const",
+            "let",
+            "var",
+            "function",
+            "class",
+            "interface",
+            "type",
+            "enum",
+            "import",
+            "export",
+            "return",
+            "if",
+            "else",
+            "for",
+            "while",
+            "switch",
+            "case",
+            "break",
+            "continue",
+            "try",
+            "catch",
+            "finally",
+            "throw",
+            "new",
+            "this",
+            "super",
+            "extends",
+            "implements",
+            "public",
+            "private",
+            "protected",
+            "static",
+            "readonly",
+            "abstract",
+            "async",
+            "await",
+            "yield",
+            "typeof",
+            "instanceof",
+            "in",
+            "of",
+            "as",
+            "is",
+            "true",
+            "false",
+            "null",
+            "undefined",
+            "void",
+            "never",
+            "any",
+            "unknown",
+            "string",
+            "number",
+            "boolean",
+            "object",
+            "symbol",
+            "bigint",
         ];
 
         Ok(serde_json::json!({
@@ -514,7 +587,9 @@ impl LspServer {
     fn handle_definition(&mut self, params: Option<Value>) -> Result<Value> {
         let (uri, line, character) = self.extract_position(&params)?;
 
-        let doc = self.documents.get_mut(&uri)
+        let doc = self
+            .documents
+            .get_mut(&uri)
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
@@ -543,7 +618,9 @@ impl LspServer {
     fn handle_type_definition(&mut self, params: Option<Value>) -> Result<Value> {
         let (uri, line, character) = self.extract_position(&params)?;
 
-        let doc = self.documents.get_mut(&uri)
+        let doc = self
+            .documents
+            .get_mut(&uri)
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
@@ -572,7 +649,9 @@ impl LspServer {
     fn handle_references(&mut self, params: Option<Value>) -> Result<Value> {
         let (uri, line, character) = self.extract_position(&params)?;
 
-        let doc = self.documents.get_mut(&uri)
+        let doc = self
+            .documents
+            .get_mut(&uri)
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
@@ -607,18 +686,16 @@ impl LspServer {
             .ok_or_else(|| anyhow::anyhow!("Missing uri"))?
             .to_string();
 
-        let doc = self.documents.get_mut(&uri)
+        let doc = self
+            .documents
+            .get_mut(&uri)
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
         let parser = doc.parser.as_ref().unwrap();
         let line_map = doc.line_map.as_ref().unwrap();
 
-        let provider = DocumentSymbolProvider::new(
-            parser.get_arena(),
-            line_map,
-            &doc.content,
-        );
+        let provider = DocumentSymbolProvider::new(parser.get_arena(), line_map, &doc.content);
 
         let root = doc.get_root();
         let symbols = provider.get_document_symbols(root);
@@ -650,18 +727,16 @@ impl LspServer {
             })
             .unwrap_or_default();
 
-        let doc = self.documents.get_mut(&uri)
+        let doc = self
+            .documents
+            .get_mut(&uri)
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
         let parser = doc.parser.as_ref().unwrap();
         let line_map = doc.line_map.as_ref().unwrap();
 
-        let provider = SelectionRangeProvider::new(
-            parser.get_arena(),
-            line_map,
-            &doc.content,
-        );
+        let provider = SelectionRangeProvider::new(parser.get_arena(), line_map, &doc.content);
 
         let ranges = provider.get_selection_ranges(&positions);
         Ok(serde_json::to_value(&ranges)?)
@@ -676,7 +751,9 @@ impl LspServer {
             .ok_or_else(|| anyhow::anyhow!("Missing uri"))?
             .to_string();
 
-        let doc = self.documents.get_mut(&uri)
+        let doc = self
+            .documents
+            .get_mut(&uri)
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
@@ -771,12 +848,16 @@ fn main() -> Result<()> {
             }
         }
 
-        let content_length = content_length.ok_or_else(|| anyhow::anyhow!("Missing Content-Length header"))?;
+        let content_length =
+            content_length.ok_or_else(|| anyhow::anyhow!("Missing Content-Length header"))?;
 
         // Read content
         let mut content = vec![0u8; content_length];
         let stdin = std::io::stdin();
-        stdin.lock().read_exact(&mut content).context("Failed to read content")?;
+        stdin
+            .lock()
+            .read_exact(&mut content)
+            .context("Failed to read content")?;
 
         let content_str = String::from_utf8(content).context("Invalid UTF-8")?;
 
@@ -785,8 +866,8 @@ fn main() -> Result<()> {
         }
 
         // Parse JSON-RPC message
-        let msg: JsonRpcMessage = serde_json::from_str(&content_str)
-            .context("Failed to parse JSON-RPC message")?;
+        let msg: JsonRpcMessage =
+            serde_json::from_str(&content_str).context("Failed to parse JSON-RPC message")?;
 
         // Handle message
         if let Some(response) = server.handle_message(msg) {

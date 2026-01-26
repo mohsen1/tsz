@@ -9,7 +9,7 @@
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::node::NodeArena;
-use crate::parser::{syntax_kind_ext, NodeIndex};
+use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// A selection range with a parent pointer.
 ///
@@ -175,7 +175,10 @@ mod selection_range_tests {
         let pos = Position::new(0, 4);
         let result = provider.get_selection_range(pos);
 
-        assert!(result.is_some(), "Should find selection range for identifier");
+        assert!(
+            result.is_some(),
+            "Should find selection range for identifier"
+        );
         let selection = result.unwrap();
 
         // Should have at least one parent (the identifier should expand to larger constructs)
@@ -209,7 +212,11 @@ mod selection_range_tests {
         }
 
         // Should have multiple levels for nested member access
-        assert!(depth >= 2, "Should have nested selection ranges, got {}", depth);
+        assert!(
+            depth >= 2,
+            "Should have nested selection ranges, got {}",
+            depth
+        );
     }
 
     #[test]
@@ -226,7 +233,10 @@ mod selection_range_tests {
         let pos = Position::new(1, 2);
         let result = provider.get_selection_range(pos);
 
-        assert!(result.is_some(), "Should find selection range in function body");
+        assert!(
+            result.is_some(),
+            "Should find selection range in function body"
+        );
 
         // Should eventually expand to include the whole function
         let mut current = result.as_ref();
@@ -240,7 +250,10 @@ mod selection_range_tests {
             current = sel.parent.as_deref();
         }
 
-        assert!(found_function, "Selection should expand to include function");
+        assert!(
+            found_function,
+            "Selection should expand to include function"
+        );
     }
 
     #[test]
@@ -258,7 +271,10 @@ mod selection_range_tests {
 
         assert_eq!(results.len(), 2);
         assert!(results[0].is_some(), "First position should have selection");
-        assert!(results[1].is_some(), "Second position should have selection");
+        assert!(
+            results[1].is_some(),
+            "Second position should have selection"
+        );
     }
 
     #[test]
@@ -335,6 +351,10 @@ mod selection_range_tests {
         }
 
         // Should have several levels: return -> statement -> block -> method -> class -> file
-        assert!(depth >= 4, "Should have deep nesting in class, got {}", depth);
+        assert!(
+            depth >= 4,
+            "Should have deep nesting in class, got {}",
+            depth
+        );
     }
 }

@@ -12,7 +12,7 @@ use crate::binder::BinderState;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::references::FindReferences;
 use crate::parser::node::NodeArena;
-use crate::parser::{syntax_kind_ext, NodeIndex};
+use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// A code lens represents a command that can be shown inline with source code.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -328,9 +328,7 @@ impl<'a> CodeLensProvider<'a> {
                 .get_extended(idx)
                 .map_or(crate::parser::NodeIndex::NONE, |ext| ext.parent);
 
-            if parent == node_idx
-                && node.kind == crate::scanner::SyntaxKind::Identifier as u16
-            {
+            if parent == node_idx && node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
                 // Get the identifier text
                 let start = node.pos as usize;
                 let end = node.end as usize;
@@ -375,7 +373,10 @@ mod code_lens_tests {
             .expect("Should have lens at line 0");
 
         assert!(func_lens.data.is_some(), "Lens should have data");
-        assert_eq!(func_lens.data.as_ref().unwrap().kind, CodeLensKind::References);
+        assert_eq!(
+            func_lens.data.as_ref().unwrap().kind,
+            CodeLensKind::References
+        );
     }
 
     #[test]
@@ -415,10 +416,7 @@ mod code_lens_tests {
         let lenses = provider.provide_code_lenses(root);
 
         // Should have references and implementations lenses for interface
-        let interface_lenses: Vec<_> = lenses
-            .iter()
-            .filter(|l| l.range.start.line == 0)
-            .collect();
+        let interface_lenses: Vec<_> = lenses.iter().filter(|l| l.range.start.line == 0).collect();
 
         assert!(
             interface_lenses.len() >= 2,
@@ -451,7 +449,10 @@ mod code_lens_tests {
 
         assert!(resolved.is_some(), "Should resolve lens");
         let resolved = resolved.unwrap();
-        assert!(resolved.command.is_some(), "Resolved lens should have command");
+        assert!(
+            resolved.command.is_some(),
+            "Resolved lens should have command"
+        );
 
         let command = resolved.command.unwrap();
         // Should show reference count (2 calls + 1 declaration - 1 = 2 references)
