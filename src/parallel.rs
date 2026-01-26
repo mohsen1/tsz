@@ -527,8 +527,22 @@ pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
 }
 
 pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
-    // Calculate total symbols needed
-    let total_symbols: usize = results.iter().map(|r| r.symbols.len()).sum();
+    // Collect lib_binders from all results (deduplicated by address)
+    let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();
+    let mut lib_binder_set: FxHashSet<usize> = FxHashSet::default();
+    for result in results {
+        for lib_binder in &result.lib_binders {
+            let binder_addr = Arc::as_ptr(lib_binder) as usize;
+            if lib_binder_set.insert(binder_addr) {
+                lib_binders.push(Arc::clone(lib_binder));
+            }
+        }
+    }
+
+    // Calculate total symbols needed (including lib symbols)
+    let lib_symbol_count: usize = lib_binders.iter().map(|b| b.symbols.len()).sum();
+    let user_symbol_count: usize = results.iter().map(|r| r.symbols.len()).sum();
+    let total_symbols = lib_symbol_count + user_symbol_count;
 
     // Create global symbol arena with pre-allocated capacity
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
@@ -545,6 +559,79 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
     // Track which symbols have been merged to avoid duplicate processing
     let mut merged_symbols: FxHashMap<String, SymbolId> = FxHashMap::default();
+
+    // ==========================================================================
+    // PHASE 1: Remap lib symbols to global arena
+    // ==========================================================================
+    // This creates a mapping from (lib_binder_ptr, local_id) -> global_id
+    // so that file_locals can reference lib symbols using global IDs
+    let mut lib_symbol_remap: FxHashMap<(usize, SymbolId), SymbolId> = FxHashMap::default();
+
+    for lib_binder in &lib_binders {
+        let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
+
+        // Process all symbols in this lib binder
+        for i in 0..lib_binder.symbols.len() {
+            let local_id = SymbolId(i as u32);
+            if let Some(lib_sym) = lib_binder.symbols.get(local_id) {
+                // Check if a symbol with this name already exists (cross-lib merging)
+                let global_id = if let Some(&existing_id) = merged_symbols.get(&lib_sym.escaped_name)
+                {
+                    // Symbol already exists - check if we can merge
+                    if let Some(existing_sym) = global_symbols.get(existing_id) {
+                        if can_merge_symbols_cross_file(existing_sym.flags, lib_sym.flags) {
+                            // Merge: reuse existing symbol ID
+                            // Merge declarations from this lib
+                            if let Some(existing_mut) = global_symbols.get_mut(existing_id) {
+                                existing_mut.flags |= lib_sym.flags;
+                                for decl in &lib_sym.declarations {
+                                    if !existing_mut.declarations.contains(decl) {
+                                        existing_mut.declarations.push(*decl);
+                                    }
+                                }
+                            }
+                            existing_id
+                        } else {
+                            // Cannot merge - allocate new (shadowing)
+                            let new_id = global_symbols.alloc_from(lib_sym);
+                            merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
+                            new_id
+                        }
+                    } else {
+                        // Shouldn't happen - allocate new
+                        let new_id = global_symbols.alloc_from(lib_sym);
+                        merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
+                        new_id
+                    }
+                } else {
+                    // New symbol - allocate in global arena
+                    let new_id = global_symbols.alloc_from(lib_sym);
+                    merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
+                    new_id
+                };
+
+                // Store the remapping
+                lib_symbol_remap.insert((lib_binder_ptr, local_id), global_id);
+            }
+        }
+    }
+
+    // Also remap lib file_locals entries that reference symbols by name
+    // (for exported lib symbols like Array, Object, console)
+    let mut lib_name_to_global: FxHashMap<String, SymbolId> = FxHashMap::default();
+    for lib_binder in &lib_binders {
+        let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
+        for (name, &local_id) in lib_binder.file_locals.iter() {
+            if let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, local_id)) {
+                // Only keep the first mapping for each name (lib files are processed in order)
+                lib_name_to_global.entry(name.clone()).or_insert(global_id);
+            }
+        }
+    }
+
+    // ==========================================================================
+    // PHASE 2: Process user files
+    // ==========================================================================
 
     for result in results {
         declared_modules.extend(result.declared_modules.iter().cloned());
@@ -770,20 +857,32 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         // Remap node_symbols to use global IDs
+        // Note: node_symbols primarily maps user file nodes to user symbols,
+        // but lib symbols referenced in user code need remapping too
         let mut remapped_node_symbols = FxHashMap::default();
         for (node_idx, old_sym_id) in result.node_symbols.iter() {
             if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                 remapped_node_symbols.insert(*node_idx, new_sym_id);
             }
+            // Note: We don't need to check lib_symbol_remap here because
+            // node_symbols are created during binding of user files, and at that point
+            // lib symbols are accessed by name lookup (file_locals), not by node mapping
         }
 
         // Remap file_locals to use global IDs
+        // This handles both user symbols (from id_remap) and lib symbols (from lib_name_to_global)
         let mut remapped_file_locals = SymbolTable::new();
         for (name, old_sym_id) in result.file_locals.iter() {
             if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
+                // User symbol - use remapped ID
                 remapped_file_locals.set(name.clone(), new_sym_id);
                 // Also add to globals (all top-level declarations visible globally)
                 globals.set(name.clone(), new_sym_id);
+            } else if let Some(&global_id) = lib_name_to_global.get(name) {
+                // Lib symbol - use the pre-remapped global ID
+                // Only add to file_locals, NOT to globals (lib symbols are accessed
+                // through lib_contexts in the checker, not through globals)
+                remapped_file_locals.set(name.clone(), global_id);
             }
         }
 
@@ -792,8 +891,14 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             let mut table = SymbolTable::new();
             for (name, old_sym_id) in scope.table.iter() {
                 if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
+                    // User symbol - include in scope
                     table.set(name.clone(), new_sym_id);
                 }
+                // NOTE: We intentionally do NOT add lib symbols to scopes.
+                // Lib symbols have declaration NodeIndex values from lib arenas which
+                // can accidentally match valid indices in user file arenas, causing
+                // false duplicate identifier detection. Lib symbols are accessible
+                // through file_locals for type lookup, but should not be in scopes.
             }
             remapped_scopes.push(Scope {
                 parent: scope.parent,
@@ -820,22 +925,13 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // NOTE: We intentionally do NOT populate globals from merged_symbols here.
     // merged_symbols contains ALL symbols (including namespace-local ones like `var Symbol`
     // inside a namespace), but globals should only contain file-level symbols.
-    // File-level symbols are already correctly added to globals at line 769-770.
-
-    // Collect lib_binders from all results (deduplicated by address)
-    // NOTE: These lib_binders contain local SymbolIds and are NOT remapped
-    // They are kept for future use but should NOT be used directly for symbol resolution
-    // The remapped lib symbols are already in program.globals and program.file_locals
-    let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();
-    let mut lib_binder_set: FxHashSet<usize> = FxHashSet::default();
-    for result in results {
-        for lib_binder in &result.lib_binders {
-            let binder_addr = Arc::as_ptr(lib_binder) as usize;
-            if lib_binder_set.insert(binder_addr) {
-                lib_binders.push(Arc::clone(lib_binder));
-            }
-        }
-    }
+    // File-level symbols are already correctly added to globals at lines 873-880.
+    //
+    // NOTE: lib_binders were collected and processed at the beginning of this function.
+    // Their symbols have been remapped to global IDs and are now in:
+    // - global_symbols: The actual Symbol data
+    // - lib_name_to_global: Name -> global SymbolId mapping
+    // - Each file's remapped_file_locals and globals
 
     MergedProgram {
         files,
