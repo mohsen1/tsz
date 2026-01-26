@@ -55,8 +55,13 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Check if a type is valid for arithmetic operations (number, bigint, enum, or any).
     /// This is used for TS2362/TS2363 error checking.
+    ///
+    /// Also returns true for ERROR and UNKNOWN types to prevent cascading errors.
+    /// If a type couldn't be resolved (TS2304, etc.), we don't want to add noise
+    /// with arithmetic errors - the primary error is more useful.
     pub fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::ANY {
+        // Don't emit arithmetic errors for error/unknown types - prevents cascading errors
+        if type_id == TypeId::ANY || type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
             return true;
         }
         self.is_number_like(type_id) || self.is_bigint_like(type_id)
@@ -82,6 +87,15 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Evaluate the + operator (can be string concatenation or addition).
     fn evaluate_plus(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
+        // Don't emit errors for error/unknown types - prevents cascading errors
+        if left == TypeId::ERROR
+            || right == TypeId::ERROR
+            || left == TypeId::UNKNOWN
+            || right == TypeId::UNKNOWN
+        {
+            return BinaryOpResult::Success(TypeId::UNKNOWN);
+        }
+
         // any + anything = any (and vice versa)
         if left == TypeId::ANY || right == TypeId::ANY {
             return BinaryOpResult::Success(TypeId::ANY);
@@ -111,6 +125,15 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Evaluate arithmetic operators (-, *, /, %, **).
     fn evaluate_arithmetic(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
+        // Don't emit errors for error/unknown types - prevents cascading errors
+        if left == TypeId::ERROR
+            || right == TypeId::ERROR
+            || left == TypeId::UNKNOWN
+            || right == TypeId::UNKNOWN
+        {
+            return BinaryOpResult::Success(TypeId::UNKNOWN);
+        }
+
         // any allows all operations
         if left == TypeId::ANY || right == TypeId::ANY {
             return BinaryOpResult::Success(TypeId::NUMBER);
