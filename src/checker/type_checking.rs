@@ -456,7 +456,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the type is number, bigint, any, or an enum type.
     /// This is used to validate operands for TS2362/TS2363 errors.
     fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
-        use crate::solver::{BinaryOpEvaluator, TypeKey, SymbolRef};
+        use crate::solver::{BinaryOpEvaluator, SymbolRef, TypeKey};
 
         // Check if this is an enum type (Ref to an enum symbol)
         if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id) {
