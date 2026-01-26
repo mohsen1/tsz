@@ -104,7 +104,9 @@ All unit tests should pass. There should be zero clippy warnings. It's okay if c
 ALWAYS run commands with a reasonable timeout to avoid commands that will hang
 
 ## Run tests in docker
-Always run tests in docker to ensure a consistent environment. Using `scripts/test.sh` will automatically use docker
+Always run tests in docker to ensure a consistent environment. Using `scripts/test.sh` will automatically use docker.
+
+Exception: Pre-commit hooks use `--no-sandbox` for speed since Docker adds ~5-10s overhead per run. Full Docker-based tests run in CI.
 
 ## Disk Usage with Worktrees
 
