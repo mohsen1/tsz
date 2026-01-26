@@ -2317,6 +2317,27 @@ impl BinderState {
         is_exported: bool,
     ) -> SymbolId {
         if let Some(existing_id) = self.current_scope.get(name) {
+            // Check if the existing symbol is in the local symbol table.
+            // If not (e.g., it's from a lib binder), we should create a new local symbol
+            // to shadow the lib symbol with the local declaration.
+            if self.symbols.get(existing_id).is_none() {
+                // The existing_id is from a lib binder, not our local binder.
+                // Create a new symbol in the local binder to shadow the lib symbol.
+                let sym_id = self.symbols.alloc(flags, name.to_string());
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.declarations.push(declaration);
+                    if (flags & symbol_flags::VALUE) != 0 {
+                        sym.value_declaration = declaration;
+                    }
+                    sym.is_exported = is_exported;
+                }
+                // Update current_scope to point to the local symbol (shadowing)
+                self.current_scope.set(name.to_string(), sym_id);
+                self.node_symbols.insert(declaration.0, sym_id);
+                self.declare_in_persistent_scope(name.to_string(), sym_id);
+                return sym_id;
+            }
+
             let existing_flags = self.symbols.get(existing_id).map(|s| s.flags).unwrap_or(0);
             let can_merge = Self::can_merge_flags(existing_flags, flags);
 
