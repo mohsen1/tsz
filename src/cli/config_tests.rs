@@ -269,12 +269,6 @@ fn resolve_compiler_options_resolves_lib_files() {
 
 #[test]
 fn resolve_compiler_options_rejects_unknown_lib() {
-    let lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("TypeScript")
-        .join("node_modules")
-        .join("typescript")
-        .join("lib");
-
     let config = parse_tsconfig(
         r#"{
           "compilerOptions": {
@@ -287,11 +281,8 @@ fn resolve_compiler_options_rejects_unknown_lib() {
     let err = resolve_compiler_options(config.compiler_options.as_ref())
         .expect_err("unsupported lib should error");
     let message = err.to_string();
-    if lib_dir.is_dir() {
-        assert!(message.contains("compilerOptions.lib"), "{message}");
-    } else {
-        assert!(message.contains("lib directory"), "{message}");
-    }
+    // With embedded libs, we always get a "compilerOptions.lib" error for unknown libs
+    assert!(message.contains("compilerOptions.lib"), "{message}");
 }
 
 fn canonicalize_or_owned(path: &Path) -> PathBuf {

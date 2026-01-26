@@ -47,6 +47,8 @@ const CONTEXT_FLAG_GENERATOR: u32 = 2;
 const CONTEXT_FLAG_STATIC_BLOCK: u32 = 4;
 /// Context flag: parsing a parameter default (where 'await' is not allowed)
 const CONTEXT_FLAG_PARAMETER_DEFAULT: u32 = 8;
+/// Context flag: disallow 'in' as a binary operator (for for-statement initializers)
+const CONTEXT_FLAG_DISALLOW_IN: u32 = 16;
 
 // =============================================================================
 // Parse Diagnostic
@@ -256,6 +258,12 @@ impl ParserState {
     #[inline]
     fn in_parameter_default_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_PARAMETER_DEFAULT) != 0
+    }
+
+    /// Check if 'in' is disallowed as a binary operator (e.g., in for-statement initializers)
+    #[inline]
+    fn in_disallow_in_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_DISALLOW_IN) != 0
     }
 
     /// Check if the current token is an illegal binding identifier in the current context
@@ -1040,12 +1048,19 @@ impl ParserState {
             | SyntaxKind::ExclamationEqualsToken
             | SyntaxKind::EqualsEqualsEqualsToken
             | SyntaxKind::ExclamationEqualsEqualsToken => 9,
+            // 'in' is not a binary operator in for-statement initializers
+            SyntaxKind::InKeyword => {
+                if self.in_disallow_in_context() {
+                    0
+                } else {
+                    10
+                }
+            }
             SyntaxKind::LessThanToken
             | SyntaxKind::GreaterThanToken
             | SyntaxKind::LessThanEqualsToken
             | SyntaxKind::GreaterThanEqualsToken
             | SyntaxKind::InstanceOfKeyword
-            | SyntaxKind::InKeyword
             | SyntaxKind::AsKeyword
             | SyntaxKind::SatisfiesKeyword => 10,
             SyntaxKind::LessThanLessThanToken
@@ -3549,6 +3564,15 @@ impl ParserState {
         // Skip 'get' or 'set'
         self.next_token();
 
+        // If there's a line break after get/set, it's treated as a property name
+        // (shorthand property in class), not as an accessor keyword.
+        // This matches TypeScript's ASI behavior.
+        if self.scanner.has_preceding_line_break() {
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            return false;
+        }
+
         // Check the token AFTER 'get' or 'set' to determine what we have:
         // - `:`, `=`, `;`, `}`, `?` → property named 'get'/'set' (e.g., `get: number`)
         // - `(` → method named 'get'/'set' (e.g., `get() {}`)
@@ -5324,6 +5348,9 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenParenToken);
 
         // Parse initializer (can be var/let/const declaration or expression)
+        // Disallow 'in' as a binary operator so it's recognized as the for-in keyword
+        let saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_DISALLOW_IN;
         let initializer = if !self.is_token(SyntaxKind::SemicolonToken) {
             if self.is_token(SyntaxKind::VarKeyword)
                 || self.is_token(SyntaxKind::LetKeyword)
@@ -5336,6 +5363,7 @@ impl ParserState {
         } else {
             NodeIndex::NONE
         };
+        self.context_flags = saved_flags;
 
         // Error recovery: if initializer parsing failed badly, resync to semicolon
         if initializer.is_none()
@@ -8104,6 +8132,15 @@ impl ParserState {
         let current = self.current_token;
 
         self.next_token(); // skip get/set/async
+
+        // If there's a line break after get/set/async, it's treated as a property name
+        // (shorthand property), not as an accessor or async modifier.
+        // This matches TypeScript's ASI behavior.
+        if self.scanner.has_preceding_line_break() {
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            return false;
+        }
 
         // Check if followed by property name (identifier, keyword, string, number, [)
         // Keywords like 'return', 'throw', 'delete' can be method names
