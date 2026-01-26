@@ -1727,6 +1727,17 @@ impl BinderState {
                 }
             }
 
+            // Await, yield expressions - record flow and traverse into expression
+            // Note: These use unary_exprs_ex storage with `expression` field, not unary_exprs
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION
+                || k == syntax_kind_ext::YIELD_EXPRESSION =>
+            {
+                self.record_flow(idx);
+                if let Some(unary) = arena.get_unary_expr_ex(node) {
+                    self.bind_node(arena, unary.expression);
+                }
+            }
+
             // Identifier references - record current flow for type narrowing queries
             k if k == SyntaxKind::Identifier as u16 => {
                 self.record_flow(idx);
