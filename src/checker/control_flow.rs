@@ -3384,8 +3384,8 @@ impl<'a> FlowAnalyzer<'a> {
     /// This is critical for closure narrowing - mutable variables cannot preserve
     /// narrowing from outer scope because they may be reassigned through the closure.
     fn is_mutable_variable(&self, reference: NodeIndex) -> bool {
-        // Get the symbol for this reference
-        let Some(symbol_id) = self.binder.get_node_symbol(reference) else {
+        // Resolve the identifier reference to its symbol
+        let Some(symbol_id) = self.binder.resolve_identifier(self.arena, reference) else {
             return false; // No symbol = not a mutable variable
         };
 
@@ -3404,7 +3404,22 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
-        // Check the node flags - CONST flag means it's immutable
+        // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
+        // The value_declaration points to VARIABLE_DECLARATION, we need to check its parent's flags
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
+            if let Some(ext) = self.arena.get_extended(decl_id) {
+                if !ext.parent.is_none() {
+                    if let Some(parent_node) = self.arena.get(ext.parent) {
+                        let flags = parent_node.flags as u32;
+                        let is_const = (flags & node_flags::CONST) != 0;
+                        return !is_const; // Return true if NOT const (i.e., let or var)
+                    }
+                }
+            }
+        }
+
+        // For other node types, check the node's own flags
         let flags = decl_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
 
@@ -3742,7 +3757,10 @@ if (typeof x === "string") {
         let binary = arena
             .get_binary_expr(condition_node)
             .expect("binary condition");
-        let target_idx = binary.left; // This is 'x'
+        // binary.left is "typeof x", we need to get the operand "x"
+        let typeof_node = arena.get(binary.left).expect("typeof node");
+        let unary = arena.get_unary_expr(typeof_node).expect("unary expression");
+        let target_idx = unary.operand; // This is 'x'
 
         // The narrowing happens at the condition
         let union_type = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -3761,11 +3779,16 @@ if (typeof x === "string") {
         // Get the variable declaration to verify it's let (mutable)
         let root_node = arena.get(root).expect("root node");
         let source_file = arena.get_source_file(root_node).expect("source file");
-        let var_decl_idx = source_file.statements.nodes[0]; // Variable declaration
-        let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
+        let var_stmt_idx = source_file.statements.nodes[0]; // VARIABLE_STATEMENT
+        let var_stmt_node = arena.get(var_stmt_idx).expect("var stmt node");
 
-        // Verify the variable is let (not const)
-        let flags = var_decl_node.flags as u32;
+        // Get the VARIABLE_DECLARATION_LIST from within the VARIABLE_STATEMENT
+        let var_data = arena.get_variable(var_stmt_node).expect("variable data");
+        let decl_list_idx = var_data.declarations.nodes[0]; // VARIABLE_DECLARATION_LIST
+        let decl_list_node = arena.get(decl_list_idx).expect("decl list node");
+
+        // Verify the declaration list does NOT have CONST flag (it's 'let')
+        let flags = decl_list_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
         assert!(!is_const, "Variable should be let (mutable), not const");
 
@@ -3804,18 +3827,26 @@ if (typeof x === "string") {
         let binary = arena
             .get_binary_expr(condition_node)
             .expect("binary condition");
-        let target_idx = binary.left; // This is 'x'
+        // binary.left is "typeof x", we need to get the operand "x"
+        let typeof_node = arena.get(binary.left).expect("typeof node");
+        let unary = arena.get_unary_expr(typeof_node).expect("unary expression");
+        let target_idx = unary.operand; // This is 'x'
 
         // Get the variable declaration to verify it's const
         let root_node = arena.get(root).expect("root node");
         let source_file = arena.get_source_file(root_node).expect("source file");
-        let var_decl_idx = source_file.statements.nodes[0]; // Variable declaration
-        let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
+        let var_stmt_idx = source_file.statements.nodes[0]; // VARIABLE_STATEMENT
+        let var_stmt_node = arena.get(var_stmt_idx).expect("var stmt node");
 
-        // Verify the variable is const
-        let flags = var_decl_node.flags as u32;
+        // Get the VARIABLE_DECLARATION_LIST from within the VARIABLE_STATEMENT
+        let var_data = arena.get_variable(var_stmt_node).expect("variable data");
+        let decl_list_idx = var_data.declarations.nodes[0]; // VARIABLE_DECLARATION_LIST
+        let decl_list_node = arena.get(decl_list_idx).expect("decl list node");
+
+        // Verify the declaration list has CONST flag
+        let flags = decl_list_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
-        assert!(is_const, "Variable should be const");
+        assert!(is_const, "Variable declaration list should be const");
 
         // Verify that is_mutable_variable returns false for this variable
         assert!(!analyzer.is_mutable_variable(target_idx));
@@ -3845,11 +3876,16 @@ const fn = () => {
         // Get the variable declaration
         let root_node = arena.get(root).expect("root node");
         let source_file = arena.get_source_file(root_node).expect("source file");
-        let var_decl_idx = source_file.statements.nodes[0];
-        let var_decl_node = arena.get(var_decl_idx).expect("var decl node");
+        let var_stmt_idx = source_file.statements.nodes[0]; // VARIABLE_STATEMENT
+        let var_stmt_node = arena.get(var_stmt_idx).expect("var stmt node");
 
-        // Verify the variable is let (mutable)
-        let flags = var_decl_node.flags as u32;
+        // Get the VARIABLE_DECLARATION_LIST from within the VARIABLE_STATEMENT
+        let var_data = arena.get_variable(var_stmt_node).expect("variable data");
+        let decl_list_idx = var_data.declarations.nodes[0]; // VARIABLE_DECLARATION_LIST
+        let decl_list_node = arena.get(decl_list_idx).expect("decl list node");
+
+        // Verify the declaration list does NOT have CONST flag (it's 'let')
+        let flags = decl_list_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
         assert!(!is_const, "Variable should be let (mutable)");
     }
