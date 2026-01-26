@@ -2396,12 +2396,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_mapped_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        // Instead of returning IsUnknown (which causes TS2571), treat as property not found
-                        // This handles circular references and deep nesting more conservatively
+                        // Instead of immediately returning PropertyNotFound, try apparent members
+                        // This handles circular references and deep nesting more gracefully
+                        let prop_atom =
+                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                            return result;
+                        }
+                        // Fall back to property not found
                         return PropertyAccessResult::PropertyNotFound {
                             type_id: obj_type,
-                            property_name: prop_atom
-                                .unwrap_or_else(|| self.interner.intern_string(prop_name)),
+                            property_name: prop_atom,
                         };
                     }
                 };
@@ -2411,11 +2416,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
-                    // Evaluation didn't change the type - property not found
-                    PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
-                        property_name: prop_atom
-                            .unwrap_or_else(|| self.interner.intern_string(prop_name)),
+                    // Evaluation didn't change the type - try apparent members before giving up
+                    let prop_atom =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        result
+                    } else {
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        }
                     }
                 }
             }
@@ -2425,10 +2435,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_mapped_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
+                        // Try apparent members before giving up
+                        let prop_atom =
+                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                            return result;
+                        }
                         return PropertyAccessResult::PropertyNotFound {
                             type_id: obj_type,
-                            property_name: prop_atom
-                                .unwrap_or_else(|| self.interner.intern_string(prop_name)),
+                            property_name: prop_atom,
                         };
                     }
                 };
@@ -2438,11 +2453,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
-                    // Evaluation didn't change the type - property not found
-                    PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
-                        property_name: prop_atom
-                            .unwrap_or_else(|| self.interner.intern_string(prop_name)),
+                    // Evaluation didn't change the type - try apparent members before giving up
+                    let prop_atom =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        result
+                    } else {
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        }
                     }
                 }
             }
