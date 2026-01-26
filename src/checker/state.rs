@@ -6886,6 +6886,18 @@ impl<'a> CheckerState<'a> {
                         // so we return the type as-is (it will be resolved in resolve_namespace_value_member)
                         return type_id;
                     }
+
+                    // Enums in value position behave like objects (runtime enum object).
+                    // For numeric enums, this includes a number index signature for reverse mapping.
+                    if symbol.flags & symbol_flags::ENUM != 0
+                        && let Some(enum_object) = self.enum_object_type(sym_id)
+                    {
+                        if enum_object != type_id {
+                            return self
+                                .resolve_type_for_property_access_inner(enum_object, visited);
+                        }
+                        return enum_object;
+                    }
                 }
 
                 let resolved = self.type_reference_symbol_type(sym_id);

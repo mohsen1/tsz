@@ -1126,7 +1126,8 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         literal_index: Option<usize>,
     ) -> TypeId {
-        use crate::solver::{LiteralValue, QueryDatabase, TypeKey};
+        use crate::checker::state::EnumKind;
+        use crate::solver::QueryDatabase;
 
         let cache_key = (object_type, index_type, literal_index);
         if let Some(&cached) = self.ctx.element_access_type_cache.get(&cache_key) {
@@ -1136,103 +1137,30 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        let object_key = match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::ReadonlyType(inner)) => self.ctx.types.lookup(inner),
-            other => other,
+        let solver_index_type = if let Some(index) = literal_index {
+            self.ctx.types.literal_number(index as f64)
+        } else if self
+            .enum_symbol_from_type(index_type)
+            .is_some_and(|sym_id| self.enum_kind(sym_id) == Some(EnumKind::Numeric))
+        {
+            // Numeric enum values are number-like at runtime.
+            TypeId::NUMBER
+        } else {
+            index_type
         };
 
-        let literal_index_type = literal_index
-            .map(|index| self.ctx.types.literal_number(index as f64))
-            .or_else(|| match self.ctx.types.lookup(index_type) {
-                Some(TypeKey::Literal(LiteralValue::Number(num))) => {
-                    Some(self.ctx.types.literal_number(num.0))
-                }
-                _ => None,
-            });
+        let mut result = self.ctx.types.evaluate_index_access_with_options(
+            object_type,
+            solver_index_type,
+            self.ctx.no_unchecked_indexed_access(),
+        );
 
-        let result = match object_key {
-            Some(TypeKey::Array(element)) => {
-                if let Some(literal_index_type) = literal_index_type {
-                    let result = self
-                        .ctx
-                        .types
-                        .evaluate_index_access(object_type, literal_index_type);
-                    if result == TypeId::UNDEFINED {
-                        element
-                    } else {
-                        result
-                    }
-                } else {
-                    element
-                }
-            }
-            Some(TypeKey::Tuple(elements)) => {
-                let elements = self.ctx.types.tuple_list(elements);
-                if let Some(literal_index_type) = literal_index_type {
-                    let result = self
-                        .ctx
-                        .types
-                        .evaluate_index_access(object_type, literal_index_type);
-                    if result == TypeId::UNDEFINED {
-                        TypeId::ANY
-                    } else {
-                        result
-                    }
-                } else {
-                    let element_types: Vec<TypeId> =
-                        elements.iter().map(|element| element.type_id).collect();
-                    if element_types.is_empty() {
-                        TypeId::NEVER
-                    } else if element_types.len() == 1 {
-                        element_types[0]
-                    } else {
-                        self.ctx.types.union(element_types)
-                    }
-                }
-            }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                if literal_index.is_some() {
-                    if let Some(number_index) = shape.number_index.as_ref() {
-                        number_index.value_type
-                    } else if let Some(string_index) = shape.string_index.as_ref() {
-                        string_index.value_type
-                    } else {
-                        TypeId::ERROR
-                    }
-                } else if index_type == TypeId::NUMBER {
-                    if let Some(number_index) = shape.number_index.as_ref() {
-                        number_index.value_type
-                    } else if let Some(string_index) = shape.string_index.as_ref() {
-                        string_index.value_type
-                    } else {
-                        TypeId::ERROR
-                    }
-                } else if index_type == TypeId::STRING
-                    && let Some(string_index) = shape.string_index.as_ref()
-                {
-                    string_index.value_type
-                } else {
-                    TypeId::ANY
-                }
-            }
-            Some(TypeKey::Union(_)) => {
-                let members = self.get_union_members(object_type);
-                let member_types: Vec<_> = members
-                    .iter()
-                    .map(|&member| self.get_element_access_type(member, index_type, literal_index))
-                    .collect();
-                if member_types.is_empty() {
-                    TypeId::ANY
-                } else {
-                    self.ctx.types.union(member_types)
-                }
-            }
-            _ => {
-                // For unresolved types, return ANY for generic array types
-                TypeId::ANY
-            }
-        };
+        // For element access expressions, `undefined` from the index-access evaluator
+        // corresponds to "missing" (e.g. no matching property/index signature). The checker
+        // is responsible for diagnostics; the value space should remain usable.
+        if result == TypeId::UNDEFINED {
+            result = TypeId::ANY;
+        }
 
         self.ctx.element_access_type_set.remove(&cache_key);
         self.ctx.element_access_type_cache.insert(cache_key, result);

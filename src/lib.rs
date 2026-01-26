@@ -52,6 +52,10 @@ pub mod module_resolution_debug;
 // Lib Loader - Load and merge lib.d.ts symbols into the binder (BIND-10)
 pub mod lib_loader;
 
+// Embedded TypeScript Library Files - Bundled lib.d.ts files for standalone use
+pub mod embedded_libs;
+pub use embedded_libs::{EmbeddedLib, get_default_libs_for_target, get_lib, get_libs_for_target};
+
 // Checker types and implementation (Phase 5)
 pub mod checker;
 

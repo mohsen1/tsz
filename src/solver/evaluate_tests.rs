@@ -10015,6 +10015,17 @@ fn test_index_access_optional_property() {
 }
 
 #[test]
+fn test_index_access_any_is_any() {
+    let interner = TypeInterner::new();
+
+    let result = evaluate_index_access(&interner, TypeId::ANY, TypeId::STRING);
+    assert_eq!(result, TypeId::ANY);
+
+    let result = evaluate_index_access(&interner, TypeId::NUMBER, TypeId::ANY);
+    assert_eq!(result, TypeId::ANY);
+}
+
+#[test]
 fn test_index_access_with_no_unchecked_indexed_access() {
     let interner = TypeInterner::new();
 
@@ -10039,6 +10050,25 @@ fn test_index_access_with_no_unchecked_indexed_access() {
 
     let result = evaluator.evaluate_index_access(array, TypeId::NUMBER);
     let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_index_access_with_options_helper_no_unchecked_indexed_access() {
+    let interner = TypeInterner::new();
+
+    let indexed = interner.object_with_index(ObjectShape {
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        }),
+        number_index: None,
+    });
+
+    let result = evaluate_index_access_with_options(&interner, indexed, TypeId::STRING, true);
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
     assert_eq!(result, expected);
 }
 
