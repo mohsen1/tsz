@@ -10,6 +10,16 @@
 
 This document outlines a comprehensive plan to achieve 100% TypeScript conformance while maintaining a clean, maintainable architecture based on the solver/visitor pattern. The plan is organized into 5 phases with clear milestones, priorities, and success metrics.
 
+### Foundation-first strategy (solver-first)
+
+Conformance percentage is a lagging indicator. The near-term goal is to build a correct solver foundation, narrow the checker to AST traversal + diagnostics, and document the workflow so fixes compound.
+
+Principles:
+1. Move pure TypeId logic into solver (no AST in solver).
+2. Solver returns structured results; checker formats diagnostics.
+3. Keep migrations small and testable (one evaluator at a time).
+4. Document each migration in this plan and `docs/solver-type-computation-analysis.md`.
+
 ### Current State Snapshot
 
 | Metric | Value |
@@ -50,6 +60,23 @@ This document outlines a comprehensive plan to achieve 100% TypeScript conforman
 ---
 
 ## Phase 1: Stability & Foundation (Target: 40% conformance)
+
+### 1.0 Solver-first migration track (ongoing)
+
+We will migrate checker type computation to solver in small, verifiable slices while stability work proceeds. Each slice should follow this checklist:
+
+1. Identify a pure TypeId routine in checker (minimal AST reliance).
+2. Add a solver evaluator or helper with a structured result type.
+3. Add solver unit tests and checker integration tests.
+4. Replace checker logic with a thin adapter that emits diagnostics.
+5. Run a focused conformance subset and record impact.
+
+Initial slices (Phase 1-2):
+- `get_element_access_type` → solver evaluator
+- Nullish helpers (single source of truth in solver)
+- Conditional result type helper
+- Index signature resolver (shared by element access + subtype)
+- Array literal builder (partial, helper-driven)
 
 ### 1.1 Fix Critical Crashes (Week 1-2)
 
@@ -824,6 +851,8 @@ checker/
 - [ ] 0 crashes
 - [ ] 0 OOM errors
 - [ ] <5 timeouts
+- [ ] Element access moved to solver with structured results
+- [ ] Nullish helpers consolidated in solver
 - [ ] TS2749 false positives reduced by 80%
 - [ ] **40% conformance achieved**
 
