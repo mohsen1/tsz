@@ -5172,19 +5172,22 @@ impl<'a> CheckerState<'a> {
         //   let a: A2 = this;
         //   a.#prop;  // Should work if A2 has #prop
         if symbols.is_empty() {
-            // Try to find the property directly in the object type
+            // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_check);
+
+            // Try to find the property directly in the resolved object type
             use crate::solver::{PropertyAccessResult, QueryDatabase, TypeKey};
             match self
                 .ctx
                 .types
-                .property_access_type(object_type_for_check, &property_name)
+                .property_access_type(resolved_type, &property_name)
             {
                 PropertyAccessResult::Success { .. } => {
                     // Property exists in the type, proceed with the access
                     return self.get_type_of_property_access_by_name(
                         idx,
                         access,
-                        object_type_for_check,
+                        resolved_type,
                         &property_name,
                     );
                 }
@@ -5192,10 +5195,6 @@ impl<'a> CheckerState<'a> {
                     // FALLBACK: Manually check if the property exists in the callable type
                     // This fixes cases where property_access_type fails due to atom comparison issues
                     // The property IS in the type (as shown by error messages), but the lookup fails
-                    //
-                    // Important: We need to resolve TypeKey::Ref to get the actual Callable type
-                    let resolved_type =
-                        self.resolve_type_for_property_access(object_type_for_check);
                     if let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(resolved_type)
                     {
                         let shape = self.ctx.types.callable_shape(shape_id);
