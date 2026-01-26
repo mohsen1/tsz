@@ -1,14 +1,16 @@
 # Solver Type Computation Analysis
 
 **Date**: January 2026
-**Status**: Research Document
+**Status**: Living guidance (foundation-first)
 **Scope**: Analyzing opportunities to leverage solver for type computation
 
 ---
 
 ## Executive Summary
 
-This document analyzes whether the solver module can handle type computation currently performed in `checker/type_computation.rs` and `solver/operations.rs`.
+This document analyzes whether the solver module can handle type computation currently performed in `checker/type_computation.rs` and `solver/operations.rs`, and defines a solver-first foundation for future work.
+
+**Focus Statement**: Conformance pass rate (~30% as of Jan 2026) is a lagging indicator. We will not chase the number directly; we will build a correct solver foundation, tighten the checker/solver contract, and document the workflow so later improvements are durable.
 
 **Key Finding**: The solver can and should handle **more** pure type logic. The checker should become a thin orchestration layer for AST traversal, error reporting, and contextual state management.
 
@@ -17,11 +19,14 @@ This document analyzes whether the solver module can handle type computation cur
 2. Consolidate nullish type checking (3 duplicate implementations → 1)
 3. Create new solver evaluators for array/object literal construction
 4. Standardize the checker→solver delegation pattern
+5. Document solver-first workflow and migration checklist
+6. Enforce “no AST in solver” and “no test-aware behavior” guardrails
 
 ---
 
 ## Table of Contents
 
+0. [Foundation Focus](#0-foundation-focus-conformance-is-lagging)
 1. [Current Architecture](#1-current-architecture)
 2. [Solver Capabilities](#2-solver-capabilities)
 3. [Migration Analysis](#3-migration-analysis)
@@ -29,6 +34,19 @@ This document analyzes whether the solver module can handle type computation cur
 5. [Proposed Architecture](#5-proposed-architecture)
 6. [Implementation Recommendations](#6-implementation-recommendations)
 7. [Appendix: Module Reference](#7-appendix-module-reference)
+
+---
+
+## 0. Foundation Focus (Conformance Is Lagging)
+
+We are currently around 30% conformance. That number is not the immediate target. The near-term goal is to build a correct, maintainable solver foundation that mirrors tsc semantics and makes future fixes straightforward.
+
+Guiding principles:
+1. **Root causes over metrics**: Fix structural issues in solver/checker boundaries rather than chasing pass rates.
+2. **Solver-first logic**: Pure TypeId logic belongs in solver; checker handles AST and diagnostics.
+3. **Structured results**: Solver returns structured results; checker formats errors.
+4. **No shortcuts**: Avoid test-aware branches or file/path-based behavior.
+5. **Document the workflow**: Update this guide when adding new evaluators or migration patterns.
 
 ---
 
@@ -586,6 +604,15 @@ pub fn remove_nullish(...) -> TypeId { ... }
 | Standardize error propagation | 4-6 hours | High | Medium |
 | Document solver APIs | 2-3 hours | Medium | Very Low |
 
+### 6.4 Foundation-first workflow
+
+Use this workflow for any new type computation work:
+1. Identify pure TypeId logic and move it to solver.
+2. Define a result enum that encodes errors; no diagnostics in solver.
+3. Add solver unit tests for the evaluator and checker integration tests.
+4. Update this document with the new evaluator and migration notes.
+5. Review conformance impact after correctness and documentation are in place.
+
 ---
 
 ## 7. Appendix: Module Reference
@@ -717,5 +744,7 @@ Following these recommendations will result in:
 - Better maintainability (type logic in one place)
 - Better reusability (solver works for LSP, CLI, IDE plugins)
 - Better performance (solver operations can be optimized independently)
+
+Near-term success is measured by solver coverage, elimination of duplicated logic, and documented workflows. Conformance percentage is a lagging indicator of that foundation.
 
 The checker should evolve to become a thin orchestration layer that extracts AST data, delegates to solver, and reports errors with source locations.
