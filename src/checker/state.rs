@@ -9710,7 +9710,11 @@ impl<'a> CheckerState<'a> {
         // This is the key TypeScript behavior:
         // - const p: Point = {x: 1, y: 2, z: 3}  // ERROR: 'z' is excess (fresh)
         // - const obj = {x: 1, y: 2, z: 3}; p = obj;  // OK: obj loses freshness
-        if !self.ctx.freshness_tracker.should_check_excess_properties(source) {
+        if !self
+            .ctx
+            .freshness_tracker
+            .should_check_excess_properties(source)
+        {
             return;
         }
 
