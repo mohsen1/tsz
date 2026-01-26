@@ -9,10 +9,14 @@
 
 import { parentPort, workerData } from 'worker_threads';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
 import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
 import { hashContent, type CacheEntry } from './tsc-cache.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const require = createRequire(import.meta.url);
 
