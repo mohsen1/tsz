@@ -2478,17 +2478,94 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
+            // Ref types: symbol references that need resolution by the checker.
+            // The checker should resolve these before calling property_access_type,
+            // but as a fallback, try apparent members and return ANY if not found
+            // to avoid false positives when the type can't be resolved here.
+            TypeKey::Ref(_) | TypeKey::TypeQuery(_) => {
+                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                    return result;
+                }
+                // Can't resolve symbol reference - return ANY to avoid false positives
+                // The checker should have resolved this type first
+                PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                }
+            }
+
+            // Conditional types need evaluation by the checker
+            TypeKey::Conditional(_) => {
+                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                    return result;
+                }
+                // Conditional not evaluated - return ANY to avoid false positives
+                PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                }
+            }
+
+            // Index access types need evaluation
+            TypeKey::IndexAccess(_, _) => {
+                let evaluated = evaluate_type(self.interner, obj_type);
+                if evaluated != obj_type {
+                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                } else {
+                    let prop_atom =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        result
+                    } else {
+                        // Can't evaluate - return ANY to avoid false positives
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
+                        }
+                    }
+                }
+            }
+
+            // KeyOf types need evaluation
+            TypeKey::KeyOf(_) => {
+                let evaluated = evaluate_type(self.interner, obj_type);
+                if evaluated != obj_type {
+                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                } else {
+                    let prop_atom =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    // KeyOf typically returns string/number/symbol, try string member access
+                    self.resolve_string_property(prop_name, prop_atom)
+                }
+            }
+
+            // ThisType: represents 'this' type in a class/interface context
+            // Should be resolved to the actual class type by the checker
+            TypeKey::ThisType => {
+                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                    return result;
+                }
+                // 'this' type not resolved - return ANY to avoid false positives
+                PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                }
+            }
+
             _ => {
                 // Unknown type key - try apparent members before giving up
                 let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                     return result;
                 }
-                // For truly unknown types, return PropertyNotFound
-                // This should be rare - most type keys should be handled above
-                PropertyAccessResult::PropertyNotFound {
-                    type_id: obj_type,
-                    property_name: prop_atom,
+                // For truly unknown types, return ANY to avoid false positives
+                // This includes UniqueSymbol, Error, and any future type keys
+                PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
                 }
             }
         }

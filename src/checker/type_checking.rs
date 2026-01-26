@@ -9431,19 +9431,28 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let numeric_as_index = self.is_array_like_type(object_type);
+        // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
+        let resolved_type = self.resolve_type_for_property_access(object_type);
+        if resolved_type == TypeId::ANY {
+            return Some(TypeId::ANY);
+        }
+        if resolved_type == TypeId::ERROR {
+            return None;
+        }
+
+        let numeric_as_index = self.is_array_like_type(resolved_type);
         let mut types = Vec::with_capacity(keys.len());
 
         for &key in keys {
             let name = self.ctx.types.resolve_atom(key);
             if numeric_as_index && let Some(index) = self.get_numeric_index_from_string(&name) {
                 let element_type =
-                    self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
+                    self.get_element_access_type(resolved_type, TypeId::NUMBER, Some(index));
                 types.push(element_type);
                 continue;
             }
 
-            match self.ctx.types.property_access_type(object_type, &name) {
+            match self.ctx.types.property_access_type(resolved_type, &name) {
                 PropertyAccessResult::Success { type_id, .. } => types.push(type_id),
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     types.push(property_type.unwrap_or(TypeId::UNKNOWN));
