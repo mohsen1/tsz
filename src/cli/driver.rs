@@ -1287,6 +1287,7 @@ fn resolve_module_specifier(
     };
 
     let mut allow_node_modules = false;
+    let mut path_mapping_attempted = false;
 
     if Path::new(&specifier).is_absolute() {
         candidates.extend(expand_module_path_candidates(
@@ -1306,6 +1307,7 @@ fn resolve_module_specifier(
         if let Some(paths) = options.paths.as_ref()
             && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
         {
+            path_mapping_attempted = true;
             for target in &mapping.targets {
                 let substituted = substitute_path_target(target, &wildcard);
                 let path = if Path::new(&substituted).is_absolute() {
@@ -1332,6 +1334,12 @@ fn resolve_module_specifier(
         if candidate.is_file() && is_valid_module_file(&candidate) {
             return Some(canonicalize_or_owned(&candidate));
         }
+    }
+
+    // If path mapping was attempted but no file was found, return None early
+    // to emit TS2307 rather than falling through to node_modules resolution
+    if path_mapping_attempted {
+        return None;
     }
 
     if allow_node_modules {

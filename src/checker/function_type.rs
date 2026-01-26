@@ -194,9 +194,9 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if !is_function_declaration {
-                    self.maybe_report_implicit_any_parameter(param, has_contextual_type);
-                }
+                // Check all function parameters for implicit any (TS7006)
+                // This includes function declarations, expressions, arrow functions, and methods
+                self.maybe_report_implicit_any_parameter(param, has_contextual_type);
 
                 // Check if optional or has initializer
                 let optional = param.question_token || !param.initializer.is_none();

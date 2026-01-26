@@ -1008,13 +1008,8 @@ impl<'a> CheckerState<'a> {
                     let _ = self.resolve_qualified_name(type_name_idx);
                     return TypeId::ERROR;
                 };
-                if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
-                    let name = self
-                        .entity_name_text(type_name_idx)
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    self.error_value_only_type_at(&name, type_name_idx);
-                    return TypeId::ERROR;
-                }
+                // Note: We don't check value-only here because resolve_qualified_name will do it
+                // This prevents duplicate TS2749 errors
                 if let Some(args) = &type_ref.type_arguments {
                     if self.should_resolve_recursive_type_alias(sym_id, args) {
                         // Ensure the base type symbol is resolved first so its type params
@@ -1153,16 +1148,9 @@ impl<'a> CheckerState<'a> {
                 if !is_builtin_array
                     && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
                 {
-                    // Check if this is a value-only symbol (but allow type-only imports)
-                    // Type-only imports (is_type_only = true) should resolve in type positions
-                    // even if they don't have a VALUE flag
-                    if (self.alias_resolves_to_value_only(sym_id)
-                        || self.symbol_is_value_only(sym_id))
-                        && !self.symbol_is_type_only(sym_id)
-                    {
-                        self.error_value_only_type_at(name, type_name_idx);
-                        return TypeId::ERROR;
-                    }
+                    // Note: We don't check value-only here for simple identifiers because the
+                    // check happens later in resolve_type_reference_for_lowering. This prevents
+                    // duplicate TS2749 errors.
                     if let Some(args) = &type_ref.type_arguments
                         && self.should_resolve_recursive_type_alias(sym_id, args)
                     {
@@ -11521,9 +11509,24 @@ impl<'a> CheckerState<'a> {
         if !param.type_annotation.is_none() {
             return;
         }
-        // Skip parameters with default values - TypeScript infers the type from the initializer
+        // Check if parameter has an initializer
         if !param.initializer.is_none() {
-            return;
+            // TypeScript infers type from initializer, EXCEPT for null and undefined
+            // Parameters initialized with null/undefined still trigger TS7006
+            use crate::scanner::SyntaxKind;
+            let initializer_is_null_or_undefined =
+                if let Some(init_node) = self.ctx.arena.get(param.initializer) {
+                    init_node.kind == SyntaxKind::NullKeyword as u16
+                        || init_node.kind == SyntaxKind::UndefinedKeyword as u16
+                } else {
+                    false
+                };
+
+            // Skip only if initializer is NOT null or undefined
+            if !initializer_is_null_or_undefined {
+                return;
+            }
+            // Otherwise continue to emit TS7006 for null/undefined initializers
         }
         if self.is_this_parameter_name(param.name) {
             return;
