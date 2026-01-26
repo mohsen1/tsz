@@ -93,6 +93,11 @@ pub struct BinderState {
     /// When get_symbol() doesn't find a symbol locally, it checks these lib binders.
     lib_binders: Vec<Arc<BinderState>>,
 
+    /// Symbol IDs that originated from lib files.
+    /// Used by get_symbol() to check lib_binders first for these IDs,
+    /// avoiding collision with local symbols at the same index.
+    lib_symbol_ids: FxHashSet<SymbolId>,
+
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
     pub module_exports: FxHashMap<String, SymbolTable>,
@@ -169,6 +174,7 @@ impl BinderState {
             global_augmentations: FxHashMap::default(),
             in_global_augmentation: false,
             lib_binders: Vec::new(),
+            lib_symbol_ids: FxHashSet::default(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
@@ -202,6 +208,7 @@ impl BinderState {
         self.global_augmentations.clear();
         self.in_global_augmentation = false;
         self.lib_binders.clear();
+        self.lib_symbol_ids.clear();
         self.module_exports.clear();
         self.reexports.clear();
         self.wildcard_reexports.clear();
@@ -258,6 +265,7 @@ impl BinderState {
             global_augmentations: FxHashMap::default(),
             in_global_augmentation: false,
             lib_binders: Vec::new(),
+            lib_symbol_ids: FxHashSet::default(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
@@ -335,6 +343,7 @@ impl BinderState {
             global_augmentations,
             in_global_augmentation: false,
             lib_binders: Vec::new(),
+            lib_symbol_ids: FxHashSet::default(),
             module_exports,
             reexports,
             wildcard_reexports,
@@ -866,6 +875,8 @@ impl BinderState {
                 if !self.symbol_arenas.contains_key(sym_id) {
                     self.symbol_arenas.insert(*sym_id, Arc::clone(&lib.arena));
                 }
+                // Track this as a lib symbol ID for get_symbol() lookup order
+                self.lib_symbol_ids.insert(*sym_id);
             }
             // Store lib binders for automatic symbol resolution in get_symbol()
             self.lib_binders.push(Arc::clone(&lib.binder));
@@ -3910,11 +3921,22 @@ impl BinderState {
     // Public accessors
 
     pub fn get_symbol(&self, id: SymbolId) -> Option<&Symbol> {
-        // First try local symbols
+        // If this is a lib symbol ID, check lib binders first to avoid
+        // collision with local symbols at the same index
+        if self.lib_symbol_ids.contains(&id) {
+            for lib_binder in &self.lib_binders {
+                if let Some(sym) = lib_binder.symbols.get(id) {
+                    return Some(sym);
+                }
+            }
+        }
+
+        // Try local symbols
         if let Some(sym) = self.symbols.get(id) {
             return Some(sym);
         }
-        // Then try lib binders (if any have been merged)
+
+        // Finally try lib binders for any remaining cases
         for lib_binder in &self.lib_binders {
             if let Some(sym) = lib_binder.symbols.get(id) {
                 return Some(sym);
