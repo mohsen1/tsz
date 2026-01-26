@@ -1,7 +1,16 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(wasm-pack build:*)",
+      "Bash(npm run conformance:*)",
+      "Bash(node:*)",
+      "Bash(./conformance/run-conformance.sh:*)"
+    ]
+  },
   "enabledPlugins": {
     "rust-analyzer-lsp@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": true,
-     "rust-skills@rust-skills": true
+    "rust-skills@rust-skills": true
   }
 }

@@ -13,6 +13,7 @@
 use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
 use crate::solver::{TypeId, TypeInterner, TypeKey};
+use crate::solver as solver_narrowing;
 
 /// Strict modes checker that applies various strict mode rules
 pub struct StrictModesChecker<'a> {
@@ -84,7 +85,7 @@ impl<'a> StrictModesChecker<'a> {
         if !self.strict_null_checks {
             return false;
         }
-        type_id == TypeId::NULL || type_id == TypeId::UNDEFINED || self.contains_nullable(type_id)
+        solver_narrowing::can_be_nullish(self.types, type_id)
     }
 
     /// Check if a union type contains null or undefined
@@ -107,34 +108,7 @@ impl<'a> StrictModesChecker<'a> {
         if !self.strict_null_checks {
             return type_id;
         }
-
-        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
-            return TypeId::NEVER;
-        }
-
-        let Some(type_key) = self.types.lookup(type_id) else {
-            return type_id;
-        };
-
-        match type_key {
-            TypeKey::Union(type_list_id) => {
-                let types = self.types.type_list(type_list_id);
-                let filtered: Vec<TypeId> = types
-                    .iter()
-                    .copied()
-                    .filter(|&t| t != TypeId::NULL && t != TypeId::UNDEFINED)
-                    .collect();
-
-                if filtered.is_empty() {
-                    TypeId::NEVER
-                } else if filtered.len() == 1 {
-                    filtered[0]
-                } else {
-                    self.types.union(filtered)
-                }
-            }
-            _ => type_id,
-        }
+        solver_narrowing::remove_nullish(self.types, type_id)
     }
 
     // -------------------------------------------------------------------------

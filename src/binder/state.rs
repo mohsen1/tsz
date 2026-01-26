@@ -91,7 +91,7 @@ pub struct BinderState {
 
     /// Lib binders for automatic lib symbol resolution.
     /// When get_symbol() doesn't find a symbol locally, it checks these lib binders.
-    lib_binders: Vec<Arc<BinderState>>,
+    pub lib_binders: Vec<Arc<BinderState>>,
 
     /// Symbol IDs that originated from lib files.
     /// Used by get_symbol() to check lib_binders first for these IDs,

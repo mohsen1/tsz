@@ -1,7 +1,7 @@
 # Path to 100% TypeScript Conformance
 
 **Date**: 2026-01-26
-**Current Status**: 27.1% (3,310/12,198 tests passing)
+**Current Status**: 27.6% (3,372/12,198 tests passing)
 **Target**: 100% conformance with clean solver/visitor architecture
 
 ---
@@ -24,38 +24,38 @@ Principles:
 
 | Metric | Value |
 |--------|-------|
-| **Pass Rate** | 27.1% (3,310/12,198) |
-| **Failing Tests** | 8,807 |
-| **Crashed Tests** | 19 |
+| **Pass Rate** | 27.6% (3,372/12,198) |
+| **Failing Tests** | 8,754 |
+| **Crashed Tests** | 10 |
 | **OOM Tests** | 9 |
 | **Timed Out Tests** | 53 |
-| **Worker Crashes** | 116 |
+| **Worker Crashes** | 114 |
 
 ### Top Missing Error Codes (We Should Emit But Don't)
 
 | Code | Description | Count | Priority |
 |------|-------------|-------|----------|
-| **TS2318** | Cannot find global type | 3,387 | P0 |
-| **TS2304** | Cannot find name | 2,230 | P0 |
+| **TS2318** | Cannot find global type | 3,412 | P0 |
+| **TS2304** | Cannot find name | 2,201 | P0 |
 | **TS2307** | Cannot find module | 2,069 | P0 |
-| **TS2488** | Type must have Symbol.iterator | 1,690 | P1 |
-| **TS2322** | Type not assignable | 1,106 | P1 |
-| **TS2583** | Cannot find name (suggest lib) | 1,040 | P1 |
+| **TS2488** | Type must have Symbol.iterator | 1,682 | P1 |
+| **TS2322** | Type not assignable | 968 | P1 |
+| **TS2583** | Cannot find name (suggest lib) | 1,034 | P1 |
 | **TS18050** | Element implicitly has 'any' | 679 | P2 |
-| **TS2300** | Duplicate identifier | 654 | P2 |
+| **TS2300** | Duplicate identifier | 660 | P2 |
 
 ### Top Extra Error Codes (We Emit But Shouldn't)
 
 | Code | Description | Count | Priority |
 |------|-------------|-------|----------|
-| **TS2749** | Refers to value but used as type | 40,621 | P0 |
-| **TS2322** | Type not assignable (false positive) | 12,971 | P0 |
-| **TS2693** | Type only refers to type | 9,559 | P1 |
-| **TS2339** | Property does not exist | 5,523 | P1 |
-| **TS2507** | Type is not a constructor | 4,364 | P1 |
-| **TS2345** | Argument not assignable | 2,879 | P2 |
-| **TS2362** | Left-hand arithmetic operand | 2,761 | P2 |
-| **TS1005** | Expected token | 2,730 | P2 |
+| **TS2749** | Refers to value but used as type | 36,231 | P0 |
+| **TS2322** | Type not assignable (false positive) | 13,194 | P0 |
+| **TS2339** | Property does not exist | 7,025 | P1 |
+| **TS2507** | Type is not a constructor | 4,888 | P1 |
+| **TS2345** | Argument not assignable | 2,919 | P2 |
+| **TS1005** | Expected token | 2,732 | P2 |
+| **TS2362** | Left-hand arithmetic operand | 2,651 | P2 |
+| **TS2304** | Cannot find name (extra) | 2,199 | P2 |
 
 ---
 
@@ -229,6 +229,24 @@ impl LibLoader {
 - `src/lib_loader.rs` - Fix lib loading
 - `src/binder/mod.rs` - Add global scope
 - `src/checker/symbol_resolver.rs` - Fix global lookup
+
+### 1.5 Ship TypeScript lib files in artifacts + sparse checkout (Week 3-4)
+
+**Problem**: Missing or partial lib files in the submodule and published artifacts lead to
+`TS2318`, `TS2583`, and `TS2304` spikes in conformance and runtime usage.
+
+**Solution**:
+1. Ensure `TypeScript/lib/*.d.ts` is included in sparse checkout patterns.
+2. Add a deterministic build step to sync libs from `TypeScript/lib` into the embedded
+   or packaged assets used by `tsz` and WASM.
+3. Bundle lib files with release artifacts (CLI + WASM), and verify lookup paths at runtime.
+4. Add a small conformance smoke check that validates lib availability (Promise, Symbol,
+   Iterator, DOM basics) before full runs.
+
+**Files**:
+- `scripts/setup-ts-submodule.sh` - Expand sparse checkout to include `lib/*.d.ts`
+- `scripts/build-wasm.sh` - Copy or embed lib files in the WASM artifact
+- `src/embedded_libs.rs` / `src/lib_loader.rs` - Ensure lib ingestion matches the packaged layout
 
 ---
 

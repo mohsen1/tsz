@@ -30,7 +30,8 @@
 
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
-use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
+use crate::solver as solver_narrowing;
+use crate::solver::{TypeId as SolverTypeId, TypeInterner};
 use rustc_hash::FxHashSet;
 
 /// Maximum depth for optional chain traversal to prevent infinite loops
@@ -147,7 +148,7 @@ pub fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
 /// If the expression is an optional chain and the base can be nullish,
 /// the result is T | undefined
 pub fn get_optional_chain_type(
-    types: &mut impl TypeDatabase,
+    types: &TypeInterner,
     _base_type: SolverTypeId,
     access_type: SolverTypeId,
     is_optional: bool,
@@ -172,95 +173,23 @@ pub fn get_optional_chain_type(
 }
 
 /// Checks if a type contains undefined
-pub fn type_contains_undefined(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
-    use crate::solver::{IntrinsicKind, TypeKey};
-
-    if type_id == SolverTypeId::UNDEFINED {
-        return true;
-    }
-
-    let Some(key) = types.lookup(type_id) else {
-        return false;
-    };
-
-    match key {
-        TypeKey::Intrinsic(IntrinsicKind::Undefined | IntrinsicKind::Void) => true,
-        TypeKey::Union(members) => {
-            let members = types.type_list(members);
-            members.iter().any(|&m| type_contains_undefined(types, m))
-        }
-        _ => false,
-    }
+pub fn type_contains_undefined(types: &TypeInterner, type_id: SolverTypeId) -> bool {
+    solver_narrowing::type_contains_undefined(types, type_id)
 }
 
 /// Removes null and undefined from a type for optional chain narrowing
-pub fn get_non_nullish_type(types: &mut impl TypeDatabase, type_id: SolverTypeId) -> SolverTypeId {
-    use crate::solver::{IntrinsicKind, TypeKey};
-
-    let Some(key) = types.lookup(type_id) else {
-        return type_id;
-    };
-
-    match key {
-        TypeKey::Intrinsic(
-            IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void,
-        ) => SolverTypeId::NEVER,
-        TypeKey::Union(members) => {
-            let members = types.type_list(members);
-            let non_nullish: Vec<SolverTypeId> = members
-                .iter()
-                .filter(|&&m| !is_nullish_type(types, m))
-                .copied()
-                .collect();
-
-            if non_nullish.is_empty() {
-                SolverTypeId::NEVER
-            } else if non_nullish.len() == 1 {
-                non_nullish[0]
-            } else {
-                types.union(non_nullish)
-            }
-        }
-        _ => type_id,
-    }
+pub fn get_non_nullish_type(types: &TypeInterner, type_id: SolverTypeId) -> SolverTypeId {
+    solver_narrowing::remove_nullish(types, type_id)
 }
 
 /// Checks if a type is nullish (null or undefined)
-pub fn is_nullish_type(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
-    use crate::solver::{IntrinsicKind, TypeKey};
-
-    if type_id == SolverTypeId::NULL || type_id == SolverTypeId::UNDEFINED {
-        return true;
-    }
-
-    let Some(key) = types.lookup(type_id) else {
-        return false;
-    };
-
-    matches!(
-        key,
-        TypeKey::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void)
-    )
+pub fn is_nullish_type(types: &TypeInterner, type_id: SolverTypeId) -> bool {
+    solver_narrowing::is_nullish_type(types, type_id)
 }
 
 /// Checks if a type can be nullish (contains null or undefined)
-pub fn can_be_nullish(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
-    use crate::solver::TypeKey;
-
-    if is_nullish_type(types, type_id) {
-        return true;
-    }
-
-    let Some(key) = types.lookup(type_id) else {
-        return false;
-    };
-
-    if let TypeKey::Union(members) = key {
-        let members = types.type_list(members);
-        return members.iter().any(|&m| is_nullish_type(types, m));
-    }
-
-    false
+pub fn can_be_nullish(types: &TypeInterner, type_id: SolverTypeId) -> bool {
+    solver_narrowing::can_be_nullish(types, type_id)
 }
 
 #[cfg(test)]

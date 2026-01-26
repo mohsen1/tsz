@@ -3695,6 +3695,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the name is a known global type.
     pub(crate) fn is_known_global_type_name(&self, name: &str) -> bool {
+        if self.ctx.is_known_global_type(name) {
+            return true;
+        }
+
         matches!(
             name,
             // Core built-in objects
@@ -7289,56 +7293,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> (Option<TypeId>, Option<TypeId>) {
-        use crate::solver::{IntrinsicKind, TypeKey};
-
-        let Some(key) = self.ctx.types.lookup(type_id) else {
-            return (Some(type_id), None);
-        };
-
-        match key {
-            TypeKey::Intrinsic(IntrinsicKind::Null) => (None, Some(TypeId::NULL)),
-            TypeKey::Intrinsic(IntrinsicKind::Undefined | IntrinsicKind::Void) => {
-                (None, Some(TypeId::UNDEFINED))
-            }
-            TypeKey::Union(members) => {
-                let members = self.ctx.types.type_list(members);
-                let mut non_null = Vec::with_capacity(members.len());
-                let mut nullish = Vec::new();
-
-                for &member in members.iter() {
-                    match self.ctx.types.lookup(member) {
-                        Some(TypeKey::Intrinsic(IntrinsicKind::Null)) => nullish.push(TypeId::NULL),
-                        Some(TypeKey::Intrinsic(
-                            IntrinsicKind::Undefined | IntrinsicKind::Void,
-                        )) => {
-                            nullish.push(TypeId::UNDEFINED);
-                        }
-                        _ => non_null.push(member),
-                    }
-                }
-
-                if nullish.is_empty() {
-                    return (Some(type_id), None);
-                }
-
-                let non_null_type = if non_null.is_empty() {
-                    None
-                } else if non_null.len() == 1 {
-                    Some(non_null[0])
-                } else {
-                    Some(self.ctx.types.union(non_null))
-                };
-
-                let cause = if nullish.len() == 1 {
-                    Some(nullish[0])
-                } else {
-                    Some(self.ctx.types.union(nullish))
-                };
-
-                (non_null_type, cause)
-            }
-            _ => (Some(type_id), None),
-        }
+        crate::solver::split_nullish_type(&self.ctx.types, type_id)
     }
 
     /// Report an error for possibly nullish object access.
@@ -9288,6 +9243,14 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
+        if self.symbol_has_type_declaration(sym_id) {
+            return false;
+        }
+
+        if (symbol.flags & symbol_flags::MODULE) != 0 {
+            return false;
+        }
+
         // If the symbol is type-only (from `import type`), it's not value-only
         // In type positions, type-only imports should be allowed
         if symbol.is_type_only {
@@ -9336,7 +9299,45 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
+        if self.symbol_has_type_declaration(target) {
+            return false;
+        }
+
         self.symbol_is_value_only(target)
+    }
+
+    fn symbol_has_type_declaration(&self, sym_id: SymbolId) -> bool {
+        use crate::parser::syntax_kind_ext;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let arena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref())
+            .unwrap_or(self.ctx.arena);
+
+        for &decl in &symbol.declarations {
+            if decl.is_none() {
+                continue;
+            }
+            let Some(node) = arena.get(decl) else {
+                continue;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => return true,
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => return true,
+                k if k == syntax_kind_ext::CLASS_DECLARATION => return true,
+                k if k == syntax_kind_ext::ENUM_DECLARATION => return true,
+                _ => {}
+            }
+        }
+
+        false
     }
 
     // ============================================================================

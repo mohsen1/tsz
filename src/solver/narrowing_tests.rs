@@ -164,6 +164,47 @@ fn test_find_discriminants_missing_property() {
 }
 
 // =============================================================================
+// Nullish Helper Tests
+// =============================================================================
+
+#[test]
+fn test_nullish_helpers_basic() {
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+
+    assert!(is_nullish_type(&interner, TypeId::NULL));
+    assert!(is_nullish_type(&interner, TypeId::UNDEFINED));
+    assert!(!is_nullish_type(&interner, TypeId::STRING));
+    assert!(can_be_nullish(&interner, union));
+    assert!(type_contains_undefined(&interner, union));
+
+    let removed = remove_nullish(&interner, union);
+    assert_eq!(removed, TypeId::STRING);
+}
+
+#[test]
+fn test_split_nullish_type() {
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+
+    let (non_null, cause) = split_nullish_type(&interner, union);
+    assert_eq!(non_null, Some(TypeId::STRING));
+    let cause = cause.expect("expected nullish cause");
+    assert!(is_nullish_type(&interner, cause));
+    assert!(type_contains_undefined(&interner, cause));
+}
+
+#[test]
+fn test_definitely_nullish_union() {
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+    assert!(is_definitely_nullish(&interner, union));
+}
+
+// =============================================================================
 // Narrowing by Discriminant Tests
 // =============================================================================
 

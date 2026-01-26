@@ -548,6 +548,7 @@ fn build_program_with_cache(
                     global_augmentations: Default::default(),
                     reexports: Default::default(),
                     wildcard_reexports: Default::default(),
+                    lib_binders: Vec::new(),
                 }
             }
         };

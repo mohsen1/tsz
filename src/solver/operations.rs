@@ -2159,6 +2159,21 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             TypeKey::Union(members) => {
                 let members = self.interner.type_list(members);
+                if members.contains(&TypeId::ANY) {
+                    return PropertyAccessResult::Success {
+                        type_id: TypeId::ANY,
+                        from_index_signature: false,
+                    };
+                }
+                if members.contains(&TypeId::ERROR) {
+                    return PropertyAccessResult::Success {
+                        type_id: TypeId::ERROR,
+                        from_index_signature: false,
+                    };
+                }
+                if members.contains(&TypeId::UNKNOWN) {
+                    return PropertyAccessResult::IsUnknown;
+                }
                 // Property access on union: partition into nullable and non-nullable members
                 let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                 let mut valid_results = Vec::new();

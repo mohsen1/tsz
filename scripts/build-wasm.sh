@@ -23,4 +23,19 @@ docker run --rm \
     cp -r /app/pkg/* /output/
   "
 
+LIB_SRC="$PROJECT_ROOT/TypeScript/lib"
+if [ -d "$LIB_SRC" ]; then
+  echo "📦 Copying TypeScript lib files (packaged)..."
+  rm -rf "$PROJECT_ROOT/pkg/lib"
+  mkdir -p "$PROJECT_ROOT/pkg/lib"
+  cp -R "$LIB_SRC/." "$PROJECT_ROOT/pkg/lib/"
+elif [ -d "$PROJECT_ROOT/TypeScript/src/lib" ]; then
+  echo "📦 Copying TypeScript lib files (source)..."
+  rm -rf "$PROJECT_ROOT/pkg/lib"
+  mkdir -p "$PROJECT_ROOT/pkg/lib"
+  cp -R "$PROJECT_ROOT/TypeScript/src/lib/." "$PROJECT_ROOT/pkg/lib/"
+else
+  echo "⚠️  TypeScript lib directory not found; skipping lib copy"
+fi
+
 echo "✅ WASM built successfully to $PROJECT_ROOT/pkg/"

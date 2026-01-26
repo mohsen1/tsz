@@ -121,6 +121,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fetch TypeScript lib sources
+        run: git submodule update --init --depth 1 -- TypeScript
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -143,6 +146,15 @@ jobs:
 
       - name: Build WASM (nodejs target for conformance)
         run: wasm-pack build --target nodejs --out-dir pkg
+
+      - name: Copy TypeScript lib files into pkg
+        run: |
+          if [ -d "TypeScript/src/lib" ]; then
+            mkdir -p pkg/lib
+            cp -R TypeScript/src/lib/. pkg/lib/
+          else
+            echo "TypeScript lib sources missing; skipping lib copy"
+          fi
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4

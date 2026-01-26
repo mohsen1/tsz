@@ -9,7 +9,7 @@ set -e
 TS_REPO="https://github.com/microsoft/TypeScript.git"
 TS_DIR="TypeScript"
 
-echo "→ Setting up TypeScript submodule (sparse: tests/ + src/lib/)..."
+echo "→ Setting up TypeScript submodule (sparse: tests/ + src/lib/ + lib/)..."
 
 # Cleanup: Remove any stale lock files
 rm -f .git/modules/"$TS_DIR"/shallow.lock 2>/dev/null || true
@@ -51,8 +51,8 @@ echo "Enabling sparse checkout..."
 git sparse-checkout init --cone
 
 # Step 4: Set the specific directories we want
-echo "Checking out tests/ and src/lib/ directories..."
-git sparse-checkout set tests src/lib
+echo "Checking out tests/, src/lib/, and lib/ directories..."
+git sparse-checkout set tests src/lib lib
 
 # Go back to root
 cd ..
@@ -62,7 +62,7 @@ SHA=$(cd "$TS_DIR" && git rev-parse --short HEAD)
 echo ""
 echo "✓ Done! TypeScript@$SHA"
 echo "  Tests location: $TS_DIR/tests/"
-echo "  Lib files: $TS_DIR/src/lib/"
+echo "  Lib files: $TS_DIR/src/lib/ (sources), $TS_DIR/lib/ (packaged if present)"
 echo ""
 echo "To update later:"
 echo "  git submodule update --remote --merge $TS_DIR"

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::checker::context::ScriptTarget as CheckerScriptTarget;
@@ -607,10 +608,23 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
             continue;
         }
 
-        let path = lib_map
-            .get(&lib_name)
-            .ok_or_else(|| anyhow!("unsupported compilerOptions.lib '{}'", lib_name))?
-            .clone();
+        let path = match lib_map.get(&lib_name) {
+            Some(path) => path.clone(),
+            None => {
+                let alias = match lib_name.as_str() {
+                    "lib" => Some("es5"),
+                    "es6" => Some("es2015"),
+                    _ => None,
+                };
+                let Some(alias) = alias else {
+                    return Err(anyhow!("unsupported compilerOptions.lib '{}'", lib_name));
+                };
+                lib_map
+                    .get(alias)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("unsupported compilerOptions.lib '{}'", lib_name))?
+            }
+        };
         resolved.push(path.clone());
 
         let contents = std::fs::read_to_string(&path)
@@ -625,11 +639,29 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
 
 pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
     let default_lib = default_lib_name_for_target(target);
-    match resolve_lib_files(&[default_lib.to_string()]) {
-        Ok(files) => Ok(files),
-        Err(err) if default_lib != "lib" => resolve_lib_files(&["lib".to_string()]).or(Err(err)),
-        Err(err) => Err(err),
+    let err = match resolve_lib_files(&[default_lib.to_string()]) {
+        Ok(files) => return Ok(files),
+        Err(err) => err,
+    };
+
+    let mut fallbacks = Vec::new();
+    if default_lib == "lib" {
+        fallbacks.push("es5");
     }
+    if default_lib == "es6" {
+        fallbacks.push("es2015");
+    }
+    if default_lib != "lib" {
+        fallbacks.push("lib");
+    }
+
+    for fallback in fallbacks {
+        if let Ok(files) = resolve_lib_files(&[fallback.to_string()]) {
+            return Ok(files);
+        }
+    }
+
+    Err(err)
 }
 
 fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
@@ -648,24 +680,69 @@ fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
 }
 
 fn default_lib_dir() -> Result<PathBuf> {
+    if let Some(dir) = lib_dir_from_env() {
+        return Ok(dir);
+    }
+
+    if let Some(dir) = lib_dir_from_exe() {
+        return Ok(dir);
+    }
+
+    if let Some(dir) = lib_dir_from_cwd() {
+        return Ok(dir);
+    }
+
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Some(dir) = lib_dir_from_root(manifest_dir) {
+        return Ok(dir);
+    }
+
+    bail!("lib directory not found under {}", manifest_dir.display());
+}
+
+fn lib_dir_from_env() -> Option<PathBuf> {
+    let dir = env::var_os("TSZ_LIB_DIR")?;
+    let dir = PathBuf::from(dir);
+    if dir.is_dir() {
+        Some(canonicalize_or_owned(&dir))
+    } else {
+        None
+    }
+}
+
+fn lib_dir_from_exe() -> Option<PathBuf> {
+    let exe = env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    let candidate = exe_dir.join("lib");
+    if candidate.is_dir() {
+        return Some(canonicalize_or_owned(&candidate));
+    }
+    lib_dir_from_root(exe_dir)
+}
+
+fn lib_dir_from_cwd() -> Option<PathBuf> {
+    let cwd = env::current_dir().ok()?;
+    lib_dir_from_root(&cwd)
+}
+
+fn lib_dir_from_root(root: &Path) -> Option<PathBuf> {
     let candidates = [
-        manifest_dir
-            .join("TypeScript")
+        root.join("TypeScript").join("lib"),
+        root.join("TypeScript").join("src").join("lib"),
+        root.join("TypeScript")
             .join("node_modules")
             .join("typescript")
             .join("lib"),
-        manifest_dir.join("TypeScript").join("lib"),
-        manifest_dir.join("tests").join("lib"),
+        root.join("tests").join("lib"),
     ];
 
     for candidate in candidates {
         if candidate.is_dir() {
-            return Ok(canonicalize_or_owned(&candidate));
+            return Some(canonicalize_or_owned(&candidate));
         }
     }
 
-    bail!("lib directory not found under {}", manifest_dir.display());
+    None
 }
 
 fn build_lib_map(lib_dir: &Path) -> Result<HashMap<String, PathBuf>> {

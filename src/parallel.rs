@@ -150,6 +150,9 @@ pub struct BindResult {
     pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// Lib binders for global type resolution (Array, String, etc.)
+    /// These are merged from lib.d.ts files and enable cross-file symbol lookup
+    pub lib_binders: Vec<Arc<BinderState>>,
 }
 
 /// Parse and bind multiple files in parallel
@@ -191,6 +194,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 global_augmentations: binder.global_augmentations,
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
+                lib_binders: Vec::new(), // No libs in this path
             }
         })
         .collect()
@@ -221,6 +225,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         global_augmentations: binder.global_augmentations,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
+        lib_binders: Vec::new(), // No libs in this path
     }
 }
 
@@ -372,6 +377,9 @@ pub fn parse_and_bind_parallel_with_libs(
 
             binder.bind_source_file(&arena, source_file);
 
+            // Extract lib_binders from binder before it's moved
+            let lib_binders = binder.lib_binders.clone();
+
             BindResult {
                 file_name,
                 source_file,
@@ -387,6 +395,7 @@ pub fn parse_and_bind_parallel_with_libs(
                 global_augmentations: binder.global_augmentations,
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
+                lib_binders,
             }
         })
         .collect()
@@ -443,6 +452,9 @@ pub struct MergedProgram {
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps current_file -> Vec of source_modules
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// Lib binders for global type resolution (Array, String, Promise, etc.)
+    /// These contain symbols from lib.d.ts files and enable resolution of built-in types
+    pub lib_binders: Vec<Arc<BinderState>>,
     /// Global type interner - shared across all threads for type deduplication
     pub type_interner: TypeInterner,
 }
@@ -810,6 +822,21 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // inside a namespace), but globals should only contain file-level symbols.
     // File-level symbols are already correctly added to globals at line 769-770.
 
+    // Collect lib_binders from all results (deduplicated by address)
+    // NOTE: These lib_binders contain local SymbolIds and are NOT remapped
+    // They are kept for future use but should NOT be used directly for symbol resolution
+    // The remapped lib symbols are already in program.globals and program.file_locals
+    let mut lib_binders: Vec<Arc<BinderState>> = Vec::new();
+    let mut lib_binder_set: FxHashSet<usize> = FxHashSet::default();
+    for result in results {
+        for lib_binder in &result.lib_binders {
+            let binder_addr = Arc::as_ptr(lib_binder) as usize;
+            if lib_binder_set.insert(binder_addr) {
+                lib_binders.push(Arc::clone(lib_binder));
+            }
+        }
+    }
+
     MergedProgram {
         files,
         symbols: global_symbols,
@@ -821,6 +848,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         module_exports,
         reexports,
         wildcard_reexports,
+        lib_binders,
         type_interner: TypeInterner::new(),
     }
 }
@@ -850,8 +878,10 @@ pub fn compile_files_with_libs(
 // Parallel Type Checking
 // =============================================================================
 
+use crate::checker::context::{CheckerOptions, LibContext};
 use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::Diagnostic;
+use crate::lib_loader::LibFile;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeId;
 
@@ -1073,8 +1103,69 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     }
 }
 
+/// Type check full source files in parallel.
+///
+/// This runs `check_source_file` for each file, which validates all top-level
+/// statements and function bodies. Compiler options and lib contexts are applied
+/// so diagnostics match normal compilation behavior.
+pub fn check_files_parallel(
+    program: &MergedProgram,
+    checker_options: &CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> CheckResult {
+    // Create lib_contexts from lib_files (contains both arena and binder)
+    // The binders in lib_files should match the binders in program.lib_binders
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+
+    let file_results: Vec<FileCheckResult> = program
+        .files
+        .par_iter()
+        .enumerate()
+        .map(|(file_idx, file)| {
+            let binder = create_binder_from_bound_file(file, program, file_idx);
+
+            let mut checker = CheckerState::with_options(
+                &file.arena,
+                &binder,
+                &program.type_interner,
+                file.file_name.clone(),
+                checker_options,
+            );
+
+            if !lib_contexts.is_empty() {
+                checker.ctx.set_lib_contexts(lib_contexts.clone());
+            }
+
+            checker.check_source_file(file.source_file);
+
+            let diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+
+            FileCheckResult {
+                file_idx,
+                file_name: file.file_name.clone(),
+                function_results: Vec::new(),
+                diagnostics,
+            }
+        })
+        .collect();
+
+    let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
+
+    CheckResult {
+        file_results,
+        function_count: 0,
+        diagnostic_count,
+    }
+}
+
 /// Create a BinderState from a BoundFile for type checking
-fn create_binder_from_bound_file(
+pub(crate) fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
@@ -1111,6 +1202,7 @@ fn create_binder_from_bound_file(
     );
 
     binder.declared_modules = program.declared_modules.clone();
+
     binder
 }
 

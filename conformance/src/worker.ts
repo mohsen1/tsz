@@ -295,10 +295,23 @@ function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
 // Convert options to JSON for WASM (snake_case keys expected)
 function toWasmOptions(opts: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  
-  // Map all options to what WASM expects
+
+  const mapping: Record<string, string> = {
+    strict: 'strict',
+    noimplicitany: 'noImplicitAny',
+    strictnullchecks: 'strictNullChecks',
+    strictfunctiontypes: 'strictFunctionTypes',
+    strictpropertyinitialization: 'strictPropertyInitialization',
+    noimplicitreturns: 'noImplicitReturns',
+    noimplicitthis: 'noImplicitThis',
+    target: 'target',
+    module: 'module',
+    nolib: 'noLib',
+  };
+
   for (const [key, value] of Object.entries(opts)) {
-    result[key] = value;
+    const mapped = mapping[key] ?? key;
+    result[mapped] = value;
   }
   
   return result;
@@ -380,6 +393,10 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
     try {
       if (testCase.isMultiFile || testCase.files.length > 1) {
         const program = new wasmModule.WasmProgram();
+
+        if (program.setCompilerOptions) {
+          program.setCompilerOptions(JSON.stringify(toWasmOptions(testCase.options)));
+        }
 
         // Add lib.d.ts unless noLib - use addLibFile for library files
         if (!testCase.options.nolib && libSource) {
