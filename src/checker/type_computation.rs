@@ -15,7 +15,7 @@ use crate::checker::state::CheckerState;
 use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::solver::{ContextualTypeContext, TupleElement, TypeId, TypeKey};
+use crate::solver::{CallableShape, ContextualTypeContext, TupleElement, TypeId, TypeKey};
 
 // =============================================================================
 // Type Computation Methods
@@ -1790,6 +1790,28 @@ impl<'a> CheckerState<'a> {
                 }
             }
             Some(TypeKey::Function(_)) => Some(constructor_type),
+            Some(TypeKey::Ref(sym_ref)) | Some(TypeKey::TypeQuery(sym_ref)) => {
+                // Ref to a symbol or TypeQuery (typeof X) - resolve to the symbol's type
+                use crate::binder::SymbolId;
+                let symbol_id = SymbolId(sym_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    // Check if this is a class symbol
+                    if symbol.flags & crate::binder::symbol_flags::CLASS != 0 {
+                        // For class symbols, the Ref/TypeQuery represents the constructor type
+                        // Get the symbol's actual type which should be a Callable with construct signatures
+                        let symbol_type = self.get_type_of_symbol(symbol_id);
+                        // Check if the symbol's type is constructable
+                        self.get_construct_type_from_type(symbol_type)
+                    } else {
+                        // For other symbols (e.g., functions with @constructor), get their type
+                        let symbol_type = self.get_type_of_symbol(symbol_id);
+                        // Check if the symbol's type is constructable
+                        self.get_construct_type_from_type(symbol_type)
+                    }
+                } else {
+                    None
+                }
+            }
             Some(TypeKey::Intersection(members_id)) => {
                 // For intersection of constructors (mixin pattern), the result is an
                 // intersection of all instance types. Handle this specially.
@@ -1956,6 +1978,45 @@ impl<'a> CheckerState<'a> {
                     .any(|&member| self.type_contains_abstract_class(member))
             }
             _ => false,
+        }
+    }
+
+    /// Get the construct type from a TypeId, used for new expressions.
+    ///
+    /// This is similar to get_construct_signature_return_type but returns
+    /// the full construct type (not just the return type) for new expressions.
+    ///
+    /// The emit_error parameter controls whether we emit TS2507 errors.
+    fn get_construct_type_from_type(&self, type_id: TypeId) -> Option<TypeId> {
+        use crate::solver::TypeKey;
+
+        let Some(type_key) = self.ctx.types.lookup(type_id) else {
+            return None;
+        };
+
+        match type_key {
+            TypeKey::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                if shape.construct_signatures.is_empty() {
+                    // Functions with a prototype property are constructable
+                    if self.type_has_prototype_property(type_id) {
+                        Some(type_id)
+                    } else {
+                        None
+                    }
+                } else {
+                    // Return a callable with construct signatures as call signatures
+                    Some(self.ctx.types.callable(CallableShape {
+                        call_signatures: shape.construct_signatures.clone(),
+                        construct_signatures: Vec::new(),
+                        properties: Vec::new(),
+                        string_index: None,
+                        number_index: None,
+                    }))
+                }
+            }
+            TypeKey::Function(_) => Some(type_id),
+            _ => None,
         }
     }
 

@@ -1058,17 +1058,34 @@ impl<'a> CheckerState<'a> {
                 let type_param = self.lookup_type_parameter(name);
                 let sym_id = self.resolve_identifier_symbol(type_name_idx);
                 if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
-                    // Try resolving from lib binders before falling back to UNKNOWN
-                    // First check if the global type exists via binder's get_global_type
-                    let lib_binders = self.get_lib_binders();
-                    if let Some(_global_sym) = self
-                        .ctx
-                        .binder
-                        .get_global_type_with_libs(name, &lib_binders)
-                    {
-                        // Global type symbol exists in lib binders - try to resolve it
+                    // Only try resolving from lib binders if lib files are loaded (noLib is false)
+                    if self.ctx.has_lib_loaded() {
+                        // Try resolving from lib binders before falling back to UNKNOWN
+                        // First check if the global type exists via binder's get_global_type
+                        let lib_binders = self.get_lib_binders();
+                        if let Some(_global_sym) = self
+                            .ctx
+                            .binder
+                            .get_global_type_with_libs(name, &lib_binders)
+                        {
+                            // Global type symbol exists in lib binders - try to resolve it
+                            if let Some(type_id) = self.resolve_lib_type_by_name(name) {
+                                // Successfully resolved - process type arguments and return
+                                if let Some(args) = &type_ref.type_arguments {
+                                    for &arg_idx in &args.nodes {
+                                        let _ = self.get_type_from_type_node(arg_idx);
+                                    }
+                                }
+                                return type_id;
+                            }
+                            // Symbol exists but failed to resolve - this is an error condition
+                            // The type is declared but we couldn't get its TypeId, which shouldn't happen
+                            // Fall through to emit error below
+                        }
+                        // Fall back to resolve_lib_type_by_name for cases where type may exist
+                        // but get_global_type_with_libs doesn't find it
                         if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                            // Successfully resolved - process type arguments and return
+                            // Successfully resolved via alternate path
                             if let Some(args) = &type_ref.type_arguments {
                                 for &arg_idx in &args.nodes {
                                     let _ = self.get_type_from_type_node(arg_idx);
@@ -1076,21 +1093,10 @@ impl<'a> CheckerState<'a> {
                             }
                             return type_id;
                         }
-                        // Symbol exists but failed to resolve - this is an error condition
-                        // The type is declared but we couldn't get its TypeId, which shouldn't happen
-                        // Fall through to emit error below
                     }
-                    // Fall back to resolve_lib_type_by_name for cases where type may exist
-                    // but get_global_type_with_libs doesn't find it
-                    if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                        // Successfully resolved via alternate path
-                        if let Some(args) = &type_ref.type_arguments {
-                            for &arg_idx in &args.nodes {
-                                let _ = self.get_type_from_type_node(arg_idx);
-                            }
-                        }
-                        return type_id;
-                    }
+                    // When has_lib_loaded() is false (noLib is true), the above block is skipped
+                    // and falls through to the is_known_global_type_name check below,
+                    // which emits TS2318 via error_cannot_find_global_type
                     if self.is_known_global_type_name(name) {
                         // Check if this is a built-in mapped type utility (Record, Partial, etc.)
                         // These are standard TypeScript utility types that should not emit errors
@@ -1755,8 +1761,11 @@ impl<'a> CheckerState<'a> {
             return Some(self.type_reference_symbol_type(sym_id));
         }
         // Fall back to lib contexts for global type resolution
-        if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-            return Some(type_id);
+        // BUT only if lib files are actually loaded (noLib is false)
+        if self.ctx.has_lib_loaded() {
+            if let Some(type_id) = self.resolve_lib_type_by_name(name) {
+                return Some(type_id);
+            }
         }
         None
     }

@@ -15,7 +15,7 @@
 use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::parser::NodeIndex;
-use crate::solver::{TypeId, TypeKey};
+use crate::solver::TypeId;
 
 // =============================================================================
 // Iterable Type Checking Methods
@@ -97,23 +97,17 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an object shape has a Symbol.iterator method.
+    ///
+    /// An object is iterable if it has a [Symbol.iterator]() method that returns an iterator.
+    /// An iterator (with just a next() method) is NOT automatically iterable.
     fn object_has_iterator_method(&self, shape_id: crate::solver::ObjectShapeId) -> bool {
         let shape = self.ctx.types.object_shape(shape_id);
 
-        // First check direct properties
+        // Check for [Symbol.iterator] method (iterable protocol)
         for prop in &shape.properties {
             let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-            // Check for [Symbol.iterator] method (iterator protocol)
             if prop_name.as_ref() == "[Symbol.iterator]" && prop.is_method {
                 return true;
-            }
-            // Also check for 'next' method (direct iterator, not iterable)
-            // This is a heuristic - if something has 'next' it might be an iterator
-            if prop_name.as_ref() == "next" && prop.is_method {
-                // Verify it's callable (function type)
-                if let Some(TypeKey::Function(_)) = self.ctx.types.lookup(prop.type_id) {
-                    return true;
-                }
             }
         }
 
