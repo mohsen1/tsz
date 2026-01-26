@@ -290,7 +290,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    #[allow(dead_code)] // Infrastructure for declaration emit
+    /// Emit an interface declaration (for .d.ts declaration emit mode)
     pub(super) fn emit_interface_declaration(&mut self, node: &Node) {
         let Some(interface) = self.arena.get_interface(node) else {
             return;
@@ -308,12 +308,31 @@ impl<'a> Printer<'a> {
             self.write(">");
         }
 
-        // Heritage clauses
-        if let Some(ref heritage) = interface.heritage_clauses
-            && !heritage.nodes.is_empty()
-        {
-            self.write(" extends ");
-            self.emit_comma_separated(&heritage.nodes);
+        // Heritage clauses - interfaces can extend multiple types
+        if let Some(ref heritage_clauses) = interface.heritage_clauses {
+            let mut first_extends = true;
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.arena.get_heritage(clause_node) else {
+                    continue;
+                };
+                // Interfaces only have extends clauses (no implements)
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for (i, &type_idx) in heritage.types.nodes.iter().enumerate() {
+                    if first_extends && i == 0 {
+                        self.write(" extends ");
+                        first_extends = false;
+                    } else {
+                        self.write(", ");
+                    }
+                    self.emit_heritage_expression(type_idx);
+                }
+            }
         }
 
         self.write(" {");
@@ -330,7 +349,7 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    #[allow(dead_code)] // Infrastructure for declaration emit
+    /// Emit a type alias declaration (for .d.ts declaration emit mode)
     pub(super) fn emit_type_alias_declaration(&mut self, node: &Node) {
         let Some(type_alias) = self.arena.get_type_alias(node) else {
             return;
