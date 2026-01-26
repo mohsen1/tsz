@@ -13,6 +13,7 @@ use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
+use crate::solver as solver_narrowing;
 use crate::solver::{SymbolRef, TypeId, TypeKey};
 
 // =============================================================================
@@ -496,21 +497,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true for the null type, undefined type, or unions that only
     /// contain null and/or undefined.
     pub fn is_null_or_undefined_only(&self, return_type: TypeId) -> bool {
-        if return_type == TypeId::NULL || return_type == TypeId::UNDEFINED {
-            return true;
-        }
-
-        if let Some(TypeKey::Union(members)) = self.ctx.types.lookup(return_type) {
-            let members = self.ctx.types.type_list(members);
-            for &member in members.iter() {
-                if member != TypeId::NULL && member != TypeId::UNDEFINED {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        false
+        solver_narrowing::is_definitely_nullish(&self.ctx.types, return_type)
     }
 
     // Note: The `lower_type_with_bindings` helper method remains in state.rs
