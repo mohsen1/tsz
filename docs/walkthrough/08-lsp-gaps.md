@@ -10,11 +10,17 @@ TSZ provides **LSP feature modules** rather than a standalone LSP server. These 
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| ✅ Implemented | 17 | Fully functional features |
+| ✅ Implemented | 20 | Fully functional features |
 | ⚠️ Partial | 2 | Features with known limitations |
-| ❌ Stub | 3 | Empty placeholder modules |
+| ❌ Stub | 0 | Empty placeholder modules |
 
-**Total LOC**: ~15,000 lines of Rust (excluding tests)
+**Total LOC**: ~16,500 lines of Rust (excluding tests)
+
+**New in this update**:
+- Selection Range fully implemented
+- Type Definition fully implemented
+- Code Lens fully implemented
+- LSP server binary (`tsz-lsp`) added
 
 ---
 
@@ -26,7 +32,7 @@ TSZ provides **LSP feature modules** rather than a standalone LSP server. These 
 |---------|--------|------|-------|-------|
 | Go to Definition | ✅ | `definition.rs` | ~880 | Resolves identifiers to declarations |
 | Find References | ✅ | `references.rs` | ~1,140 | Finds all symbol usages |
-| Type Definition | ❌ | `type_definition.rs` | 2 | **STUB** - Navigate to type definition |
+| Type Definition | ✅ | `type_definition.rs` | ~500 | Navigate to type definition |
 | Document Highlighting | ✅ | `highlighting.rs` | ~400 | Read/write occurrence distinction |
 
 ### Code Intelligence
@@ -44,7 +50,7 @@ TSZ provides **LSP feature modules** rather than a standalone LSP server. These 
 |---------|--------|------|-------|-------|
 | Rename | ✅ | `rename.rs` | ~615 | Workspace-wide symbol rename |
 | Code Actions | ✅ | `code_actions.rs` | ~2,730 | Extract, organize imports, quick fixes |
-| Code Lens | ❌ | `code_lens.rs` | 2 | **STUB** - Inline actionable info |
+| Code Lens | ✅ | `code_lens.rs` | ~550 | Reference counts, implementations |
 
 ### Document Structure
 
@@ -53,7 +59,7 @@ TSZ provides **LSP feature modules** rather than a standalone LSP server. These 
 | Document Symbols | ✅ | `document_symbols.rs` | ~675 | Hierarchical outline |
 | Semantic Tokens | ✅ | `semantic_tokens.rs` | ~790 | Full token classification |
 | Folding Ranges | ✅ | `folding.rs` | ~535 | Blocks, comments, imports |
-| Selection Range | ❌ | `selection_range.rs` | 2 | **STUB** - Semantic expand/shrink |
+| Selection Range | ✅ | `selection_range.rs` | ~350 | Semantic expand/shrink |
 
 ### Workspace
 
@@ -64,72 +70,31 @@ TSZ provides **LSP feature modules** rather than a standalone LSP server. These 
 
 ---
 
-## Stub Features (Not Implemented)
+## Recently Implemented Features
 
-### 1. Type Definition (`type_definition.rs`)
+The following features were previously stubs but are now fully implemented:
 
-**Current State**: Empty stub with only a comment
-```rust
-// LSP Type Definition
-```
+### 1. Type Definition (`type_definition.rs`) - ✅ Implemented
 
-**Expected Functionality**:
-- Navigate from a variable to its **type definition** (not implementation)
-- Example: Given `let x: Foo = ...`, jump to `interface Foo { ... }`
-- Different from Go to Definition which goes to the variable declaration
+Navigates from a variable to its **type definition** (not value declaration).
+- Resolves symbol at cursor position
+- Extracts type annotation from declarations
+- Finds type declarations (interfaces, type aliases, classes, enums)
+- Handles TypeReference, ArrayType, UnionType, etc.
 
-**Implementation Requirements**:
-- Resolve symbol at cursor position
-- Extract type information from binder/checker
-- Find the source location of the type declaration
-- Handle primitive types (no definition), type aliases, interfaces, classes
+### 2. Code Lens (`code_lens.rs`) - ✅ Implemented
 
-**Priority**: Medium - Useful for type exploration
+Displays actionable information above code elements:
+- Reference counts above functions, classes, interfaces
+- Implementation finder for interfaces
+- Supports lazy resolution for performance
 
----
+### 3. Selection Range (`selection_range.rs`) - ✅ Implemented
 
-### 2. Code Lens (`code_lens.rs`)
-
-**Current State**: Empty stub with only a comment
-```rust
-// LSP Code Lens implementation
-```
-
-**Expected Functionality**:
-- Display actionable information above code elements
-- Common use cases:
-  - Reference counts: "3 references" above function declarations
-  - Test runners: "Run Test | Debug Test" above test functions
-  - Implementation counts: "2 implementations" above interfaces
-
-**Implementation Requirements**:
-- Traverse AST to identify code lens targets (functions, classes, interfaces)
-- Compute relevant information (reference counts, test detection)
-- Return `CodeLens` items with positions and commands
-- Support resolution of commands when lens is clicked
-
-**Priority**: Low - Nice-to-have for IDE experience
-
----
-
-### 3. Selection Range (`selection_range.rs`)
-
-**Current State**: Empty stub with only a comment
-```rust
-// LSP Selection Ranges
-```
-
-**Expected Functionality**:
-- Expand/shrink selection by semantic boundaries
-- Example: cursor in `foo` → select `foo` → `foo.bar()` → `foo.bar().baz` → full statement
-
-**Implementation Requirements**:
-- Find AST node at cursor position
-- Build parent chain from node to root
-- Return nested `SelectionRange` objects representing semantic boundaries
-- Handle expression boundaries, statement boundaries, block boundaries
-
-**Priority**: Medium - Improves editing experience
+Expands/shrinks selection by semantic boundaries:
+- Builds parent chain from cursor position to root
+- Filters out internal structural nodes
+- Returns nested SelectionRange for smart selection
 
 ---
 
@@ -216,15 +181,30 @@ The following code actions are implemented in `code_actions.rs`:
 
 ## Architectural Limitations
 
-### 1. No Standalone LSP Server
+### 1. LSP Server (tsz-lsp) - Basic Infrastructure
 
-**Issue**: TSZ provides feature modules only, not a complete LSP server binary.
+**Status**: A basic LSP server binary (`tsz-lsp`) is now available.
 
-**Impact**:
-- Requires external integration (WASM binding, VS Code extension, etc.)
-- No direct `tsz --lsp` command available
+**Current Capabilities**:
+- JSON-RPC protocol handling over stdio
+- Document synchronization (open/change/close)
+- Go to Definition, Type Definition
+- Find References
+- Document Symbols
+- Selection Range
+- Code Lens
 
-**Workaround**: Use the WASM build with an LSP wrapper or build custom integration.
+**Pending Features** (require full type checker):
+- Hover (needs TypeInterner)
+- Full Completions (needs type-aware suggestions)
+- Signature Help (needs function type info)
+- Semantic Tokens (partial - needs type classification)
+
+**Usage**:
+```bash
+tsz-lsp                    # Start server on stdio
+tsz-lsp --verbose          # With debug logging
+```
 
 ---
 
