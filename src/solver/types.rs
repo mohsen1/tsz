@@ -483,6 +483,16 @@ pub struct IndexSignature {
     pub readonly: bool,
 }
 
+/// Combined index signature information for a type
+/// Provides convenient access to both string and number index signatures
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct IndexInfo {
+    /// String index signature: { [key: string]: T }
+    pub string_index: Option<IndexSignature>,
+    /// Number index signature: { [key: number]: T }
+    pub number_index: Option<IndexSignature>,
+}
+
 /// Object type with properties and optional index signatures
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ObjectShape {

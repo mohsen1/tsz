@@ -4,10 +4,12 @@
 //! swap in a query system (e.g., Salsa) without touching core logic.
 
 use crate::interner::Atom;
+use crate::solver::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::solver::intern::TypeInterner;
+use crate::solver::narrowing;
 use crate::solver::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, MappedType, MappedTypeId, ObjectShape, ObjectShapeId, PropertyInfo,
+    FunctionShapeId, IndexInfo, MappedType, MappedTypeId, ObjectShape, ObjectShapeId, PropertyInfo,
     PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
     TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
 };
@@ -296,6 +298,26 @@ pub trait QueryDatabase: TypeDatabase {
         )
     }
 
+    /// Resolve element access (array/tuple indexing) with detailed error reporting
+    fn resolve_element_access(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> ElementAccessResult {
+        let evaluator = ElementAccessEvaluator::new(self.as_type_database());
+        evaluator.resolve_element_access(object_type, index_type, literal_index)
+    }
+
+    /// Get index signatures for a type
+    fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo;
+
+    /// Check if a type contains null or undefined
+    fn is_nullish_type(&self, type_id: TypeId) -> bool;
+
+    /// Remove null and undefined from a type
+    fn remove_nullish(&self, type_id: TypeId) -> TypeId;
+
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         crate::solver::subtype::is_subtype_of(self.as_type_database(), source, target)
     }
@@ -308,6 +330,123 @@ pub trait QueryDatabase: TypeDatabase {
 impl QueryDatabase for TypeInterner {
     fn as_type_database(&self) -> &dyn TypeDatabase {
         self
+    }
+
+    fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
+        match self.lookup(type_id) {
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.object_shape(shape_id);
+                IndexInfo {
+                    string_index: shape.string_index.clone(),
+                    number_index: shape.number_index.clone(),
+                }
+            }
+            Some(TypeKey::Array(element)) => {
+                // Arrays have number index signature with element type
+                IndexInfo {
+                    string_index: None,
+                    number_index: Some(crate::solver::types::IndexSignature {
+                        key_type: TypeId::NUMBER,
+                        value_type: element,
+                        readonly: false,
+                    }),
+                }
+            }
+            Some(TypeKey::Tuple(elements_id)) => {
+                // Tuples have number index signature with union of element types
+                let elements = self.tuple_list(elements_id);
+                let element_types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
+                let value_type = if element_types.is_empty() {
+                    TypeId::UNDEFINED
+                } else if element_types.len() == 1 {
+                    element_types[0]
+                } else {
+                    self.union(element_types)
+                };
+                IndexInfo {
+                    string_index: None,
+                    number_index: Some(crate::solver::types::IndexSignature {
+                        key_type: TypeId::NUMBER,
+                        value_type,
+                        readonly: false,
+                    }),
+                }
+            }
+            Some(TypeKey::Union(members_id)) => {
+                // For unions, collect index signatures from all members
+                let members = self.type_list(members_id);
+                let mut string_indices = Vec::new();
+                let mut number_indices = Vec::new();
+
+                for &member in members.iter() {
+                    let info = self.get_index_signatures(member);
+                    if let Some(sig) = info.string_index {
+                        string_indices.push(sig);
+                    }
+                    if let Some(sig) = info.number_index {
+                        number_indices.push(sig);
+                    }
+                }
+
+                // Union of the value types
+                let string_index = if string_indices.is_empty() {
+                    None
+                } else {
+                    Some(crate::solver::types::IndexSignature {
+                        key_type: TypeId::STRING,
+                        value_type: self
+                            .union(string_indices.iter().map(|s| s.value_type).collect()),
+                        readonly: string_indices.iter().all(|s| s.readonly),
+                    })
+                };
+
+                let number_index = if number_indices.is_empty() {
+                    None
+                } else {
+                    Some(crate::solver::types::IndexSignature {
+                        key_type: TypeId::NUMBER,
+                        value_type: self
+                            .union(number_indices.iter().map(|s| s.value_type).collect()),
+                        readonly: number_indices.iter().all(|s| s.readonly),
+                    })
+                };
+
+                IndexInfo {
+                    string_index,
+                    number_index,
+                }
+            }
+            Some(TypeKey::Intersection(members_id)) => {
+                // For intersections, combine index signatures
+                let members = self.type_list(members_id);
+                let mut string_index = None;
+                let mut number_index = None;
+
+                for &member in members.iter() {
+                    let info = self.get_index_signatures(member);
+                    if let Some(sig) = info.string_index {
+                        string_index = Some(sig);
+                    }
+                    if let Some(sig) = info.number_index {
+                        number_index = Some(sig);
+                    }
+                }
+
+                IndexInfo {
+                    string_index,
+                    number_index,
+                }
+            }
+            _ => IndexInfo::default(),
+        }
+    }
+
+    fn is_nullish_type(&self, type_id: TypeId) -> bool {
+        narrowing::is_nullish_type(self, type_id)
+    }
+
+    fn remove_nullish(&self, type_id: TypeId) -> TypeId {
+        narrowing::remove_nullish(self, type_id)
     }
 }
 
@@ -552,6 +691,21 @@ impl QueryDatabase for QueryCache<'_> {
             }
         }
         result
+    }
+
+    fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
+        // Delegate to the interner - caching could be added later if needed
+        self.interner.get_index_signatures(type_id)
+    }
+
+    fn is_nullish_type(&self, type_id: TypeId) -> bool {
+        // Delegate to the interner
+        self.interner.is_nullish_type(type_id)
+    }
+
+    fn remove_nullish(&self, type_id: TypeId) -> TypeId {
+        // Delegate to the interner
+        self.interner.remove_nullish(type_id)
     }
 }
 
