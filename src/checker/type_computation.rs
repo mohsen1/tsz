@@ -1128,6 +1128,14 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use crate::solver::{LiteralValue, QueryDatabase, TypeKey};
 
+        let cache_key = (object_type, index_type, literal_index);
+        if let Some(&cached) = self.ctx.element_access_type_cache.get(&cache_key) {
+            return cached;
+        }
+        if !self.ctx.element_access_type_set.insert(cache_key) {
+            return TypeId::ANY;
+        }
+
         let object_key = match self.ctx.types.lookup(object_type) {
             Some(TypeKey::ReadonlyType(inner)) => self.ctx.types.lookup(inner),
             other => other,
@@ -1142,20 +1150,21 @@ impl<'a> CheckerState<'a> {
                 _ => None,
             });
 
-        match object_key {
+        let result = match object_key {
             Some(TypeKey::Array(element)) => {
                 if let Some(literal_index_type) = literal_index_type {
                     let result = self
                         .ctx
                         .types
                         .evaluate_index_access(object_type, literal_index_type);
-                    return if result == TypeId::UNDEFINED {
+                    if result == TypeId::UNDEFINED {
                         element
                     } else {
                         result
-                    };
+                    }
+                } else {
+                    element
                 }
-                element
             }
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.ctx.types.tuple_list(elements);
@@ -1164,52 +1173,48 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .types
                         .evaluate_index_access(object_type, literal_index_type);
-                    return if result == TypeId::UNDEFINED {
+                    if result == TypeId::UNDEFINED {
                         TypeId::ANY
                     } else {
                         result
-                    };
-                }
-
-                let element_types: Vec<TypeId> =
-                    elements.iter().map(|element| element.type_id).collect();
-                if element_types.is_empty() {
-                    TypeId::NEVER
-                } else if element_types.len() == 1 {
-                    element_types[0]
+                    }
                 } else {
-                    self.ctx.types.union(element_types)
+                    let element_types: Vec<TypeId> =
+                        elements.iter().map(|element| element.type_id).collect();
+                    if element_types.is_empty() {
+                        TypeId::NEVER
+                    } else if element_types.len() == 1 {
+                        element_types[0]
+                    } else {
+                        self.ctx.types.union(element_types)
+                    }
                 }
             }
             Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = self.ctx.types.object_shape(shape_id);
                 if literal_index.is_some() {
                     if let Some(number_index) = shape.number_index.as_ref() {
-                        return number_index.value_type;
+                        number_index.value_type
+                    } else if let Some(string_index) = shape.string_index.as_ref() {
+                        string_index.value_type
+                    } else {
+                        TypeId::ERROR
                     }
-                    if let Some(string_index) = shape.string_index.as_ref() {
-                        return string_index.value_type;
-                    }
-                    return TypeId::ERROR;
-                }
-
-                if index_type == TypeId::NUMBER {
+                } else if index_type == TypeId::NUMBER {
                     if let Some(number_index) = shape.number_index.as_ref() {
-                        return number_index.value_type;
+                        number_index.value_type
+                    } else if let Some(string_index) = shape.string_index.as_ref() {
+                        string_index.value_type
+                    } else {
+                        TypeId::ERROR
                     }
-                    if let Some(string_index) = shape.string_index.as_ref() {
-                        return string_index.value_type;
-                    }
-                    return TypeId::ERROR;
-                }
-
-                if index_type == TypeId::STRING
+                } else if index_type == TypeId::STRING
                     && let Some(string_index) = shape.string_index.as_ref()
                 {
-                    return string_index.value_type;
+                    string_index.value_type
+                } else {
+                    TypeId::ANY
                 }
-
-                TypeId::ANY
             }
             Some(TypeKey::Union(_)) => {
                 let members = self.get_union_members(object_type);
@@ -1227,7 +1232,11 @@ impl<'a> CheckerState<'a> {
                 // For unresolved types, return ANY for generic array types
                 TypeId::ANY
             }
-        }
+        };
+
+        self.ctx.element_access_type_set.remove(&cache_key);
+        self.ctx.element_access_type_cache.insert(cache_key, result);
+        result
     }
 
     /// Get the type of the `super` keyword.
@@ -1635,7 +1644,14 @@ impl<'a> CheckerState<'a> {
         use rustc_hash::FxHashMap;
 
         let resolved = self.resolve_type_for_property_access(type_id);
-        match self.ctx.types.lookup(resolved) {
+        if let Some(cached) = self.ctx.object_spread_property_cache.get(&resolved) {
+            return cached.clone();
+        }
+        if !self.ctx.object_spread_property_set.insert(resolved) {
+            return Vec::new();
+        }
+
+        let properties = match self.ctx.types.lookup(resolved) {
             Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = self.ctx.types.object_shape(shape_id);
                 shape.properties.to_vec()
@@ -1655,7 +1671,13 @@ impl<'a> CheckerState<'a> {
                 merged.into_values().collect()
             }
             _ => Vec::new(),
-        }
+        };
+
+        self.ctx.object_spread_property_set.remove(&resolved);
+        self.ctx
+            .object_spread_property_cache
+            .insert(resolved, properties.clone());
+        properties
     }
 
     /// Get the type of a `new` expression.
@@ -1979,8 +2001,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// The emit_error parameter controls whether we emit TS2507 errors.
     fn get_construct_type_from_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::binder::SymbolId;
-        use crate::solver::{SymbolRef, TypeKey};
+        use crate::solver::TypeKey;
 
         let Some(type_key) = self.ctx.types.lookup(type_id) else {
             return None;

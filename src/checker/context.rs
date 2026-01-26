@@ -13,7 +13,7 @@ use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
-use crate::solver::FreshnessTracker;
+use crate::solver::{FreshnessTracker, PropertyInfo, TypeEnvironment, TypeId, TypeInterner};
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
@@ -103,7 +103,6 @@ impl CheckerOptions {
 }
 use crate::binder::BinderState;
 use crate::parser::node::NodeArena;
-use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
 
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]
@@ -251,6 +250,18 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for mapped type evaluation with resolution.
     pub mapped_eval_set: FxHashSet<TypeId>,
 
+    /// Cache for object spread property collection.
+    pub object_spread_property_cache: FxHashMap<TypeId, Vec<PropertyInfo>>,
+
+    /// Recursion guard for object spread property collection.
+    pub object_spread_property_set: FxHashSet<TypeId>,
+
+    /// Cache for element access type computation.
+    pub element_access_type_cache: FxHashMap<(TypeId, TypeId, Option<usize>), TypeId>,
+
+    /// Recursion guard for element access type computation.
+    pub element_access_type_set: FxHashSet<(TypeId, TypeId, Option<usize>)>,
+
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 
@@ -394,6 +405,10 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
+            object_spread_property_cache: FxHashMap::default(),
+            object_spread_property_set: FxHashSet::default(),
+            element_access_type_cache: FxHashMap::default(),
+            element_access_type_set: FxHashSet::default(),
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -457,6 +472,10 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
+            object_spread_property_cache: FxHashMap::default(),
+            object_spread_property_set: FxHashSet::default(),
+            element_access_type_cache: FxHashMap::default(),
+            element_access_type_set: FxHashSet::default(),
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -522,6 +541,10 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
+            object_spread_property_cache: FxHashMap::default(),
+            object_spread_property_set: FxHashSet::default(),
+            element_access_type_cache: FxHashMap::default(),
+            element_access_type_set: FxHashSet::default(),
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -586,6 +609,10 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
+            object_spread_property_cache: FxHashMap::default(),
+            object_spread_property_set: FxHashSet::default(),
+            element_access_type_cache: FxHashMap::default(),
+            element_access_type_set: FxHashSet::default(),
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),

@@ -28,6 +28,9 @@
 
 use crate::binder::BinderState;
 use crate::binder::{Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::cli::config::resolve_default_lib_files;
+use crate::emitter::ScriptTarget;
 use crate::lib_loader;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
@@ -36,6 +39,11 @@ use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+#[cfg(target_arch = "wasm32")]
+fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBuf>> {
+    Ok(Vec::new())
+}
 
 /// Result of parsing a single file
 pub struct ParseResult {
@@ -261,24 +269,13 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
 
     let mut lib_files_loaded = Vec::new();
 
-    // If no lib files are specified, try to load the default lib.d.ts
-    let files_to_load = if lib_files.is_empty() {
-        // Try multiple default locations for lib.d.ts files
-        // Priority order:
-        // 1) TypeScript/tests/lib (git submodule - test fixtures)
-        // 2) TypeScript/node_modules/typescript/lib (compiler dependencies)
-        // 3) tests/lib (standalone setup)
-        let default_lib_paths = vec![
-            PathBuf::from("TypeScript/tests/lib/lib.d.ts"),
-            PathBuf::from("TypeScript/node_modules/typescript/lib/lib.d.ts"),
-            PathBuf::from("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
-            PathBuf::from("tests/lib/lib.d.ts"),
-            PathBuf::from("tests/lib/lib.dom.d.ts"),
-        ];
-        default_lib_paths
-    } else {
-        lib_files.iter().map(|p| p.to_path_buf()).collect()
-    };
+    if lib_files.is_empty() {
+        return lib_files_loaded;
+    }
+    let files_to_load = lib_files
+        .iter()
+        .map(|p| p.to_path_buf())
+        .collect::<Vec<_>>();
 
     for lib_path in files_to_load {
         // Skip if the file doesn't exist
@@ -833,8 +830,18 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 /// This is the main entry point for multi-file compilation.
 /// Lib files are automatically loaded and merged during binding.
 pub fn compile_files(files: Vec<(String, String)>) -> MergedProgram {
-    // Load lib files for binding (console, Array, Promise, etc.)
-    let lib_paths: Vec<&Path> = Vec::new(); // Empty = use defaults (lib.d.ts, lib.dom.d.ts)
+    let lib_files = resolve_default_lib_files(ScriptTarget::ESNext).unwrap_or_default();
+    compile_files_with_libs(files, &lib_files)
+}
+
+/// Full pipeline with explicit lib files.
+///
+/// Callers are responsible for providing the resolved lib file paths.
+pub fn compile_files_with_libs(
+    files: Vec<(String, String)>,
+    lib_files: &[PathBuf],
+) -> MergedProgram {
+    let lib_paths: Vec<&Path> = lib_files.iter().map(PathBuf::as_path).collect();
     let bind_results = parse_and_bind_parallel_with_lib_files(files, &lib_paths);
     merge_bind_results(bind_results)
 }

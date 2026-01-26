@@ -343,7 +343,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
-    apply_cli_overrides(&mut resolved, args);
+    apply_cli_overrides(&mut resolved, args)?;
 
     // Output the resolved config as JSON
     println!("{{");
@@ -434,7 +434,7 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
-    apply_cli_overrides(&mut resolved, args);
+    apply_cli_overrides(&mut resolved, args)?;
 
     let base_dir = tsconfig_path
         .as_ref()
@@ -522,7 +522,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
-    apply_cli_overrides(&mut resolved, args);
+    apply_cli_overrides(&mut resolved, args)?;
 
     let base_dir = tsconfig_path
         .as_ref()

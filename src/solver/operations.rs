@@ -104,6 +104,8 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     defaulted_placeholders: FxHashSet<TypeId>,
     /// Current recursion depth for constrain_types to prevent infinite loops
     constraint_recursion_depth: RefCell<usize>,
+    /// Visited (source, target) pairs during constraint collection.
+    constraint_pairs: RefCell<FxHashSet<(TypeId, TypeId)>>,
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -113,6 +115,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             checker,
             defaulted_placeholders: FxHashSet::default(),
             constraint_recursion_depth: RefCell::new(0),
+            constraint_pairs: RefCell::new(FxHashSet::default()),
         }
     }
 
@@ -299,6 +302,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut var_map: FxHashMap<TypeId, crate::solver::infer::InferenceVar> =
             FxHashMap::default();
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
+
+        self.constraint_pairs.borrow_mut().clear();
+        *self.constraint_recursion_depth.borrow_mut() = 0;
 
         // 1. Create inference variables and placeholders for each type parameter
         for tp in &func.type_params {
@@ -1007,6 +1013,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source: TypeId,
         target: TypeId,
     ) {
+        if !self.constraint_pairs.borrow_mut().insert((source, target)) {
+            return;
+        }
+
         // Check and increment recursion depth to prevent infinite loops
         {
             let mut depth = self.constraint_recursion_depth.borrow_mut();
@@ -2366,11 +2376,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             TypeKey::Intrinsic(IntrinsicKind::Object) => {
                 let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                self.resolve_object_member(prop_name, prop_atom)
-                    .unwrap_or(PropertyAccessResult::PropertyNotFound {
+                self.resolve_object_member(prop_name, prop_atom).unwrap_or(
+                    PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
                         property_name: prop_atom,
-                    })
+                    },
+                )
             }
 
             TypeKey::Array(_) => {
@@ -2390,12 +2401,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     None => {
                         let prop_atom =
                             prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                        return self
-                            .resolve_object_member(prop_name, prop_atom)
-                            .unwrap_or(PropertyAccessResult::PropertyNotFound {
+                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
+                            PropertyAccessResult::PropertyNotFound {
                                 type_id: obj_type,
                                 property_name: prop_atom,
-                            });
+                            },
+                        );
                     }
                 };
 
@@ -2407,11 +2418,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Evaluation didn't change the type - try apparent members
                     let prop_atom =
                         prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                    self.resolve_object_member(prop_name, prop_atom)
-                        .unwrap_or(PropertyAccessResult::PropertyNotFound {
+                    self.resolve_object_member(prop_name, prop_atom).unwrap_or(
+                        PropertyAccessResult::PropertyNotFound {
                             type_id: obj_type,
                             property_name: prop_atom,
-                        })
+                        },
+                    )
                 }
             }
 
@@ -2422,12 +2434,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     None => {
                         let prop_atom =
                             prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                        return self
-                            .resolve_object_member(prop_name, prop_atom)
-                            .unwrap_or(PropertyAccessResult::PropertyNotFound {
+                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
+                            PropertyAccessResult::PropertyNotFound {
                                 type_id: obj_type,
                                 property_name: prop_atom,
-                            });
+                            },
+                        );
                     }
                 };
 

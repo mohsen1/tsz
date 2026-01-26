@@ -3,6 +3,7 @@ use serde::{Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
+use crate::checker::context::ScriptTarget as CheckerScriptTarget;
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
 
 /// Custom deserializer for boolean options that accepts both bool and string values.
@@ -76,6 +77,8 @@ pub struct CompilerOptions {
     pub jsx: Option<String>,
     #[serde(default)]
     pub lib: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_lib: Option<bool>,
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
@@ -117,6 +120,7 @@ pub struct ResolvedCompilerOptions {
     pub checker: CheckerOptions,
     pub jsx: Option<JsxEmit>,
     pub lib_files: Vec<PathBuf>,
+    pub lib_is_default: bool,
     pub module_resolution: Option<ModuleResolutionKind>,
     pub types_versions_compiler_version: Option<String>,
     pub types: Option<Vec<String>>,
@@ -144,6 +148,7 @@ pub enum JsxEmit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleResolutionKind {
+    Classic,
     Node,
     Node16,
     NodeNext,
@@ -205,12 +210,16 @@ pub fn resolve_compiler_options(
 ) -> Result<ResolvedCompilerOptions> {
     let mut resolved = ResolvedCompilerOptions::default();
     let Some(options) = options else {
+        resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
+        resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
+        resolved.lib_is_default = true;
         return Ok(resolved);
     };
 
     if let Some(target) = options.target.as_deref() {
         resolved.printer.target = parse_script_target(target)?;
     }
+    resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
 
     if let Some(module) = options.module.as_deref() {
         resolved.printer.module = parse_module_kind(module)?;
@@ -266,8 +275,16 @@ pub fn resolve_compiler_options(
         resolved.jsx = Some(parse_jsx_emit(jsx)?);
     }
 
+    if let Some(no_lib) = options.no_lib {
+        resolved.checker.no_lib = no_lib;
+    }
+
     if let Some(lib_list) = options.lib.as_ref() {
         resolved.lib_files = resolve_lib_files(lib_list)?;
+        resolved.lib_is_default = false;
+    } else if !resolved.checker.no_lib {
+        resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
+        resolved.lib_is_default = true;
     }
 
     let base_url = options.base_url.as_deref().map(str::trim);
@@ -444,6 +461,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         type_roots: child.type_roots.or(base.type_roots),
         jsx: child.jsx.or(base.jsx),
         lib: child.lib.or(base.lib),
+        no_lib: child.no_lib.or(base.no_lib),
         base_url: child.base_url.or(base.base_url),
         paths: child.paths.or(base.paths),
         root_dir: child.root_dir.or(base.root_dir),
@@ -505,6 +523,7 @@ fn parse_module_kind(value: &str) -> Result<ModuleKind> {
 fn parse_module_resolution(value: &str) -> Result<ModuleResolutionKind> {
     let normalized = normalize_option(value);
     let resolution = match normalized.as_str() {
+        "classic" => ModuleResolutionKind::Classic,
         "node" | "node10" => ModuleResolutionKind::Node,
         "node16" => ModuleResolutionKind::Node16,
         "nodenext" => ModuleResolutionKind::NodeNext,
@@ -569,7 +588,7 @@ fn split_path_pattern(pattern: &str) -> (String, String) {
     }
 }
 
-fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
+pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
     if lib_list.is_empty() {
         return Ok(Vec::new());
     }
@@ -604,14 +623,49 @@ fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
     Ok(resolved)
 }
 
+pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
+    let default_lib = default_lib_name_for_target(target);
+    match resolve_lib_files(&[default_lib.to_string()]) {
+        Ok(files) => Ok(files),
+        Err(err) if default_lib != "lib" => resolve_lib_files(&["lib".to_string()]).or(Err(err)),
+        Err(err) => Err(err),
+    }
+}
+
+fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
+    match target {
+        ScriptTarget::ES3 | ScriptTarget::ES5 => "lib",
+        ScriptTarget::ES2015 => "es6",
+        ScriptTarget::ES2016 => "es2016.full",
+        ScriptTarget::ES2017 => "es2017.full",
+        ScriptTarget::ES2018 => "es2018.full",
+        ScriptTarget::ES2019 => "es2019.full",
+        ScriptTarget::ES2020 => "es2020.full",
+        ScriptTarget::ES2021 => "es2021.full",
+        ScriptTarget::ES2022 => "es2022.full",
+        ScriptTarget::ESNext => "esnext.full",
+    }
+}
+
 fn default_lib_dir() -> Result<PathBuf> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let candidate = manifest_dir.join("..").join("src").join("lib");
-    if candidate.is_dir() {
-        Ok(canonicalize_or_owned(&candidate))
-    } else {
-        bail!("lib directory not found at {}", candidate.display());
+    let candidates = [
+        manifest_dir
+            .join("TypeScript")
+            .join("node_modules")
+            .join("typescript")
+            .join("lib"),
+        manifest_dir.join("TypeScript").join("lib"),
+        manifest_dir.join("tests").join("lib"),
+    ];
+
+    for candidate in candidates {
+        if candidate.is_dir() {
+            return Ok(canonicalize_or_owned(&candidate));
+        }
     }
+
+    bail!("lib directory not found under {}", manifest_dir.display());
 }
 
 fn build_lib_map(lib_dir: &Path) -> Result<HashMap<String, PathBuf>> {
@@ -639,17 +693,34 @@ fn build_lib_map(lib_dir: &Path) -> Result<HashMap<String, PathBuf>> {
 
 fn extract_lib_references(source: &str) -> Vec<String> {
     let mut refs = Vec::new();
+    let mut in_block_comment = false;
     for line in source.lines() {
         let line = line.trim_start();
-        if !line.starts_with("///") {
-            if line.is_empty() {
-                continue;
+        if in_block_comment {
+            if line.contains("*/") {
+                in_block_comment = false;
             }
-            break;
+            continue;
         }
-        if let Some(value) = parse_reference_lib_value(line) {
-            refs.push(normalize_lib_name(value));
+        if line.starts_with("/*") {
+            if !line.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
         }
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with("///") {
+            if let Some(value) = parse_reference_lib_value(line) {
+                refs.push(normalize_lib_name(value));
+            }
+            continue;
+        }
+        if line.starts_with("//") {
+            continue;
+        }
+        break;
     }
     refs
 }
@@ -679,7 +750,27 @@ fn parse_reference_lib_value(line: &str) -> Option<&str> {
 }
 
 fn normalize_lib_name(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized
+        .strip_prefix("lib.")
+        .unwrap_or(normalized.as_str())
+        .to_string()
+}
+
+pub(crate) fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptTarget {
+    match target {
+        ScriptTarget::ES3 => CheckerScriptTarget::ES3,
+        ScriptTarget::ES5 => CheckerScriptTarget::ES5,
+        ScriptTarget::ES2015 => CheckerScriptTarget::ES2015,
+        ScriptTarget::ES2016 => CheckerScriptTarget::ES2016,
+        ScriptTarget::ES2017 => CheckerScriptTarget::ES2017,
+        ScriptTarget::ES2018 => CheckerScriptTarget::ES2018,
+        ScriptTarget::ES2019 => CheckerScriptTarget::ES2019,
+        ScriptTarget::ES2020 => CheckerScriptTarget::ES2020,
+        ScriptTarget::ES2021 | ScriptTarget::ES2022 | ScriptTarget::ESNext => {
+            CheckerScriptTarget::ESNext
+        }
+    }
 }
 
 fn canonicalize_or_owned(path: &Path) -> PathBuf {

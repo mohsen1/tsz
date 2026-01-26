@@ -196,7 +196,7 @@ fn load_project_state(args: &CliArgs, cwd: &Path) -> Result<ProjectState> {
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
-    driver::apply_cli_overrides(&mut resolved, args);
+    driver::apply_cli_overrides(&mut resolved, args)?;
 
     let base_dir = driver::config_base_dir(cwd, tsconfig_path.as_deref());
     let base_dir = canonicalize_or_owned(&base_dir);

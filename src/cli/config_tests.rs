@@ -110,7 +110,8 @@ fn resolve_compiler_options_defaults() {
     assert_eq!(resolved.printer.target, ScriptTarget::ESNext);
     assert_eq!(resolved.printer.module, ModuleKind::None);
     assert!(resolved.jsx.is_none());
-    assert!(resolved.lib_files.is_empty());
+    assert!(!resolved.lib_files.is_empty());
+    assert!(resolved.lib_is_default);
     assert!(resolved.root_dir.is_none());
     assert!(resolved.out_dir.is_none());
     assert!(!resolved.checker.strict);
@@ -149,7 +150,8 @@ fn resolve_compiler_options_overrides() {
         Some(ModuleResolutionKind::Bundler)
     );
     assert_eq!(resolved.jsx, Some(JsxEmit::Preserve));
-    assert!(resolved.lib_files.is_empty());
+    assert!(!resolved.lib_files.is_empty());
+    assert!(resolved.lib_is_default);
     assert_eq!(resolved.root_dir, Some(PathBuf::from("src")));
     assert_eq!(resolved.out_dir, Some(PathBuf::from("dist")));
     assert_eq!(resolved.declaration_dir, Some(PathBuf::from("types")));
@@ -235,7 +237,11 @@ fn resolve_compiler_options_rejects_paths_without_base_url() {
 
 #[test]
 fn resolve_compiler_options_resolves_lib_files() {
-    let lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib");
+    let lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("TypeScript")
+        .join("node_modules")
+        .join("typescript")
+        .join("lib");
     if !lib_dir.is_dir() {
         return;
     }
@@ -252,9 +258,9 @@ fn resolve_compiler_options_resolves_lib_files() {
     let resolved = resolve_compiler_options(config.compiler_options.as_ref())
         .expect("compiler options should resolve");
 
-    let es2015 = canonicalize_or_owned(&lib_dir.join("es2015.d.ts"));
-    let es5 = canonicalize_or_owned(&lib_dir.join("es5.d.ts"));
-    let dom = canonicalize_or_owned(&lib_dir.join("dom.generated.d.ts"));
+    let es2015 = canonicalize_or_owned(&lib_dir.join("lib.es2015.d.ts"));
+    let es5 = canonicalize_or_owned(&lib_dir.join("lib.es5.d.ts"));
+    let dom = canonicalize_or_owned(&lib_dir.join("lib.dom.d.ts"));
 
     assert!(resolved.lib_files.contains(&es2015));
     assert!(resolved.lib_files.contains(&es5));
@@ -263,7 +269,11 @@ fn resolve_compiler_options_resolves_lib_files() {
 
 #[test]
 fn resolve_compiler_options_rejects_unknown_lib() {
-    let lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib");
+    let lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("TypeScript")
+        .join("node_modules")
+        .join("typescript")
+        .join("lib");
 
     let config = parse_tsconfig(
         r#"{
