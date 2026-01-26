@@ -224,6 +224,20 @@ pub trait QueryDatabase: TypeDatabase {
         )
     }
 
+    fn evaluate_index_access_with_options(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        crate::solver::evaluate::evaluate_index_access_with_options(
+            self.as_type_database(),
+            object_type,
+            index_type,
+            no_unchecked_indexed_access,
+        )
+    }
+
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
         crate::solver::evaluate::evaluate_type(self.as_type_database(), type_id)
     }

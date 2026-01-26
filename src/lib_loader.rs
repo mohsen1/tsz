@@ -3,10 +3,26 @@
 //! This module provides functionality for loading standard library type definitions
 //! (like lib.d.ts) and merging their global symbols into the binder's root scope.
 //! This enables proper resolution of built-in types like `Object`, `Function`, `console`, etc.
+//!
+//! # Embedded Libraries
+//!
+//! This module works with the `embedded_libs` module to provide access to TypeScript's
+//! standard library files that are bundled directly into the binary. This allows tsz
+//! to work without requiring separate lib file installation.
+//!
+//! ```rust
+//! use wasm::lib_loader::load_embedded_libs;
+//! use wasm::common::ScriptTarget;
+//!
+//! // Load all libs needed for ES2020 with DOM
+//! let libs = load_embedded_libs(ScriptTarget::ES2020, true);
+//! ```
 
 use crate::binder::BinderState;
 use crate::binder::SymbolTable;
 use crate::checker::types::diagnostics::Diagnostic;
+use crate::common::ScriptTarget;
+use crate::embedded_libs::{self, EmbeddedLib};
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use std::sync::Arc;
@@ -21,24 +37,24 @@ pub const CANNOT_FIND_GLOBAL_TYPE: u32 = 2318;
 /// TS2583: Cannot find name '{0}'. Do you need to change your target library?
 pub const MISSING_ES2015_LIB_SUPPORT: u32 = 2583;
 
-/// Load the default lib.d.ts file from the tests/lib directory.
-///
-/// This is a convenience function for tests and development that loads
-/// the standard library definitions containing global symbols like
-/// `console`, `Object`, `Array`, `Promise`, `window`, `document`, etc.
-///
-/// Returns `None` if the lib.d.ts file cannot be found or read.
-pub fn load_default_lib_dts() -> Option<Arc<LibFile>> {
-    let lib_dts_path = std::path::Path::new("tests/lib/lib.d.ts");
-    let source_text = std::fs::read_to_string(lib_dts_path).ok()?;
+// =============================================================================
+// Embedded Library Loading
+// =============================================================================
 
-    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), source_text);
+/// Parse and bind an embedded lib file.
+///
+/// Returns a parsed and bound LibFile from an embedded lib definition.
+/// Note: Some TypeScript lib files use advanced syntax (like `intrinsic` keyword)
+/// that may produce parse errors. We continue despite these errors to capture
+/// the symbols that are successfully parsed.
+fn load_embedded_lib(lib: &EmbeddedLib) -> Option<Arc<LibFile>> {
+    let mut lib_parser = ParserState::new(lib.file_name.to_string(), lib.content.to_string());
     let source_file_idx = lib_parser.parse_source_file();
 
-    if !lib_parser.get_diagnostics().is_empty() {
-        // Parse errors in lib.d.ts - return None
-        return None;
-    }
+    // Note: We intentionally continue even with parse errors because:
+    // 1. TypeScript libs use some advanced syntax we don't fully support yet
+    // 2. The important core types (Object, Array, etc.) parse correctly
+    // 3. Partial symbols are better than no symbols
 
     let mut lib_binder = BinderState::new();
     lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
@@ -47,10 +63,89 @@ pub fn load_default_lib_dts() -> Option<Arc<LibFile>> {
     let binder = Arc::new(lib_binder);
 
     Some(Arc::new(LibFile::new(
-        "lib.d.ts".to_string(),
+        lib.file_name.to_string(),
         arena,
         binder,
     )))
+}
+
+/// Load embedded libs for a given script target.
+///
+/// # Arguments
+/// * `target` - The ECMAScript target version
+/// * `include_dom` - Whether to include DOM and browser APIs
+///
+/// # Returns
+/// A vector of loaded LibFile instances, ready to be merged into a binder.
+///
+/// # Example
+/// ```rust
+/// use wasm::lib_loader::load_embedded_libs;
+/// use wasm::common::ScriptTarget;
+///
+/// let libs = load_embedded_libs(ScriptTarget::ES2020, true);
+/// assert!(!libs.is_empty());
+/// ```
+pub fn load_embedded_libs(target: ScriptTarget, include_dom: bool) -> Vec<Arc<LibFile>> {
+    let lib_refs = if include_dom {
+        embedded_libs::get_default_libs_for_target(target)
+    } else {
+        embedded_libs::get_libs_for_target(target)
+    };
+
+    lib_refs
+        .into_iter()
+        .filter_map(|lib| load_embedded_lib(lib))
+        .collect()
+}
+
+/// Load a specific embedded lib by name.
+///
+/// # Arguments
+/// * `name` - The lib name (e.g., "es5", "es2015.promise", "dom")
+///
+/// # Returns
+/// The loaded LibFile if found and successfully parsed, None otherwise.
+pub fn load_embedded_lib_by_name(name: &str) -> Option<Arc<LibFile>> {
+    embedded_libs::get_lib(name).and_then(load_embedded_lib)
+}
+
+/// Load embedded libs by name list.
+///
+/// This is useful when you have a specific list of libs from compiler options.
+///
+/// # Arguments
+/// * `lib_names` - A slice of lib names to load
+///
+/// # Returns
+/// A vector of loaded LibFile instances.
+pub fn load_embedded_libs_by_names(lib_names: &[&str]) -> Vec<Arc<LibFile>> {
+    lib_names
+        .iter()
+        .filter_map(|name| load_embedded_lib_by_name(name))
+        .collect()
+}
+
+/// Load the default lib.d.ts file (ES5 base library).
+///
+/// This function loads the embedded ES5 base library which contains core
+/// JavaScript types like `Object`, `Array`, `Function`, `String`, etc.
+///
+/// For a more complete set of libs including DOM, use `load_all_default_libs()`.
+/// For specific ECMAScript versions, use `load_embedded_libs()`.
+///
+/// Returns the ES5 base lib file, or None if it cannot be loaded.
+pub fn load_default_lib_dts() -> Option<Arc<LibFile>> {
+    // Load just the ES5 base lib (the core JavaScript types)
+    load_embedded_lib_by_name("es5")
+}
+
+/// Load all default embedded libs for ES2020 with DOM.
+///
+/// This is a convenience function that loads a comprehensive set of lib files
+/// suitable for most use cases. Returns all libs as a vector.
+pub fn load_all_default_libs() -> Vec<Arc<LibFile>> {
+    load_embedded_libs(ScriptTarget::ES2020, true)
 }
 
 /// Loaded lib file with its arena and binder state.
@@ -465,53 +560,69 @@ mod tests {
 
     #[test]
     fn test_load_default_lib_dts() {
-        // Test that we can load the default lib.d.ts file
+        // Test that we can load the default lib.d.ts file (ES5 base lib)
         let lib_file = load_default_lib_dts();
 
-        // This test may run in environments where tests/lib/lib.d.ts is not available
-        // (e.g., cargo test from a different directory)
+        // This test may run in environments where embedded libs are not available
         if let Some(lib) = lib_file {
-            // Verify that key global symbols are present
+            // Verify that key ES5 global symbols are present
             let file_locals = lib.file_locals();
 
-            // Core ECMAScript globals
-            assert!(file_locals.has("Object"), "Object should be in lib.d.ts");
-            assert!(file_locals.has("Array"), "Array should be in lib.d.ts");
+            // Core ECMAScript globals (ES5 base)
+            assert!(
+                file_locals.has("Object"),
+                "Object should be in lib.es5.d.ts"
+            );
+            assert!(file_locals.has("Array"), "Array should be in lib.es5.d.ts");
             assert!(
                 file_locals.has("Function"),
-                "Function should be in lib.d.ts"
+                "Function should be in lib.es5.d.ts"
             );
-            assert!(file_locals.has("Promise"), "Promise should be in lib.d.ts");
-            assert!(file_locals.has("console"), "console should be in lib.d.ts");
+            // Note: Promise is defined in ES5 lib (interface Promise<T>)
+            assert!(
+                file_locals.has("Promise"),
+                "Promise should be in lib.es5.d.ts"
+            );
 
-            // DOM globals (if present in lib.d.ts)
-            // Note: These may not be in all lib.d.ts versions
-            let has_window = file_locals.has("window");
-            let has_document = file_locals.has("document");
-
-            if has_window {
-                assert!(file_locals.has("window"), "window should be in lib.d.ts");
-            }
-            if has_document {
-                assert!(
-                    file_locals.has("document"),
-                    "document should be in lib.d.ts"
-                );
-            }
+            // console is in DOM lib, not ES5 - so we don't check for it here
+            // Use load_all_default_libs() to get console and other DOM globals
         }
+    }
+
+    #[test]
+    fn test_load_all_default_libs() {
+        // Test that we can load all default libs including DOM
+        let lib_files = load_all_default_libs();
+
+        // This should always return libs since they're embedded
+        assert!(!lib_files.is_empty(), "Should load at least one lib file");
+
+        // Collect all symbols from all libs
+        let mut all_symbols = SymbolTable::new();
+        merge_lib_symbols(&mut all_symbols, &lib_files);
+
+        // Core ECMAScript globals
+        assert!(all_symbols.has("Object"), "Object should be available");
+        assert!(all_symbols.has("Array"), "Array should be available");
+        assert!(all_symbols.has("Function"), "Function should be available");
+        assert!(all_symbols.has("Promise"), "Promise should be available");
+
+        // DOM globals (from lib.dom.d.ts)
+        assert!(all_symbols.has("console"), "console should be in DOM lib");
+        assert!(all_symbols.has("window"), "window should be in DOM lib");
+        assert!(all_symbols.has("document"), "document should be in DOM lib");
     }
 
     #[test]
     fn test_bind_with_lib_symbols() {
         use crate::parser::ParserState;
 
-        // Load lib.d.ts
-        let lib_file = load_default_lib_dts();
-        if lib_file.is_none() {
-            // Skip test if lib.d.ts is not available
+        // Load all default libs (includes ES5 + DOM for console, etc.)
+        let lib_files = load_all_default_libs();
+        if lib_files.is_empty() {
+            // Skip test if libs are not available
             return;
         }
-        let lib_file = lib_file.unwrap();
 
         // Parse a source file that uses global symbols
         let source = r#"
@@ -535,7 +646,7 @@ async function foo() {
         // Bind with lib symbols
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
-        binder.merge_lib_symbols(&[lib_file]);
+        binder.merge_lib_symbols(&lib_files);
 
         // Verify global symbols are accessible
         assert!(
@@ -560,13 +671,12 @@ async function foo() {
     fn test_get_symbol_resolves_lib_symbols() {
         use crate::parser::ParserState;
 
-        // Load lib.d.ts
-        let lib_file = load_default_lib_dts();
-        if lib_file.is_none() {
-            // Skip test if lib.d.ts is not available
+        // Load all default libs (includes ES5 + DOM for console, etc.)
+        let lib_files = load_all_default_libs();
+        if lib_files.is_empty() {
+            // Skip test if libs are not available
             return;
         }
-        let lib_file = lib_file.unwrap();
 
         // Parse a source file
         let source = "const x = 1;";
@@ -576,7 +686,7 @@ async function foo() {
         // Bind with lib symbols
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
-        binder.merge_lib_symbols(&[lib_file]);
+        binder.merge_lib_symbols(&lib_files);
 
         // Get a lib symbol ID and verify get_symbol() can resolve it
         let console_sym_id = binder
@@ -620,13 +730,12 @@ async function foo() {
     fn test_get_global_type() {
         use crate::parser::ParserState;
 
-        // Load lib.d.ts
-        let lib_file = load_default_lib_dts();
-        if lib_file.is_none() {
-            // Skip test if lib.d.ts is not available
+        // Load all default libs (includes ES5 + DOM for console, etc.)
+        let lib_files = load_all_default_libs();
+        if lib_files.is_empty() {
+            // Skip test if libs are not available
             return;
         }
-        let lib_file = lib_file.unwrap();
 
         // Parse a simple source file
         let source = "const x = 1;";
@@ -636,7 +745,7 @@ async function foo() {
         // Bind with lib symbols
         let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
-        binder.merge_lib_symbols(&[lib_file]);
+        binder.merge_lib_symbols(&lib_files);
 
         // Test get_global_type for built-in types
         assert!(

@@ -37,11 +37,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Use recurse_index_access to respect depth limits
             return self.recurse_index_access(evaluated_object, evaluated_index);
         }
-        // Be more strict: don't fall back to 'any' for index access
-        // This improves type safety by requiring proper types
-        // Returning ERROR instead of ANY makes the solver stricter
+        // Match tsc: index access involving `any` produces `any`.
+        // (e.g. `any[string]` is `any`, not an error)
         if evaluated_object == TypeId::ANY || evaluated_index == TypeId::ANY {
-            return TypeId::ERROR;
+            return TypeId::ANY;
         }
 
         // Get the object structure

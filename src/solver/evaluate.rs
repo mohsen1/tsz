@@ -591,6 +591,18 @@ pub fn evaluate_index_access(
     evaluator.evaluate_index_access(object_type, index_type)
 }
 
+/// Convenience function for evaluating index access types with options.
+pub fn evaluate_index_access_with_options(
+    interner: &dyn TypeDatabase,
+    object_type: TypeId,
+    index_type: TypeId,
+    no_unchecked_indexed_access: bool,
+) -> TypeId {
+    let mut evaluator = TypeEvaluator::new(interner);
+    evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+    evaluator.evaluate_index_access(object_type, index_type)
+}
+
 /// Convenience function for full type evaluation
 pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let evaluator = TypeEvaluator::new(interner);
