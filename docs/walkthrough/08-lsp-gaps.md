@@ -1,0 +1,395 @@
+# LSP Implementation Gaps
+
+This document catalogs the Language Server Protocol (LSP) implementation status in TSZ, identifying implemented features, stub features, and known limitations.
+
+## Overview
+
+TSZ provides **LSP feature modules** rather than a standalone LSP server. These modules are designed for integration into external LSP server implementations (e.g., VS Code extensions, editor plugins via WASM).
+
+### Implementation Summary
+
+| Status | Count | Description |
+|--------|-------|-------------|
+| ✅ Implemented | 17 | Fully functional features |
+| ⚠️ Partial | 2 | Features with known limitations |
+| ❌ Stub | 3 | Empty placeholder modules |
+
+**Total LOC**: ~15,000 lines of Rust (excluding tests)
+
+---
+
+## Feature Status Matrix
+
+### Core Navigation
+
+| Feature | Status | File | Lines | Notes |
+|---------|--------|------|-------|-------|
+| Go to Definition | ✅ | `definition.rs` | ~880 | Resolves identifiers to declarations |
+| Find References | ✅ | `references.rs` | ~1,140 | Finds all symbol usages |
+| Type Definition | ❌ | `type_definition.rs` | 2 | **STUB** - Navigate to type definition |
+| Document Highlighting | ✅ | `highlighting.rs` | ~400 | Read/write occurrence distinction |
+
+### Code Intelligence
+
+| Feature | Status | File | Lines | Notes |
+|---------|--------|------|-------|-------|
+| Completions | ✅ | `completions.rs` | ~1,190 | Symbols + keywords |
+| Signature Help | ⚠️ | `signature_help.rs` | ~1,140 | Known issue with member calls |
+| Hover | ✅ | `hover.rs` | ~520 | Type info + JSDoc |
+| Inlay Hints | ⚠️ | `inlay_hints.rs` | ~305 | Type hints not implemented |
+
+### Refactoring
+
+| Feature | Status | File | Lines | Notes |
+|---------|--------|------|-------|-------|
+| Rename | ✅ | `rename.rs` | ~615 | Workspace-wide symbol rename |
+| Code Actions | ✅ | `code_actions.rs` | ~2,730 | Extract, organize imports, quick fixes |
+| Code Lens | ❌ | `code_lens.rs` | 2 | **STUB** - Inline actionable info |
+
+### Document Structure
+
+| Feature | Status | File | Lines | Notes |
+|---------|--------|------|-------|-------|
+| Document Symbols | ✅ | `document_symbols.rs` | ~675 | Hierarchical outline |
+| Semantic Tokens | ✅ | `semantic_tokens.rs` | ~790 | Full token classification |
+| Folding Ranges | ✅ | `folding.rs` | ~535 | Blocks, comments, imports |
+| Selection Range | ❌ | `selection_range.rs` | 2 | **STUB** - Semantic expand/shrink |
+
+### Workspace
+
+| Feature | Status | File | Lines | Notes |
+|---------|--------|------|-------|-------|
+| Diagnostics | ✅ | `diagnostics.rs` | ~165 | Error/warning reporting |
+| Formatting | ✅ | `formatting.rs` | ~400 | Delegates to external tools |
+
+---
+
+## Stub Features (Not Implemented)
+
+### 1. Type Definition (`type_definition.rs`)
+
+**Current State**: Empty stub with only a comment
+```rust
+// LSP Type Definition
+```
+
+**Expected Functionality**:
+- Navigate from a variable to its **type definition** (not implementation)
+- Example: Given `let x: Foo = ...`, jump to `interface Foo { ... }`
+- Different from Go to Definition which goes to the variable declaration
+
+**Implementation Requirements**:
+- Resolve symbol at cursor position
+- Extract type information from binder/checker
+- Find the source location of the type declaration
+- Handle primitive types (no definition), type aliases, interfaces, classes
+
+**Priority**: Medium - Useful for type exploration
+
+---
+
+### 2. Code Lens (`code_lens.rs`)
+
+**Current State**: Empty stub with only a comment
+```rust
+// LSP Code Lens implementation
+```
+
+**Expected Functionality**:
+- Display actionable information above code elements
+- Common use cases:
+  - Reference counts: "3 references" above function declarations
+  - Test runners: "Run Test | Debug Test" above test functions
+  - Implementation counts: "2 implementations" above interfaces
+
+**Implementation Requirements**:
+- Traverse AST to identify code lens targets (functions, classes, interfaces)
+- Compute relevant information (reference counts, test detection)
+- Return `CodeLens` items with positions and commands
+- Support resolution of commands when lens is clicked
+
+**Priority**: Low - Nice-to-have for IDE experience
+
+---
+
+### 3. Selection Range (`selection_range.rs`)
+
+**Current State**: Empty stub with only a comment
+```rust
+// LSP Selection Ranges
+```
+
+**Expected Functionality**:
+- Expand/shrink selection by semantic boundaries
+- Example: cursor in `foo` → select `foo` → `foo.bar()` → `foo.bar().baz` → full statement
+
+**Implementation Requirements**:
+- Find AST node at cursor position
+- Build parent chain from node to root
+- Return nested `SelectionRange` objects representing semantic boundaries
+- Handle expression boundaries, statement boundaries, block boundaries
+
+**Priority**: Medium - Improves editing experience
+
+---
+
+## Partial Implementations
+
+### 1. Signature Help - Incomplete Member Calls
+
+**Location**: `signature_help.rs`, test in `signature_help_tests.rs:153`
+
+**Issue**: Signature help fails for incomplete member method calls
+```typescript
+interface Obj { method(a: number, b: string): void; }
+declare const obj: Obj;
+obj.method(|  // ← Signature help doesn't work here
+```
+
+**Root Cause**: Member expression resolution doesn't fully handle cases where the call is incomplete (missing closing paren, typing in progress).
+
+**Test Status**:
+```rust
+#[test]
+#[ignore = "TODO: Signature help for incomplete member calls"]
+fn test_signature_help_incomplete_member_call()
+```
+
+**Impact**: Users don't get parameter hints while typing method calls with `.` notation.
+
+---
+
+### 2. Inlay Hints - Type Hints Not Implemented
+
+**Location**: `inlay_hints.rs:270-279`
+
+**Issue**: Type hints for implicitly-typed variables are not implemented
+```rust
+/// Collect type hints for variable declarations without explicit type annotations.
+fn collect_type_hints(&self, _decl_idx: NodeIndex, _hints: &mut Vec<InlayHint>) {
+    // Type hints require type inference which needs the TypeInterner.
+    // For now, this is a placeholder.
+}
+```
+
+**What Works**:
+- ✅ Parameter name hints for function calls
+
+**What's Missing**:
+- ❌ Type hints for `let x = 1` → showing `: number`
+- ❌ Generic parameter hints where types are inferred
+
+**Implementation Requirements**:
+- Add `TypeInterner` and `CheckerState` to `InlayHintsProvider`
+- Call type inference for variable declarations without explicit types
+- Format inferred type as hint text
+
+---
+
+## Code Actions Inventory
+
+The following code actions are implemented in `code_actions.rs`:
+
+| Action | Kind | Description |
+|--------|------|-------------|
+| Remove Unused Import | `quickfix` | Delete unused import statements |
+| Add Missing Property | `quickfix` | Add property to object literal |
+| Add Missing Import | `quickfix` | Import unresolved identifier |
+| Organize Imports | `source.organizeImports` | Sort import statements alphabetically |
+| Extract to Constant | `refactor.extract` | Extract selection to named constant |
+
+### Missing Code Actions (vs TypeScript)
+
+| Action | Priority | Notes |
+|--------|----------|-------|
+| Extract Function | High | Extract selection to function |
+| Extract Method | High | Extract selection to class method |
+| Move to New File | Medium | Move declaration to separate file |
+| Generate Getter/Setter | Medium | From class property |
+| Implement Interface | Medium | Add missing members |
+| Add All Missing Imports | Medium | Batch import resolution |
+| Convert to Named Import | Low | Convert `import x` to `import { x }` |
+| Convert to Default Import | Low | Inverse of above |
+| Infer Function Return Type | Low | Add explicit return type |
+
+---
+
+## Architectural Limitations
+
+### 1. No Standalone LSP Server
+
+**Issue**: TSZ provides feature modules only, not a complete LSP server binary.
+
+**Impact**:
+- Requires external integration (WASM binding, VS Code extension, etc.)
+- No direct `tsz --lsp` command available
+
+**Workaround**: Use the WASM build with an LSP wrapper or build custom integration.
+
+---
+
+### 2. Stateless Query Model
+
+**Issue**: Each LSP operation independently parses, binds, and resolves.
+
+**Pros**:
+- Thread-safe
+- WASM compatible
+- No complex state management
+
+**Cons**:
+- Inefficient for repeated queries on same file
+- No incremental updates (except Project container)
+- Limited caching opportunities
+
+**Impact**: Performance may degrade with frequent queries on large files.
+
+---
+
+### 3. Single-File Focus
+
+**Issue**: Most LSP features work within individual files; cross-file navigation is limited.
+
+**Affected Features**:
+- Find References: May miss references in unopened files
+- Rename: Requires all affected files to be in Project
+- Add Missing Import: Depends on pre-populated import candidates
+
+**Workaround**: Use `Project` container to manage multi-file contexts.
+
+---
+
+### 4. Type Checker Integration Gaps
+
+**Issue**: Some LSP features depend on type information that may be incomplete.
+
+**Root Cause**: Type checker gaps documented in `07-gaps-summary.md` affect LSP accuracy:
+- Definite assignment analysis missing
+- TDZ checking incomplete
+- Intersection reduction partial
+- Promise detection issues
+
+**Affected Features**:
+- Hover: May show incomplete type information
+- Completions: May miss members from complex types
+- Signature Help: May show incorrect parameter types
+
+---
+
+## Missing LSP Protocol Features
+
+Features from the LSP specification not implemented at all:
+
+| Feature | LSP Method | Priority |
+|---------|-----------|----------|
+| Workspace Symbols | `workspace/symbol` | Medium |
+| Document Links | `textDocument/documentLink` | Low |
+| Document Colors | `textDocument/documentColor` | Low |
+| Linked Editing | `textDocument/linkedEditingRange` | Low |
+| Call Hierarchy | `textDocument/callHierarchy` | Medium |
+| Type Hierarchy | `textDocument/typeHierarchy` | Medium |
+| Moniker | `textDocument/moniker` | Low |
+| Inline Values | `textDocument/inlineValue` | Low |
+
+---
+
+## Testing Gaps
+
+### Ignored Tests
+
+| File | Test | Reason |
+|------|------|--------|
+| `signature_help_tests.rs:153` | `test_signature_help_incomplete_member_call` | Incomplete member call resolution |
+
+### Untested Scenarios
+
+Based on code review:
+
+1. **Completions**: Object spread completions, JSX attribute completions
+2. **Hover**: Generic instantiation display, union type formatting
+3. **Code Actions**: Conflict resolution when multiple fixes apply
+4. **Rename**: Renaming across re-exports, renaming in string literals
+
+---
+
+## Recommended Implementation Priority
+
+### Phase 1: Complete Core Features
+
+1. **Selection Range** - Small scope, high value for editing
+2. **Signature Help for Member Calls** - Fix existing feature
+3. **Inlay Type Hints** - Complete partial implementation
+
+### Phase 2: Missing Navigation
+
+4. **Type Definition** - Important for type exploration
+5. **Call Hierarchy** - Understand call relationships
+6. **Workspace Symbols** - Search across project
+
+### Phase 3: Refactoring
+
+7. **Extract Function/Method** - Common refactoring need
+8. **Implement Interface** - Productivity feature
+9. **Code Lens** - Nice-to-have
+
+### Phase 4: Advanced Features
+
+10. **Type Hierarchy** - Complex but valuable
+11. **Linked Editing** - HTML/JSX tag renaming
+12. **Additional Code Actions** - Polish
+
+---
+
+## File Reference
+
+All LSP modules are located in `/home/user/tsz/src/lsp/`:
+
+```
+src/lsp/
+├── mod.rs              # Module exports and documentation
+├── project.rs          # Multi-file project container (~3,100 lines)
+├── resolver.rs         # Symbol resolution utilities (~1,970 lines)
+├── code_actions.rs     # Quick fixes and refactorings (~2,730 lines)
+├── completions.rs      # Code completion (~1,190 lines)
+├── signature_help.rs   # Parameter hints (~1,140 lines)
+├── references.rs       # Find references (~1,140 lines)
+├── definition.rs       # Go to definition (~880 lines)
+├── semantic_tokens.rs  # Syntax highlighting (~790 lines)
+├── document_symbols.rs # File outline (~675 lines)
+├── rename.rs           # Symbol rename (~615 lines)
+├── folding.rs          # Code folding (~535 lines)
+├── hover.rs            # Hover information (~520 lines)
+├── highlighting.rs     # Document highlighting (~400 lines)
+├── formatting.rs       # Code formatting (~400 lines)
+├── inlay_hints.rs      # Inlay hints (~305 lines)
+├── position.rs         # Position utilities (~225 lines)
+├── jsdoc.rs            # JSDoc parsing (~200 lines)
+├── diagnostics.rs      # Error reporting (~165 lines)
+├── utils.rs            # Shared utilities
+├── symbols.rs          # Symbol definitions
+├── type_definition.rs  # STUB (2 lines)
+├── code_lens.rs        # STUB (2 lines)
+├── selection_range.rs  # STUB (2 lines)
+└── *_tests.rs          # Test files
+```
+
+---
+
+## Contributing
+
+When implementing a missing LSP feature:
+
+1. Check the [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) for expected behavior
+2. Look at TypeScript's implementation for reference
+3. Add comprehensive tests covering edge cases
+4. Update this document with the new feature status
+5. Consider WASM compatibility (no filesystem access, no threads)
+
+**See also**:
+- [07-gaps-summary.md](./07-gaps-summary.md) - Type system gaps affecting LSP
+- [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/)
+- [VS Code LSP Guide](https://code.visualstudio.com/api/language-extensions/language-server-extension-guide)
+
+---
+
+*Last updated: January 2026*
