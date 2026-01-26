@@ -93,6 +93,11 @@ pub struct BinderState {
     /// When get_symbol() doesn't find a symbol locally, it checks these lib binders.
     lib_binders: Vec<Arc<BinderState>>,
 
+    /// Symbol IDs that originated from lib files.
+    /// Used by get_symbol() to check lib_binders first for these IDs,
+    /// avoiding collision with local symbols at the same index.
+    lib_symbol_ids: FxHashSet<SymbolId>,
+
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
     pub module_exports: FxHashMap<String, SymbolTable>,
@@ -169,6 +174,7 @@ impl BinderState {
             global_augmentations: FxHashMap::default(),
             in_global_augmentation: false,
             lib_binders: Vec::new(),
+            lib_symbol_ids: FxHashSet::default(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
@@ -202,6 +208,7 @@ impl BinderState {
         self.global_augmentations.clear();
         self.in_global_augmentation = false;
         self.lib_binders.clear();
+        self.lib_symbol_ids.clear();
         self.module_exports.clear();
         self.reexports.clear();
         self.wildcard_reexports.clear();
@@ -258,6 +265,7 @@ impl BinderState {
             global_augmentations: FxHashMap::default(),
             in_global_augmentation: false,
             lib_binders: Vec::new(),
+            lib_symbol_ids: FxHashSet::default(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
@@ -335,6 +343,7 @@ impl BinderState {
             global_augmentations,
             in_global_augmentation: false,
             lib_binders: Vec::new(),
+            lib_symbol_ids: FxHashSet::default(),
             module_exports,
             reexports,
             wildcard_reexports,
@@ -502,9 +511,27 @@ impl BinderState {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<SymbolId> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.resolve_import_with_reexports_inner(module_specifier, export_name, &mut visited)
+    }
+
+    /// Inner implementation with cycle detection for module re-exports.
+    fn resolve_import_with_reexports_inner(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(String, String)>,
+    ) -> Option<SymbolId> {
         let _span =
             span!(Level::DEBUG, "resolve_import_with_reexports", %module_specifier, %export_name)
                 .entered();
+
+        // Cycle detection: check if we've already visited this (module, export) pair
+        let key = (module_specifier.to_string(), export_name.to_string());
+        if visited.contains(&key) {
+            return None;
+        }
+        visited.insert(key);
 
         // First, check if it's a direct export from this module
         if let Some(module_table) = self.module_exports.get(module_specifier)
@@ -526,7 +553,11 @@ impl BinderState {
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> following named re-export from '{}', original name='{}'",
                     export_name, module_specifier, source_module, name_to_lookup
                 );
-                return self.resolve_import_with_reexports(source_module, name_to_lookup);
+                return self.resolve_import_with_reexports_inner(
+                    source_module,
+                    name_to_lookup,
+                    visited,
+                );
             }
         }
 
@@ -538,7 +569,8 @@ impl BinderState {
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> trying wildcard re-export from '{}'",
                     export_name, module_specifier, source_module
                 );
-                if let Some(result) = self.resolve_import_with_reexports(source_module, export_name)
+                if let Some(result) =
+                    self.resolve_import_with_reexports_inner(source_module, export_name, visited)
                 {
                     return Some(result);
                 }
@@ -866,6 +898,8 @@ impl BinderState {
                 if !self.symbol_arenas.contains_key(sym_id) {
                     self.symbol_arenas.insert(*sym_id, Arc::clone(&lib.arena));
                 }
+                // Track this as a lib symbol ID for get_symbol() lookup order
+                self.lib_symbol_ids.insert(*sym_id);
             }
             // Store lib binders for automatic symbol resolution in get_symbol()
             self.lib_binders.push(Arc::clone(&lib.binder));
@@ -3910,11 +3944,22 @@ impl BinderState {
     // Public accessors
 
     pub fn get_symbol(&self, id: SymbolId) -> Option<&Symbol> {
-        // First try local symbols
+        // If this is a lib symbol ID, check lib binders first to avoid
+        // collision with local symbols at the same index
+        if self.lib_symbol_ids.contains(&id) {
+            for lib_binder in &self.lib_binders {
+                if let Some(sym) = lib_binder.symbols.get(id) {
+                    return Some(sym);
+                }
+            }
+        }
+
+        // Try local symbols
         if let Some(sym) = self.symbols.get(id) {
             return Some(sym);
         }
-        // Then try lib binders (if any have been merged)
+
+        // Finally try lib binders for any remaining cases
         for lib_binder in &self.lib_binders {
             if let Some(sym) = lib_binder.symbols.get(id) {
                 return Some(sym);

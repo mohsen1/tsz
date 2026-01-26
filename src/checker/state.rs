@@ -4105,7 +4105,17 @@ impl<'a> CheckerState<'a> {
             );
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-            return checker.compute_type_of_symbol(sym_id);
+            // Copy symbol resolution state to detect cross-file cycles, but exclude
+            // the current symbol (which the parent added) since this checker will
+            // add it again during get_type_of_symbol
+            for &id in &self.ctx.symbol_resolution_set {
+                if id != sym_id {
+                    checker.ctx.symbol_resolution_set.insert(id);
+                }
+            }
+            // Use get_type_of_symbol to ensure proper cycle detection
+            let result = checker.get_type_of_symbol(sym_id);
+            return (result, Vec::new());
         }
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -9219,11 +9229,6 @@ impl<'a> CheckerState<'a> {
                         checker.ctx.contextual_type = Some(declared_type);
                     }
                     let init_type = checker.get_type_of_node(var_decl.initializer);
-
-                    // Remove freshness from the initializer type since it's being assigned to a variable
-                    // Object literals lose freshness when assigned, allowing width subtyping thereafter
-                    checker.ctx.freshness_tracker.remove_freshness(init_type);
-
                     checker.ctx.contextual_type = prev_context;
 
                     // Check assignability (skip for 'any' since anything is assignable to any)
@@ -9263,7 +9268,8 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        // For object literals, also check for excess properties
+                        // For object literals, check excess properties BEFORE removing freshness
+                        // Object literals are "fresh" when first created and subject to excess property checks
                         if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
                             && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         {
@@ -9274,6 +9280,10 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
+
+                    // Remove freshness AFTER excess property check
+                    // Object literals lose freshness when assigned, allowing width subtyping thereafter
+                    checker.ctx.freshness_tracker.remove_freshness(init_type);
                 }
                 // Type annotation determines the final type
                 return declared_type;
