@@ -9219,11 +9219,6 @@ impl<'a> CheckerState<'a> {
                         checker.ctx.contextual_type = Some(declared_type);
                     }
                     let init_type = checker.get_type_of_node(var_decl.initializer);
-
-                    // Remove freshness from the initializer type since it's being assigned to a variable
-                    // Object literals lose freshness when assigned, allowing width subtyping thereafter
-                    checker.ctx.freshness_tracker.remove_freshness(init_type);
-
                     checker.ctx.contextual_type = prev_context;
 
                     // Check assignability (skip for 'any' since anything is assignable to any)
@@ -9263,7 +9258,8 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        // For object literals, also check for excess properties
+                        // For object literals, check excess properties BEFORE removing freshness
+                        // Object literals are "fresh" when first created and subject to excess property checks
                         if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
                             && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         {
@@ -9274,6 +9270,10 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
+
+                    // Remove freshness AFTER excess property check
+                    // Object literals lose freshness when assigned, allowing width subtyping thereafter
+                    checker.ctx.freshness_tracker.remove_freshness(init_type);
                 }
                 // Type annotation determines the final type
                 return declared_type;
