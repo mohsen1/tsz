@@ -232,31 +232,31 @@ struct ImportCandidateInput {
 #[allow(dead_code)] // Fields are deserialized but some not yet used
 struct CompilerOptions {
     /// Enable all strict type checking options.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
     strict: Option<bool>,
 
     /// Raise error on expressions and declarations with an implied 'any' type.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_implicit_any: Option<bool>,
 
     /// Enable strict null checks.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
     strict_null_checks: Option<bool>,
 
     /// Enable strict checking of function types.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
     strict_function_types: Option<bool>,
 
     /// Enable strict property initialization checks in classes.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
     strict_property_initialization: Option<bool>,
 
     /// Report error when not all code paths in function return a value.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_implicit_returns: Option<bool>,
 
     /// Raise error on 'this' expressions with an implied 'any' type.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_implicit_this: Option<bool>,
 
     /// Specify ECMAScript target version (accepts string like "ES5" or numeric).
@@ -266,6 +266,62 @@ struct CompilerOptions {
     /// Specify module code generation (accepts string like "CommonJS" or numeric).
     #[serde(default, deserialize_with = "deserialize_target_or_module")]
     module: Option<u32>,
+}
+
+/// Deserialize a boolean option that can be a boolean, string, or comma-separated string.
+/// TypeScript test files often have boolean options like "true, false" for different test cases.
+fn deserialize_bool_option<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct BoolOptionVisitor;
+
+    impl<'de> Visitor<'de> for BoolOptionVisitor {
+        type Value = Option<bool>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a boolean, string, or comma-separated list of booleans")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            // Handle comma-separated values like "true, false" - take the first value
+            let first_value = value.split(',').next().unwrap_or(value).trim();
+            let result = match first_value.to_lowercase().as_str() {
+                "true" | "1" => Some(true),
+                "false" | "0" => Some(false),
+                _ => None,
+            };
+            Ok(result)
+        }
+    }
+
+    deserializer.deserialize_any(BoolOptionVisitor)
 }
 
 /// Deserialize target/module values that can be either strings or numbers.

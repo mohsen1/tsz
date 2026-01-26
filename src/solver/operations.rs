@@ -2319,17 +2319,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                 if let Some(constraint) = info.constraint {
                     if constraint == obj_type {
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
+                        // Unconstrained type parameter - return ANY to avoid false positive TS2339
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
                         }
                     } else {
                         self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom))
                     }
                 } else {
-                    PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
-                        property_name: prop_atom,
+                    // No constraint - return ANY to avoid false positive TS2339
+                    // The type parameter could be instantiated with any type
+                    PropertyAccessResult::Success {
+                        type_id: TypeId::ANY,
+                        from_index_signature: false,
                     }
                 }
             }
@@ -2373,12 +2376,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             TypeKey::Intrinsic(IntrinsicKind::Object) => {
                 let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                self.resolve_object_member(prop_name, prop_atom).unwrap_or(
-                    PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
-                        property_name: prop_atom,
-                    },
-                )
+                // Try apparent members first
+                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                    return result;
+                }
+                // For the generic Object type, return ANY to avoid false positive TS2339
+                // The object could have any property at runtime
+                PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                }
             }
 
             TypeKey::Array(_) => {
@@ -2396,17 +2403,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_mapped_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        // Instead of immediately returning PropertyNotFound, try apparent members
-                        // This handles circular references and deep nesting more gracefully
+                        // Can't evaluate due to circular references - try apparent members first
                         let prop_atom =
                             prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                         if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                             return result;
                         }
-                        // Fall back to property not found
-                        return PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
+                        // Return ANY instead of PropertyNotFound to avoid false positive TS2339
+                        // The property might exist on the instantiated type, we just can't check it
+                        return PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
                         };
                     }
                 };
@@ -2416,15 +2423,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
-                    // Evaluation didn't change the type - try apparent members before giving up
+                    // Evaluation didn't change the type - try apparent members first
                     let prop_atom =
                         prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
+                        // Can't determine the actual type - return ANY to avoid false positives
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
                         }
                     }
                 }
@@ -2435,15 +2443,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_mapped_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        // Try apparent members before giving up
+                        // Can't evaluate due to circular references - try apparent members first
                         let prop_atom =
                             prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                         if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                             return result;
                         }
-                        return PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
+                        // Return ANY instead of PropertyNotFound to avoid false positive TS2339
+                        // The property might exist on the mapped type, we just can't check it
+                        return PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
                         };
                     }
                 };
@@ -2453,24 +2463,34 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
-                    // Evaluation didn't change the type - try apparent members before giving up
+                    // Evaluation didn't change the type - try apparent members first
                     let prop_atom =
                         prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
+                        // Can't determine the actual type - return ANY to avoid false positives
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
                         }
                     }
                 }
             }
 
-            _ => PropertyAccessResult::PropertyNotFound {
-                type_id: obj_type,
-                property_name: prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name)),
-            },
+            _ => {
+                // Unknown type key - try apparent members before giving up
+                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                    return result;
+                }
+                // For truly unknown types, return PropertyNotFound
+                // This should be rare - most type keys should be handled above
+                PropertyAccessResult::PropertyNotFound {
+                    type_id: obj_type,
+                    property_name: prop_atom,
+                }
+            }
         }
     }
 

@@ -1706,12 +1706,15 @@ impl<'a> CheckerState<'a> {
                     // Check if it's type-only (interface, type alias without value, or type-only import)
                     let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
                     let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
-                    let is_interface = (symbol.flags & symbol_flags::INTERFACE) != 0;
                     let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
 
-                    // Emit TS2693 for interfaces and type aliases used as values
-                    // Also check for type-only symbols
-                    if (has_type && !has_value) || is_interface || is_type_alias {
+                    // Emit TS2693 for type-only symbols used as values
+                    // This includes:
+                    // 1. Symbols with TYPE flag but no VALUE flag (interfaces without namespace merge, type-only imports)
+                    // 2. Type aliases (never have VALUE, even if they reference a class)
+                    //
+                    // IMPORTANT: Don't emit for interfaces that have VALUE (merged with namespace)
+                    if is_type_alias || (has_type && !has_value) {
                         self.error_type_only_value_at(class_name, new_expr.expression);
                         return TypeId::ERROR;
                     }
@@ -3217,15 +3220,16 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(0);
             let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
-            let is_interface = (flags & crate::binder::symbol_flags::INTERFACE) != 0;
             let is_type_alias = (flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0;
 
             // Check for type-only symbols used as values
             // This includes:
-            // 1. Symbols with TYPE flag but no VALUE flag
-            // 2. Interfaces (TYPE flag, but typically no VALUE unless merged)
-            // 3. Type aliases (TYPE flag, never have VALUE)
-            if (has_type && !has_value) || is_interface || is_type_alias {
+            // 1. Symbols with TYPE flag but no VALUE flag (interfaces, type-only imports, etc.)
+            // 2. Type aliases (never have VALUE, even if they reference a class)
+            //
+            // IMPORTANT: Only check is_interface if it has no VALUE flag.
+            // Interfaces merged with namespaces DO have VALUE and should NOT error.
+            if is_type_alias || (has_type && !has_value) {
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;
             }
