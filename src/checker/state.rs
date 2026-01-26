@@ -4105,7 +4105,17 @@ impl<'a> CheckerState<'a> {
             );
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-            return checker.compute_type_of_symbol(sym_id);
+            // Copy symbol resolution state to detect cross-file cycles, but exclude
+            // the current symbol (which the parent added) since this checker will
+            // add it again during get_type_of_symbol
+            for &id in &self.ctx.symbol_resolution_set {
+                if id != sym_id {
+                    checker.ctx.symbol_resolution_set.insert(id);
+                }
+            }
+            // Use get_type_of_symbol to ensure proper cycle detection
+            let result = checker.get_type_of_symbol(sym_id);
+            return (result, Vec::new());
         }
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
