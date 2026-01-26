@@ -737,3 +737,84 @@ const result = a - b;  // TS2362: left-hand side must be number/bigint/any/enum
         ts2362_count
     );
 }
+
+#[test]
+fn test_never_type_property_access_emits_ts18050() {
+    // Test accessing property on a value that narrows to never type
+    // This happens when exhaustive narrowing produces an impossible union
+    let source = r#"
+function test(x: never) {
+    // x is never type - property access should emit TS18050
+    const y = x.toString();
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should emit TS18050 for property access on never type
+    let ts18050_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18050)
+        .count();
+    assert!(
+        ts18050_count >= 1,
+        "Expected at least 1 TS18050 error for never type property access, got {}",
+        ts18050_count
+    );
+}
+
+#[test]
+fn test_never_type_call_emits_ts18050() {
+    // Test calling a value that is never type
+    let source = r#"
+function test(x: never) {
+    // x is never type - calling it should emit TS18050
+    const y = x();
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should emit TS18050 for call on never type
+    let ts18050_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18050)
+        .count();
+    assert!(
+        ts18050_count >= 1,
+        "Expected at least 1 TS18050 error for never type call, got {}",
+        ts18050_count
+    );
+}
