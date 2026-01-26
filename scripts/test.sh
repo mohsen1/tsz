@@ -1,45 +1,33 @@
 #!/bin/bash
-# Rust Test Runner - Docker-based testing with caching
+# Rust Test Runner - Optimized for speed
 #
-# This is the main test runner for the Rust/WASM TypeScript implementation.
-# It uses Docker to ensure consistent testing environment and caches builds
-# for fast iteration.
+# FAST by default: Runs tests directly without Docker for instant feedback.
+# Use --sandbox for isolated Docker testing (CI or memory-sensitive scenarios).
 #
 # Usage:
-#   ./scripts/test.sh                          # Run all Rust unit tests (in Docker)
-#   ./scripts/test.sh --no-sandbox             # Run tests directly without Docker
-#   ./scripts/test.sh test_name                # Run specific test (pattern match)
-#   ./scripts/test.sh namespace               # Run all tests matching "namespace"
-#   ./scripts/test.sh --ignored test_name      # Run ignored tests too (nextest: --run-ignored all)
-#   ./scripts/test.sh --timeout=60 test_name   # Kill the test run after N seconds (inside container)
-#   ./scripts/test.sh --rebuild                # Force rebuild Docker image
-#   ./scripts/test.sh --clean                  # Clean cached volumes
-#   ./scripts/test.sh --bench                  # Run benchmarks
-#   ./scripts/test.sh --conformance            # Run conformance tests
-#   ./scripts/test.sh --conformance compiler   # Run compiler category tests
-#   ./scripts/test.sh --conformance all        # Run all conformance categories
+#   ./scripts/test.sh                      # Run all tests (fast, no Docker)
+#   ./scripts/test.sh test_name            # Run specific test (pattern match)
+#   ./scripts/test.sh --quick              # Quick mode: fail-fast, best for precommit
+#   ./scripts/test.sh --quick test_name    # Quick mode with filter
+#   ./scripts/test.sh --sandbox            # Run in Docker sandbox
+#   ./scripts/test.sh --ignored            # Include ignored tests
+#   ./scripts/test.sh --timeout=60         # Kill after N seconds
+#   ./scripts/test.sh --rebuild            # Force rebuild Docker image
+#   ./scripts/test.sh --clean              # Clean cached volumes
+#   ./scripts/test.sh --conformance        # Run conformance tests
+#   ./scripts/test.sh --bench              # Run benchmarks
 #
-# For TypeScript test suite conformance testing, you can also use:
-#   ./conformance/run-conformance.sh
-#
-# Source code is always mounted fresh (not baked into image), so file changes
-# are immediately visible without needing to rebuild the Docker image.
+# Environment variables:
+#   TSZ_TEST_DOCKER=1     Force Docker mode
+#   TSZ_TEST_VERBOSE=1    Show verbose output
 
 set -euo pipefail
 
-IMAGE_NAME="rust-wasm-base"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Use shared target volume for all worktrees to prevent duplicate build artifacts
-# When running with orchestrator, all workers share the same build cache
-# For standalone runs, we still use the shared volume for efficiency
-TARGET_VOLUME="tsz-target-shared"
-
-# Resource limits - use most available cores for parallel test execution
-DOCKER_MEMORY="8g"
-DOCKER_CPUS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 8)"
-
-# Parse arguments
+# Parse arguments - fast path first
+QUICK_MODE=false
+USE_DOCKER=false
 REBUILD=false
 CLEAN=false
 TEST_FILTER=""
@@ -47,98 +35,110 @@ CONFORMANCE_TEST=""
 CONFORMANCE_CATEGORY=""
 RUN_IGNORED=false
 TIMEOUT_SECS=""
-USE_DOCKER=true
+RUN_BENCH=false
+VERBOSE="${TSZ_TEST_VERBOSE:-}"
 
-for arg in "$@"; do
-    case $arg in
-        --no-sandbox)
-            USE_DOCKER=false
-            ;;
-        --rebuild)
-            REBUILD=true
-            ;;
-        --clean)
-            CLEAN=true
-            ;;
-        --ignored)
-            RUN_IGNORED=true
-            ;;
-        --timeout=*)
-            TIMEOUT_SECS="${arg#*=}"
-            ;;
-        --conformance)
-            CONFORMANCE_TEST=true
-            ;;
+# Fast argument parsing
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --quick|-q) QUICK_MODE=true ;;
+        --sandbox|--docker) USE_DOCKER=true ;;
+        --no-sandbox) USE_DOCKER=false ;;  # Kept for backwards compat
+        --rebuild) REBUILD=true; USE_DOCKER=true ;;
+        --clean) CLEAN=true ;;
+        --ignored) RUN_IGNORED=true ;;
+        --timeout=*) TIMEOUT_SECS="${1#*=}" ;;
+        --conformance) CONFORMANCE_TEST=true ;;
+        --bench) RUN_BENCH=true ;;
+        --verbose|-v) VERBOSE=1 ;;
         compiler|conformance|projects)
-            if [ "$CONFORMANCE_TEST" = true ]; then
-                CONFORMANCE_CATEGORY="$arg"
+            [[ "$CONFORMANCE_TEST" == true ]] && CONFORMANCE_CATEGORY="$1"
+            ;;
+        all)
+            if [[ "$CONFORMANCE_TEST" == true ]]; then
+                CONFORMANCE_CATEGORY="conformance,compiler,projects"
+            else
+                TEST_FILTER="$1"
             fi
             ;;
-        *)
-            TEST_FILTER="$arg"
-            ;;
+        *) TEST_FILTER="$1" ;;
     esac
+    shift
 done
 
-# Handle --all flag for conformance tests
-if [ "$CONFORMANCE_TEST" = true ] && [ "$TEST_FILTER" = "all" ]; then
-    CONFORMANCE_CATEGORY="conformance,compiler,projects"
-    TEST_FILTER=""
-fi
+# Environment override
+[[ "${TSZ_TEST_DOCKER:-}" == "1" ]] && USE_DOCKER=true
 
-# If conformance test requested, delegate to conformance runner
-if [ "$CONFORMANCE_TEST" = true ]; then
-    if [ -n "$CONFORMANCE_CATEGORY" ]; then
+# Delegate to conformance runner
+if [[ "$CONFORMANCE_TEST" == true ]]; then
+    if [[ -n "$CONFORMANCE_CATEGORY" ]]; then
         exec "$ROOT_DIR/conformance/run-conformance.sh" --category="$CONFORMANCE_CATEGORY"
     else
         exec "$ROOT_DIR/conformance/run-conformance.sh"
     fi
 fi
 
-# Run tests directly if --no-sandbox is specified
-if [ "$USE_DOCKER" = false ]; then
-    echo "🧪 Running tests WITHOUT Docker sandbox..."
-    echo "⚠️  Warning: Tests may consume significant memory and could crash your host"
+# Delegate to bench runner
+if [[ "$RUN_BENCH" == true ]]; then
+    exec "$ROOT_DIR/scripts/bench.sh" "$TEST_FILTER"
+fi
 
-    cd "$ROOT_DIR"
+cd "$ROOT_DIR"
 
-    # Build nextest args
-    NEXT_TEST_ARGS=""
-    if [ "$RUN_IGNORED" = true ]; then
-        NEXT_TEST_ARGS="$NEXT_TEST_ARGS --run-ignored all"
-    fi
-
-    # Build the cargo command
-    if [ -n "$TIMEOUT_SECS" ]; then
-        echo "   Timeout: ${TIMEOUT_SECS}s"
-        CARGO_CMD="timeout ${TIMEOUT_SECS}s cargo nextest run$NEXT_TEST_ARGS"
-    else
-        CARGO_CMD="cargo nextest run$NEXT_TEST_ARGS"
-    fi
-
-    if [ -n "$TEST_FILTER" ]; then
-        echo "   Filter: $TEST_FILTER"
-        eval "$CARGO_CMD $TEST_FILTER"
-    else
-        eval "$CARGO_CMD"
-    fi
-
-    echo "✅ Tests complete!"
+# Clean mode
+if [[ "$CLEAN" == true ]]; then
+    echo "Cleaning cached volumes..."
+    docker volume rm cargo-registry cargo-git tsz-target-shared 2>/dev/null || true
+    echo "Done"
     exit 0
 fi
 
-# Clean cached volumes if requested
-if [ "$CLEAN" = true ]; then
-    echo "🧹 Cleaning cached volumes for this worktree..."
-    echo "   Target volume: $TARGET_VOLUME"
-    docker volume rm cargo-registry cargo-git "$TARGET_VOLUME" 2>/dev/null || true
-    echo "✅ Volumes cleaned"
-    exit 0
+# =============================================================================
+# FAST PATH: Direct execution (no Docker) - DEFAULT
+# =============================================================================
+if [[ "$USE_DOCKER" == false ]]; then
+    # Check for nextest availability once
+    HAS_NEXTEST=false
+    if command -v cargo-nextest &>/dev/null || cargo nextest --version &>/dev/null 2>&1; then
+        HAS_NEXTEST=true
+    fi
+
+    # Build the command directly as a string for speed
+    if [[ "$HAS_NEXTEST" == true ]]; then
+        CMD="cargo nextest run"
+        [[ "$QUICK_MODE" == true ]] && CMD="$CMD --profile quick"
+        [[ "$RUN_IGNORED" == true ]] && CMD="$CMD --run-ignored all"
+        [[ -n "$TEST_FILTER" ]] && CMD="$CMD '$TEST_FILTER'"
+    else
+        CMD="cargo test"
+        [[ -n "$TEST_FILTER" ]] && CMD="$CMD '$TEST_FILTER'"
+        [[ "$RUN_IGNORED" == true ]] && CMD="$CMD --include-ignored"
+        [[ "$QUICK_MODE" == true ]] && CMD="$CMD -- --test-threads=4"
+    fi
+
+    # Add timeout wrapper if specified
+    [[ -n "$TIMEOUT_SECS" ]] && CMD="timeout ${TIMEOUT_SECS}s $CMD"
+
+    [[ "$QUICK_MODE" == true ]] && [[ -z "$VERBOSE" ]] && echo "Quick mode (fail-fast)"
+    [[ -n "$VERBOSE" ]] && echo "Running: $CMD"
+
+    eval "$CMD"
+    exit $?
 fi
 
-# Build base image if needed or forced (only contains rustc + nextest, not source)
-if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
-    echo "🔨 Building base Docker image..."
+# =============================================================================
+# DOCKER PATH: Sandboxed execution
+# =============================================================================
+IMAGE_NAME="rust-wasm-base"
+TARGET_VOLUME="tsz-target-shared"
+DOCKER_MEMORY="8g"
+DOCKER_CPUS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 8)"
+
+echo "Running tests in Docker (mem: $DOCKER_MEMORY, cpus: $DOCKER_CPUS)"
+
+# Build base image if needed
+if [[ "$REBUILD" == true ]] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+    echo "Building Docker image..."
     DOCKER_BUILDKIT=1 docker build -t "$IMAGE_NAME" -f - "$ROOT_DIR" << 'EOF'
 # syntax=docker/dockerfile:1.4
 FROM rust:latest
@@ -149,42 +149,25 @@ WORKDIR /app
 EOF
 fi
 
-# Run tests
-echo "🧪 Running tests in Docker sandbox (memory: $DOCKER_MEMORY, cpus: $DOCKER_CPUS)..."
-echo "   Use --no-sandbox to run tests directly without Docker"
-echo "   Target cache: $TARGET_VOLUME (shared across all worktrees)"
+# Build nextest args
+NEXTEST_CMD="cargo nextest run"
+[[ "$RUN_IGNORED" == true ]] && NEXTEST_CMD="$NEXTEST_CMD --run-ignored all"
+[[ -n "$TIMEOUT_SECS" ]] && NEXTEST_CMD="timeout ${TIMEOUT_SECS}s $NEXTEST_CMD"
+[[ -n "$TEST_FILTER" ]] && NEXTEST_CMD="$NEXTEST_CMD $TEST_FILTER"
 
-# We use a workaround: copy source to a writable location inside the container
-# This avoids the ro mount conflict with the target cache
-NEXT_TEST_ARGS=""
-if [ "$RUN_IGNORED" = true ]; then
-    NEXT_TEST_ARGS="$NEXT_TEST_ARGS --run-ignored all"
-fi
-if [ -n "$TIMEOUT_SECS" ]; then
-    echo "   Timeout: ${TIMEOUT_SECS}s"
-    NEXT_TEST_ARGS="timeout ${TIMEOUT_SECS}s cargo nextest run$NEXT_TEST_ARGS"
-else
-    NEXT_TEST_ARGS="cargo nextest run$NEXT_TEST_ARGS"
-fi
+# Use tar for fast incremental file sync (much faster than find+cp)
+# Only syncs files that changed, excludes target dir and git
+SYNC_CMD='tar -C /source --exclude=.target --exclude=target --exclude=.git -cf - . | tar -C /app -xf -'
 
-# Copy source files excluding target directory (which is a mounted volume)
-COPY_CMD="find /app -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + && find /source -mindepth 1 -maxdepth 1 ! -name target -exec cp -r {} /app/ \\;"
+docker run --rm \
+    --memory="$DOCKER_MEMORY" \
+    --cpus="$DOCKER_CPUS" \
+    -v "$ROOT_DIR:/source:ro" \
+    -v cargo-registry:/usr/local/cargo/registry \
+    -v cargo-git:/usr/local/cargo/git \
+    -v "$TARGET_VOLUME":/app/target \
+    -e CARGO_INCREMENTAL=1 \
+    "$IMAGE_NAME" \
+    bash -c "$SYNC_CMD && $NEXTEST_CMD"
 
-if [ -n "$TEST_FILTER" ]; then
-    echo "   Filter: $TEST_FILTER"
-    docker run --rm --memory="$DOCKER_MEMORY" --cpus="$DOCKER_CPUS" \
-        -v "$ROOT_DIR:/source:ro" \
-        -v cargo-registry:/usr/local/cargo/registry \
-        -v cargo-git:/usr/local/cargo/git \
-        -v "$TARGET_VOLUME":/app/target \
-        "$IMAGE_NAME" bash -c "$COPY_CMD && $NEXT_TEST_ARGS $TEST_FILTER"
-else
-    docker run --rm --memory="$DOCKER_MEMORY" --cpus="$DOCKER_CPUS" \
-        -v "$ROOT_DIR:/source:ro" \
-        -v cargo-registry:/usr/local/cargo/registry \
-        -v cargo-git:/usr/local/cargo/git \
-        -v "$TARGET_VOLUME":/app/target \
-        "$IMAGE_NAME" bash -c "$COPY_CMD && $NEXT_TEST_ARGS"
-fi
-
-echo "✅ Tests complete!"
+echo "Done"
