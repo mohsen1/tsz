@@ -10162,6 +10162,24 @@ impl<'a> CheckerState<'a> {
         // Get the type of the object being accessed
         let obj_type = self.get_type_of_node(access.expression);
 
+        // P1 fix: First check if the property exists on the type.
+        // If the property doesn't exist, skip the readonly check - TS2339 will be
+        // reported elsewhere. This matches tsc behavior which checks existence before
+        // readonly status.
+        use crate::solver::{PropertyAccessResult, QueryDatabase};
+        let property_result = self.ctx.types.property_access_type(obj_type, &prop_name);
+        let property_exists = matches!(
+            property_result,
+            PropertyAccessResult::Success { .. }
+                | PropertyAccessResult::PossiblyNullOrUndefined { .. }
+        );
+
+        if !property_exists {
+            // Property doesn't exist on this type - skip readonly check
+            // The property existence error (TS2339) is reported elsewhere
+            return;
+        }
+
         // Check if the property is readonly in the object type (solver types)
         if self.is_property_readonly(obj_type, &prop_name) {
             // Special case: readonly properties can be assigned in constructors
