@@ -8135,11 +8135,22 @@ impl<'a> CheckerState<'a> {
     /// let c: { x: number };    // → Object type with property x: number
     /// ```
     pub fn get_type_from_type_node(&mut self, idx: NodeIndex) -> TypeId {
-        // Check cache first to prevent duplicate error emissions
-        // This is critical for TS2304 - without caching, the same type node
-        // can be checked multiple times, emitting duplicate errors
+        // Check cache first ONLY for ERROR results to prevent duplicate TS2304 emissions
+        // We CANNOT cache successful resolutions because they may depend on:
+        // 1. Type parameter bindings (which change in generic contexts)
+        // 2. Type environment (which changes as symbols are resolved)
+        // 3. Current scope (different scopes may have different visible symbols)
+        //
+        // See: docs/TS2304_CACHING_FIX.md
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-            return cached;
+            // Only return cached result if it's ERROR (to prevent duplicate error emissions)
+            // For all other results, re-compute to ensure correct resolution with current context
+            if cached == TypeId::ERROR {
+                return cached;
+            }
+            // For non-ERROR cached results, we need to recompute to ensure
+            // type parameters and environment are properly handled
+            // Fall through to recomputation below
         }
 
         use crate::solver::TypeLowering;
@@ -8149,30 +8160,38 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
                 // Validate the type reference exists before lowering
                 let result = self.get_type_from_type_reference(idx);
-                // Cache the result before returning
-                self.ctx.node_types.insert(idx.0, result);
+                // Only cache ERROR results to prevent duplicate error emissions
+                if result == TypeId::ERROR {
+                    self.ctx.node_types.insert(idx.0, result);
+                }
                 return result;
             }
             if node.kind == syntax_kind_ext::TYPE_QUERY {
                 // Handle typeof X - need to resolve symbol properly via binder
                 let result = self.get_type_from_type_query(idx);
-                // Cache the result before returning
-                self.ctx.node_types.insert(idx.0, result);
+                // Only cache ERROR results to prevent duplicate error emissions
+                if result == TypeId::ERROR {
+                    self.ctx.node_types.insert(idx.0, result);
+                }
                 return result;
             }
             if node.kind == syntax_kind_ext::UNION_TYPE {
                 // Handle union types specially to ensure nested typeof expressions
                 // are resolved via binder (for abstract class detection)
                 let result = self.get_type_from_union_type(idx);
-                // Cache the result before returning
-                self.ctx.node_types.insert(idx.0, result);
+                // Only cache ERROR results to prevent duplicate error emissions
+                if result == TypeId::ERROR {
+                    self.ctx.node_types.insert(idx.0, result);
+                }
                 return result;
             }
             if node.kind == syntax_kind_ext::TYPE_LITERAL {
                 // Type literals should use checker resolution so type parameters resolve correctly.
                 let result = self.get_type_from_type_literal(idx);
-                // Cache the result before returning
-                self.ctx.node_types.insert(idx.0, result);
+                // Only cache ERROR results to prevent duplicate error emissions
+                if result == TypeId::ERROR {
+                    self.ctx.node_types.insert(idx.0, result);
+                }
                 return result;
             }
         }
@@ -8197,8 +8216,10 @@ impl<'a> CheckerState<'a> {
         )
         .with_type_param_bindings(type_param_bindings);
         let result = lowering.lower_type(idx);
-        // Cache the result before returning
-        self.ctx.node_types.insert(idx.0, result);
+        // Only cache ERROR results to prevent duplicate error emissions
+        if result == TypeId::ERROR {
+            self.ctx.node_types.insert(idx.0, result);
+        }
         result
     }
 
