@@ -8940,6 +8940,31 @@ impl<'a> CheckerState<'a> {
                     self.check_statement(for_data.statement);
                 }
             }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                // Type-check the switch expression to catch TS2304 errors
+                if let Some(switch_data) = self.ctx.arena.get_switch(node) {
+                    self.get_type_of_node(switch_data.expression);
+                    // Check the case block for clauses
+                    if let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                        && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                    {
+                        for &clause_idx in &case_block.statements.nodes {
+                            if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                                && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                            {
+                                // Check case expression (skip for default clause which has NONE expression)
+                                if !clause.expression.is_none() {
+                                    self.get_type_of_node(clause.expression);
+                                }
+                                // Check statements in the case
+                                for &stmt_idx in &clause.statements.nodes {
+                                    self.check_statement(stmt_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             syntax_kind_ext::TRY_STATEMENT => {
                 if let Some(try_data) = self.ctx.arena.get_try(node) {
                     self.check_statement(try_data.try_block);
