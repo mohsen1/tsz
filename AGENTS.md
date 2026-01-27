@@ -34,9 +34,10 @@ Before merging changes:
 ## Pre-commit Hooks
 
 Git hooks are installed automatically on first `cargo build`. They enforce code quality by running:
-1. `cargo fmt` - Format all code
-2. `cargo clippy --fix` - Lint and auto-fix issues
-3. Unit tests
+1. **TypeScript submodule check** - Blocks any changes to `TypeScript/` directory
+2. `cargo fmt` - Format all code
+3. `cargo clippy --fix` - Lint and auto-fix issues
+4. Unit tests
 
 To manually install: `./scripts/install-hooks.sh`
 

@@ -11,6 +11,42 @@ set -e
 
 echo "🔧 Pre-commit checks..."
 
+# ============================================================
+# CRITICAL: Block any changes to TypeScript submodule
+# ============================================================
+SUBMODULE_CHANGES=$(git diff --cached --name-only | grep '^TypeScript/' || true)
+if [ -n "$SUBMODULE_CHANGES" ]; then
+    echo ""
+    echo "❌ ERROR: Attempting to commit changes to TypeScript submodule!"
+    echo ""
+    echo "The TypeScript/ directory is a READ-ONLY git submodule."
+    echo "You must NOT modify, add, or commit any files in this directory."
+    echo ""
+    echo "Blocked files:"
+    echo "$SUBMODULE_CHANGES" | head -20
+    if [ "$(echo "$SUBMODULE_CHANGES" | wc -l)" -gt 20 ]; then
+        echo "... and more"
+    fi
+    echo ""
+    echo "To unstage these changes:"
+    echo "  git reset HEAD TypeScript/"
+    echo ""
+    echo "If you need test files, create them in the project root (e.g., test_*.ts)"
+    exit 1
+fi
+
+# Also check for submodule pointer changes
+SUBMODULE_POINTER=$(git diff --cached --name-only | grep '^TypeScript$' || true)
+if [ -n "$SUBMODULE_POINTER" ]; then
+    echo ""
+    echo "❌ ERROR: Attempting to change TypeScript submodule pointer!"
+    echo ""
+    echo "Updating the submodule reference requires explicit approval."
+    echo ""
+    echo "To unstage: git reset HEAD TypeScript"
+    exit 1
+fi
+
 # Check if cargo is available
 if ! command -v cargo &> /dev/null; then
     echo "❌ cargo not found"
