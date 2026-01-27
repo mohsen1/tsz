@@ -971,6 +971,26 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Get the rightmost identifier text for an entity name.
+    ///
+    /// This is used to disambiguate symbol IDs that may collide across binders
+    /// by matching the actual identifier text referenced in source.
+    pub(crate) fn entity_name_symbol_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            return self.entity_name_symbol_text(qn.right);
+        }
+        None
+    }
+
     // =========================================================================
     // Symbol Resolution for Lowering
     // =========================================================================
