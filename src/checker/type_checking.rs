@@ -9243,11 +9243,21 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        if self.symbol_has_type_declaration(sym_id) {
+        // Fast path using symbol flags: if symbol has TYPE flag, it's not value-only
+        // This handles classes, interfaces, enums, type aliases, etc.
+        // TYPE flag includes: CLASS | INTERFACE | ENUM | ENUM_MEMBER | TYPE_LITERAL | TYPE_PARAMETER | TYPE_ALIAS
+        let has_type_flag = (symbol.flags & symbol_flags::TYPE) != 0;
+        if has_type_flag {
             return false;
         }
 
+        // Modules/namespaces can also be used as types in some contexts
         if (symbol.flags & symbol_flags::MODULE) != 0 {
+            return false;
+        }
+
+        // Check declarations as a secondary source of truth (for cases where flags might not be set correctly)
+        if self.symbol_has_type_declaration(sym_id) {
             return false;
         }
 
@@ -9257,6 +9267,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Finally, check if this is purely a value symbol (has VALUE but not TYPE)
         let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
         let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
         has_value && !has_type
