@@ -263,6 +263,8 @@ pub struct SymbolArena {
 impl SymbolArena {
     /// Base offset for checker-local symbols to avoid ID collisions.
     pub const CHECKER_SYMBOL_BASE: u32 = 0x10000000;
+    /// Maximum pre-allocation to avoid capacity overflow.
+    const MAX_SYMBOL_PREALLOC: usize = 1_000_000;
 
     pub fn new() -> Self {
         SymbolArena {
@@ -282,8 +284,9 @@ impl SymbolArena {
 
     /// Create a new symbol arena with pre-allocated capacity.
     pub fn with_capacity(capacity: usize) -> Self {
+        let safe_capacity = capacity.min(Self::MAX_SYMBOL_PREALLOC);
         SymbolArena {
-            symbols: Vec::with_capacity(capacity),
+            symbols: Vec::with_capacity(safe_capacity),
             base_offset: 0,
         }
     }

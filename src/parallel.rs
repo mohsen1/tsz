@@ -37,6 +37,7 @@ use crate::lib_loader;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::parser::{ParseDiagnostic, ParserState};
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};

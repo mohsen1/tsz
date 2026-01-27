@@ -1049,6 +1049,8 @@ impl Default for ExtendedNodeInfo {
 }
 
 impl NodeArena {
+    /// Maximum pre-allocation to avoid capacity overflow in huge files.
+    const MAX_NODE_PREALLOC: usize = 5_000_000;
     pub fn new() -> NodeArena {
         NodeArena::default()
     }
@@ -1056,21 +1058,22 @@ impl NodeArena {
     /// Create an arena with pre-allocated capacity.
     /// Uses heuristic ratios based on typical TypeScript AST composition.
     pub fn with_capacity(capacity: usize) -> NodeArena {
+        let safe_capacity = capacity.min(Self::MAX_NODE_PREALLOC);
         // Use Default for all the new pools, just set capacity for main ones
         let mut arena = NodeArena::default();
 
         // Pre-allocate the most commonly used pools
-        arena.nodes = Vec::with_capacity(capacity);
-        arena.extended_info = Vec::with_capacity(capacity);
-        arena.identifiers = Vec::with_capacity(capacity / 4); // ~25% identifiers
-        arena.literals = Vec::with_capacity(capacity / 8); // ~12% literals
-        arena.binary_exprs = Vec::with_capacity(capacity / 8); // ~12% binary
-        arena.call_exprs = Vec::with_capacity(capacity / 8); // ~12% calls
-        arena.access_exprs = Vec::with_capacity(capacity / 8); // ~12% property access
-        arena.blocks = Vec::with_capacity(capacity / 8); // ~12% blocks
-        arena.variables = Vec::with_capacity(capacity / 16); // ~6% variables
-        arena.functions = Vec::with_capacity(capacity / 16); // ~6% functions
-        arena.type_refs = Vec::with_capacity(capacity / 8); // ~12% type refs
+        arena.nodes = Vec::with_capacity(safe_capacity);
+        arena.extended_info = Vec::with_capacity(safe_capacity);
+        arena.identifiers = Vec::with_capacity(safe_capacity / 4); // ~25% identifiers
+        arena.literals = Vec::with_capacity(safe_capacity / 8); // ~12% literals
+        arena.binary_exprs = Vec::with_capacity(safe_capacity / 8); // ~12% binary
+        arena.call_exprs = Vec::with_capacity(safe_capacity / 8); // ~12% calls
+        arena.access_exprs = Vec::with_capacity(safe_capacity / 8); // ~12% property access
+        arena.blocks = Vec::with_capacity(safe_capacity / 8); // ~12% blocks
+        arena.variables = Vec::with_capacity(safe_capacity / 16); // ~6% variables
+        arena.functions = Vec::with_capacity(safe_capacity / 16); // ~6% functions
+        arena.type_refs = Vec::with_capacity(safe_capacity / 8); // ~12% type refs
         arena.source_files = Vec::with_capacity(1); // Usually 1
 
         arena

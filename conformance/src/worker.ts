@@ -61,7 +61,14 @@ let nativeBinary: any = null;
 let tscCacheEntries: Record<string, CacheEntry> | undefined = undefined;
 
 // Memory monitoring
-const getMemoryUsage = () => process.memoryUsage().heapUsed;
+const getWasmMemoryUsage = () => {
+  try {
+    return wasmModule?.memory?.buffer?.byteLength ?? 0;
+  } catch {
+    return 0;
+  }
+};
+const getMemoryUsage = () => process.memoryUsage().heapUsed + getWasmMemoryUsage();
 
 // Heartbeat to detect hangs
 let lastActivity = Date.now();
