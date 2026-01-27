@@ -2341,6 +2341,28 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 // If no non-nullable members had the property, it's a PropertyNotFound error
                 if valid_results.is_empty() && nullable_causes.is_empty() {
+                    // Before giving up, check union-level index signatures
+                    use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
+                    let resolver = IndexSignatureResolver::new(self.interner);
+
+                    if resolver.has_index_signature(obj_type, IndexKind::String) {
+                        if let Some(value_type) = resolver.resolve_string_index(obj_type) {
+                            return PropertyAccessResult::Success {
+                                type_id: self.add_undefined_if_unchecked(value_type),
+                                from_index_signature: true,
+                            };
+                        }
+                    }
+
+                    if resolver.is_numeric_index_name(prop_name) {
+                        if let Some(value_type) = resolver.resolve_number_index(obj_type) {
+                            return PropertyAccessResult::Success {
+                                type_id: self.add_undefined_if_unchecked(value_type),
+                                from_index_signature: true,
+                            };
+                        }
+                    }
+
                     return PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
                         property_name: prop_atom,
