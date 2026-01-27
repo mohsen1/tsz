@@ -119,14 +119,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Maximum recursion depth for counting literal members to prevent stack overflow
+    const MAX_LITERAL_COUNT_DEPTH: u32 = 50;
+
     /// Count the number of literal members that can be converted to strings.
     /// Returns 0 if the type contains non-literal types that cannot be stringified.
     pub fn count_literal_members(&self, type_id: TypeId) -> usize {
+        self.count_literal_members_impl(type_id, 0)
+    }
+
+    /// Internal implementation with depth tracking.
+    fn count_literal_members_impl(&self, type_id: TypeId, depth: u32) -> usize {
+        // Prevent infinite recursion in deeply nested union types
+        if depth > Self::MAX_LITERAL_COUNT_DEPTH {
+            eprintln!(
+                "Warning: count_literal_members depth limit exceeded ({})",
+                Self::MAX_LITERAL_COUNT_DEPTH
+            );
+            return 0; // Abort - too deep
+        }
+
         if let Some(TypeKey::Union(members)) = self.interner().lookup(type_id) {
             let members = self.interner().type_list(members);
             let mut count = 0;
             for &member in members.iter() {
-                let member_count = self.count_literal_members(member);
+                let member_count = self.count_literal_members_impl(member, depth + 1);
                 if member_count == 0 {
                     return 0;
                 }
@@ -151,11 +168,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Handles string, number, boolean, and bigint literals, converting them to their string form.
     /// For unions, extracts all members recursively.
     pub fn extract_literal_strings(&self, type_id: TypeId) -> Vec<String> {
+        self.extract_literal_strings_impl(type_id, 0)
+    }
+
+    /// Internal implementation with depth tracking.
+    fn extract_literal_strings_impl(&self, type_id: TypeId, depth: u32) -> Vec<String> {
+        // Prevent infinite recursion in deeply nested union types
+        if depth > Self::MAX_LITERAL_COUNT_DEPTH {
+            eprintln!(
+                "Warning: extract_literal_strings depth limit exceeded ({})",
+                Self::MAX_LITERAL_COUNT_DEPTH
+            );
+            return Vec::new(); // Abort - too deep
+        }
+
         if let Some(TypeKey::Union(members)) = self.interner().lookup(type_id) {
             let members = self.interner().type_list(members);
             let mut result = Vec::new();
             for &member in members.iter() {
-                let strings = self.extract_literal_strings(member);
+                let strings = self.extract_literal_strings_impl(member, depth + 1);
                 if strings.is_empty() {
                     // Union contains a non-stringifiable type
                     return Vec::new();
