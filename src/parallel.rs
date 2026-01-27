@@ -1319,6 +1319,11 @@ pub(crate) fn create_binder_from_bound_file(
 
     binder.declared_modules = program.declared_modules.clone();
 
+    // Mark lib symbols as merged since the MergedProgram's symbol arena
+    // contains all remapped lib symbols with unique global IDs.
+    // This enables the fast path in get_symbol() that avoids cross-binder lookups.
+    binder.set_lib_symbols_merged(true);
+
     binder
 }
 

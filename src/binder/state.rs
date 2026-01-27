@@ -4204,6 +4204,14 @@ impl BinderState {
         self.lib_symbols_merged
     }
 
+    /// Set the lib_symbols_merged flag.
+    ///
+    /// This should be called when a binder is reconstructed from a MergedProgram
+    /// where all lib symbols have already been remapped to unique global IDs.
+    pub fn set_lib_symbols_merged(&mut self, merged: bool) {
+        self.lib_symbols_merged = merged;
+    }
+
     pub fn get_symbol(&self, id: SymbolId) -> Option<&Symbol> {
         // Fast path: If lib symbols are merged, all symbols are in the local arena
         // with unique IDs - no need to check lib_binders.
