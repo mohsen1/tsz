@@ -58,7 +58,8 @@ impl<'a> CheckerState<'a> {
         class: &crate::parser::node::ClassData,
     ) -> TypeId {
         let mut visited = FxHashSet::default();
-        self.get_class_instance_type_inner(class_idx, class, &mut visited)
+        let mut visited_nodes = FxHashSet::default();
+        self.get_class_instance_type_inner(class_idx, class, &mut visited, &mut visited_nodes)
     }
 
     /// Inner implementation of class instance type resolution with cycle detection.
@@ -76,12 +77,19 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &crate::parser::node::ClassData,
         visited: &mut FxHashSet<SymbolId>,
+        visited_nodes: &mut FxHashSet<NodeIndex>,
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
-        if let Some(sym_id) = current_sym
-            && !visited.insert(sym_id)
-        {
-            return TypeId::ERROR; // Circular reference - propagate error
+
+        // Check for cycles using both symbol ID (for same-file cycles)
+        // and node index (for cross-file cycles with @Filename annotations)
+        if let Some(sym_id) = current_sym {
+            if !visited.insert(sym_id) {
+                return TypeId::ERROR; // Circular reference detected via symbol
+            }
+        }
+        if !visited_nodes.insert(class_idx) {
+            return TypeId::ERROR; // Circular reference detected via node index
         }
 
         struct MethodAggregate {
@@ -433,9 +441,12 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                 };
+
+                // Check for circular inheritance using symbol tracking
                 if visited.contains(&base_sym_id) {
                     break;
                 }
+
                 let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id) else {
                     break;
                 };
@@ -470,6 +481,11 @@ impl<'a> CheckerState<'a> {
                     }
                     break;
                 };
+
+                // Check for circular inheritance using node index tracking (for cross-file cycles)
+                if visited_nodes.contains(&base_class_idx) {
+                    break;
+                }
                 let Some(base_node) = self.ctx.arena.get(base_class_idx) else {
                     break;
                 };
@@ -501,7 +517,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let base_instance_type =
-                    self.get_class_instance_type_inner(base_class_idx, base_class, visited);
+                    self.get_class_instance_type_inner(base_class_idx, base_class, visited, visited_nodes);
                 let substitution =
                     TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                 let base_instance_type =
@@ -753,6 +769,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             visited.remove(&sym_id);
+            visited_nodes.remove(&class_idx);
         }
         instance_type
     }
