@@ -90,6 +90,16 @@ impl<'a> ContextualTypeContext<'a> {
                     Some(self.interner.union(param_types))
                 }
             }
+            // For Application types (e.g., generic type aliases like Destructuring<TFuncs1, T>),
+            // unwrap to the base type and get parameter type from it
+            // This fixes TS2571 false positives where arrow function parameters are typed as UNKNOWN
+            // instead of the actual type from the Application
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                // Recursively get parameter type from the base type
+                let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+                ctx.get_parameter_type(index)
+            }
             _ => None,
         }
     }
@@ -130,6 +140,12 @@ impl<'a> ContextualTypeContext<'a> {
                     Some(self.interner.union(param_types))
                 }
             }
+            // For Application types, unwrap to the base type
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+                ctx.get_parameter_type_for_call(index, arg_count)
+            }
             _ => None,
         }
     }
@@ -163,6 +179,12 @@ impl<'a> ContextualTypeContext<'a> {
                     Some(self.interner.union(this_types))
                 }
             }
+            // For Application types, unwrap to the base type
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+                ctx.get_this_type()
+            }
             _ => None,
         }
     }
@@ -195,6 +217,12 @@ impl<'a> ContextualTypeContext<'a> {
                 } else {
                     Some(self.interner.union(return_types))
                 }
+            }
+            // For Application types, unwrap to the base type
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+                ctx.get_return_type()
             }
             _ => None,
         }
