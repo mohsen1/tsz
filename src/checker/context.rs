@@ -884,6 +884,17 @@ impl<'a> CheckerContext<'a> {
         false
     }
 
+    /// Check if a symbol originates from a lib context.
+    pub fn symbol_is_from_lib(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol_arena) = self.binder.symbol_arenas.get(&sym_id) else {
+            return false;
+        };
+
+        self.lib_contexts
+            .iter()
+            .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, symbol_arena))
+    }
+
     /// Check if a name is a known global type that should emit TS2318/TS2583 when missing.
     /// This helps distinguish between "unknown name" (TS2304) and "missing global type" (TS2318/TS2583).
     pub fn is_known_global_type(&self, name: &str) -> bool {

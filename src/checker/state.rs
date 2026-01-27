@@ -1094,6 +1094,8 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
             let name = ident.escaped_text.as_str();
+            let has_libs = self.ctx.has_lib_loaded();
+            let is_known_global = self.is_known_global_type_name(name);
 
             if has_type_args {
                 let is_builtin_array = name == "Array" || name == "ReadonlyArray";
@@ -1110,7 +1112,7 @@ impl<'a> CheckerState<'a> {
                 };
                 if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     // Only try resolving from lib binders if lib files are loaded (noLib is false)
-                    if self.ctx.has_lib_loaded() {
+                    if has_libs {
                         // Try resolving from lib binders before falling back to UNKNOWN
                         // First check if the global type exists via binder's get_global_type
                         let lib_binders = self.get_lib_binders();
@@ -1148,48 +1150,12 @@ impl<'a> CheckerState<'a> {
                     // When has_lib_loaded() is false (noLib is true), the above block is skipped
                     // and falls through to the is_known_global_type_name check below,
                     // which emits TS2318 via error_cannot_find_global_type
-                    if self.is_known_global_type_name(name) {
-                        // Check if this is a built-in mapped type utility (Record, Partial, etc.)
-                        // These are standard TypeScript utility types that should not emit errors
-                        // when used with type arguments - they represent type transformations
-                        if self.is_mapped_type_utility(name) {
-                            // Process type arguments but don't emit an error
-                            // Return ANY as a reasonable approximation for these utility types
-                            if let Some(args) = &type_ref.type_arguments {
-                                for &arg_idx in &args.nodes {
-                                    let _ = self.get_type_from_type_node(arg_idx);
-                                }
-                            }
-                            return TypeId::ANY;
-                        }
-
-                        // Emit TS2318/TS2583 for missing global types
-                        // TS2583 for ES2015+ types, TS2318 for other global types
-                        self.error_cannot_find_global_type(name, type_name_idx);
-
-                        // For Promise-like types with type arguments, create a proper TypeApplication
-                        // so that promise_like_return_type_argument can extract T from Promise<T>
-                        if self.is_promise_like_name(name)
-                            && let Some(args) = &type_ref.type_arguments
-                        {
-                            let type_args: Vec<TypeId> = args
-                                .nodes
-                                .iter()
-                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                                .collect();
-                            if !type_args.is_empty() {
-                                // Create a Promise application with the type args
-                                // We use PROMISE_BASE which is recognized as Promise-like
-                                return self.ctx.types.application(TypeId::PROMISE_BASE, type_args);
-                            }
-                        }
-                        // For other known global types, just process args and return ERROR
-                        if let Some(args) = &type_ref.type_arguments {
-                            for &arg_idx in &args.nodes {
-                                let _ = self.get_type_from_type_node(arg_idx);
-                            }
-                        }
-                        return TypeId::ERROR;
+                    if is_known_global {
+                        return self.handle_missing_global_type_with_args(
+                            name,
+                            type_ref,
+                            type_name_idx,
+                        );
                     }
                     if name == "await" {
                         self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
@@ -1337,6 +1303,44 @@ impl<'a> CheckerState<'a> {
         }
 
         // Unknown type name node kind - propagate error
+        TypeId::ERROR
+    }
+
+    fn handle_missing_global_type_with_args(
+        &mut self,
+        name: &str,
+        type_ref: &crate::parser::node::TypeRefData,
+        type_name_idx: NodeIndex,
+    ) -> TypeId {
+        if self.is_mapped_type_utility(name) {
+            if let Some(args) = &type_ref.type_arguments {
+                for &arg_idx in &args.nodes {
+                    let _ = self.get_type_from_type_node(arg_idx);
+                }
+            }
+            return TypeId::ANY;
+        }
+
+        self.error_cannot_find_global_type(name, type_name_idx);
+
+        if self.is_promise_like_name(name)
+            && let Some(args) = &type_ref.type_arguments
+        {
+            let type_args: Vec<TypeId> = args
+                .nodes
+                .iter()
+                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                .collect();
+            if !type_args.is_empty() {
+                return self.ctx.types.application(TypeId::PROMISE_BASE, type_args);
+            }
+        }
+
+        if let Some(args) = &type_ref.type_arguments {
+            for &arg_idx in &args.nodes {
+                let _ = self.get_type_from_type_node(arg_idx);
+            }
+        }
         TypeId::ERROR
     }
 
