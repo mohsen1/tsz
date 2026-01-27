@@ -9,7 +9,7 @@
 
 use crate::parser::NodeIndex;
 use rustc_hash::FxHashMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub mod state;
 pub use state::{BinderState, LibContext, ValidationError};
@@ -110,7 +110,7 @@ pub mod symbol_flags {
 // =============================================================================
 
 /// Unique identifier for a symbol in the symbol table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SymbolId(pub u32);
 
 impl SymbolId {
@@ -123,7 +123,7 @@ impl SymbolId {
 
 /// A symbol represents a named entity in the program.
 /// Symbols are created during binding and used during type checking.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Symbol {
     /// Symbol flags describing kind and properties
     pub flags: u32,
@@ -194,7 +194,7 @@ impl Symbol {
 
 /// A symbol table maps names to symbols.
 /// Used for scope management and name resolution.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SymbolTable {
     /// Symbols indexed by their escaped name (using FxHashMap for faster hashing)
     symbols: FxHashMap<String, SymbolId>,
@@ -253,7 +253,7 @@ impl SymbolTable {
 // =============================================================================
 
 /// Arena allocator for symbols.
-#[derive(Clone, Debug, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct SymbolArena {
     symbols: Vec<Symbol>,
     /// Base offset for symbol IDs (0 for binder, high value for checker-local symbols)
@@ -387,7 +387,7 @@ pub mod flow_flags {
 }
 
 /// Unique identifier for a flow node.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FlowNodeId(pub u32);
 
 impl FlowNodeId {
@@ -399,7 +399,7 @@ impl FlowNodeId {
 }
 
 /// A node in the control flow graph.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FlowNode {
     /// Flow node flags
     pub flags: u32,
@@ -431,7 +431,7 @@ impl FlowNode {
 }
 
 /// Arena for flow nodes.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct FlowNodeArena {
     nodes: Vec<FlowNode>,
 }
@@ -495,7 +495,7 @@ impl FlowNodeArena {
 // =============================================================================
 
 /// Unique identifier for a persistent scope.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ScopeId(pub u32);
 
 impl ScopeId {
@@ -507,7 +507,7 @@ impl ScopeId {
 }
 
 /// Container kind - tracks what kind of scope we're in
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContainerKind {
     /// Source file (global scope)
     SourceFile,
@@ -524,7 +524,7 @@ pub enum ContainerKind {
 /// A persistent scope containing symbols and a link to its parent.
 /// This enables stateless checking by allowing the checker to query
 /// scope information without maintaining a traversal-order-dependent stack.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Scope {
     /// Parent scope ID (for scope chain lookup)
     pub parent: ScopeId,

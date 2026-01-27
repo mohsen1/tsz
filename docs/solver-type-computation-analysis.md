@@ -1,6 +1,7 @@
 # Solver Type Computation Analysis
 
 **Date**: January 2026
+**Last Audit**: January 27, 2026
 **Status**: Living guidance (foundation-first)
 **Scope**: Analyzing opportunities to leverage solver for type computation
 
@@ -28,6 +29,7 @@ This document analyzes whether the solver module can handle type computation cur
 
 0. [Foundation Focus](#0-foundation-focus-conformance-is-lagging)
 1. [Current Architecture](#1-current-architecture)
+   - [1.4 Architecture Audit (January 2026)](#14-architecture-audit-january-2026)
 2. [Solver Capabilities](#2-solver-capabilities)
 3. [Migration Analysis](#3-migration-analysis)
 4. [Identified Duplications](#4-identified-duplications)
@@ -61,14 +63,20 @@ The codebase follows a clean separation of concerns:
 
 ### 1.2 Module Sizes
 
+*Updated January 27, 2026*
+
 | Component | Lines | Primary Responsibility |
 |-----------|-------|------------------------|
-| `solver/operations.rs` | 3,243 | Call resolution, property access, generic instantiation |
-| `solver/evaluate.rs` | 615 | Meta-type evaluation (conditionals, mapped, index access) |
+| `binder/state.rs` | 4,853 | Symbol binding, scope management, CFG construction |
+| `binder.rs` | 594 | Core data structures (Symbol, Scope, SymbolFlags) |
+| `checker/state.rs` | 12,683 | Main orchestration, caching, dispatch |
+| `checker/type_computation.rs` | 3,863 | AST → TypeId computation |
+| `checker/type_checking.rs` | 11,619 | Statement/declaration validation |
+| `solver/operations.rs` | 3,549 | Call resolution, property access, generic instantiation |
 | `solver/subtype.rs` | 1,696 | Structural subtype checking |
+| `solver/visitor.rs` | 1,110 | Visitor pattern for type operations |
+| `solver/evaluate.rs` | 627 | Meta-type evaluation (conditionals, mapped, index access) |
 | `solver/infer.rs` | 600+ | Union-Find generic inference |
-| `checker/type_computation.rs` | 3,498 | AST → TypeId orchestration |
-| `checker/state.rs` | 6,000+ | Caching, dispatch, relationship checks |
 
 ### 1.3 Type Flow Architecture
 
@@ -97,17 +105,129 @@ Direction 2: Solver → Checker (Type Information)
 TypeId
     │
     ▼
-solver/db.rs::TypeDatabase::lookup(TypeId) → TypeKey
-    │
-    ▼
-Pattern match on TypeKey variants
-    │
-    ▼
-Extract properties/structure
+solver/visitor.rs functions (PREFERRED)
+  - is_array_type(), is_union_type(), is_function_type()
+  - contains_type_parameters(), collect_referenced_types()
     │
     ▼
 Use in checker logic (error reporting, narrowing, etc.)
+
+⚠️ AVOID: Direct lookup(TypeId) → TypeKey → manual match
+   Use visitor functions instead (see TYPE_VISITOR_PATTERN_GUIDE.md)
 ```
+
+### 1.4 Architecture Audit (January 2026)
+
+A deep audit of the solver, checker, and binder components was conducted on January 27, 2026. This section documents the findings.
+
+#### 1.4.1 Quantified Metrics
+
+| Metric | Checker | Solver | Implication |
+|--------|---------|--------|-------------|
+| `TypeKey::` direct references | **601** | 65 | Checker bypasses abstractions |
+| `.lookup()` calls | **271** | — | Direct type introspection |
+| Visitor pattern function usage | **16** | — | Pattern dramatically underutilized |
+
+**Key Ratio**: 601 direct TypeKey matches vs 16 visitor pattern uses in checker (38:1 ratio).
+
+The visitor pattern is well-designed (`solver/visitor.rs` - 1,110 lines) but dramatically underutilized.
+
+#### 1.4.2 Breakdown by File
+
+| File | TypeKey refs | .lookup() calls | Status |
+|------|--------------|-----------------|--------|
+| `checker/state.rs` | 174 | 47 | High violation |
+| `checker/type_checking.rs` | 106 | 33 | High violation |
+| `checker/type_computation.rs` | 63 | 23 | High violation |
+| `checker/control_flow.rs` | 25 | 14 | Medium violation |
+| `checker/iterable_checker.rs` | 20 | 6 | Medium violation |
+| `checker/interface_type.rs` | 17 | 2 | Medium violation |
+| Other checker files | 196 | 146 | Distributed violations |
+
+#### 1.4.3 Examples of Violations
+
+**Violation 1: Manual TypeKey matching in state.rs**
+
+```rust
+// CURRENT (violation): Manual type introspection
+if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
+    let elems = self.ctx.types.tuple_list(elems_id);
+    for elem in elems.iter() {
+        arg_types.push(elem.type_id);
+    }
+} else if let Some(TypeKey::Array(elem_type)) = self.ctx.types.lookup(spread_type) {
+    arg_types.push(elem_type);
+}
+
+// SHOULD BE: Use visitor or delegate to solver
+use crate::solver::visitor::{is_tuple_type, is_array_type};
+// Or create SpreadEvaluator in solver
+```
+
+**Violation 2: Type classification in array_type.rs**
+
+```rust
+// CURRENT (violation): Manual match
+pub fn is_array_type(&self, type_id: TypeId) -> bool {
+    matches!(self.ctx.types.lookup(type_id), Some(TypeKey::Array(_)))
+}
+
+// SHOULD BE: Use visitor function
+use crate::solver::visitor::is_array_type;
+pub fn is_array_type(&self, type_id: TypeId) -> bool {
+    is_array_type(&self.ctx.types, type_id)
+}
+```
+
+#### 1.4.4 Component Assessment
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **Binder** | ✅ Good | Clean separation - handles symbols/scopes, never computes types |
+| **Solver** | ✅ Good | Pure TypeId logic, structured results, no AST dependencies |
+| **Checker** | ⚠️ Drift | 601 TypeKey refs violate visitor pattern requirement |
+| **Documentation** | ⚠️ Drift | Describes ideal state; implementation has diverged |
+
+#### 1.4.5 Binder Analysis
+
+The binder component is well-architected:
+
+- **Clean separation**: Binder handles symbols and scopes, never computes types
+- **Dual scope system**: Legacy (for hoisting) + persistent (for stateless checking)
+- **Symbol merging**: Properly handles TypeScript declaration merging rules
+- **CFG construction**: Builds control flow graph for type narrowing
+- **Cross-file resolution**: Via `symbol_arenas` and `decl_file_idx`
+
+**Concern**: The dual scope system adds complexity. Consider deprecating legacy scope chain once persistent scopes are fully validated.
+
+#### 1.4.6 Positive Findings
+
+Not everything is problematic. Good patterns exist:
+
+1. **Assignability delegation** (state.rs):
+   ```rust
+   pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
+       let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+       checker.is_assignable_with_overrides(source, target, &overrides)
+   }
+   ```
+
+2. **Error explanation** (error_reporter.rs):
+   ```rust
+   let reason = checker.explain_failure(source, target);  // Solver explains WHY
+   let diag = self.render_failure_reason(&reason, ...);   // Checker formats
+   ```
+
+3. **Element access evaluator**: Properly delegated to solver with structured `ElementAccessResult`
+
+#### 1.4.7 Recommended Migration Priority
+
+| Priority | Task | Effort | Impact |
+|----------|------|--------|--------|
+| **P0** | Replace checker type classification with visitor functions | 4-8 hours | High - mechanical refactoring |
+| **P1** | Extract inline type logic to solver evaluators | 8-16 hours | High - architectural alignment |
+| **P2** | Consolidate remaining duplicate logic | 4-6 hours | Medium - code quality |
+| **P3** | Consider binder scope simplification | TBD | Low - maintenance |
 
 ---
 
@@ -551,6 +671,44 @@ match evaluator.resolve_element_access(obj, idx, lit) {
 
 ## 6. Implementation Recommendations
 
+### 6.0 Priority 0: Visitor Pattern Migration (HIGHEST PRIORITY)
+
+*Added January 27, 2026 based on architecture audit findings*
+
+**Problem**: Checker has 601 direct `TypeKey::` references vs 16 visitor pattern uses.
+
+**Solution**: Replace manual TypeKey matches with visitor functions from `solver/visitor.rs`.
+
+| File | TypeKey refs | Migration Approach |
+|------|--------------|-------------------|
+| `checker/state.rs` | 174 | Replace with visitor functions + new evaluators |
+| `checker/type_checking.rs` | 106 | Replace with visitor functions |
+| `checker/type_computation.rs` | 63 | Replace with visitor functions |
+| Other files | 258 | Replace with visitor functions |
+
+**Example Migration**:
+
+```rust
+// BEFORE (601 instances like this)
+matches!(self.ctx.types.lookup(type_id), Some(TypeKey::Array(_)))
+
+// AFTER
+use crate::solver::visitor::is_array_type;
+is_array_type(&self.ctx.types, type_id)
+```
+
+**Available Visitor Functions** (from `solver/visitor.rs`):
+- `is_literal_type()`, `is_function_type()`, `is_callable_type()`
+- `is_union_type()`, `is_intersection_type()`
+- `is_array_type()`, `is_tuple_type()`, `is_object_like_type()`
+- `is_type_parameter()`, `is_conditional_type()`, `is_mapped_type()`
+- `contains_type_parameters()`, `contains_error_type()`
+- `collect_all_types()`, `collect_referenced_types()`
+
+**Effort**: 4-8 hours (mechanical refactoring)
+**Impact**: High - aligns with documented architecture
+**Risk**: Low - no semantic changes, just API migration
+
 ### 6.1 Priority 1: Immediate Wins (Low Risk, High Value)
 
 | Task | Effort | Impact | Risk |
@@ -731,12 +889,17 @@ impl TypeId {
 
 ## Conclusion
 
-The solver module is well-architected and already handles most pure type logic. The main opportunities for improvement are:
+The solver module is well-architected and already handles most pure type logic. The binder properly handles symbols and scopes without computing types.
 
-1. **Move remaining pure type computations** from checker to solver
-2. **Consolidate duplicate implementations** (especially nullish checking)
-3. **Create new evaluators** for array/object literal construction
-4. **Standardize the delegation pattern** between checker and solver
+**January 2026 Audit Finding**: The checker layer has accumulated significant technical debt with **601 direct TypeKey references** while using the visitor pattern only **16 times**. This 38:1 ratio indicates substantial drift from the documented architecture.
+
+The main opportunities for improvement are:
+
+1. **HIGHEST PRIORITY: Adopt visitor pattern in checker** (601 refs → visitor functions)
+2. **Move remaining pure type computations** from checker to solver
+3. **Consolidate duplicate implementations** (especially nullish checking)
+4. **Create new evaluators** for array/object literal construction
+5. **Standardize the delegation pattern** between checker and solver
 
 Following these recommendations will result in:
 - Better testability (solver functions can be unit tested without AST)

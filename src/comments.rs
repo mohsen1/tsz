@@ -4,10 +4,10 @@
 //! Comments are not part of the AST, so they must be extracted separately
 //! from the source text and associated with nodes for emission.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A range representing a comment in the source text.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CommentRange {
     /// Start position (byte offset)
     pub pos: u32,

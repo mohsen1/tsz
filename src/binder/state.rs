@@ -227,6 +227,14 @@ impl BinderState {
         self.debugger.get_summary()
     }
 
+    /// Create a BinderState from pre-parsed lib data.
+    ///
+    /// This is used for loading pre-parsed lib files where we only have
+    /// symbols and file_locals (no node_symbols or other binding state).
+    pub fn from_preparsed(symbols: SymbolArena, file_locals: SymbolTable) -> Self {
+        Self::from_bound_state(symbols, file_locals, FxHashMap::default())
+    }
+
     /// Create a BinderState from existing bound state.
     ///
     /// This is used for type checking after parallel binding and symbol merging.

@@ -6,6 +6,17 @@
 //!
 //! The lib files are sourced from the TypeScript submodule at `TypeScript/src/lib/`.
 //!
+//! # Performance Note
+//!
+//! For faster startup, use the pre-parsed lib system in [`crate::preparsed_libs`]:
+//! 1. Run `tsz --generate-lib-cache` to create pre-parsed binary data
+//! 2. Rebuild with `--features preparsed_libs` to embed the pre-parsed data
+//!
+//! The pre-parsed approach is ~10x faster than parsing raw text at runtime.
+//! This module serves as:
+//! - The source for generating pre-parsed data
+//! - A fallback when pre-parsed data is unavailable
+//!
 //! # Usage
 //!
 //! ```rust

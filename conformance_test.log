@@ -1,126 +1,0 @@
-╔══════════════════════════════════════════════════════════╗
-║      TSZ Conformance Runner (Docker + WASM)             ║
-╠══════════════════════════════════════════════════════════╣
-║  Tests:      50                                          ║
-║  Workers:    1                                           ║
-║  Categories: conformance,compiler,projects               ║
-║  Timeout:    600s                                        ║
-╚══════════════════════════════════════════════════════════╝
-
-📦 Building WASM...
-[INFO]: 🎯  Checking for the Wasm target...
-[INFO]: 🌀  Compiling to Wasm...
-   Compiling wasm v0.1.0 (/Users/mohsenazimi/code/tsz)
-warning: constant `MAX_CLASS_INHERITANCE_DEPTH` is never used
-  --> src/checker/class_type.rs:23:7
-   |
-23 | const MAX_CLASS_INHERITANCE_DEPTH: usize = 256;
-   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-warning: methods `create_flow_evaluator`, `extract_flow_facts`, and `apply_solver_flow_narrowing` are never used
-    --> src/checker/flow_analysis.rs:1693:19
-     |
-  91 | impl<'a> CheckerState<'a> {
-     | ------------------------- methods in this implementation
-...
-1693 |     pub(crate) fn create_flow_evaluator(&self) -> FlowTypeEvaluator<'_> {
-     |                   ^^^^^^^^^^^^^^^^^^^^^
-...
-1703 |     pub(crate) fn extract_flow_facts(&self, _sym_id: SymbolId, _usage_idx: NodeIndex) -> FlowFacts {
-     |                   ^^^^^^^^^^^^^^^^^^
-...
-1719 |     pub(crate) fn apply_solver_flow_narrowing(
-     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: field `db` is never read
-   --> src/solver/flow_analysis.rs:111:5
-    |
-110 | pub struct FlowTypeEvaluator<'a> {
-    |            ----------------- field in this struct
-111 |     db: &'a dyn TypeDatabase,
-    |     ^^
-
-warning: `wasm` (lib) generated 3 warnings
-    Finished `release` profile [optimized] target(s) in 7.66s
-[INFO]: Optional fields missing from Cargo.toml: 'description', 'repository', and 'license'. These are not necessary, but recommended
-[INFO]: ✨   Done in 7.95s
-[INFO]: 📦   Your wasm pkg is ready to publish at /Users/mohsenazimi/code/tsz/pkg.
-[WARN]: ⚠️   There's a newer version of wasm-pack available, the new version is: 0.14.0, you are using: 0.13.1. To update, navigate to: https://rustwasm.github.io/wasm-pack/installer/
-✅ WASM built
-📦 Copying TypeScript lib files (source)...
-
-📦 Building conformance runner...
-✅ Runner built
-
-🐳 Preparing Docker image...
-✅ Docker ready
-
-🚀 Running tests in Docker (WASM)...
-   (Memory: 4GB, CPUs: 1, Timeout: 600s)
-
-[36m╔══════════════════════════════════════════════════════════╗[0m
-[36m║    High-Performance Parallel Conformance Test Runner     ║[0m
-[36m╚══════════════════════════════════════════════════════════╝[0m
-[36m
-Collecting test files...[0m
-[2m  conformance: 17 files[0m
-[2m  compiler: 17 files[0m
-[2m  projects: 17 files[0m
-[36m  Total: 51 test files[0m
-[2m  Workers: 1 | Timeout: 10000ms[0m
-[32m
-Using TSC cache: 12053 tests cached[0m
-[2m  Generated: 2026-01-22T22:59:34.277Z[0m
-[36m
-Initializing 1 workers...[0m
-[32m  Workers ready![0m
-[36m
-Running tests...[0m
-  Progress: 1/51 (2.0%) | 2/s | 0.5s      Progress: 2/51 (3.9%) | 4/s | 0.5s      Progress: 3/51 (5.9%) | 5/s | 0.6s      Progress: 4/51 (7.8%) | 6/s | 0.6s      Progress: 5/51 (9.8%) | 7/s | 0.7s      Progress: 6/51 (11.8%) | 8/s | 0.7s      Progress: 7/51 (13.7%) | 9/s | 0.7s      Progress: 8/51 (15.7%) | 10/s | 0.8s      Progress: 9/51 (17.6%) | 11/s | 0.8s      Progress: 10/51 (19.6%) | 12/s | 0.8s      Progress: 11/51 (21.6%) | 12/s | 0.9s      Progress: 12/51 (23.5%) | 13/s | 0.9s      Progress: 13/51 (25.5%) | 13/s | 1.0s      Progress: 14/51 (27.5%) | 14/s | 1.0s      Progress: 15/51 (29.4%) | 14/s | 1.1s      Progress: 16/51 (31.4%) | 14/s | 1.1s      Progress: 17/51 (33.3%) | 15/s | 1.1s      Progress: 18/51 (35.3%) | 15/s | 1.2s      Progress: 19/51 (37.3%) | 16/s | 1.2s      Progress: 20/51 (39.2%) | 16/s | 1.2s      Progress: 21/51 (41.2%) | 16/s | 1.3s      Progress: 22/51 (43.1%) | 17/s | 1.3s      Progress: 23/51 (45.1%) | 17/s | 1.3s      Progress: 24/51 (47.1%) | 18/s | 1.4s      Progress: 25/51 (49.0%) | 18/s | 1.4s      Progress: 26/51 (51.0%) | 18/s | 1.4s      Progress: 27/51 (52.9%) | 19/s | 1.4s      Progress: 28/51 (54.9%) | 19/s | 1.5s      Progress: 29/51 (56.9%) | 19/s | 1.5s      Progress: 30/51 (58.8%) | 20/s | 1.5s      Progress: 31/51 (60.8%) | 20/s | 1.5s      Progress: 32/51 (62.7%) | 21/s | 1.6s      Progress: 33/51 (64.7%) | 21/s | 1.6s      Progress: 34/51 (66.7%) | 21/s | 1.6s      Progress: 35/51 (68.6%) | 18/s | 1.9s      Progress: 36/51 (70.6%) | 16/s | 2.2s      Progress: 37/51 (72.5%) | 15/s | 2.4s      Progress: 38/51 (74.5%) | 14/s | 2.7s      Progress: 39/51 (76.5%) | 13/s | 2.9s      Progress: 40/51 (78.4%) | 12/s | 3.2s      Progress: 41/51 (80.4%) | 12/s | 3.5s      Progress: 42/51 (82.4%) | 11/s | 3.7s      Progress: 43/51 (84.3%) | 11/s | 4.0s      Progress: 44/51 (86.3%) | 10/s | 4.2s      Progress: 45/51 (88.2%) | 10/s | 4.5s      Progress: 46/51 (90.2%) | 10/s | 4.7s      Progress: 47/51 (92.2%) | 10/s | 4.9s      Progress: 48/51 (94.1%) | 9/s | 5.2s      Progress: 49/51 (96.1%) | 9/s | 5.4s      Progress: 50/51 (98.0%) | 9/s | 5.7s      Progress: 51/51 (100.0%) | 9/s | 5.9s                                                                                                        [2m
-════════════════════════════════════════════════════════════[0m
-[1mCONFORMANCE TEST RESULTS[0m
-[2m════════════════════════════════════════════════════════════[0m
-[33m
-Pass Rate: 29.4% (15/51)[0m
-[2mTime: 6.0s (9 tests/sec)[0m
-[1m
-Summary:[0m
-[32m  ✓ Passed:   15[0m
-[31m  ✗ Failed:   36[0m
-[2m  💥 Crashed:  0[0m
-[2m  💾 OOM:      0[0m
-[2m  ⏱ Timeout:  0[0m
-[1m
-Worker Health:[0m
-[2m  Spawned:   1[0m
-[2m  Crashed:   0[0m
-[2m  Respawned: 0[0m
-[1m
-By Category:[0m
-[33m  conformance: 1/17 (5.9%)[0m
-[33m  compiler: 7/17 (41.2%)[0m
-[33m  projects: 7/17 (41.2%)[0m
-[1m
-Top Missing Errors:[0m
-[33m  TS2318: 6x[0m
-[33m  TS2488: 6x[0m
-[33m  TS2580: 3x[0m
-[33m  TS2583: 3x[0m
-[33m  TS2697: 3x[0m
-[33m  TS2305: 3x[0m
-[33m  TS6053: 3x[0m
-[33m  TS1147: 3x[0m
-[1m
-Top Extra Errors:[0m
-[33m  TS2571: 106x[0m
-[33m  TS2339: 44x[0m
-[33m  TS2307: 16x[0m
-[33m  TS7010: 16x[0m
-[33m  TS2554: 15x[0m
-[33m  TS2345: 14x[0m
-[33m  TS2749: 12x[0m
-[33m  TS2507: 9x[0m
-[2m
-════════════════════════════════════════════════════════════[0m
