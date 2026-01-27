@@ -1,0 +1,51 @@
+@@ -180,6 +182,8 @@
+             // Bind
+             let mut binder = BinderState::new();
+             binder.bind_source_file(&arena, source_file);
++            
++            let is_external_module = binder.is_external_module();
+ 
+             BindResult {
+                 file_name,
+@@ -201,6 +205,7 @@
+                 lib_binders: Vec::new(), // No libs in this path
+                 flow_nodes: binder.flow_nodes,
+                 node_flow: binder.node_flow,
++                is_external_module,
+             }
+         })
+         .collect()
+@@ -215,6 +220,8 @@
+     let mut binder = BinderState::new();
+     binder.bind_source_file(&arena, source_file);
+ 
++    let is_external_module = binder.is_external_module();
++
+     BindResult {
+         file_name,
+         source_file,
+@@ -235,6 +242,7 @@
+         lib_binders: Vec::new(), // No libs in this path
+         flow_nodes: binder.flow_nodes,
+         node_flow: binder.node_flow,
++        is_external_module,
+     }
+ }
+ 
+@@ -396,6 +404,8 @@
+     };
+     binder.bind_source_file(&arena, source_file);
+ 
++    let is_external_module = binder.is_external_module();
++
+     BindResult {
+         file_name,
+         source_file,
+@@ -416,6 +426,7 @@
+         lib_binders,
+         flow_nodes: binder.flow_nodes,
+         node_flow: binder.node_flow,
++        is_external_module,
+     }
+ }
+ 
