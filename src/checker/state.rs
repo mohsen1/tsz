@@ -984,6 +984,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get type from a type reference node (e.g., "number", "string", "MyType").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
+        eprintln!("DEBUG: get_type_from_type_reference called");
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -1208,6 +1209,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Array/ReadonlyArray not found - check if lib files are loaded
                 // When --noLib is used, emit TS2318 instead of silently creating Array type
+                eprintln!("DEBUG: Array/ReadonlyArray not found, has_lib_loaded={}", self.ctx.has_lib_loaded());
                 if !self.ctx.has_lib_loaded() {
                     // No lib files loaded - emit TS2318 for missing global type
                     self.error_cannot_find_global_type(name, type_name_idx);

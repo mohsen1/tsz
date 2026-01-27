@@ -2095,6 +2095,32 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                     return result;
                 }
+
+                // Check for index signatures using IndexSignatureResolver
+                // Some Object types may have index signatures that aren't in ObjectWithIndex
+                use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
+                let resolver = IndexSignatureResolver::new(self.interner);
+
+                // Try string index signature first (most common)
+                if resolver.has_index_signature(obj_type, IndexKind::String) {
+                    if let Some(value_type) = resolver.resolve_string_index(obj_type) {
+                        return PropertyAccessResult::Success {
+                            type_id: self.add_undefined_if_unchecked(value_type),
+                            from_index_signature: true,
+                        };
+                    }
+                }
+
+                // Try numeric index signature if property name looks numeric
+                if resolver.is_numeric_index_name(prop_name) {
+                    if let Some(value_type) = resolver.resolve_number_index(obj_type) {
+                        return PropertyAccessResult::Success {
+                            type_id: self.add_undefined_if_unchecked(value_type),
+                            from_index_signature: true,
+                        };
+                    }
+                }
+
                 PropertyAccessResult::PropertyNotFound {
                     type_id: obj_type,
                     property_name: prop_atom,
@@ -2117,12 +2143,24 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     return result;
                 }
 
-                // Check string index signature (THIS is the case for error 4111)
+                // Check string index signature
                 if let Some(ref idx) = shape.string_index {
                     return PropertyAccessResult::Success {
                         type_id: self.add_undefined_if_unchecked(idx.value_type),
-                        from_index_signature: true, // Resolved via index signature!
+                        from_index_signature: true,
                     };
+                }
+
+                // Check numeric index signature if property name looks numeric
+                use crate::solver::index_signatures::IndexSignatureResolver;
+                let resolver = IndexSignatureResolver::new(self.interner);
+                if resolver.is_numeric_index_name(prop_name) {
+                    if let Some(ref idx) = shape.number_index {
+                        return PropertyAccessResult::Success {
+                            type_id: self.add_undefined_if_unchecked(idx.value_type),
+                            from_index_signature: true,
+                        };
+                    }
                 }
 
                 PropertyAccessResult::PropertyNotFound {
@@ -2478,33 +2516,69 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            // Ref types: symbol references that need resolution by the checker.
-            // The checker should resolve these before calling property_access_type,
-            // but as a fallback, try apparent members and return ANY if not found
-            // to avoid false positives when the type can't be resolved here.
-            TypeKey::Ref(_) | TypeKey::TypeQuery(_) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                    return result;
-                }
-                // Can't resolve symbol reference - return ANY to avoid false positives
-                // The checker should have resolved this type first
-                PropertyAccessResult::Success {
-                    type_id: TypeId::ANY,
-                    from_index_signature: false,
+            // Ref types: symbol references that need resolution to their structural form
+            TypeKey::Ref(_) => {
+                let evaluated = evaluate_type(self.interner, obj_type);
+                if evaluated != obj_type {
+                    // Successfully evaluated - resolve property on the concrete type
+                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                } else {
+                    // Evaluation didn't change the type - try apparent members
+                    let prop_atom =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        result
+                    } else {
+                        // Can't resolve symbol reference - return ANY to avoid false positives
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
+                        }
+                    }
                 }
             }
 
-            // Conditional types need evaluation by the checker
-            TypeKey::Conditional(_) => {
-                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                    return result;
+            // TypeQuery types: typeof queries that need resolution to their structural form
+            TypeKey::TypeQuery(_) => {
+                let evaluated = evaluate_type(self.interner, obj_type);
+                if evaluated != obj_type {
+                    // Successfully evaluated - resolve property on the concrete type
+                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                } else {
+                    // Evaluation didn't change the type - try apparent members
+                    let prop_atom =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        result
+                    } else {
+                        // Can't resolve type query - return ANY to avoid false positives
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
+                        }
+                    }
                 }
-                // Conditional not evaluated - return ANY to avoid false positives
-                PropertyAccessResult::Success {
-                    type_id: TypeId::ANY,
-                    from_index_signature: false,
+            }
+
+            // Conditional types need evaluation to their resolved form
+            TypeKey::Conditional(_) => {
+                let evaluated = evaluate_type(self.interner, obj_type);
+                if evaluated != obj_type {
+                    // Successfully evaluated - resolve property on the concrete type
+                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                } else {
+                    // Evaluation didn't change the type - try apparent members
+                    let prop_atom =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        result
+                    } else {
+                        // Can't evaluate - return ANY to avoid false positives
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
+                        }
+                    }
                 }
             }
 
@@ -2965,10 +3039,23 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 self.callable_result(self.array_reduce_callable(element_type, array_of_element))
             }
 
-            _ => PropertyAccessResult::PropertyNotFound {
-                type_id: array_type,
-                property_name: prop_atom,
-            },
+            _ => {
+                // Fall back to numeric index signature if property name is numeric
+                // Arrays have implicit numeric index signatures
+                use crate::solver::index_signatures::IndexSignatureResolver;
+                let resolver = IndexSignatureResolver::new(self.interner);
+                if resolver.is_numeric_index_name(prop_name) {
+                    return PropertyAccessResult::Success {
+                        type_id: element_or_undefined,
+                        from_index_signature: true,
+                    };
+                }
+
+                PropertyAccessResult::PropertyNotFound {
+                    type_id: array_type,
+                    property_name: prop_atom,
+                }
+            }
         }
     }
 
