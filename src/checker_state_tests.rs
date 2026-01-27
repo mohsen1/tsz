@@ -4767,6 +4767,65 @@ map[key] = 2;
 }
 
 #[test]
+fn test_nonexistent_property_should_not_report_ts2540() {
+    // P1 fix: Assigning to a non-existent property should report TS2339 (property doesn't exist)
+    // but NOT TS2540 (cannot assign to readonly). This matches tsc behavior which checks
+    // property existence before readonly status.
+    use crate::parser::ParserState;
+
+    let source = r#"
+interface Person {
+    readonly name: string;
+}
+let p: Person = { name: "Alice" };
+// This property does not exist on Person - should get TS2339, NOT TS2540
+p.nonexistent = "error";
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    println!("Diagnostics:");
+    for diag in &checker.ctx.diagnostics {
+        println!("  TS{}: {}", diag.code, diag.message_text);
+    }
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should NOT have TS2540 for non-existent property
+    let count_2540 = codes.iter().filter(|&&c| c == 2540).count();
+    assert_eq!(
+        count_2540, 0,
+        "Should NOT report TS2540 for non-existent property, got {} in: {:?}",
+        count_2540, codes
+    );
+
+    // Should have TS2339 for non-existent property
+    let count_2339 = codes.iter().filter(|&&c| c == 2339).count();
+    assert!(
+        count_2339 >= 1,
+        "Should report TS2339 for non-existent property, got {} in: {:?}",
+        count_2339,
+        codes
+    );
+}
+
+#[test]
 fn test_abstract_property_negative_errors() {
     // Test the full abstractPropertyNegative test case to verify expected errors
     use crate::parser::ParserState;
