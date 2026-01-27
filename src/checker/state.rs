@@ -3115,6 +3115,20 @@ impl<'a> CheckerState<'a> {
                 let sym_id = self.resolve_identifier_symbol(type_name_idx);
 
                 if is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                    // Array/ReadonlyArray not found - check if lib files are loaded
+                    // When --noLib is used, emit TS2318 instead of silently creating Array type
+                    if !self.ctx.has_lib_loaded() {
+                        // No lib files loaded - emit TS2318 for missing global type
+                        self.error_cannot_find_global_type(name, type_name_idx);
+                        // Still process type arguments to avoid cascading errors
+                        if let Some(args) = &type_ref.type_arguments {
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
+                            }
+                        }
+                        return TypeId::ERROR;
+                    }
+                    // Lib files are loaded but Array not found - fall back to creating Array type
                     let elem_type = type_ref
                         .type_arguments
                         .as_ref()
@@ -3190,6 +3204,20 @@ impl<'a> CheckerState<'a> {
                 if let Some(type_param) = self.lookup_type_parameter(name) {
                     return type_param;
                 }
+                // Array/ReadonlyArray not found - check if lib files are loaded
+                // When --noLib is used, emit TS2318 instead of silently creating Array type
+                if !self.ctx.has_lib_loaded() {
+                    // No lib files loaded - emit TS2318 for missing global type
+                    self.error_cannot_find_global_type(name, type_name_idx);
+                    // Still process type arguments to avoid cascading errors
+                    if let Some(args) = &type_ref.type_arguments {
+                        for &arg_idx in &args.nodes {
+                            let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
+                        }
+                    }
+                    return TypeId::ERROR;
+                }
+                // Lib files are loaded but Array not found - fall back to creating Array type
                 let elem_type = type_ref
                     .type_arguments
                     .as_ref()
