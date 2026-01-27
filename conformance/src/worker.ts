@@ -491,7 +491,36 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
 
         // Spawn native binary
         const { spawn } = require('child_process');
-        const args = filesToCheck.map(f => path.join(tmpDir, f));
+        const args: string[] = [];
+        
+        // Add compiler options as CLI arguments
+        const opts = testCase.options;
+        if (opts.target) args.push('--target', String(opts.target));
+        if (opts.lib) {
+          const libVal = opts.lib;
+          if (typeof libVal === 'string') {
+            args.push('--lib', libVal);
+          } else if (Array.isArray(libVal)) {
+            args.push('--lib', libVal.join(','));
+          }
+        }
+        if (opts.nolib) args.push('--noLib');
+        if (opts.strict) args.push('--strict');
+        if (opts.strictnullchecks !== undefined) args.push(opts.strictnullchecks ? '--strictNullChecks' : '--strictNullChecks=false');
+        if (opts.strictfunctiontypes !== undefined) args.push(opts.strictfunctiontypes ? '--strictFunctionTypes' : '--strictFunctionTypes=false');
+        if (opts.noimplicitany !== undefined) args.push(opts.noimplicitany ? '--noImplicitAny' : '--noImplicitAny=false');
+        if (opts.noimplicitreturns) args.push('--noImplicitReturns');
+        if (opts.noimplicitthis) args.push('--noImplicitThis');
+        if (opts.module) args.push('--module', String(opts.module));
+        if (opts.jsx) args.push('--jsx', String(opts.jsx));
+        if (opts.allowjs) args.push('--allowJs');
+        if (opts.checkjs) args.push('--checkJs');
+        if (opts.declaration) args.push('--declaration');
+        if (opts.noemit) args.push('--noEmit');
+        
+        // Add file paths
+        args.push(...filesToCheck.map(f => path.join(tmpDir, f)));
+        
         // Run from project directory so CLI can find its built-in lib files
         const projectDir = path.resolve(__dirname, '../..');
         const child = spawn(nativeBinaryPath, args, {
