@@ -209,7 +209,7 @@ pub fn write_preparsed_libs(libs: &PreParsedLibs, path: &Path) -> std::io::Resul
         .with_no_limit()
         .with_fixint_encoding();
     let data = config.serialize(libs).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("Serialization error: {}", e))
+        std::io::Error::other(format!("Serialization error: {}", e))
     })?;
 
     std::fs::write(path, data)?;
