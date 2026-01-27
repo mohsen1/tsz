@@ -3864,6 +3864,8 @@ impl<'a> CheckerState<'a> {
         match self.ctx.types.lookup(type_id) {
             Some(TypeKey::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint {
+                    // DEBUG: Print what we're checking
+                    eprintln!("DEBUG: is_constructor_type checking TypeParameter constraint: {:?}", self.ctx.types.lookup(constraint));
                     self.is_constructor_type(constraint)
                 } else {
                     false
