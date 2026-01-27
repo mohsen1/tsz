@@ -2281,7 +2281,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
                 // Filter out UNKNOWN members - they shouldn't cause the entire union to be unknown
                 // Only return IsUnknown if ALL members are UNKNOWN
-                let non_unknown_members: Vec<_> = members.iter().filter(|&&t| t != TypeId::UNKNOWN).copied().collect();
+                let non_unknown_members: Vec<_> = members
+                    .iter()
+                    .filter(|&&t| t != TypeId::UNKNOWN)
+                    .copied()
+                    .collect();
                 if non_unknown_members.is_empty() {
                     // All members are UNKNOWN
                     return PropertyAccessResult::IsUnknown;
@@ -2428,6 +2432,36 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if saw_unknown {
                         return PropertyAccessResult::IsUnknown;
                     }
+
+                    // Before giving up, check if any member has an index signature
+                    // For intersections, if ANY member has an index signature, the property access should succeed
+                    use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
+                    let resolver = IndexSignatureResolver::new(self.interner);
+
+                    // Check string index signature on all members
+                    for &member in members.iter() {
+                        if resolver.has_index_signature(member, IndexKind::String) {
+                            if let Some(value_type) = resolver.resolve_string_index(member) {
+                                return PropertyAccessResult::Success {
+                                    type_id: self.add_undefined_if_unchecked(value_type),
+                                    from_index_signature: true,
+                                };
+                            }
+                        }
+                    }
+
+                    // Check numeric index signature if property name looks numeric
+                    if resolver.is_numeric_index_name(prop_name) {
+                        for &member in members.iter() {
+                            if let Some(value_type) = resolver.resolve_number_index(member) {
+                                return PropertyAccessResult::Success {
+                                    type_id: self.add_undefined_if_unchecked(value_type),
+                                    from_index_signature: true,
+                                };
+                            }
+                        }
+                    }
+
                     return PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
                         property_name: prop_atom,

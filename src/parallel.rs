@@ -27,7 +27,7 @@
 //! ```
 
 use crate::binder::BinderState;
-use crate::binder::{Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
+use crate::binder::{FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::cli::config::resolve_default_lib_files;
 use crate::emitter::ScriptTarget;
@@ -153,6 +153,10 @@ pub struct BindResult {
     /// Lib binders for global type resolution (Array, String, etc.)
     /// These are merged from lib.d.ts files and enable cross-file symbol lookup
     pub lib_binders: Vec<Arc<BinderState>>,
+    /// Flow nodes for control flow analysis
+    pub flow_nodes: FlowNodeArena,
+    /// Node-to-flow mapping: tracks which flow node was active at each AST node
+    pub node_flow: FxHashMap<u32, FlowNodeId>,
 }
 
 /// Parse and bind multiple files in parallel
@@ -195,6 +199,8 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
                 lib_binders: Vec::new(), // No libs in this path
+                flow_nodes: binder.flow_nodes,
+                node_flow: binder.node_flow,
             }
         })
         .collect()
@@ -226,6 +232,8 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         lib_binders: Vec::new(), // No libs in this path
+        flow_nodes: binder.flow_nodes,
+        node_flow: binder.node_flow,
     }
 }
 
@@ -396,6 +404,8 @@ pub fn parse_and_bind_parallel_with_libs(
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
                 lib_binders,
+                flow_nodes: binder.flow_nodes,
+                node_flow: binder.node_flow,
             }
         })
         .collect()
@@ -423,6 +433,10 @@ pub struct BoundFile {
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
     pub global_augmentations: FxHashMap<String, Vec<NodeIndex>>,
+    /// Flow nodes for control flow analysis
+    pub flow_nodes: FlowNodeArena,
+    /// Node-to-flow mapping: tracks which flow node was active at each AST node
+    pub node_flow: FxHashMap<u32, FlowNodeId>,
 }
 
 use crate::solver::TypeInterner;
@@ -919,6 +933,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             node_scope_ids: result.node_scope_ids.clone(),
             parse_diagnostics: result.parse_diagnostics.clone(),
             global_augmentations: result.global_augmentations.clone(),
+            flow_nodes: result.flow_nodes.clone(),
+            node_flow: result.node_flow.clone(),
         });
     }
 
@@ -1295,6 +1311,8 @@ pub(crate) fn create_binder_from_bound_file(
         program.wildcard_reexports.clone(),
         program.symbol_arenas.clone(),
         program.shorthand_ambient_modules.clone(),
+        file.flow_nodes.clone(),
+        file.node_flow.clone(),
     );
 
     binder.declared_modules = program.declared_modules.clone();

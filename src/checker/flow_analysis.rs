@@ -1338,7 +1338,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // First try get_node_symbol, then fall back to resolve_identifier
         self.ctx.binder.get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
     }
 
     /// Check if we're currently inside a closure (function expression or arrow function).

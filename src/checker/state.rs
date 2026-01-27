@@ -1259,7 +1259,7 @@ impl<'a> CheckerState<'a> {
                     .as_ref()
                     .and_then(|args| args.nodes.first().copied())
                     .map(|idx| self.get_type_from_type_node(idx))
-                    .unwrap_or(TypeId::UNKNOWN);
+                    .unwrap_or(TypeId::ERROR);
                 let array_type = self.ctx.types.array(elem_type);
                 if name == "ReadonlyArray" {
                     return self
@@ -6657,6 +6657,9 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
+        // Clear cache to ensure fresh evaluation with current contextual type
+        self.ctx.application_eval_cache.clear();
+
         if let Some(&cached) = self.ctx.application_eval_cache.get(&type_id) {
             return cached;
         }
@@ -10292,14 +10295,6 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    // is_property_readonly is in type_checking.rs - this delegates to QueryDatabase
-    #[allow(dead_code)]
-    fn is_property_readonly_state(&self, type_id: TypeId, prop_name: &str) -> bool {
-        use crate::solver::QueryDatabase;
-
-        self.ctx.types.is_property_readonly(type_id, prop_name)
     }
 
     fn is_readonly_index_signature(

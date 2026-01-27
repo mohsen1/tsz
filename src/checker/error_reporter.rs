@@ -1638,9 +1638,19 @@ impl<'a> CheckerState<'a> {
     /// Check if a type has string as a union member (directly or nested).
     /// Used to determine if + operator could be string concatenation.
     fn type_has_string_union_member(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
+        use crate::solver::{TypeKey, LiteralValue};
 
         if type_id == TypeId::STRING {
+            return true;
+        }
+
+        // Check if this is a string literal or template literal
+        if let Some(TypeKey::Literal(LiteralValue::String(_))) = self.ctx.types.lookup(type_id) {
+            return true;
+        }
+
+        // Check if this is a template literal type
+        if let Some(TypeKey::TemplateLiteral(_)) = self.ctx.types.lookup(type_id) {
             return true;
         }
 
