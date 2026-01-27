@@ -302,6 +302,9 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "ReadonlySet",
     "TemplateStringsArray",
     "TypedPropertyDescriptor",
+    // ES2015 - Function types
+    "CallableFunction",
+    "NewableFunction",
     // ES2015 - Additional utility types
     "PropertyKey",
     // ES2017
@@ -334,6 +337,8 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     // ES2022
     "Awaited",
     "ErrorOptions", // ES2022 error options (for Error cause)
+    "Disposable",
+    "AsyncDisposable",
     // ES2015+ Typed arrays
     "DataView",
     "Int8Array",

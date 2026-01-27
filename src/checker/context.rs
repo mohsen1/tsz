@@ -858,7 +858,7 @@ impl<'a> CheckerContext<'a> {
             | "RegExp" | "Error" | "Math" | "JSON" | "console" | "window" | "document"
             | "ArrayBuffer" | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray"
             | "Int16Array" | "Uint16Array" | "Int32Array" | "Uint32Array" | "Float32Array"
-            | "Float64Array" | "this" | "globalThis" => true,
+            | "Float64Array" | "this" | "globalThis" | "IArguments" => true,
             _ => false,
         }
     }
