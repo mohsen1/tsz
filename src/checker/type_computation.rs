@@ -111,10 +111,6 @@ impl<'a> CheckerState<'a> {
     /// - Spread elements (`[...arr]`)
     /// - Common type inference for mixed elements
     pub(crate) fn get_type_of_array_literal(&mut self, idx: NodeIndex) -> TypeId {
-        eprintln!(
-            "DEBUG: get_type_of_array_literal called for node {:?}, contextual_type: {:?}",
-            idx, self.ctx.contextual_type
-        );
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
