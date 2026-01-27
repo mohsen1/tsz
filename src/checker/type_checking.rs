@@ -5301,6 +5301,49 @@ impl<'a> CheckerState<'a> {
     // Symbol and Duplicate Checking (extracted from state.rs)
     // =========================================================================
 
+    /// Check for missing global types when --noLib is used (TS2318).
+    ///
+    /// When --noLib is specified and no library files are loaded, TypeScript emits
+    /// TS2318 errors for essential global types that are expected to exist.
+    /// These errors are emitted at the beginning of the file (position 0).
+    ///
+    /// TypeScript emits these errors for the following core types:
+    /// - Array, Boolean, Function, IArguments, Number, Object, RegExp, String
+    /// - Awaited (when using awaited types)
+    ///
+    /// This matches TypeScript's behavior in tests like noCrashOnNoLib.ts
+    pub(crate) fn check_missing_global_types(&mut self) {
+        use crate::lib_loader;
+
+        // Core global types that TypeScript requires
+        const REQUIRED_GLOBAL_TYPES: &[&str] = &[
+            "Array",
+            "Boolean",
+            "Function",
+            "IArguments",
+            "Number",
+            "Object",
+            "RegExp",
+            "String",
+        ];
+
+        // Check each required global type
+        for &type_name in REQUIRED_GLOBAL_TYPES {
+            // Check if the type exists in the binder's file_locals
+            if !self.ctx.binder.file_locals.has(type_name) {
+                // Emit TS2318 at position 0 (beginning of file)
+                self.ctx.push_diagnostic(
+                    lib_loader::emit_error_global_type_missing(
+                        type_name,
+                        self.ctx.file_name.clone(),
+                        0,
+                        0,
+                    ),
+                );
+            }
+        }
+    }
+
     /// Check for duplicate identifiers (TS2300, TS2451, TS2392).
     /// Reports when variables, functions, classes, or other declarations
     /// have conflicting names within the same scope.

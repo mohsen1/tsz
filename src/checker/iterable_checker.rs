@@ -88,8 +88,16 @@ impl<'a> CheckerState<'a> {
                 // This handles Set<T>, Map<K, V>, ReadonlyArray<T>, etc.
                 self.is_iterable_type(app.base)
             }
-            // Type parameters - conservatively assume not iterable unless we can prove otherwise
-            Some(TypeKey::TypeParameter(_)) => false,
+            // Type parameters - check if the constraint is iterable
+            Some(TypeKey::TypeParameter(tp)) => {
+                if let Some(constraint) = tp.constraint {
+                    self.is_iterable_type(constraint)
+                } else {
+                    // Unconstrained type parameters (extends unknown/any) should not error
+                    // TypeScript does NOT emit TS2488 for unconstrained type parameters
+                    false
+                }
+            }
             // Functions, classes without Symbol.iterator are not iterable
             Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_)) => false,
             _ => false,

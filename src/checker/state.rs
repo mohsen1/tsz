@@ -1009,7 +1009,9 @@ impl<'a> CheckerState<'a> {
                     let _ = self.resolve_qualified_name(type_name_idx);
                     return TypeId::ERROR;
                 };
-                if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
+                if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
+                    && !self.symbol_is_type_only(sym_id)
+                {
                     let name = self
                         .entity_name_text(type_name_idx)
                         .unwrap_or_else(|| "<unknown>".to_string());
@@ -2716,6 +2718,7 @@ impl<'a> CheckerState<'a> {
                 if !is_namespace
                     && (self.alias_resolves_to_value_only(member_sym_id)
                         || self.symbol_is_value_only(member_sym_id))
+                    && !self.symbol_is_type_only(member_sym_id)
                 {
                     self.error_value_only_type_at(&right_name, qn.right);
                     return TypeId::ERROR;
@@ -2763,6 +2766,7 @@ impl<'a> CheckerState<'a> {
                     if !is_namespace
                         && (self.alias_resolves_to_value_only(member_sym_id)
                             || self.symbol_is_value_only(member_sym_id))
+                        && !self.symbol_is_type_only(member_sym_id)
                     {
                         self.error_value_only_type_at(&right_name, qn.right);
                         return TypeId::ERROR;
@@ -3080,7 +3084,9 @@ impl<'a> CheckerState<'a> {
                 let _ = self.resolve_qualified_name(type_name_idx);
                 return TypeId::ERROR;
             };
-            if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
+            if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
+                && !self.symbol_is_type_only(sym_id)
+            {
                 let name = self
                     .entity_name_text(type_name_idx)
                     .unwrap_or_else(|| "<unknown>".to_string());
@@ -8081,8 +8087,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Emit missing-name diagnostics for nested type references before lowering.
-        self.check_type_for_missing_names(idx);
+        // Skip pre-check for missing names - let type lowering handle it to avoid duplicates.
+        // The check_type_for_missing_names call was causing duplicate TS2304 errors
+        // because both the pre-check and type lowering emit errors for the same nodes.
+        // See: docs/TS2304_DUPLICATE_ERRORS.md
+        //
+        // COMMENTED OUT TO FIX DUPLICATE TS2304 ERRORS:
+        // self.check_type_for_missing_names(idx);
 
         // Use TypeLowering which handles all type nodes
         let type_param_bindings = self.get_type_param_bindings();
