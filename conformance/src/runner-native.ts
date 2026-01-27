@@ -207,8 +207,15 @@ function runNative(testCase: ParsedTestCase): Promise<{ codes: number[]; crashed
           }
         }
 
+        // Exit code 1 with error codes is normal (tsz reports type errors)
+        // Only treat as crash if:
+        // 1. Exit code is not 0 or 1, OR
+        // 2. Exit code is 1 but no error codes found (unexpected error)
+        const hasErrors = codes.length > 0;
+        const actuallyCrashed = (code !== 0 && code !== 1) || (code === 1 && !hasErrors);
+
         cleanup();
-        resolve({ codes, crashed: false });
+        resolve({ codes, crashed: actuallyCrashed });
       });
 
       child.on('error', (err) => {
