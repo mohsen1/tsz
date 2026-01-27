@@ -3877,6 +3877,14 @@ impl<'a> CheckerState<'a> {
                 let member_types = self.ctx.types.type_list(members);
                 member_types.iter().any(|&m| self.is_constructor_type(m))
             }
+            Some(TypeKey::Union(members)) => {
+                // Union types are constructable if ALL members are constructable
+                // This matches TypeScript's behavior where `type A | B` used in extends
+                // requires both A and B to be constructors
+                let member_types = self.ctx.types.type_list(members);
+                !member_types.is_empty()
+                    && member_types.iter().all(|&m| self.is_constructor_type(m))
+            }
             Some(TypeKey::Application(app_id)) => {
                 // For type applications like Ctor<{}>, check if the base type is a constructor
                 // This handles cases like:
@@ -5453,13 +5461,13 @@ impl<'a> CheckerState<'a> {
             };
 
             if should_emit {
-                self.ctx
-                    .push_diagnostic(lib_loader::emit_error_global_type_missing(
-                        type_name,
-                        self.ctx.file_name.clone(),
-                        0,
-                        0,
-                    ));
+                let diag = lib_loader::emit_error_global_type_missing(
+                    type_name,
+                    self.ctx.file_name.clone(),
+                    0,
+                    0,
+                );
+                self.ctx.diagnostics.push(diag);
             }
         }
     }
@@ -9460,8 +9468,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Modules/namespaces can also be used as types in some contexts
-        if (symbol.flags & symbol_flags::MODULE) != 0 {
+        // Modules/namespaces can be used as types in some contexts, but not if they're
+        // merged with functions or other values (e.g., function+namespace declaration merging)
+        // In such cases, the function/value takes precedence and TS2749 should be emitted
+        let has_module = (symbol.flags & symbol_flags::MODULE) != 0;
+        let has_function = (symbol.flags & symbol_flags::FUNCTION) != 0;
+        let has_other_value = (symbol.flags & (symbol_flags::VALUE & !symbol_flags::FUNCTION)) != 0;
+
+        // Pure namespace (MODULE only, no function/value flags) is not value-only
+        if has_module && !has_function && !has_other_value {
             return false;
         }
 

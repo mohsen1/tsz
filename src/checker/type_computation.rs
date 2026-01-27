@@ -2909,6 +2909,83 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Elaborate array literal argument errors by checking each element.
+    ///
+    /// When an array literal is passed as an argument but doesn't match the parameter type,
+    /// TypeScript emits TS2322 errors for each incompatible element instead of a single
+    /// TS2345 error for the whole argument. This function implements that behavior.
+    ///
+    /// Returns `true` if elaboration was performed, `false` if the argument is not
+    /// an array literal and normal TS2345 error should be emitted.
+    fn elaborate_array_literal_argument_error(
+        &mut self,
+        arg_idx: NodeIndex,
+        arg_type: TypeId,
+        param_type: TypeId,
+    ) -> bool {
+        use crate::solver::TypeKey;
+
+        // Check if the argument is an array literal
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+
+        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(array_expr) = self.ctx.arena.get_literal_expr(arg_node) else {
+            return false;
+        };
+
+        // Check if both types are arrays
+        let arg_elem_type = match self.ctx.types.lookup(arg_type) {
+            Some(TypeKey::Array(elem)) => elem,
+            _ => return false,
+        };
+
+        let param_elem_type = match self.ctx.types.lookup(param_type) {
+            Some(TypeKey::Array(elem)) => elem,
+            _ => return false,
+        };
+
+        // If the element types are already assignable, no error needed
+        if self.is_assignable_to(arg_elem_type, param_elem_type) {
+            return false;
+        }
+
+        // Elaborate: Check each array element against the expected element type
+        let mut found_error = false;
+        for &elem_idx in array_expr.elements.nodes.iter() {
+            if elem_idx.is_none() {
+                continue;
+            }
+
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            // Skip spread elements for now (they have their own checking)
+            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                continue;
+            }
+
+            // Get the element's type (it should already be computed)
+            let elem_type = self.get_type_of_node(elem_idx);
+
+            // Check if this element is assignable to the expected element type
+            if !self.is_assignable_to(elem_type, param_elem_type) {
+                // Emit TS2322 for this specific element
+                self.error_type_not_assignable_at(elem_type, param_elem_type, elem_idx);
+                found_error = true;
+            }
+        }
+
+        // Return true to indicate we elaborated the error
+        // (even if no elements were incompatible, we don't want the TS2345 error)
+        found_error
+    }
+
     // =========================================================================
     // Type Relationship Queries
     // =========================================================================
