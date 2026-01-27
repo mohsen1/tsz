@@ -108,6 +108,38 @@ The `IndexSignatureResolver.is_readonly` function in `src/solver/index_signature
 - TypeScript issue #37823 - Readonly property assignment in constructors
 - TypeScript Documentation: Understanding readonly modifier
 
+## Implementation Summary
+
+Two commits were needed to fully address the intersection readonly bug:
+
+1. **Commit 1c88e9fc0**: Fixed `property_is_readonly` in `src/solver/operations.rs`
+   - Changed intersection handling from `.any()` to `.all()`
+   - Handles non-normalized intersection types
+
+2. **Commit 160e6973e** (part of larger commit): Fixed intersection normalization in `src/solver/intern.rs`
+   - Changed readonly merging from `||` to `&&` in:
+     - `try_merge_objects_in_intersection` (properties and index signatures)
+     - `try_merge_callables_in_intersection` (properties and index signatures)
+   - Handles normalized intersection types that get merged into single objects
+
+## Test Results
+
+After fixes, intersection readonly behavior now matches TypeScript:
+
+```typescript
+// Mixed readonly/mutable - allows assignment (was false positive)
+type Mixed = { readonly a: number } & { a: number };
+let x: Mixed = { a: 1 };
+x.a = 2; // ✓ OK - no error
+
+// All readonly - correctly errors
+interface Base { readonly value: number; }
+let base: Base = { value: 1 };
+base.value = 12; // ✓ Error TS2540
+```
+
 ## Expected Impact
 
 Reduction from 10,381 TS2540 errors to <100 expected errors.
+
+Note: Some edge cases with all-readonly intersections may still have issues due to type normalization, but the main source of false positives (mixed readonly/mutable) is fixed.
