@@ -6168,7 +6168,8 @@ impl ParserState {
                 self.next_token();
                 let _ = self.parse_return_type();
                 let result = !self.scanner.has_preceding_line_break()
-                    && self.is_token(SyntaxKind::EqualsGreaterThanToken);
+                    && (self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                        || self.is_token(SyntaxKind::OpenBraceToken));
 
                 self.arena.nodes.truncate(saved_arena_len);
                 self.parse_diagnostics.truncate(saved_diagnostics_len);
@@ -6209,7 +6210,8 @@ impl ParserState {
             self.next_token();
             let _ = self.parse_return_type();
             let result = !self.scanner.has_preceding_line_break()
-                && self.is_token(SyntaxKind::EqualsGreaterThanToken);
+                && (self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                    || self.is_token(SyntaxKind::OpenBraceToken));
 
             self.arena.nodes.truncate(saved_arena_len);
             self.parse_diagnostics.truncate(saved_diagnostics_len);
