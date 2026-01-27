@@ -1064,10 +1064,12 @@ impl<'a> CheckerState<'a> {
             && numeric_string_index.is_none()
         {
             use_index_signature_check = false;
+            // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
             let result = self
                 .ctx
                 .types
-                .property_access_type(object_type_for_access, &property_name);
+                .property_access_type(resolved_type, &property_name);
             result_type = Some(match result {
                 PropertyAccessResult::Success { type_id, .. } => type_id,
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {

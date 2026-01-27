@@ -215,8 +215,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // If all members succeeded, return a union of their return types
-        if !return_types.is_empty() && failures.is_empty() {
+        // If any members succeeded, return a union of their return types
+        // TypeScript allows calling a union of functions if at least one member accepts the arguments
+        if !return_types.is_empty() {
             if return_types.len() == 1 {
                 return CallResult::Success(return_types[0]);
             }
