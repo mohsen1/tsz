@@ -644,6 +644,38 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Clear type cache for a node and all its children recursively.
+    ///
+    /// This is used when we need to recompute types with different contextual information,
+    /// such as when checking return statements with contextual return types.
+    pub(crate) fn clear_type_cache_recursive(&mut self, idx: NodeIndex) {
+        use crate::parser::syntax_kind_ext;
+
+        if idx.is_none() {
+            return;
+        }
+
+        // Clear this node's cache
+        eprintln!("DEBUG: Clearing cache for node {:?}", idx);
+        self.ctx.node_types.remove(&idx.0);
+
+        // Recursively clear children
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        // For array literals, clear cache for all elements
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            if let Some(array) = self.ctx.arena.get_literal_expr(node) {
+                for &elem_idx in array.elements.nodes.iter() {
+                    self.clear_type_cache_recursive(elem_idx);
+                }
+            }
+        }
+
+        // TODO: Add more node types as needed (object literals, etc.)
+    }
+
     /// Compute the type of a node (internal, not cached).
     fn compute_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {

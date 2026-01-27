@@ -2449,6 +2449,10 @@ impl<'a> CheckerState<'a> {
             let prev_context = self.ctx.contextual_type;
             if expected_type != TypeId::ANY && !self.type_contains_error(expected_type) {
                 self.ctx.contextual_type = Some(expected_type);
+                // Clear cached type to force recomputation with contextual type
+                // This is necessary because the expression might have been previously typed
+                // without contextual information (e.g., during function body analysis)
+                self.clear_type_cache_recursive(return_data.expression);
             }
             let return_type = self.get_type_of_node(return_data.expression);
             self.ctx.contextual_type = prev_context;
