@@ -225,7 +225,53 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             CallResult::Success(union_result)
         } else if !failures.is_empty() {
             // At least one member failed with a non-NotCallable error
-            // Return the first failure (similar to how overloads are handled)
+            // Check if all failures are ArgumentTypeMismatch - if so, compute the intersection
+            // of all parameter types to get the expected type (e.g., for union of functions
+            // with incompatible parameter types like (x: number) => void | (x: boolean) => void)
+            let all_arg_mismatches = failures
+                .iter()
+                .all(|f| matches!(f, CallResult::ArgumentTypeMismatch { .. }));
+
+            if all_arg_mismatches && !failures.is_empty() {
+                // Extract all parameter types from the failures
+                let mut param_types = Vec::new();
+                for failure in &failures {
+                    if let CallResult::ArgumentTypeMismatch { expected, .. } = failure {
+                        param_types.push(*expected);
+                    }
+                }
+
+                // Compute the intersection of all parameter types
+                // For incompatible primitives like number & boolean, this becomes never
+                let intersected_param = if param_types.len() == 1 {
+                    param_types[0]
+                } else {
+                    // Build intersection by combining all types
+                    let mut result = param_types[0];
+                    for &param_type in &param_types[1..] {
+                        result = self.interner.intersection2(result, param_type);
+                    }
+                    result
+                };
+
+                // Return a single ArgumentTypeMismatch with the intersected type
+                // Use the first argument type as the actual
+                let actual_arg_type =
+                    if let Some(CallResult::ArgumentTypeMismatch { actual, .. }) = failures.first()
+                    {
+                        *actual
+                    } else {
+                        TypeId::UNKNOWN
+                    };
+
+                return CallResult::ArgumentTypeMismatch {
+                    index: 0,
+                    expected: intersected_param,
+                    actual: actual_arg_type,
+                };
+            }
+
+            // Not all argument type mismatches, return the first failure
             failures
                 .into_iter()
                 .next()
