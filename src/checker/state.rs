@@ -10235,6 +10235,12 @@ impl<'a> CheckerState<'a> {
                     // Symbol was resolved - check if it represents a constructor type for extends clauses
                     if is_extends_clause {
                         let symbol_type = self.get_type_of_symbol(heritage_sym);
+                        eprintln!(
+                            "DEBUG: heritage symbol type: {:?}, is_constructor_type: {}, is_class_symbol: {}",
+                            self.ctx.types.lookup(symbol_type),
+                            self.is_constructor_type(symbol_type),
+                            self.is_class_symbol(heritage_sym)
+                        );
                         if !self.is_constructor_type(symbol_type)
                             && !self.is_class_symbol(heritage_sym)
                         {

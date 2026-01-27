@@ -3847,6 +3847,13 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_constructor_type(&self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
 
+        // DEBUG: Print what we're checking
+        eprintln!(
+            "DEBUG: is_constructor_type called with type_id={:?}, type_key={:?}",
+            type_id,
+            self.ctx.types.lookup(type_id)
+        );
+
         // First check if it directly has construct signatures
         if self.has_construct_sig(type_id) {
             return true;
@@ -3865,7 +3872,10 @@ impl<'a> CheckerState<'a> {
             Some(TypeKey::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint {
                     // DEBUG: Print what we're checking
-                    eprintln!("DEBUG: is_constructor_type checking TypeParameter constraint: {:?}", self.ctx.types.lookup(constraint));
+                    eprintln!(
+                        "DEBUG: is_constructor_type checking TypeParameter constraint: {:?}",
+                        self.ctx.types.lookup(constraint)
+                    );
                     self.is_constructor_type(constraint)
                 } else {
                     false
