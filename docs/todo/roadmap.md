@@ -16,18 +16,19 @@ Last updated: 2026-01-27
 - P4 (TS2322): #180 merged - Tracing added for assignability analysis
 
 **🚧 Remaining**:
-- P1 (TS2540): Readonly check ordering - Not started
+- P1 (TS2540): Readonly check ordering - PR #183 created
 
 ## Priority status (P0-P4)
 | Priority | Issue | Status | PRs |
 |----------|-------|--------|-----|
 | **P0** | TS2749 (14,175 extra) | ✅ Merged | #179, #181 |
-| **P1** | TS2540 (10,381 extra) | Not started | (none) |
+| **P1** | TS2540 (10,381 extra) | 🟡 PR Open | #183 |
 | **P2** | TS2339 (8,176 extra) | ✅ Merged | #182 |
 | **P3** | TS2318 (3,386 missing) | ✅ Merged | #178 |
 | **P4** | TS2322 (13,671 extra) | ✅ Merged | #180 |
 
 PR links:
+- #183 https://github.com/mohsen1/tsz/pull/183
 - #182 https://github.com/mohsen1/tsz/pull/182
 - #181 https://github.com/mohsen1/tsz/pull/181
 - #180 https://github.com/mohsen1/tsz/pull/180
@@ -56,18 +57,23 @@ PR links:
 
 ---
 
-## P1: TS2540 - Readonly assignment (extra errors)
+## P1: TS2540 - Readonly assignment (extra errors) 🟡
 **Impact**: Large false positive source.
 
 **Root cause**: Readonly check happens before property existence check, diverging from tsc ordering.
 
-**Current work**: No PR yet.
+**Current work**: #183 https://github.com/mohsen1/tsz/pull/183
+
+**Implementation**:
+- ✅ Located `check_readonly_assignment()` in `src/checker/state.rs`
+- ✅ Added property existence check using `property_access_type()` before readonly check
+- ✅ Added test `test_nonexistent_property_should_not_report_ts2540`
+- ✅ Existing readonly tests still pass
 
 **Next steps**:
-- [ ] Locate the property access/assignment path where readonly is checked.
-- [ ] Reorder existence vs readonly checks to match tsc.
-- [ ] Add focused tests (readonly + missing property permutations).
-- [ ] Open PR with CI green.
+- [ ] Wait for CI to pass on PR #183
+- [ ] Merge PR #183
+- [ ] Monitor conformance test results for TS2540 error reduction
 
 ---
 
