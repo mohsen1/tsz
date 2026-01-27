@@ -8254,7 +8254,15 @@ impl<'a> CheckerState<'a> {
         sym_id: crate::binder::SymbolId,
         visited_aliases: &mut Vec<crate::binder::SymbolId>,
     ) -> Option<crate::binder::SymbolId> {
+        // Prevent stack overflow from long alias chains
+        const MAX_ALIAS_RESOLUTION_DEPTH: usize = 128;
+        if visited_aliases.len() >= MAX_ALIAS_RESOLUTION_DEPTH {
+            return None;
+        }
+
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        // Defensive: Verify symbol is valid before accessing fields
+        // This prevents crashes when symbol IDs reference non-existent symbols
         if symbol.flags & symbol_flags::ALIAS == 0 {
             return Some(sym_id);
         }
@@ -8304,8 +8312,13 @@ impl<'a> CheckerState<'a> {
         let decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
             let import = self.ctx.arena.get_import_decl(decl_node)?;
+            // Track resolution depth to prevent stack overflow
+            let depth = visited_aliases.len();
+            if depth >= 128 {
+                return None; // Prevent stack overflow
+            }
             if let Some(target) =
-                self.resolve_qualified_symbol_inner(import.module_specifier, visited_aliases)
+                self.resolve_qualified_symbol_inner(import.module_specifier, visited_aliases, depth)
             {
                 return Some(target);
             }

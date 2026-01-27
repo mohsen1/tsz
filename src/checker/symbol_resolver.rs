@@ -173,6 +173,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a symbol has a specific flag.
     ///
     /// Returns true if the symbol has the specified flag bit set.
+    /// Returns false if the symbol doesn't exist.
     pub fn symbol_has_flag(&self, sym_id: SymbolId, flag: u32) -> bool {
         self.ctx
             .binder
@@ -180,6 +181,34 @@ impl<'a> CheckerState<'a> {
             .get(sym_id)
             .map(|symbol| (symbol.flags & flag) != 0)
             .unwrap_or(false)
+    }
+
+    /// Safely get symbol flags, returning 0 if symbol doesn't exist.
+    ///
+    /// This defensive accessor prevents crashes when symbol IDs are invalid
+    /// or reference symbols that don't exist in any binder.
+    pub fn symbol_flags_safe(&self, sym_id: SymbolId) -> u32 {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.flags)
+            .unwrap_or(0)
+    }
+
+    /// Safely get symbol flags with lib binders fallback.
+    ///
+    /// Returns 0 if the symbol doesn't exist in any binder.
+    pub fn symbol_flags_with_libs(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &[Arc<crate::binder::BinderState>],
+    ) -> u32 {
+        self.ctx
+            .binder
+            .get_symbol_with_libs(sym_id, lib_binders)
+            .map(|symbol| symbol.flags)
+            .unwrap_or(0)
     }
 
     // =========================================================================
@@ -361,6 +390,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(symbol) =
                             self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                         {
+                            // Defensive: Ensure symbol fields are accessible before accessing flags
                             let export_ok = !require_export
                                 || scope.kind != ContainerKind::Module
                                 || symbol.is_exported
@@ -450,6 +480,7 @@ impl<'a> CheckerState<'a> {
                                             .binder
                                             .get_symbol_with_libs(member_id, &lib_binders)
                                         {
+                                            // Defensive: Validate symbol before accessing flags
                                             let is_class_member =
                                                 Self::is_class_member_symbol(member_symbol.flags);
                                             if debug {
@@ -748,7 +779,7 @@ impl<'a> CheckerState<'a> {
     /// Also resolves through alias symbols (imports).
     pub(crate) fn resolve_qualified_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
         let mut visited_aliases = Vec::new();
-        self.resolve_qualified_symbol_inner(idx, &mut visited_aliases)
+        self.resolve_qualified_symbol_inner(idx, &mut visited_aliases, 0)
     }
 
     /// Inner implementation of qualified symbol resolution with cycle detection.
@@ -756,7 +787,14 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
         visited_aliases: &mut Vec<SymbolId>,
+        depth: usize,
     ) -> Option<SymbolId> {
+        // Prevent stack overflow from deeply nested qualified names
+        const MAX_QUALIFIED_NAME_DEPTH: usize = 128;
+        if depth >= MAX_QUALIFIED_NAME_DEPTH {
+            return None;
+        }
+
         let node = self.ctx.arena.get(idx)?;
 
         if node.kind == SyntaxKind::Identifier as u16 {
@@ -779,7 +817,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let qn = self.ctx.arena.get_qualified_name(node)?;
-        let left_sym = self.resolve_qualified_symbol_inner(qn.left, visited_aliases)?;
+        let left_sym = self.resolve_qualified_symbol_inner(qn.left, visited_aliases, depth + 1)?;
         let left_sym = self.resolve_alias_symbol(left_sym, visited_aliases)?;
         let right_name = self
             .ctx

@@ -1638,7 +1638,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a type has string as a union member (directly or nested).
     /// Used to determine if + operator could be string concatenation.
     fn type_has_string_union_member(&self, type_id: TypeId) -> bool {
-        use crate::solver::{TypeKey, LiteralValue};
+        use crate::solver::{LiteralValue, TypeKey};
 
         if type_id == TypeId::STRING {
             return true;

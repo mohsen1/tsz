@@ -1535,6 +1535,13 @@ impl<'a> CheckerState<'a> {
         use crate::solver::{CallableShape, PropertyInfo, TypeKey};
         use rustc_hash::FxHashMap;
 
+        // Check recursion depth to prevent stack overflow
+        const MAX_MERGE_DEPTH: u32 = 32;
+        let depth = self.ctx.symbol_resolution_depth.get();
+        if depth >= MAX_MERGE_DEPTH {
+            return ctor_type; // Prevent infinite recursion in merge
+        }
+
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return ctor_type;
         };
@@ -1556,6 +1563,11 @@ impl<'a> CheckerState<'a> {
         // This includes both value exports (consts, functions) and type-only exports (interfaces, type aliases).
         // For merged class+namespace symbols, TypeScript allows accessing both value and type members.
         for (name, member_id) in exports.iter() {
+            // Skip if this member is already being resolved (prevents infinite recursion)
+            if self.ctx.symbol_resolution_set.contains(member_id) {
+                continue; // Skip circular references
+            }
+
             let type_id = self.get_type_of_symbol(*member_id);
             let name_atom = self.ctx.types.intern_string(name);
             props.entry(name_atom).or_insert(PropertyInfo {
@@ -1620,6 +1632,11 @@ impl<'a> CheckerState<'a> {
         // Merge ALL exports from the namespace into the function type.
         // This allows accessing namespace members via FunctionName.Member.
         for (name, member_id) in exports.iter() {
+            // Skip if this member is already being resolved (prevents infinite recursion)
+            if self.ctx.symbol_resolution_set.contains(member_id) {
+                continue; // Skip circular references
+            }
+
             let type_id = self.get_type_of_symbol(*member_id);
             let name_atom = self.ctx.types.intern_string(name);
             props.entry(name_atom).or_insert(PropertyInfo {
@@ -4123,6 +4140,13 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Circular reference - propagate error
         }
 
+        // Check recursion depth to prevent stack overflow
+        let depth = self.ctx.symbol_resolution_depth.get();
+        if depth >= self.ctx.max_symbol_resolution_depth {
+            return TypeId::ERROR; // Depth exceeded - prevent stack overflow
+        }
+        self.ctx.symbol_resolution_depth.set(depth + 1);
+
         // Push onto resolution stack
         self.ctx.symbol_resolution_stack.push(sym_id);
         self.ctx.symbol_resolution_set.insert(sym_id);
@@ -4134,6 +4158,11 @@ impl<'a> CheckerState<'a> {
         // Pop from resolution stack
         self.ctx.symbol_resolution_stack.pop();
         self.ctx.symbol_resolution_set.remove(&sym_id);
+
+        // Decrement recursion depth
+        self.ctx
+            .symbol_resolution_depth
+            .set(self.ctx.symbol_resolution_depth.get() - 1);
 
         // Cache result
         self.ctx.symbol_types.insert(sym_id, result);
@@ -4462,6 +4491,15 @@ impl<'a> CheckerState<'a> {
                 if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                     && let Some(import) = self.ctx.arena.get_import_decl(node)
                 {
+                    // CRITICAL FIX: Prevent stack overflow from circular references
+                    // When resolving an import equals inside a namespace that's currently being
+                    // resolved, return ANY to break the cycle instead of crashing
+                    if !self.ctx.symbol_resolution_stack.is_empty() {
+                        // We're in a nested resolution - this is likely to cause a cycle
+                        // Return ANY as a safe fallback
+                        return (TypeId::ANY, Vec::new());
+                    }
+
                     // module_specifier holds the reference (e.g., 'ns.member' or require("..."))
                     // Use resolve_qualified_symbol to get the target symbol directly,
                     // avoiding the value-only check that's inappropriate for import aliases.
@@ -8097,26 +8135,45 @@ impl<'a> CheckerState<'a> {
     /// let c: { x: number };    // → Object type with property x: number
     /// ```
     pub fn get_type_from_type_node(&mut self, idx: NodeIndex) -> TypeId {
+        // Check cache first to prevent duplicate error emissions
+        // This is critical for TS2304 - without caching, the same type node
+        // can be checked multiple times, emitting duplicate errors
+        if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            return cached;
+        }
+
         use crate::solver::TypeLowering;
 
         // First check if this is a type that needs special handling with binder resolution
         if let Some(node) = self.ctx.arena.get(idx) {
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
                 // Validate the type reference exists before lowering
-                return self.get_type_from_type_reference(idx);
+                let result = self.get_type_from_type_reference(idx);
+                // Cache the result before returning
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
             }
             if node.kind == syntax_kind_ext::TYPE_QUERY {
                 // Handle typeof X - need to resolve symbol properly via binder
-                return self.get_type_from_type_query(idx);
+                let result = self.get_type_from_type_query(idx);
+                // Cache the result before returning
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
             }
             if node.kind == syntax_kind_ext::UNION_TYPE {
                 // Handle union types specially to ensure nested typeof expressions
                 // are resolved via binder (for abstract class detection)
-                return self.get_type_from_union_type(idx);
+                let result = self.get_type_from_union_type(idx);
+                // Cache the result before returning
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
             }
             if node.kind == syntax_kind_ext::TYPE_LITERAL {
                 // Type literals should use checker resolution so type parameters resolve correctly.
-                return self.get_type_from_type_literal(idx);
+                let result = self.get_type_from_type_literal(idx);
+                // Cache the result before returning
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
             }
         }
 
@@ -8139,7 +8196,10 @@ impl<'a> CheckerState<'a> {
             &value_resolver,
         )
         .with_type_param_bindings(type_param_bindings);
-        lowering.lower_type(idx)
+        let result = lowering.lower_type(idx);
+        // Cache the result before returning
+        self.ctx.node_types.insert(idx.0, result);
+        result
     }
 
     // =========================================================================
@@ -8731,21 +8791,24 @@ impl<'a> CheckerState<'a> {
                         // TS7010 (implicit any return) is emitted for functions without
                         // return type annotations when noImplicitAny is enabled and the return
                         // type cannot be inferred (e.g., is 'any' or only returns undefined)
+                        // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
                         // maybe_report_implicit_any_return handles the noImplicitAny check internally
-                        let func_name = self.get_function_name_from_node(stmt_idx);
-                        let name_node = if !func.name.is_none() {
-                            Some(func.name)
-                        } else {
-                            None
-                        };
-                        self.maybe_report_implicit_any_return(
-                            func_name,
-                            name_node,
-                            return_type,
-                            has_type_annotation,
-                            false,
-                            stmt_idx,
-                        );
+                        if !func.is_async {
+                            let func_name = self.get_function_name_from_node(stmt_idx);
+                            let name_node = if !func.name.is_none() {
+                                Some(func.name)
+                            } else {
+                                None
+                            };
+                            self.maybe_report_implicit_any_return(
+                                func_name,
+                                name_node,
+                                return_type,
+                                has_type_annotation,
+                                false,
+                                stmt_idx,
+                            );
+                        }
 
                         // TS2705: Async function must return Promise
                         // Only check if there's an explicit return type annotation that is NOT Promise
@@ -12197,14 +12260,15 @@ impl<'a> CheckerState<'a> {
             self.check_type_for_parameter_properties(method.type_annotation);
         }
 
+        // Check for async modifier (needed for both abstract and concrete methods)
+        let is_async = self.has_async_modifier(&method.modifiers);
+        let is_generator = method.asterisk_token;
+
         // Check method body
         if !method.body.is_none() {
             if !has_type_annotation {
                 return_type = self.infer_return_type_from_body(method.body, None);
             }
-
-            let is_async = self.has_async_modifier(&method.modifiers);
-            let is_generator = method.asterisk_token;
 
             // TS2697: Check if async method has access to Promise type
             // DISABLED: Causes too many false positives
@@ -12220,6 +12284,7 @@ impl<'a> CheckerState<'a> {
 
             // TS7011 (implicit any return) is only emitted for ambient methods,
             // matching TypeScript's behavior
+            // Async methods infer Promise<void>, not 'any', so they should NOT trigger TS7011
             let is_ambient_class = self
                 .ctx
                 .enclosing_class
@@ -12228,7 +12293,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(false);
             let is_ambient_file = self.ctx.file_name.ends_with(".d.ts");
 
-            if is_ambient_class || is_ambient_file {
+            if (is_ambient_class || is_ambient_file) && !is_async {
                 let method_name = self.get_property_name(method.name);
                 self.maybe_report_implicit_any_return(
                     method_name,
@@ -12283,15 +12348,18 @@ impl<'a> CheckerState<'a> {
         } else {
             // Abstract method or method overload signature
             // Report TS7010 for abstract methods without return type annotation
-            let method_name = self.get_property_name(method.name);
-            self.maybe_report_implicit_any_return(
-                method_name,
-                Some(method.name),
-                return_type,
-                has_type_annotation,
-                false,
-                member_idx,
-            );
+            // Async methods infer Promise<void>, not 'any', so they should NOT trigger TS7010
+            if !is_async {
+                let method_name = self.get_property_name(method.name);
+                self.maybe_report_implicit_any_return(
+                    method_name,
+                    Some(method.name),
+                    return_type,
+                    has_type_annotation,
+                    false,
+                    member_idx,
+                );
+            }
         }
 
         self.pop_type_parameters(type_param_updates);
@@ -12457,6 +12525,7 @@ impl<'a> CheckerState<'a> {
 
             // TS7010 (implicit any return) is only emitted for ambient accessors,
             // matching TypeScript's behavior
+            // Async getters infer Promise<void>, not 'any', so they should NOT trigger TS7010
             if is_getter {
                 let is_ambient_class = self
                     .ctx
@@ -12465,8 +12534,9 @@ impl<'a> CheckerState<'a> {
                     .map(|c| c.is_declared)
                     .unwrap_or(false);
                 let is_ambient_file = self.ctx.file_name.ends_with(".d.ts");
+                let is_async = self.has_async_modifier(&accessor.modifiers);
 
-                if is_ambient_class || is_ambient_file {
+                if (is_ambient_class || is_ambient_file) && !is_async {
                     let accessor_name = self.get_property_name(accessor.name);
                     self.maybe_report_implicit_any_return(
                         accessor_name,

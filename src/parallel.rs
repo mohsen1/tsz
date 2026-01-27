@@ -27,7 +27,9 @@
 //! ```
 
 use crate::binder::BinderState;
-use crate::binder::{FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
+use crate::binder::{
+    FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::cli::config::resolve_default_lib_files;
 use crate::emitter::ScriptTarget;

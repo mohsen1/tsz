@@ -5,7 +5,7 @@
 //! to borrow the context mutably.
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
@@ -329,6 +329,13 @@ pub struct CheckerContext<'a> {
     /// Tracks the chain of modules being resolved to detect circular dependencies.
     pub import_resolution_stack: Vec<String>,
 
+    /// Symbol resolution depth counter for preventing stack overflow.
+    /// Tracks how many nested get_type_of_symbol calls we've made.
+    pub symbol_resolution_depth: Cell<u32>,
+
+    /// Maximum symbol resolution depth before we give up (prevents stack overflow).
+    pub max_symbol_resolution_depth: u32,
+
     /// Lib file contexts for global type resolution (lib.es5.d.ts, lib.dom.d.ts, etc.).
     /// Each entry is a (arena, binder) pair from a pre-parsed lib file.
     /// Used as a fallback when resolving type references not found in the main file.
@@ -412,6 +419,8 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
+            symbol_resolution_depth: Cell::new(0),
+            max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
@@ -479,6 +488,8 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
+            symbol_resolution_depth: Cell::new(0),
+            max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
@@ -548,6 +559,8 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
+            symbol_resolution_depth: Cell::new(0),
+            max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
@@ -616,6 +629,8 @@ impl<'a> CheckerContext<'a> {
             emitted_diagnostics: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
+            symbol_resolution_depth: Cell::new(0),
+            max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),

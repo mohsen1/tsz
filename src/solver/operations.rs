@@ -2331,14 +2331,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             }
                             nullable_causes.push(cause);
                         }
-                        // If any non-nullable member is missing the property, it's a PropertyNotFound error
-                        _ => {
-                            return PropertyAccessResult::PropertyNotFound {
-                                type_id: obj_type,
-                                property_name: prop_atom,
-                            };
+                        // PropertyNotFound or IsUnknown: skip this member, continue checking others
+                        PropertyAccessResult::PropertyNotFound { .. }
+                        | PropertyAccessResult::IsUnknown => {
+                            // Member doesn't have this property - skip it
                         }
                     }
+                }
+
+                // If no non-nullable members had the property, it's a PropertyNotFound error
+                if valid_results.is_empty() && nullable_causes.is_empty() {
+                    return PropertyAccessResult::PropertyNotFound {
+                        type_id: obj_type,
+                        property_name: prop_atom,
+                    };
                 }
 
                 // If there are nullable causes, return PossiblyNullOrUndefined

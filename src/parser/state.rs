@@ -7577,8 +7577,29 @@ impl ParserState {
 
         // Get the regex text (including slashes and flags)
         let text = self.scanner.get_token_value_ref().to_string();
+
+        // Capture regex flag errors BEFORE calling parse_expected (which clears them via next_token)
+        let flag_errors: Vec<_> = self.scanner.get_regex_flag_errors().to_vec();
+
         self.parse_expected(SyntaxKind::RegularExpressionLiteral);
         let end_pos = self.token_end();
+
+        // Emit errors for all regex flag issues detected by scanner
+        for error in flag_errors {
+            let (message, code) = match error.kind {
+                crate::scanner_impl::RegexFlagErrorKind::Duplicate => {
+                    ("Duplicate regular expression flag.", 1500)
+                }
+                crate::scanner_impl::RegexFlagErrorKind::InvalidFlag => {
+                    ("Unknown regular expression flag.", 1499)
+                }
+                crate::scanner_impl::RegexFlagErrorKind::IncompatibleFlags => (
+                    "The Unicode 'u' flag and the Unicode Sets 'v' flag cannot be set simultaneously.",
+                    1502,
+                ),
+            };
+            self.parse_error_at(error.pos as u32, 1, message, code);
+        }
 
         self.arena.add_literal(
             SyntaxKind::RegularExpressionLiteral as u16,
