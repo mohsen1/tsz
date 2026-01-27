@@ -1039,8 +1039,12 @@ impl<'a> CheckerState<'a> {
                     let _ = self.resolve_qualified_name(type_name_idx);
                     return TypeId::ERROR;
                 };
-                if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
-                    && !self.symbol_is_type_only(sym_id)
+                let symbol_name = self
+                    .entity_name_symbol_text(type_name_idx)
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                if (self.alias_resolves_to_value_only(sym_id, Some(symbol_name.as_str()))
+                    || self.symbol_is_value_only(sym_id, Some(symbol_name.as_str())))
+                    && !self.symbol_is_type_only(sym_id, Some(symbol_name.as_str()))
                 {
                     let name = self
                         .entity_name_text(type_name_idx)
@@ -1195,9 +1199,9 @@ impl<'a> CheckerState<'a> {
                     // Check if this is a value-only symbol (but allow type-only imports)
                     // Type-only imports (is_type_only = true) should resolve in type positions
                     // even if they don't have a VALUE flag
-                    if (self.alias_resolves_to_value_only(sym_id)
-                        || self.symbol_is_value_only(sym_id))
-                        && !self.symbol_is_type_only(sym_id)
+                    if (self.alias_resolves_to_value_only(sym_id, Some(name))
+                        || self.symbol_is_value_only(sym_id, Some(name)))
+                        && !self.symbol_is_type_only(sym_id, Some(name))
                     {
                         self.error_value_only_type_at(name, type_name_idx);
                         return TypeId::ERROR;
@@ -1297,8 +1301,9 @@ impl<'a> CheckerState<'a> {
                 && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
             {
                 // Check for value-only types first (but allow type-only imports)
-                if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
-                    && !self.symbol_is_type_only(sym_id)
+                if (self.alias_resolves_to_value_only(sym_id, Some(name))
+                    || self.symbol_is_value_only(sym_id, Some(name)))
+                    && !self.symbol_is_type_only(sym_id, Some(name))
                 {
                     self.error_value_only_type_at(name, type_name_idx);
                     return TypeId::ERROR;
@@ -2763,9 +2768,9 @@ impl<'a> CheckerState<'a> {
             {
                 let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
                 if !is_namespace
-                    && (self.alias_resolves_to_value_only(member_sym_id)
-                        || self.symbol_is_value_only(member_sym_id))
-                    && !self.symbol_is_type_only(member_sym_id)
+                    && (self.alias_resolves_to_value_only(member_sym_id, Some(right_name.as_str()))
+                        || self.symbol_is_value_only(member_sym_id, Some(right_name.as_str())))
+                    && !self.symbol_is_type_only(member_sym_id, Some(right_name.as_str()))
                 {
                     self.error_value_only_type_at(&right_name, qn.right);
                     return TypeId::ERROR;
@@ -2811,9 +2816,10 @@ impl<'a> CheckerState<'a> {
                 {
                     let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
                     if !is_namespace
-                        && (self.alias_resolves_to_value_only(member_sym_id)
-                            || self.symbol_is_value_only(member_sym_id))
-                        && !self.symbol_is_type_only(member_sym_id)
+                        && (self
+                            .alias_resolves_to_value_only(member_sym_id, Some(right_name.as_str()))
+                            || self.symbol_is_value_only(member_sym_id, Some(right_name.as_str())))
+                        && !self.symbol_is_type_only(member_sym_id, Some(right_name.as_str()))
                     {
                         self.error_value_only_type_at(&right_name, qn.right);
                         return TypeId::ERROR;
@@ -3131,8 +3137,12 @@ impl<'a> CheckerState<'a> {
                 let _ = self.resolve_qualified_name(type_name_idx);
                 return TypeId::ERROR;
             };
-            if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
-                && !self.symbol_is_type_only(sym_id)
+            let symbol_name = self
+                .entity_name_symbol_text(type_name_idx)
+                .unwrap_or_else(|| "<unknown>".to_string());
+            if (self.alias_resolves_to_value_only(sym_id, Some(symbol_name.as_str()))
+                || self.symbol_is_value_only(sym_id, Some(symbol_name.as_str())))
+                && !self.symbol_is_type_only(sym_id, Some(symbol_name.as_str()))
             {
                 let name = self
                     .entity_name_text(type_name_idx)
@@ -3221,9 +3231,9 @@ impl<'a> CheckerState<'a> {
                 }
                 if !is_builtin_array
                     && let Some(sym_id) = sym_id
-                    && (self.alias_resolves_to_value_only(sym_id)
-                        || self.symbol_is_value_only(sym_id))
-                    && !self.symbol_is_type_only(sym_id)
+                    && (self.alias_resolves_to_value_only(sym_id, Some(name))
+                        || self.symbol_is_value_only(sym_id, Some(name)))
+                    && !self.symbol_is_type_only(sym_id, Some(name))
                 {
                     self.error_value_only_type_at(name, type_name_idx);
                     return TypeId::ERROR;
@@ -3303,8 +3313,9 @@ impl<'a> CheckerState<'a> {
             if name != "Array"
                 && name != "ReadonlyArray"
                 && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
-                && (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
-                && !self.symbol_is_type_only(sym_id)
+                && (self.alias_resolves_to_value_only(sym_id, Some(name))
+                    || self.symbol_is_value_only(sym_id, Some(name)))
+                && !self.symbol_is_type_only(sym_id, Some(name))
             {
                 self.error_value_only_type_at(name, type_name_idx);
                 return TypeId::ERROR;
