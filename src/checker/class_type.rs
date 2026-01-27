@@ -20,6 +20,8 @@
 //! - Constructor accessibility tracking (private/protected)
 //! - Abstract class tracking
 
+const MAX_CLASS_INHERITANCE_DEPTH: usize = 256;
+
 use crate::binder::SymbolId;
 use crate::checker::state::{CheckerState, MemberAccessLevel};
 use crate::interner::Atom;
