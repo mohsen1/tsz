@@ -1015,7 +1015,6 @@ impl<'a> CheckerState<'a> {
 
     /// Get type from a type reference node (e.g., "number", "string", "MyType").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
-        eprintln!("DEBUG: get_type_from_type_reference called");
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -8511,6 +8510,10 @@ impl<'a> CheckerState<'a> {
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
+            // Check for missing global types (2318)
+            // Emits errors at file start for essential types when libs are not loaded
+            self.check_missing_global_types();
+
             // Check for unused declarations (6133)
             // Only check for unused declarations when no_implicit_any is enabled (strict mode)
             // This prevents test files from reporting unused variable errors when they're testing specific behaviors
@@ -10394,12 +10397,6 @@ impl<'a> CheckerState<'a> {
                     // Symbol was resolved - check if it represents a constructor type for extends clauses
                     if is_extends_clause {
                         let symbol_type = self.get_type_of_symbol(heritage_sym);
-                        eprintln!(
-                            "DEBUG: heritage symbol type: {:?}, is_constructor_type: {}, is_class_symbol: {}",
-                            self.ctx.types.lookup(symbol_type),
-                            self.is_constructor_type(symbol_type),
-                            self.is_class_symbol(heritage_sym)
-                        );
                         if !self.is_constructor_type(symbol_type)
                             && !self.is_class_symbol(heritage_sym)
                         {
@@ -10429,11 +10426,6 @@ impl<'a> CheckerState<'a> {
                     {
                         // Try to get the type of the expression to check if it's a constructor
                         let expr_type = self.get_type_of_node(expr_idx);
-                        eprintln!(
-                            "DEBUG: expr_type={:?}, is_constructor_type={}",
-                            self.ctx.types.lookup(expr_type),
-                            self.is_constructor_type(expr_type)
-                        );
                         self.is_constructor_type(expr_type)
                     } else {
                         false

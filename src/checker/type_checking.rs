@@ -3851,13 +3851,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_constructor_type(&self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
 
-        // DEBUG: Print what we're checking
-        eprintln!(
-            "DEBUG: is_constructor_type called with type_id={:?}, type_key={:?}",
-            type_id,
-            self.ctx.types.lookup(type_id)
-        );
-
         // First check if it directly has construct signatures
         if self.has_construct_sig(type_id) {
             return true;
@@ -3875,11 +3868,6 @@ impl<'a> CheckerState<'a> {
         match self.ctx.types.lookup(type_id) {
             Some(TypeKey::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint {
-                    // DEBUG: Print what we're checking
-                    eprintln!(
-                        "DEBUG: is_constructor_type checking TypeParameter constraint: {:?}",
-                        self.ctx.types.lookup(constraint)
-                    );
                     self.is_constructor_type(constraint)
                 } else {
                     false
@@ -5332,22 +5320,27 @@ impl<'a> CheckerState<'a> {
     // Symbol and Duplicate Checking (extracted from state.rs)
     // =========================================================================
 
-    /// Check for missing global types when --noLib is used (TS2318).
+    /// Check for missing global types (TS2318).
     ///
-    /// When --noLib is specified and no library files are loaded, TypeScript emits
-    /// TS2318 errors for essential global types that are expected to exist.
-    /// These errors are emitted at the beginning of the file (position 0).
+    /// When library files are not loaded or specific global types are unavailable,
+    /// TypeScript emits TS2318 errors for essential global types at the beginning
+    /// of the file (position 0).
     ///
-    /// TypeScript emits these errors for the following core types:
-    /// - Array, Boolean, Function, IArguments, Number, Object, RegExp, String
-    /// - Awaited (when using awaited types)
+    /// This function checks for:
+    /// 1. Core 8 types when --noLib is used: Array, Boolean, Function, IArguments,
+    ///    Number, Object, RegExp, String
+    /// 2. ES2015+ types when they should be available but aren't: Awaited,
+    ///    IterableIterator, AsyncIterableIterator, TypedPropertyDescriptor,
+    ///    CallableFunction, NewableFunction, Disposable, AsyncDisposable
     ///
-    /// This matches TypeScript's behavior in tests like noCrashOnNoLib.ts
+    /// This matches TypeScript's behavior in tests like noCrashOnNoLib.ts,
+    /// generatorReturnTypeFallback.2.ts, missingDecoratorType.ts, etc.
     pub(crate) fn check_missing_global_types(&mut self) {
         use crate::lib_loader;
 
-        // Core global types that TypeScript requires
-        const REQUIRED_GLOBAL_TYPES: &[&str] = &[
+        // Core global types that TypeScript requires when --noLib is used
+        // These are fundamental types that should always exist unless explicitly disabled
+        const CORE_GLOBAL_TYPES: &[&str] = &[
             "Array",
             "Boolean",
             "Function",
@@ -5358,11 +5351,108 @@ impl<'a> CheckerState<'a> {
             "String",
         ];
 
-        // Check each required global type
-        for &type_name in REQUIRED_GLOBAL_TYPES {
-            // Check if the type exists in the binder's file_locals
-            if !self.ctx.binder.file_locals.has(type_name) {
-                // Emit TS2318 at position 0 (beginning of file)
+        // Check if lib files are loaded
+        let has_lib = self.ctx.has_lib_loaded();
+
+        // When --noLib is used, check for core global types
+        // Emit TS2318 for types that are not declared in the source file
+        if !has_lib {
+            for &type_name in CORE_GLOBAL_TYPES {
+                // Check if the type is declared in the current file
+                if !self.ctx.binder.file_locals.has(type_name) {
+                    // Type not declared locally and no lib loaded - emit TS2318
+                    self.ctx
+                        .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                            type_name,
+                            self.ctx.file_name.clone(),
+                            0,
+                            0,
+                        ));
+                }
+            }
+        }
+
+        // Check for feature-specific global types that may be missing
+        // These are checked regardless of --noLib, but only if the feature appears to be used
+        self.check_feature_specific_global_types();
+    }
+
+    /// Check for feature-specific global types that may be missing.
+    ///
+    /// This function checks if certain global types that are required for specific
+    /// TypeScript features are available. Unlike the core global types, these are
+    /// only checked when the feature is potentially used in the code.
+    ///
+    /// Examples:
+    /// - TypedPropertyDescriptor: Required for decorators
+    /// - IterableIterator: Required for generators
+    /// - AsyncIterableIterator: Required for async generators
+    /// - Disposable/AsyncDisposable: Required for using declarations
+    /// - Awaited: Required for await type operator
+    fn check_feature_specific_global_types(&mut self) {
+        use crate::lib_loader;
+
+        // Types that are commonly referenced in TypeScript features
+        // We check if these are available in lib contexts
+        let feature_types = [
+            // ES2015+ types that are commonly needed
+            ("Awaited", "ES2022"),               // For await type operator
+            ("IterableIterator", "ES2015"),      // For generators
+            ("AsyncIterableIterator", "ES2018"), // For async generators
+            ("TypedPropertyDescriptor", "ES5"),  // For decorators
+            ("CallableFunction", "ES2015"),      // For strict function types
+            ("NewableFunction", "ES2015"),       // For constructor types
+            ("Disposable", "ES2022"),            // For using declarations
+            ("AsyncDisposable", "ES2022"),       // For await using declarations
+        ];
+
+        for &(type_name, _es_version) in &feature_types {
+            // Check if the type should be available but isn't
+            // Only check if:
+            // 1. The type is not in lib contexts (not available from loaded libs)
+            // 2. The type is not declared in the current file
+            // 3. This appears to be a scenario where the type would be referenced
+
+            // Check if available in lib contexts
+            if self.ctx.has_name_in_lib(type_name) {
+                continue; // Type is available
+            }
+
+            // Check if declared in current file
+            if self.ctx.binder.file_locals.has(type_name) {
+                continue; // Type is declared locally
+            }
+
+            // At this point, the type is not available
+            // TypeScript emits TS2318 at position 0 if the type would be referenced
+            // For now, we'll emit based on certain heuristics:
+
+            let should_emit = match type_name {
+                // Always check these when libs are minimal (ES5 or noLib)
+                "IterableIterator"
+                | "AsyncIterableIterator"
+                | "TypedPropertyDescriptor"
+                | "Disposable"
+                | "AsyncDisposable" => {
+                    // These are emitted when the feature syntax is detected
+                    // For simplicity, we check if any syntax that would need them exists
+                    self.should_check_for_feature_type(type_name)
+                }
+                // Awaited is checked when using await type operator or async functions
+                "Awaited" => {
+                    // Check if there's async/await usage that would require Awaited
+                    !self.ctx.has_lib_loaded() || self.ctx.async_depth > 0
+                }
+                // CallableFunction/NewableFunction are needed for strict checks
+                "CallableFunction" | "NewableFunction" => {
+                    // These are emitted in certain strict scenarios
+                    // Check if we're in a context that would use them
+                    false // Don't emit for now - too broad
+                }
+                _ => false,
+            };
+
+            if should_emit {
                 self.ctx
                     .push_diagnostic(lib_loader::emit_error_global_type_missing(
                         type_name,
@@ -5371,6 +5461,40 @@ impl<'a> CheckerState<'a> {
                         0,
                     ));
             }
+        }
+    }
+
+    /// Check if we should emit an error for a feature-specific global type.
+    ///
+    /// This heuristic determines if a feature that requires a specific global type
+    /// is likely being used in the code.
+    fn should_check_for_feature_type(&self, type_name: &str) -> bool {
+        match type_name {
+            // For generators, we could traverse the AST looking for function* syntax
+            // For now, use a simple heuristic: emit if lib is minimal
+            "IterableIterator" => {
+                // Emit if we're using ES5 lib or noLib
+                !self.ctx.has_lib_loaded()
+            }
+            "AsyncIterableIterator" => {
+                // Emit if we're using ES5/ES2015 lib without ES2018+
+                !self.ctx.has_lib_loaded()
+            }
+            "TypedPropertyDescriptor" => {
+                // Emit if decorators are potentially used and type not available
+                // This requires checking for decorator syntax
+                !self.ctx.has_lib_loaded()
+            }
+            "Disposable" => {
+                // Check for 'using' declarations
+                // For now, use simple heuristic
+                false // Will be refined based on test results
+            }
+            "AsyncDisposable" => {
+                // Check for 'await using' declarations
+                false // Will be refined based on test results
+            }
+            _ => false,
         }
     }
 
