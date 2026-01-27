@@ -716,17 +716,32 @@ impl<'a> CheckerContext<'a> {
     /// Diagnostics with the same (start, code) are only emitted once.
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
         let key = (diag.start, diag.code);
-        if self.emitted_diagnostics.contains(&key) {
-            eprintln!(
-                "DEBUG: Duplicate push_diagnostic suppressed: start={}, code={}",
-                diag.start, diag.code
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/tsz_debug.txt")
+        {
+            let _ = writeln!(
+                file,
+                "push_diagnostic: start={}, code={}, key={:?}",
+                diag.start, diag.code, key
             );
+            let _ = writeln!(
+                file,
+                "  emitted_diagnostics contains: {}",
+                self.emitted_diagnostics.contains(&key)
+            );
+            if self.emitted_diagnostics.contains(&key) {
+                let _ = writeln!(file, "  -> DUPLICATE SUPPRESSED");
+                return;
+            }
+            let _ = writeln!(file, "  -> EMITTING");
+        }
+        if self.emitted_diagnostics.contains(&key) {
             return;
         }
-        eprintln!(
-            "DEBUG: Pushing diagnostic: start={}, code={}, message={}",
-            diag.start, diag.code, diag.message_text
-        );
         self.emitted_diagnostics.insert(key);
         self.diagnostics.push(diag);
     }

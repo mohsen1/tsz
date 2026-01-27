@@ -680,6 +680,19 @@ impl<'a> CheckerState<'a> {
 
         // Fall back to standard error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/tsz_debug.txt")
+            {
+                let _ = writeln!(
+                    file,
+                    "error_cannot_find_name_at: name={}, idx={:?}, start={}, code=2304",
+                    name, idx, loc.start
+                );
+            }
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
                 self.ctx.file_name.as_str(),
