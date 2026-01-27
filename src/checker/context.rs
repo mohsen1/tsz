@@ -692,8 +692,16 @@ impl<'a> CheckerContext<'a> {
         // Check if we've already emitted this diagnostic
         let key = (start, code);
         if self.emitted_diagnostics.contains(&key) {
+            eprintln!(
+                "DEBUG: Duplicate diagnostic suppressed: start={}, code={}",
+                start, code
+            );
             return;
         }
+        eprintln!(
+            "DEBUG: Emitting diagnostic: start={}, code={}, message={}",
+            start, code, message
+        );
         self.emitted_diagnostics.insert(key);
         self.diagnostics.push(Diagnostic::error(
             self.file_name.clone(),
@@ -709,8 +717,16 @@ impl<'a> CheckerContext<'a> {
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
         let key = (diag.start, diag.code);
         if self.emitted_diagnostics.contains(&key) {
+            eprintln!(
+                "DEBUG: Duplicate push_diagnostic suppressed: start={}, code={}",
+                diag.start, diag.code
+            );
             return;
         }
+        eprintln!(
+            "DEBUG: Pushing diagnostic: start={}, code={}, message={}",
+            diag.start, diag.code, diag.message_text
+        );
         self.emitted_diagnostics.insert(key);
         self.diagnostics.push(diag);
     }
