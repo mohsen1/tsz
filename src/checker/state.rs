@@ -1206,6 +1206,21 @@ impl<'a> CheckerState<'a> {
                 if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
                     return type_id;
                 }
+                // Array/ReadonlyArray not found - check if lib files are loaded
+                // When --noLib is used, emit TS2318 instead of silently creating Array type
+                if !self.ctx.has_lib_loaded() {
+                    // No lib files loaded - emit TS2318 for missing global type
+                    self.error_cannot_find_global_type(name, type_name_idx);
+                    // Still process type arguments to avoid cascading errors
+                    if let Some(args) = &type_ref.type_arguments {
+                        for &arg_idx in &args.nodes {
+                            let _ = self.get_type_from_type_node(arg_idx);
+                        }
+                    }
+                    return TypeId::ERROR;
+                }
+                // Lib files are loaded but Array not found - this shouldn't happen normally
+                // Fall back to creating Array type for graceful degradation
                 let elem_type = type_ref
                     .type_arguments
                     .as_ref()
@@ -5114,6 +5129,7 @@ impl<'a> CheckerState<'a> {
             let result = {
                 let env = self.ctx.type_env.borrow();
                 let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+                checker.set_strict_function_types(self.ctx.strict_function_types());
                 checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
                 checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
@@ -5444,12 +5460,14 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(env) = env {
                 let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
+                checker.set_strict_function_types(self.ctx.strict_function_types());
                 checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
                 checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
                 return Some(checker.is_assignable(TypeId::NUMBER, target));
             }
             let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            checker.set_strict_function_types(self.ctx.strict_function_types());
             checker.set_strict_null_checks(self.ctx.strict_null_checks());
             checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
             checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
@@ -5461,12 +5479,14 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(env) = env {
                 let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
+                checker.set_strict_function_types(self.ctx.strict_function_types());
                 checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
                 checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
                 return Some(checker.is_assignable(source, TypeId::NUMBER));
             }
             let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            checker.set_strict_function_types(self.ctx.strict_function_types());
             checker.set_strict_null_checks(self.ctx.strict_null_checks());
             checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
             checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
@@ -6103,6 +6123,7 @@ impl<'a> CheckerState<'a> {
         let is_weak_union_violation = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+            checker.set_strict_function_types(self.ctx.strict_function_types());
             checker.set_strict_null_checks(self.ctx.strict_null_checks());
             checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
             checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
@@ -6161,6 +6182,7 @@ impl<'a> CheckerState<'a> {
                 let is_assignable = {
                     let env = self.ctx.type_env.borrow();
                     let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+                    checker.set_strict_function_types(self.ctx.strict_function_types());
                     checker.set_strict_null_checks(self.ctx.strict_null_checks());
                     checker.is_assignable(source_prop_type, effective_target_type)
                 };
@@ -6544,6 +6566,7 @@ impl<'a> CheckerState<'a> {
         use crate::solver::CompatChecker;
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+        checker.set_strict_function_types(self.ctx.strict_function_types());
         checker.set_strict_null_checks(self.ctx.strict_null_checks());
         checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
         checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
@@ -8169,6 +8192,7 @@ impl<'a> CheckerState<'a> {
                     let env = self.ctx.type_env.borrow();
                     let mut checker =
                         crate::solver::CompatChecker::with_resolver(self.ctx.types, &*env);
+                    checker.set_strict_function_types(self.ctx.strict_function_types());
                     checker.set_strict_null_checks(self.ctx.strict_null_checks());
                     checker.set_exact_optional_property_types(
                         self.ctx.exact_optional_property_types(),
@@ -8245,6 +8269,7 @@ impl<'a> CheckerState<'a> {
                     let env = self.ctx.type_env.borrow();
                     let mut checker =
                         crate::solver::CompatChecker::with_resolver(self.ctx.types, &*env);
+                    checker.set_strict_function_types(self.ctx.strict_function_types());
                     checker.set_strict_null_checks(self.ctx.strict_null_checks());
                     checker.set_exact_optional_property_types(
                         self.ctx.exact_optional_property_types(),

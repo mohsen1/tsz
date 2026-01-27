@@ -75,11 +75,14 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
 
 impl<'a> CompatChecker<'a, NoopResolver> {
     /// Create a new compatibility checker without a resolver.
+    /// Note: Callers should configure strict_function_types explicitly via set_strict_function_types()
     pub fn new(interner: &'a dyn TypeDatabase) -> CompatChecker<'a, NoopResolver> {
         CompatChecker {
             interner,
             subtype: SubtypeChecker::new(interner),
             lawyer: AnyPropagationRules::new(),
+            // Default to false (legacy TypeScript behavior) for compatibility
+            // Callers should set this explicitly based on compiler options
             strict_function_types: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
@@ -92,11 +95,14 @@ impl<'a> CompatChecker<'a, NoopResolver> {
 
 impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Create a new compatibility checker with a resolver.
+    /// Note: Callers should configure strict_function_types explicitly via set_strict_function_types()
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         CompatChecker {
             interner,
             subtype: SubtypeChecker::with_resolver(interner, resolver),
             lawyer: AnyPropagationRules::new(),
+            // Default to false (legacy TypeScript behavior) for compatibility
+            // Callers should set this explicitly based on compiler options
             strict_function_types: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
