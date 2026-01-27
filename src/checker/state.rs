@@ -93,6 +93,7 @@
 use crate::binder::BinderState;
 use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::context::CheckerOptions;
+use crate::checker::symbol_resolver::TypeSymbolResolution;
 use crate::checker::{CheckerContext, EnclosingClassInfo};
 use crate::interner::Atom;
 use crate::parser::node::NodeArena;
@@ -1035,19 +1036,20 @@ impl<'a> CheckerState<'a> {
             && name_node.kind == syntax_kind_ext::QUALIFIED_NAME
         {
             if has_type_args {
-                let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) else {
-                    let _ = self.resolve_qualified_name(type_name_idx);
-                    return TypeId::ERROR;
+                let sym_id = match self.resolve_qualified_symbol_in_type_position(type_name_idx) {
+                    TypeSymbolResolution::Type(sym_id) => sym_id,
+                    TypeSymbolResolution::ValueOnly(_) => {
+                        let name = self
+                            .entity_name_text(type_name_idx)
+                            .unwrap_or_else(|| "<unknown>".to_string());
+                        self.error_value_only_type_at(&name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    TypeSymbolResolution::NotFound => {
+                        let _ = self.resolve_qualified_name(type_name_idx);
+                        return TypeId::ERROR;
+                    }
                 };
-                if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
-                    && !self.symbol_is_type_only(sym_id)
-                {
-                    let name = self
-                        .entity_name_text(type_name_idx)
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    self.error_value_only_type_at(&name, type_name_idx);
-                    return TypeId::ERROR;
-                }
                 if let Some(args) = &type_ref.type_arguments {
                     if self.should_resolve_recursive_type_alias(sym_id, args) {
                         // Ensure the base type symbol is resolved first so its type params
@@ -1073,7 +1075,9 @@ impl<'a> CheckerState<'a> {
                 return lowering.lower_type(idx);
             }
             // No type arguments provided - check if this generic type requires them
-            if let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) {
+            if let TypeSymbolResolution::Type(sym_id) =
+                self.resolve_qualified_symbol_in_type_position(type_name_idx)
+            {
                 let required_count = self.count_required_type_params(sym_id);
                 if required_count > 0 {
                     let name = self
@@ -1096,20 +1100,16 @@ impl<'a> CheckerState<'a> {
             if has_type_args {
                 let is_builtin_array = name == "Array" || name == "ReadonlyArray";
                 let type_param = self.lookup_type_parameter(name);
-                let sym_id =
-                    if !is_builtin_array && type_param.is_none() && !has_libs && is_known_global {
-                        let sym_id = self.resolve_identifier_symbol(type_name_idx);
-                        if sym_id.is_none() {
-                            return self.handle_missing_global_type_with_args(
-                                name,
-                                type_ref,
-                                type_name_idx,
-                            );
-                        }
-                        sym_id
-                    } else {
-                        self.resolve_identifier_symbol(type_name_idx)
-                    };
+                let type_resolution =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx);
+                let sym_id = match type_resolution {
+                    TypeSymbolResolution::Type(sym_id) => Some(sym_id),
+                    TypeSymbolResolution::ValueOnly(_) => {
+                        self.error_value_only_type_at(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    TypeSymbolResolution::NotFound => None,
+                };
                 if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     // Only try resolving from lib binders if lib files are loaded (noLib is false)
                     if has_libs {
@@ -1169,25 +1169,13 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
                 if !is_builtin_array
-                    && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
+                    && let Some(sym_id) = sym_id
+                    && let Some(args) = &type_ref.type_arguments
+                    && self.should_resolve_recursive_type_alias(sym_id, args)
                 {
-                    // Check if this is a value-only symbol (but allow type-only imports)
-                    // Type-only imports (is_type_only = true) should resolve in type positions
-                    // even if they don't have a VALUE flag
-                    if (self.alias_resolves_to_value_only(sym_id)
-                        || self.symbol_is_value_only(sym_id))
-                        && !self.symbol_is_type_only(sym_id)
-                    {
-                        self.error_value_only_type_at(name, type_name_idx);
-                        return TypeId::ERROR;
-                    }
-                    if let Some(args) = &type_ref.type_arguments
-                        && self.should_resolve_recursive_type_alias(sym_id, args)
-                    {
-                        // Ensure the base type symbol is resolved first so its type params
-                        // are available in the type_env for Application expansion
-                        let _ = self.get_type_of_symbol(sym_id);
-                    }
+                    // Ensure the base type symbol is resolved first so its type params
+                    // are available in the type_env for Application expansion
+                    let _ = self.get_type_of_symbol(sym_id);
                 }
                 // Also ensure type arguments are resolved and in type_env
                 // This is needed so that when we evaluate the Application, we can
@@ -1271,23 +1259,25 @@ impl<'a> CheckerState<'a> {
                 return type_param;
             }
 
-            if name != "Array"
-                && name != "ReadonlyArray"
-                && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
-            {
-                // Check for value-only types first (but allow type-only imports)
-                if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
-                    && !self.symbol_is_type_only(sym_id)
-                {
-                    self.error_value_only_type_at(name, type_name_idx);
-                    return TypeId::ERROR;
-                }
-
-                // TS2314: Check if this generic type requires type arguments
-                let required_count = self.count_required_type_params(sym_id);
-                if required_count > 0 {
-                    self.error_generic_type_requires_type_arguments_at(name, required_count, idx);
-                    // Continue to resolve - we still want type inference to work
+            if name != "Array" && name != "ReadonlyArray" {
+                match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
+                    TypeSymbolResolution::Type(sym_id) => {
+                        // TS2314: Check if this generic type requires type arguments
+                        let required_count = self.count_required_type_params(sym_id);
+                        if required_count > 0 {
+                            self.error_generic_type_requires_type_arguments_at(
+                                name,
+                                required_count,
+                                idx,
+                            );
+                            // Continue to resolve - we still want type inference to work
+                        }
+                    }
+                    TypeSymbolResolution::ValueOnly(_) => {
+                        self.error_value_only_type_at(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    TypeSymbolResolution::NotFound => {}
                 }
             }
 
@@ -1851,7 +1841,9 @@ impl<'a> CheckerState<'a> {
                 return Some(type_id);
             }
         }
-        if let Some(sym_id) = self.resolve_identifier_symbol(name_idx) {
+        if let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position(name_idx)
+        {
             return Some(self.type_reference_symbol_type(sym_id));
         }
         // Fall back to lib contexts for global type resolution
@@ -2747,25 +2739,31 @@ impl<'a> CheckerState<'a> {
         let mut member_sym_id_from_symbol = None;
         if let Some(left_node) = self.ctx.arena.get(qn.left)
             && left_node.kind == SyntaxKind::Identifier as u16
-            && let Some(sym_id) = self.resolve_identifier_symbol(qn.left)
-            && let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
         {
-            // Try direct exports first
-            if let Some(ref exports) = symbol.exports
-                && let Some(member_id) = exports.get(&right_name)
+            if let TypeSymbolResolution::Type(sym_id) =
+                self.resolve_identifier_symbol_in_type_position(qn.left)
             {
-                member_sym_id_from_symbol = Some(member_id);
-            }
-            // If not found in direct exports, check for re-exports
-            else if let Some(ref _exports) = symbol.exports {
-                // The member might be re-exported from another module
-                // Check if this symbol has an import_module (it's an imported namespace)
-                if let Some(ref module_specifier) = symbol.import_module {
-                    // Try to resolve the member through the re-export chain
-                    if let Some(reexported_sym_id) =
-                        self.resolve_reexported_member(module_specifier, &right_name, &lib_binders)
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    // Try direct exports first
+                    if let Some(ref exports) = symbol.exports
+                        && let Some(member_id) = exports.get(&right_name)
                     {
-                        member_sym_id_from_symbol = Some(reexported_sym_id);
+                        member_sym_id_from_symbol = Some(member_id);
+                    }
+                    // If not found in direct exports, check for re-exports
+                    else if let Some(ref _exports) = symbol.exports {
+                        // The member might be re-exported from another module
+                        // Check if this symbol has an import_module (it's an imported namespace)
+                        if let Some(ref module_specifier) = symbol.import_module {
+                            // Try to resolve the member through the re-export chain
+                            if let Some(reexported_sym_id) = self.resolve_reexported_member(
+                                module_specifier,
+                                &right_name,
+                                &lib_binders,
+                            ) {
+                                member_sym_id_from_symbol = Some(reexported_sym_id);
+                            }
+                        }
                     }
                 }
             }
@@ -2864,7 +2862,9 @@ impl<'a> CheckerState<'a> {
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
             let name = &ident.escaped_text;
 
-            if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
+            if let TypeSymbolResolution::Type(sym_id) =
+                self.resolve_identifier_symbol_in_type_position(idx)
+            {
                 return self.type_reference_symbol_type(sym_id);
             }
 
@@ -3144,19 +3144,20 @@ impl<'a> CheckerState<'a> {
         if let Some(name_node) = self.ctx.arena.get(type_name_idx)
             && name_node.kind == syntax_kind_ext::QUALIFIED_NAME
         {
-            let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) else {
-                let _ = self.resolve_qualified_name(type_name_idx);
-                return TypeId::ERROR;
+            let sym_id = match self.resolve_qualified_symbol_in_type_position(type_name_idx) {
+                TypeSymbolResolution::Type(sym_id) => sym_id,
+                TypeSymbolResolution::ValueOnly(_) => {
+                    let name = self
+                        .entity_name_text(type_name_idx)
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    self.error_value_only_type_at(&name, type_name_idx);
+                    return TypeId::ERROR;
+                }
+                TypeSymbolResolution::NotFound => {
+                    let _ = self.resolve_qualified_name(type_name_idx);
+                    return TypeId::ERROR;
+                }
             };
-            if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
-                && !self.symbol_is_type_only(sym_id)
-            {
-                let name = self
-                    .entity_name_text(type_name_idx)
-                    .unwrap_or_else(|| "<unknown>".to_string());
-                self.error_value_only_type_at(&name, type_name_idx);
-                return TypeId::ERROR;
-            }
             let base_type = self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
             if has_type_args {
                 let type_args = type_ref
@@ -3182,7 +3183,16 @@ impl<'a> CheckerState<'a> {
             if has_type_args {
                 let is_builtin_array = name == "Array" || name == "ReadonlyArray";
                 let type_param = self.lookup_type_parameter(name);
-                let sym_id = self.resolve_identifier_symbol(type_name_idx);
+                let type_resolution =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx);
+                let sym_id = match type_resolution {
+                    TypeSymbolResolution::Type(sym_id) => Some(sym_id),
+                    TypeSymbolResolution::ValueOnly(_) => {
+                        self.error_value_only_type_at(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    TypeSymbolResolution::NotFound => None,
+                };
 
                 if is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     // Array/ReadonlyArray not found - check if lib files are loaded
@@ -3236,16 +3246,6 @@ impl<'a> CheckerState<'a> {
                     self.error_cannot_find_name_at(name, type_name_idx);
                     return TypeId::ERROR;
                 }
-                if !is_builtin_array
-                    && let Some(sym_id) = sym_id
-                    && (self.alias_resolves_to_value_only(sym_id)
-                        || self.symbol_is_value_only(sym_id))
-                    && !self.symbol_is_type_only(sym_id)
-                {
-                    self.error_value_only_type_at(name, type_name_idx);
-                    return TypeId::ERROR;
-                }
-
                 let base_type = if let Some(type_param) = type_param {
                     type_param
                 } else if let Some(sym_id) = sym_id {
@@ -3268,7 +3268,9 @@ impl<'a> CheckerState<'a> {
             }
 
             if name == "Array" || name == "ReadonlyArray" {
-                if let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx) {
+                if let TypeSymbolResolution::Type(sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx)
+                {
                     return self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
                 }
                 if let Some(type_param) = self.lookup_type_parameter(name) {
@@ -3317,20 +3319,21 @@ impl<'a> CheckerState<'a> {
                 _ => {}
             }
 
-            if name != "Array"
-                && name != "ReadonlyArray"
-                && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
-                && (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
-                && !self.symbol_is_type_only(sym_id)
-            {
-                self.error_value_only_type_at(name, type_name_idx);
-                return TypeId::ERROR;
+            if name != "Array" {
+                if let TypeSymbolResolution::ValueOnly(_) =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx)
+                {
+                    self.error_value_only_type_at(name, type_name_idx);
+                    return TypeId::ERROR;
+                }
             }
 
             if let Some(type_param) = self.lookup_type_parameter(name) {
                 return type_param;
             }
-            if let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx) {
+            if let TypeSymbolResolution::Type(sym_id) =
+                self.resolve_identifier_symbol_in_type_position(type_name_idx)
+            {
                 return self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
             }
 
@@ -7096,7 +7099,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
                     .collect();
-                self.ctx.types.union(resolved_members)
+                self.ctx.types.union_preserve_members(resolved_members)
             }
             TypeKey::Intersection(members_id) => {
                 let members = self.ctx.types.type_list(members_id);
