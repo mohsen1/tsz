@@ -474,6 +474,17 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   const cfg: RunnerConfig = { ...DEFAULT_CONFIG, ...config };
   const startTime = Date.now();
 
+  if (cfg.useWasm) {
+    const maxWorkers = parseInt(process.env.TSZ_WASM_MAX_WORKERS || '2', 10);
+    if (Number.isFinite(maxWorkers) && cfg.workers > maxWorkers) {
+      log(
+        `⚠️  WASM mode detected - capping workers to ${maxWorkers} (was ${cfg.workers})`,
+        colors.yellow
+      );
+      cfg.workers = maxWorkers;
+    }
+  }
+
   log('╔══════════════════════════════════════════════════════════╗', colors.cyan);
   log('║    High-Performance Parallel Conformance Test Runner     ║', colors.cyan);
   log('╚══════════════════════════════════════════════════════════╝', colors.cyan);
@@ -629,6 +640,9 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
         log(`\n  ${result.filePath}:`, colors.yellow);
         if (cmp.missing.length) log(`    Missing: TS${[...new Set(cmp.missing)].join(', TS')}`, colors.dim);
         if (cmp.extra.length) log(`    Extra: TS${[...new Set(cmp.extra)].join(', TS')}`, colors.dim);
+        if (cmp.missing.includes(2318) || cmp.extra.includes(2318)) {
+          log(`    TS2318: global type resolution mismatch`, colors.magenta);
+        }
       }
     }
   });

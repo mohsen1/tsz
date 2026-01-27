@@ -17,6 +17,9 @@ notes based on the latest full conformance run (14 workers) and recent fixes.
 - TS2318 remains very high in full runs, suggesting the lib merge fix is
   either not consistently used in the WASM multi-file path or is being
   bypassed by the check-time binder reconstruction.
+- A subsequent full run with 14 workers shows **capacity overflow** panics
+  (`alloc::raw_vec::capacity_overflow`), indicating unsafe preallocation or
+  underflowing size calculations under heavy concurrency.
 
 ## Fundamental Hypotheses (Root Causes)
 
@@ -141,6 +144,10 @@ into higher-level diagnostics.
 1. **Stability**: 90% crash rate → 0% (Rayon + panic hooks)
 2. **Performance**: Lib caching eliminated redundant parsing
 3. **Correctness**: Major reductions in false positives
+
+**Note:** A full `--workers=14` run still panics with `capacity overflow`.
+This indicates remaining risk from extreme preallocation under high
+concurrency. Mitigation: cap WASM worker count and clamp arena prealloc sizes.
 
 ### Remaining High-Impact Issues
 - TS2711 (230 missing): Dynamic import/export issues
