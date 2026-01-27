@@ -3998,6 +3998,15 @@ impl BinderState {
         id: SymbolId,
         lib_binders: &'a [Arc<BinderState>],
     ) -> Option<&'a Symbol> {
+        // Prefer lib binders when the ID is known to originate from libs
+        if self.lib_symbol_ids.contains(&id) {
+            for lib_binder in lib_binders {
+                if let Some(sym) = lib_binder.symbols.get(id) {
+                    return Some(sym);
+                }
+            }
+        }
+
         // First try local symbols
         if let Some(sym) = self.symbols.get(id) {
             return Some(sym);
