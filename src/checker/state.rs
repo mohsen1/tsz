@@ -2778,9 +2778,9 @@ impl<'a> CheckerState<'a> {
             {
                 let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
                 if !is_namespace
-                    && (self.alias_resolves_to_value_only(member_sym_id)
-                        || self.symbol_is_value_only(member_sym_id))
-                    && !self.symbol_is_type_only(member_sym_id)
+                    && (self.alias_resolves_to_value_only(member_sym_id, Some(right_name.as_str()))
+                        || self.symbol_is_value_only(member_sym_id, Some(right_name.as_str())))
+                    && !self.symbol_is_type_only(member_sym_id, Some(right_name.as_str()))
                 {
                     self.error_value_only_type_at(&right_name, qn.right);
                     return TypeId::ERROR;
@@ -2826,9 +2826,10 @@ impl<'a> CheckerState<'a> {
                 {
                     let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
                     if !is_namespace
-                        && (self.alias_resolves_to_value_only(member_sym_id)
-                            || self.symbol_is_value_only(member_sym_id))
-                        && !self.symbol_is_type_only(member_sym_id)
+                        && (self
+                            .alias_resolves_to_value_only(member_sym_id, Some(right_name.as_str()))
+                            || self.symbol_is_value_only(member_sym_id, Some(right_name.as_str())))
+                        && !self.symbol_is_type_only(member_sym_id, Some(right_name.as_str()))
                     {
                         self.error_value_only_type_at(&right_name, qn.right);
                         return TypeId::ERROR;

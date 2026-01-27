@@ -812,9 +812,9 @@ impl<'a> CheckerState<'a> {
             if should_skip_lib_symbol(sym_id) {
                 return false;
             }
-            let is_value_only = (self.alias_resolves_to_value_only(sym_id)
-                || self.symbol_is_value_only(sym_id))
-                && !self.symbol_is_type_only(sym_id);
+            let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
+                || self.symbol_is_value_only(sym_id, None))
+                && !self.symbol_is_type_only(sym_id, None);
             if is_value_only {
                 if value_only_candidate.is_none() {
                     value_only_candidate = Some(sym_id);
@@ -1030,9 +1030,10 @@ impl<'a> CheckerState<'a> {
                 return TypeSymbolResolution::NotFound;
             };
             if let Some(sym_id) = self.ctx.binder.file_locals.get(&literal.text) {
-                let is_value_only = (self.alias_resolves_to_value_only(sym_id)
-                    || self.symbol_is_value_only(sym_id))
-                    && !self.symbol_is_type_only(sym_id);
+                let is_value_only = (self
+                    .alias_resolves_to_value_only(sym_id, Some(&literal.text))
+                    || self.symbol_is_value_only(sym_id, Some(&literal.text)))
+                    && !self.symbol_is_type_only(sym_id, Some(&literal.text));
                 if is_value_only {
                     return TypeSymbolResolution::ValueOnly(sym_id);
                 }
@@ -1083,9 +1084,9 @@ impl<'a> CheckerState<'a> {
 
         // First try direct exports
         if let Some(member_sym) = exports.get(right_name) {
-            let is_value_only = (self.alias_resolves_to_value_only(member_sym)
-                || self.symbol_is_value_only(member_sym))
-                && !self.symbol_is_type_only(member_sym);
+            let is_value_only = (self.alias_resolves_to_value_only(member_sym, Some(right_name))
+                || self.symbol_is_value_only(member_sym, Some(right_name)))
+                && !self.symbol_is_type_only(member_sym, Some(right_name));
             if is_value_only {
                 return TypeSymbolResolution::ValueOnly(member_sym);
             }
@@ -1100,9 +1101,10 @@ impl<'a> CheckerState<'a> {
             if let Some(reexported_sym) =
                 self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
             {
-                let is_value_only = (self.alias_resolves_to_value_only(reexported_sym)
-                    || self.symbol_is_value_only(reexported_sym))
-                    && !self.symbol_is_type_only(reexported_sym);
+                let is_value_only = (self
+                    .alias_resolves_to_value_only(reexported_sym, Some(right_name))
+                    || self.symbol_is_value_only(reexported_sym, Some(right_name)))
+                    && !self.symbol_is_type_only(reexported_sym, Some(right_name));
                 if is_value_only {
                     return TypeSymbolResolution::ValueOnly(reexported_sym);
                 }
@@ -1298,6 +1300,26 @@ impl<'a> CheckerState<'a> {
             combined.push('.');
             combined.push_str(&right);
             return Some(combined);
+        }
+        None
+    }
+
+    /// Get the rightmost identifier text for an entity name.
+    ///
+    /// This is used to disambiguate symbol IDs that may collide across binders
+    /// by matching the actual identifier text referenced in source.
+    pub(crate) fn entity_name_symbol_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            return self.entity_name_symbol_text(qn.right);
         }
         None
     }

@@ -8826,11 +8826,10 @@ impl<'a> CheckerState<'a> {
     /// const z: Bar = ...; // OK - Bar has both type and value
     /// const w = Bar; // OK - Bar can be used as value
     /// ```
-    pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId) -> bool {
-        match self.ctx.binder.get_symbol(sym_id) {
-            Some(symbol) => symbol.is_type_only,
-            None => false,
-        }
+    pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId, name_hint: Option<&str>) -> bool {
+        self.lookup_symbol_with_name(sym_id, name_hint)
+            .map(|(symbol, _arena)| symbol.is_type_only)
+            .unwrap_or(false)
     }
 
     // Section 47: Node Predicate Utilities
@@ -9449,6 +9448,69 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn lookup_symbol_with_name(
+        &self,
+        sym_id: SymbolId,
+        name_hint: Option<&str>,
+    ) -> Option<(&crate::binder::Symbol, &crate::parser::node::NodeArena)> {
+        let name_hint = name_hint.map(str::trim).filter(|name| !name.is_empty());
+
+        if let Some(symbol) = self.ctx.binder.symbols.get(sym_id) {
+            if name_hint.is_none_or(|name| symbol.escaped_name == name) {
+                let arena = self
+                    .ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .map(|arena| arena.as_ref())
+                    .unwrap_or(self.ctx.arena);
+                return Some((symbol, arena));
+            }
+        }
+
+        if let Some(name) = name_hint {
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(symbol) = lib_ctx.binder.symbols.get(sym_id) {
+                    if symbol.escaped_name == name {
+                        return Some((symbol, lib_ctx.arena.as_ref()));
+                    }
+                }
+            }
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                if symbol.escaped_name == name {
+                    let arena = self
+                        .ctx
+                        .binder
+                        .symbol_arenas
+                        .get(&sym_id)
+                        .map(|arena| arena.as_ref())
+                        .unwrap_or(self.ctx.arena);
+                    return Some((symbol, arena));
+                }
+            }
+            return None;
+        }
+
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            let arena = self
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map(|arena| arena.as_ref())
+                .unwrap_or(self.ctx.arena);
+            return Some((symbol, arena));
+        }
+
+        for lib_ctx in &self.ctx.lib_contexts {
+            if let Some(symbol) = lib_ctx.binder.symbols.get(sym_id) {
+                return Some((symbol, lib_ctx.arena.as_ref()));
+            }
+        }
+
+        None
+    }
+
     /// Check if a symbol is value-only (has value but not type).
     ///
     /// This function distinguishes between symbols that can only be used as values
@@ -9467,9 +9529,9 @@ impl<'a> CheckerState<'a> {
     /// interface Box {}  // Box is both type and value
     /// class Foo {}  // Foo is both type and value
     /// ```
-    pub(crate) fn symbol_is_value_only(&self, sym_id: SymbolId) -> bool {
-        let symbol = match self.ctx.binder.get_symbol(sym_id) {
-            Some(symbol) => symbol,
+    pub(crate) fn symbol_is_value_only(&self, sym_id: SymbolId, name_hint: Option<&str>) -> bool {
+        let (symbol, arena) = match self.lookup_symbol_with_name(sym_id, name_hint) {
+            Some(result) => result,
             None => return false,
         };
 
@@ -9494,7 +9556,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check declarations as a secondary source of truth (for cases where flags might not be set correctly)
-        if self.symbol_has_type_declaration(sym_id) {
+        if self.symbol_has_type_declaration(symbol, arena) {
             return false;
         }
 
@@ -9526,9 +9588,13 @@ impl<'a> CheckerState<'a> {
     /// import { x as xAlias } from "./mod";  // xAlias resolves to value-only
     /// import { type T as TAlias } from "./mod";  // TAlias is type-only
     /// ```
-    pub(crate) fn alias_resolves_to_value_only(&self, sym_id: SymbolId) -> bool {
-        let symbol = match self.ctx.binder.get_symbol(sym_id) {
-            Some(symbol) => symbol,
+    pub(crate) fn alias_resolves_to_value_only(
+        &self,
+        sym_id: SymbolId,
+        name_hint: Option<&str>,
+    ) -> bool {
+        let (symbol, _arena) = match self.lookup_symbol_with_name(sym_id, name_hint) {
+            Some(result) => result,
             None => return false,
         };
 
@@ -9549,23 +9615,19 @@ impl<'a> CheckerState<'a> {
 
         // symbol_is_value_only already checks TYPE flags and declarations
         // No need for redundant declaration check here
-        self.symbol_is_value_only(target)
+        let target_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(symbol.escaped_name.as_str());
+        self.symbol_is_value_only(target, Some(target_name))
     }
 
-    fn symbol_has_type_declaration(&self, sym_id: SymbolId) -> bool {
+    fn symbol_has_type_declaration(
+        &self,
+        symbol: &crate::binder::Symbol,
+        arena: &crate::parser::node::NodeArena,
+    ) -> bool {
         use crate::parser::syntax_kind_ext;
-
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        let arena = self
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(|arena| arena.as_ref())
-            .unwrap_or(self.ctx.arena);
 
         for &decl in &symbol.declarations {
             if decl.is_none() {
