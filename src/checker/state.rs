@@ -656,7 +656,6 @@ impl<'a> CheckerState<'a> {
         }
 
         // Clear this node's cache
-        eprintln!("DEBUG: Clearing cache for node {:?}", idx);
         self.ctx.node_types.remove(&idx.0);
 
         // Recursively clear children
