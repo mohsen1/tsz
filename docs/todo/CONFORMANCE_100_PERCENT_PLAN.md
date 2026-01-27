@@ -262,6 +262,20 @@ impl LibLoader {
 3. Contextual typing not propagating
 4. Object literal excess property checking incorrect
 
+#### P4: TS2322 - Type Assignability (13,671 extra errors)
+
+**Impact**: Very high false positive count, but more complex to fix.
+
+**Root Cause (hypothesis)**:
+1. Error suppression logic in `src/checker/error_reporter.rs` (around 1732-1754) may be insufficient
+2. The `CompatChecker` in `src/solver/compat.rs` may be too strict
+3. TypeScript's intentional unsoundness rules may not be fully implemented
+
+**Fix Strategy** (requires careful analysis):
+1. Compare suppression conditions with TypeScript's actual behavior
+2. Review `docs/specs/TS_UNSOUNDNESS_CATALOG.md` and ensure all intentional unsoundness is implemented
+3. Add more detailed tracing to understand which specific assignability checks are failing
+
 **Solution Areas**:
 
 ```rust

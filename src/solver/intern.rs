@@ -614,6 +614,39 @@ impl TypeInterner {
         self.union_from_iter(members)
     }
 
+    /// Intern a union type while preserving member structure.
+    ///
+    /// This keeps unknown/literal members intact for property access checks.
+    pub fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
+        if members.is_empty() {
+            return TypeId::NEVER;
+        }
+
+        let mut flat: TypeListBuffer = SmallVec::new();
+        for member in members {
+            if let Some(TypeKey::Union(inner)) = self.lookup(member) {
+                let members = self.type_list(inner);
+                flat.extend(members.iter().copied());
+            } else {
+                flat.push(member);
+            }
+        }
+
+        flat.sort_by_key(|id| id.0);
+        flat.dedup();
+        flat.retain(|id| *id != TypeId::NEVER);
+
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        let list_id = self.intern_type_list(flat.into_vec());
+        self.intern(TypeKey::Union(list_id))
+    }
+
     /// Fast path for unions that already fit in registers.
     pub fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
         self.union_from_iter([left, right])
