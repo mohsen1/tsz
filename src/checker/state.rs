@@ -1209,7 +1209,6 @@ impl<'a> CheckerState<'a> {
                 }
                 // Array/ReadonlyArray not found - check if lib files are loaded
                 // When --noLib is used, emit TS2318 instead of silently creating Array type
-                eprintln!("DEBUG: Array/ReadonlyArray not found, has_lib_loaded={}", self.ctx.has_lib_loaded());
                 if !self.ctx.has_lib_loaded() {
                     // No lib files loaded - emit TS2318 for missing global type
                     self.error_cannot_find_global_type(name, type_name_idx);
