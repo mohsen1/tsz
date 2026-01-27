@@ -129,10 +129,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if member == primitive_type {
                     return SubtypeResult::True;
                 }
-                // Also check if the literal is a subtype of this member via literal-to-intrinsic widening
-                // This handles cases like "hello" <: (string | { toString(): string })
-                // We only do this extra check for intrinsic types to avoid redundant subtype checks
-                if matches!(self.interner.lookup(member), Some(TypeKey::Intrinsic(_))) {
+                // For literal-to-literal unions (e.g., "a" <: "a" | "b"), check if the literal
+                // is directly in the union. This is more precise than the full subtype check.
+                if matches!(self.interner.lookup(member), Some(TypeKey::Literal(_))) {
                     if self.check_subtype(source, member).is_true() {
                         return SubtypeResult::True;
                     }

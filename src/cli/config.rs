@@ -639,9 +639,9 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
 
 pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
     let default_lib = default_lib_name_for_target(target);
-    let err = match resolve_lib_files(&[default_lib.to_string()]) {
+    match resolve_lib_files(&[default_lib.to_string()]) {
         Ok(files) => return Ok(files),
-        Err(err) => err,
+        Err(_) => {}, // Fall through to fallbacks
     };
 
     let mut fallbacks = Vec::new();
@@ -661,7 +661,11 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
         }
     }
 
-    Err(err)
+    // If all disk-based resolution fails, return an empty Vec to signal
+    // that we should fall back to embedded libs. The actual lib loading
+    // happens in load_lib_files_for_contexts() which will use embedded libs
+    // when disk files are not available.
+    Ok(Vec::new())
 }
 
 fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {

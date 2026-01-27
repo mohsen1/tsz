@@ -133,9 +133,6 @@ pub struct TypeCache {
     /// Cached types for nodes.
     pub node_types: FxHashMap<u32, TypeId>,
 
-    /// Type parameter names for type_to_string.
-    pub type_parameter_names: FxHashMap<TypeId, String>,
-
     /// Cache for type relation results (subtype checking).
     pub relation_cache: FxHashMap<(TypeId, TypeId, u8), bool>,
 
@@ -228,9 +225,6 @@ pub struct CheckerContext<'a> {
 
     /// Cached types for nodes.
     pub node_types: FxHashMap<u32, TypeId>,
-
-    /// Type parameter names for type_to_string.
-    pub type_parameter_names: FxHashMap<TypeId, String>,
 
     /// Cache for type relation results.
     pub relation_cache: RefCell<FxHashMap<(TypeId, TypeId, u8), bool>>,
@@ -402,7 +396,6 @@ impl<'a> CheckerContext<'a> {
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
-            type_parameter_names: FxHashMap::default(),
             relation_cache: RefCell::new(FxHashMap::default()),
             type_environment: RefCell::new(None),
             application_eval_cache: FxHashMap::default(),
@@ -470,7 +463,6 @@ impl<'a> CheckerContext<'a> {
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
-            type_parameter_names: FxHashMap::default(),
             relation_cache: RefCell::new(FxHashMap::default()),
             type_environment: RefCell::new(None),
             application_eval_cache: FxHashMap::default(),
@@ -540,7 +532,6 @@ impl<'a> CheckerContext<'a> {
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
-            type_parameter_names: cache.type_parameter_names,
             relation_cache: RefCell::new(cache.relation_cache),
             type_environment: RefCell::new(None),
             application_eval_cache: FxHashMap::default(),
@@ -609,7 +600,6 @@ impl<'a> CheckerContext<'a> {
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
-            type_parameter_names: cache.type_parameter_names,
             relation_cache: RefCell::new(cache.relation_cache),
             type_environment: RefCell::new(None),
             application_eval_cache: FxHashMap::default(),
@@ -685,7 +675,6 @@ impl<'a> CheckerContext<'a> {
         TypeCache {
             symbol_types: self.symbol_types,
             node_types: self.node_types,
-            type_parameter_names: self.type_parameter_names,
             relation_cache: self.relation_cache.into_inner(),
             symbol_dependencies: self.symbol_dependencies,
             abstract_constructor_types: self.abstract_constructor_types,

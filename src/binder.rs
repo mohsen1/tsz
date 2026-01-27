@@ -477,6 +477,17 @@ impl FlowNodeArena {
     pub fn clear(&mut self) {
         self.nodes.clear();
     }
+
+    /// Find the unreachable flow node in the arena.
+    /// This is used when reconstructing a BinderState from serialized flow data.
+    pub fn find_unreachable(&self) -> Option<FlowNodeId> {
+        for (idx, node) in self.nodes.iter().enumerate() {
+            if node.has_any_flags(flow_flags::UNREACHABLE) {
+                return Some(FlowNodeId(idx as u32));
+            }
+        }
+        None
+    }
 }
 
 // =============================================================================

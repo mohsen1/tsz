@@ -11339,25 +11339,16 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a property of a type is readonly.
     ///
-    /// Returns true if the type is an object type and the specified property
-    /// has a readonly modifier.
+    /// Delegates to the solver's comprehensive implementation which handles:
+    /// - ReadonlyType wrappers (readonly arrays/tuples)
+    /// - Object types with readonly properties
+    /// - ObjectWithIndex types (readonly index signatures)
+    /// - Union types (readonly if ANY member has readonly property)
+    /// - Intersection types (readonly ONLY if ALL members have readonly property)
     pub(crate) fn is_property_readonly(&self, type_id: TypeId, prop_name: &str) -> bool {
-        use crate::solver::TypeKey;
+        use crate::solver::QueryDatabase;
 
-        let Some(TypeKey::Object(shape_id)) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        let shape = self.ctx.types.object_shape(shape_id);
-        let prop_name_atom = self.ctx.types.intern_string(prop_name);
-
-        for prop in &shape.properties {
-            if prop.name == prop_name_atom {
-                return prop.readonly;
-            }
-        }
-
-        false
+        self.ctx.types.is_property_readonly(type_id, prop_name)
     }
 
     /// Check if property existence errors should be emitted for destructuring.

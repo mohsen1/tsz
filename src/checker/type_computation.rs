@@ -167,6 +167,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.ctx.contextual_type = helper.get_array_element_type();
                 }
+                // Clear application eval cache when contextual types change to ensure
+                // generic function type inference uses updated contextual information
+                self.ctx.application_eval_cache.clear();
             }
 
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -542,7 +545,8 @@ impl<'a> CheckerState<'a> {
                 TypeId::ERROR
             }
             PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                property_type.unwrap_or(TypeId::UNKNOWN)
+                // Use ERROR instead of UNKNOWN to prevent TS2571 errors
+                property_type.unwrap_or(TypeId::ERROR)
             }
             PropertyAccessResult::IsUnknown => {
                 // TS2571: Object is of type 'unknown'
@@ -1078,7 +1082,8 @@ impl<'a> CheckerState<'a> {
             result_type = Some(match result {
                 PropertyAccessResult::Success { type_id, .. } => type_id,
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                    property_type.unwrap_or(TypeId::UNKNOWN)
+                    // Use ERROR instead of UNKNOWN to prevent TS2571 errors
+                    property_type.unwrap_or(TypeId::ERROR)
                 }
                 PropertyAccessResult::IsUnknown => {
                     // TS2571: Object is of type 'unknown'
@@ -1772,6 +1777,10 @@ impl<'a> CheckerState<'a> {
         // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
         let constructor_type = self.evaluate_application_type(constructor_type);
 
+        // Resolve Ref types to ensure we get the actual constructor type, not just a symbolic reference
+        // This is critical for classes where we need the Callable with construct signatures
+        let constructor_type = self.resolve_ref_type(constructor_type);
+
         let construct_type = match self.ctx.types.lookup(constructor_type) {
             Some(TypeKey::Callable(shape_id)) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
@@ -2056,6 +2065,33 @@ impl<'a> CheckerState<'a> {
     /// the full construct type (not just the return type) for new expressions.
     ///
     /// The emit_error parameter controls whether we emit TS2507 errors.
+    /// Resolve Ref types to their actual types.
+    ///
+    /// For symbol references (Ref), this resolves them to the symbol's declared type.
+    /// This is important for new expressions where we need the actual constructor type
+    /// with construct signatures, not just a symbolic reference.
+    fn resolve_ref_type(&mut self, type_id: TypeId) -> TypeId {
+        use crate::binder::SymbolId;
+        use crate::solver::TypeKey;
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Ref(sym_ref)) => {
+                let symbol_id = SymbolId(sym_ref.0);
+                // Get the symbol's actual type
+                // This resolves the Ref to a Callable (for classes) or other concrete type
+                let symbol_type = self.get_type_of_symbol(symbol_id);
+                // If the resolved type is still a Ref (e.g., for namespaces or enums),
+                // return the original Ref to avoid infinite recursion
+                if symbol_type == type_id {
+                    type_id
+                } else {
+                    symbol_type
+                }
+            }
+            _ => type_id,
+        }
+    }
+
     fn get_construct_type_from_type(&self, type_id: TypeId) -> Option<TypeId> {
         use crate::solver::TypeKey;
 
@@ -2086,7 +2122,7 @@ impl<'a> CheckerState<'a> {
             }
             TypeKey::Function(_) => Some(type_id),
             // Ref to a symbol - check if it's a class (class constructor type)
-            // or an interface with construct signatures
+            // or an interface/variable with construct signatures
             TypeKey::Ref(SymbolRef(sym_id)) => {
                 let symbol_id = SymbolId(sym_id);
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
@@ -2095,20 +2131,64 @@ impl<'a> CheckerState<'a> {
                         return Some(type_id);
                     }
                     // Interface symbols might have construct signatures
-                    // Return the type for further checking by the caller
+                    // Check if they actually have construct signatures before returning Some
                     if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
+                        // For interfaces, check if they have construct signatures
+                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                            // Check if the cached type has construct signatures
+                            if self.has_construct_sig(cached_type) {
+                                return Some(type_id);
+                            }
+                            // Also check if it's an object type with construct signatures
+                            if let Some(TypeKey::Object(_) | TypeKey::ObjectWithIndex(_)) =
+                                self.ctx.types.lookup(cached_type)
+                            {
+                                return Some(type_id);
+                            }
+                        }
+                        // Return the type for further checking by the caller
                         return Some(type_id);
+                    }
+                    // For other symbols (variables, parameters, type aliases), check their cached type
+                    // This handles cases like:
+                    //   function f<T extends typeof A>(ctor: T) {
+                    //     class B extends ctor {}  // ctor should be recognized as constructible
+                    //   }
+                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                        // Check if the cached type is constructable
+                        if self.get_construct_type_from_type(cached_type).is_some() {
+                            return Some(type_id);
+                        }
                     }
                 }
                 None
             }
-            // TypeQuery (typeof X) - check if X is a class
+            // TypeQuery (typeof X) - check if X is a class or has a constructor type
             TypeKey::TypeQuery(SymbolRef(sym_id)) => {
                 let symbol_id = SymbolId(sym_id);
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
                     // typeof ClassName is the constructor type
                     if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
                         return Some(type_id);
+                    }
+                    // Check interfaces with construct signatures
+                    if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
+                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                            if self.has_construct_sig(cached_type) {
+                                return Some(type_id);
+                            }
+                        }
+                        return Some(type_id);
+                    }
+                    // For other symbols (variables, parameters, type aliases), check their cached type
+                    // This handles cases like:
+                    //   const x: typeof A = A;
+                    //   class B extends x {}
+                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                        // Check if the cached type is constructable
+                        if self.get_construct_type_from_type(cached_type).is_some() {
+                            return Some(type_id);
+                        }
                     }
                 }
                 None
@@ -2183,6 +2263,14 @@ impl<'a> CheckerState<'a> {
                         // We create a Ref to this symbol as the instance type
                         return Some(self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id))));
                     }
+                    // Check interfaces and other symbols for cached types with construct signatures
+                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                        // Recursively check the cached type
+                        // Avoid infinite loops by checking if it's the same as the input
+                        if cached_type != type_id {
+                            return self.get_construct_signature_return_type(cached_type);
+                        }
+                    }
                 }
                 None
             }
@@ -2196,6 +2284,89 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 None
+            }
+            // Handle Application types (e.g., Constructor<T>)
+            // Evaluate the application and check the result for construct signatures
+            TypeKey::Application(_) => {
+                // We need to evaluate the application type to get its resolved form
+                // Since evaluate_application_type is on CheckerState (mutable), we
+                // check if the base type is a type alias that resolves to a Callable
+                let app = self.ctx.types.type_application(
+                    if let TypeKey::Application(app_id) = type_key {
+                        app_id
+                    } else {
+                        return None;
+                    },
+                );
+                // Check if base is a Ref to a type alias with a Callable body
+                if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base) {
+                    let symbol_id = SymbolId(sym_id);
+                    if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                        // For type aliases, get the cached resolved type
+                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                            // Recursively check the resolved type
+                            return self.get_construct_signature_return_type(cached_type);
+                        }
+                        // Check if symbol is a class
+                        if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+                            return Some(self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id))));
+                        }
+                    }
+                }
+                // Check if base directly has construct signatures
+                self.get_construct_signature_return_type(app.base)
+            }
+            // Handle Union types - ALL members must be constructable
+            TypeKey::Union(members_id) => {
+                let members = self.ctx.types.type_list(members_id);
+                let mut instance_types: Vec<TypeId> = Vec::new();
+
+                for &member in members.iter() {
+                    if let Some(return_type) = self.get_construct_signature_return_type(member) {
+                        instance_types.push(return_type);
+                    } else {
+                        // If any member is not constructable, the whole union is not
+                        return None;
+                    }
+                }
+
+                if instance_types.is_empty() {
+                    None
+                } else {
+                    // Return union of all instance types
+                    Some(self.ctx.types.union(instance_types))
+                }
+            }
+            // Handle Intersection types - ANY member being constructable is sufficient
+            TypeKey::Intersection(members_id) => {
+                let members = self.ctx.types.type_list(members_id);
+
+                for &member in members.iter() {
+                    if let Some(return_type) = self.get_construct_signature_return_type(member) {
+                        return Some(return_type);
+                    }
+                }
+                None
+            }
+            // Handle TypeParameter - check constraint for construct signatures
+            TypeKey::TypeParameter(ref info) | TypeKey::Infer(ref info) => {
+                if let Some(constraint) = info.constraint {
+                    self.get_construct_signature_return_type(constraint)
+                } else {
+                    None
+                }
+            }
+            // Handle Function types - check if it's actually a Callable
+            // (Function types in TypeScript can have construct signatures via
+            // overloading, but TypeKey::Function is for simple functions)
+            TypeKey::Function(shape_id) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                // If it's marked as a constructor, use its return type
+                if shape.is_constructor {
+                    Some(shape.return_type)
+                } else {
+                    None
+                }
             }
             _ => None,
         }

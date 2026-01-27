@@ -116,7 +116,6 @@ impl CompilationCache {
                     if let Some(cache) = self.type_caches.get_mut(&path) {
                         cache.node_types.clear();
                         cache.relation_cache.clear();
-                        cache.type_parameter_names.clear();
                     }
                 } else {
                     self.type_caches.remove(&path);
@@ -549,6 +548,8 @@ fn build_program_with_cache(
                     reexports: Default::default(),
                     wildcard_reexports: Default::default(),
                     lib_binders: Vec::new(),
+                    flow_nodes: Default::default(),
+                    node_flow: Default::default(),
                 }
             }
         };
@@ -593,6 +594,13 @@ fn update_import_symbol_ids(
     let mut import_symbol_ids: HashMap<PathBuf, HashMap<PathBuf, Vec<SymbolId>>> = HashMap::new();
     let mut star_export_dependencies: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
 
+    // Build set of known file paths for module resolution
+    let known_files: HashSet<PathBuf> = program
+        .files
+        .iter()
+        .map(|f| PathBuf::from(&f.file_name))
+        .collect();
+
     for (file_idx, file) in program.files.iter().enumerate() {
         let file_path = PathBuf::from(&file.file_name);
         let mut by_dep: HashMap<PathBuf, Vec<SymbolId>> = HashMap::new();
@@ -604,6 +612,7 @@ fn update_import_symbol_ids(
                 options,
                 base_dir,
                 &mut resolution_cache,
+                &known_files,
             );
             let Some(resolved) = resolved else {
                 continue;
@@ -627,6 +636,7 @@ fn update_import_symbol_ids(
                 options,
                 base_dir,
                 &mut resolution_cache,
+                &known_files,
             );
             let Some(resolved) = resolved else {
                 continue;
@@ -646,6 +656,7 @@ fn update_import_symbol_ids(
                 options,
                 base_dir,
                 &mut resolution_cache,
+                &known_files,
             );
             let Some(resolved) = resolved else {
                 continue;
@@ -1063,6 +1074,7 @@ fn read_source_files(
                 options,
                 base_dir,
                 &mut resolution_cache,
+                &seen,
             ) {
                 let canonical = canonicalize_or_owned(&resolved);
                 entry.insert(canonical.clone());
@@ -1334,6 +1346,7 @@ fn resolve_module_specifier(
     options: &ResolvedCompilerOptions,
     base_dir: &Path,
     resolution_cache: &mut ModuleResolutionCache,
+    known_files: &HashSet<PathBuf>,
 ) -> Option<PathBuf> {
     let specifier = module_specifier.trim();
     if specifier.is_empty() {
@@ -1433,7 +1446,11 @@ fn resolve_module_specifier(
     }
 
     for candidate in candidates {
-        if candidate.is_file() && is_valid_module_file(&candidate) {
+        // Check if candidate exists in known files (for virtual test files) or on filesystem
+        let exists = known_files.contains(&candidate)
+            || (candidate.is_file() && is_valid_module_file(&candidate));
+
+        if exists {
             return Some(canonicalize_or_owned(&candidate));
         }
     }
@@ -2419,26 +2436,27 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 /// This function loads the specified lib.d.ts files (e.g., lib.dom.d.ts, lib.es*.d.ts)
 /// and returns LibContext objects that can be used by the checker to resolve global
 /// symbols like `console`, `Array`, `Promise`, etc.
+///
+/// If disk files are not available or fail to load, this function falls back to embedded libs
+/// to ensure global types are always available.
 fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
     use crate::binder::BinderState;
     use crate::parser::ParserState;
+    use crate::lib_loader;
     use std::sync::Arc;
 
     let mut lib_contexts = Vec::new();
 
-    if lib_files.is_empty() {
-        return lib_contexts;
-    }
-    let files_to_load = lib_files.to_vec();
-
-    for lib_path in files_to_load {
+    // First, try to load from disk files
+    let mut has_core_types = false;  // Track if we loaded essential types like Object, Array
+    for lib_path in lib_files {
         // Skip if the file doesn't exist
         if !lib_path.exists() {
             continue;
         }
 
         // Read the lib file content
-        let source_text = match std::fs::read_to_string(&lib_path) {
+        let source_text = match std::fs::read_to_string(lib_path) {
             Ok(content) => content,
             Err(_) => continue,
         };
@@ -2448,7 +2466,7 @@ fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
         let mut lib_parser = ParserState::new(file_name.clone(), source_text);
         let source_file_idx = lib_parser.parse_source_file();
 
-        // Skip if there are parse errors
+        // Skip if there are parse errors (lib files may use advanced syntax)
         if !lib_parser.get_diagnostics().is_empty() {
             continue;
         }
@@ -2457,11 +2475,34 @@ fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
         let mut lib_binder = BinderState::new();
         lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
+        // Check if this lib has core types
+        if lib_binder.file_locals.has("Object") && lib_binder.file_locals.has("Array") {
+            has_core_types = true;
+        }
+
         // Create the LibContext
         let arena = Arc::new(lib_parser.into_arena());
         let binder = Arc::new(lib_binder);
 
         lib_contexts.push(LibContext { arena, binder });
+    }
+
+    // If no disk files were loaded OR core types are missing, fall back to embedded libs
+    // This ensures global types are always available even when disk files fail to parse
+    if lib_contexts.is_empty() || !has_core_types {
+        // Load embedded libs for ES2020 with DOM as a reasonable default
+        let embedded_libs = lib_loader::load_embedded_libs(
+            crate::emitter::ScriptTarget::ES2020,
+            true, // include DOM
+        );
+
+        // Add embedded libs to provide missing types
+        for lib_file in embedded_libs {
+            lib_contexts.push(LibContext {
+                arena: lib_file.arena.clone(),
+                binder: lib_file.binder.clone(),
+            });
+        }
     }
 
     lib_contexts
@@ -2517,6 +2558,7 @@ fn collect_diagnostics(
                 options,
                 base_dir,
                 &mut resolution_cache,
+                &program_paths,
             ) {
                 let canonical = canonicalize_or_owned(&resolved);
                 if let Some(target_file_name) = canonical_to_file_name.get(&canonical)
@@ -2561,6 +2603,7 @@ fn collect_diagnostics(
                 options,
                 base_dir,
                 &mut resolution_cache,
+                &program_paths,
             ) {
                 let canonical = canonicalize_or_owned(&resolved);
                 if program_paths.contains(&canonical) {
@@ -2598,6 +2641,7 @@ fn collect_diagnostics(
                 options,
                 base_dir,
                 &mut resolution_cache,
+                &program_paths,
             );
             if let Some(resolved_path) = resolved {
                 let canonical = canonicalize_or_owned(&resolved_path);
@@ -3179,6 +3223,8 @@ fn create_binder_from_bound_file(
         program.wildcard_reexports.clone(),
         program.symbol_arenas.clone(),
         program.shorthand_ambient_modules.clone(),
+        file.flow_nodes.clone(),
+        file.node_flow.clone(),
     );
 
     binder.declared_modules = program.declared_modules.clone();

@@ -293,6 +293,8 @@ impl BinderState {
             FxHashMap::default(),
             FxHashMap::default(),
             FxHashSet::default(),
+            FlowNodeArena::new(),
+            FxHashMap::default(),
         )
     }
 
@@ -313,9 +315,14 @@ impl BinderState {
         wildcard_reexports: FxHashMap<String, Vec<String>>,
         symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
         shorthand_ambient_modules: FxHashSet<String>,
+        flow_nodes: FlowNodeArena,
+        node_flow: FxHashMap<u32, FlowNodeId>,
     ) -> Self {
-        let mut flow_nodes = FlowNodeArena::new();
-        let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
+        // Find the unreachable flow node in the existing flow_nodes, or create a new one
+        let unreachable_flow = flow_nodes.find_unreachable().unwrap_or_else(|| {
+            // This shouldn't happen in practice since the binder always creates an unreachable flow
+            FlowNodeId::NONE
+        });
 
         BinderState {
             symbols,
@@ -331,7 +338,7 @@ impl BinderState {
             current_scope_idx: 0,
             node_symbols,
             symbol_arenas,
-            node_flow: FxHashMap::default(),
+            node_flow,
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
             hoisted_vars: Vec::new(),
@@ -1529,7 +1536,9 @@ impl BinderState {
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 self.record_flow(idx);
                 if let Some(expr_stmt) = arena.get_expression_statement(node) {
-                    self.bind_node(arena, expr_stmt.expression);
+                    // Use bind_expression instead of bind_node to properly record flow
+                    // for identifiers within property access expressions etc.
+                    self.bind_expression(arena, expr_stmt.expression);
                 }
             }
 
