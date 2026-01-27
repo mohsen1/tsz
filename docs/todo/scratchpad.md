@@ -140,6 +140,12 @@ into higher-level diagnostics.
 - TS2322: 27 extra - **99.8% reduction!**
 - TS2540: Not in top 8 - **FIXED!**
 
+**After (requested 14 workers, capped to 2):**
+- Pass Rate: 53.7% (108/201) - **+20.5 points over baseline**
+- Crashed: 0 (0%) - **Stable under cap**
+- TS2318: 38 missing (down sharply vs full run)
+- TS2571: 106 extra now dominant (null/undefined narrowing)
+
 ### Impact Summary
 1. **Stability**: 90% crash rate → 0% (Rayon + panic hooks)
 2. **Performance**: Lib caching eliminated redundant parsing
