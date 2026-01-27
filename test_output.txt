@@ -1,0 +1,55 @@
+    Blocking waiting for file lock on build directory
+   Compiling wasm v0.1.0 (/Users/mohsenazimi/code/tsz)
+error: Tests must be run inside Docker! Use ./scripts/test.sh
+    --> src/lib.rs:2642:1
+     |
+2642 | compile_error!("Tests must be run inside Docker! Use ./scripts/test.sh");
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_CLASS_INHERITANCE_DEPTH` is never used
+  --> src/checker/class_type.rs:23:7
+   |
+23 | const MAX_CLASS_INHERITANCE_DEPTH: usize = 256;
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `create_flow_evaluator`, `extract_flow_facts`, and `apply_solver_flow_narrowing` are never used
+    --> src/checker/flow_analysis.rs:1693:19
+     |
+  91 | impl<'a> CheckerState<'a> {
+     | ------------------------- methods in this implementation
+...
+1693 |     pub(crate) fn create_flow_evaluator(&self) -> FlowTypeEvaluator<'_> {
+     |                   ^^^^^^^^^^^^^^^^^^^^^
+...
+1703 |     pub(crate) fn extract_flow_facts(&self, _sym_id: SymbolId, _usage_idx: NodeIndex) -> FlowFacts {
+     |                   ^^^^^^^^^^^^^^^^^^
+...
+1719 |     pub(crate) fn apply_solver_flow_narrowing(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `db` is never read
+   --> src/solver/flow_analysis.rs:111:5
+    |
+110 | pub struct FlowTypeEvaluator<'a> {
+    |            ----------------- field in this struct
+111 |     db: &'a dyn TypeDatabase,
+    |     ^^
+
+warning: fields `ts_extensions` and `js_extensions` are never read
+   --> src/module_resolver.rs:344:5
+    |
+332 | pub struct ModuleResolver {
+    |            -------------- fields in this struct
+...
+344 |     ts_extensions: Vec<&'static str>,
+    |     ^^^^^^^^^^^^^
+345 |     /// Extensions to try for JavaScript resolution
+346 |     js_extensions: Vec<&'static str>,
+    |     ^^^^^^^^^^^^^
+    |
+    = note: `ModuleResolver` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `wasm` (lib) generated 4 warnings
+error: could not compile `wasm` (lib test) due to 1 previous error

@@ -348,6 +348,10 @@ pub struct CheckerContext<'a> {
     /// Used to check if await expressions are within async context (TS1359).
     pub async_depth: u32,
 
+    /// Stack of symbols being resolved via typeof to detect cycles.
+    /// Prevents infinite loops in typeof X where X's type computation depends on typeof X.
+    pub typeof_resolution_stack: RefCell<FxHashSet<u32>>,
+
     /// Closure depth - tracks nesting of function expressions, arrow functions, and method expressions.
     /// Used to apply Rule #42: CFA Invalidation in Closures.
     /// When > 0, mutable variables (let/var) lose narrowing in closures.
@@ -440,6 +444,7 @@ impl<'a> CheckerContext<'a> {
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             freshness_tracker: FreshnessTracker::new(),
+            typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
 
@@ -507,6 +512,7 @@ impl<'a> CheckerContext<'a> {
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             freshness_tracker: FreshnessTracker::new(),
+            typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
 
@@ -576,6 +582,7 @@ impl<'a> CheckerContext<'a> {
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             freshness_tracker: FreshnessTracker::new(),
+            typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
 
@@ -644,6 +651,7 @@ impl<'a> CheckerContext<'a> {
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
             freshness_tracker: FreshnessTracker::new(),
+            typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
 
