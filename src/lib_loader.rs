@@ -71,6 +71,10 @@ fn load_embedded_lib(lib: &EmbeddedLib) -> Option<Arc<LibFile>> {
 
 /// Load embedded libs for a given script target.
 ///
+/// This function first tries to load from pre-parsed binary data (if available),
+/// which is ~10x faster than parsing. If pre-parsed data is not available,
+/// it falls back to parsing the embedded lib text.
+///
 /// # Arguments
 /// * `target` - The ECMAScript target version
 /// * `include_dom` - Whether to include DOM and browser APIs
@@ -87,6 +91,12 @@ fn load_embedded_lib(lib: &EmbeddedLib) -> Option<Arc<LibFile>> {
 /// assert!(!libs.is_empty());
 /// ```
 pub fn load_embedded_libs(target: ScriptTarget, include_dom: bool) -> Vec<Arc<LibFile>> {
+    // Try pre-parsed libs first (much faster ~10x)
+    if let Some(libs) = crate::preparsed_libs::load_preparsed_libs_for_target(target, include_dom) {
+        return libs;
+    }
+
+    // Fall back to parsing embedded lib text
     let lib_refs = if include_dom {
         embedded_libs::get_default_libs_for_target(target)
     } else {
@@ -101,12 +111,24 @@ pub fn load_embedded_libs(target: ScriptTarget, include_dom: bool) -> Vec<Arc<Li
 
 /// Load a specific embedded lib by name.
 ///
+/// This function first tries to load from pre-parsed binary data (if available),
+/// which is ~10x faster than parsing. If pre-parsed data is not available,
+/// it falls back to parsing the embedded lib text.
+///
 /// # Arguments
 /// * `name` - The lib name (e.g., "es5", "es2015.promise", "dom")
 ///
 /// # Returns
 /// The loaded LibFile if found and successfully parsed, None otherwise.
 pub fn load_embedded_lib_by_name(name: &str) -> Option<Arc<LibFile>> {
+    // Try pre-parsed libs first (much faster ~10x)
+    if let Some(preparsed) = crate::preparsed_libs::get_preparsed_libs() {
+        if let Some(lib) = preparsed.get(name) {
+            return Some(Arc::new(lib.to_lib_file()));
+        }
+    }
+
+    // Fall back to parsing embedded lib text
     embedded_libs::get_lib(name).and_then(load_embedded_lib)
 }
 

@@ -3,13 +3,13 @@
 //! These types are part of the "thin pipeline" surface area and should remain
 //! available even if the legacy fat AST is disabled.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 /// A text range with start and end positions.
 /// All positions are character indices (not byte indices).
 #[wasm_bindgen]
-#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct TextRange {
     pub pos: u32,
     pub end: u32,
@@ -25,7 +25,7 @@ impl TextRange {
 
 /// Index into an arena. Used instead of pointers/references for serialization-friendly graphs.
 #[wasm_bindgen]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize, Hash)]
 pub struct NodeIndex(pub u32);
 
 impl NodeIndex {
@@ -43,7 +43,7 @@ impl NodeIndex {
 }
 
 /// A list of node indices, representing children or a node array.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NodeList {
     pub nodes: Vec<NodeIndex>,
     pub pos: u32,

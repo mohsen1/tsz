@@ -60,6 +60,13 @@ pub mod lib_loader;
 pub mod embedded_libs;
 pub use embedded_libs::{EmbeddedLib, get_default_libs_for_target, get_lib, get_libs_for_target};
 
+// Pre-parsed TypeScript Library Files - For faster startup
+pub mod preparsed_libs;
+pub use preparsed_libs::{
+    PreParsedLib, PreParsedLibs, generate_and_write_cache, get_preparsed_libs,
+    has_preparsed_libs, load_preparsed_libs_for_target,
+};
+
 // Checker types and implementation (Phase 5)
 pub mod checker;
 

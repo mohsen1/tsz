@@ -47,10 +47,13 @@ To manually install: `./scripts/install-hooks.sh`
 
 **This is the most important architectural principle.** Read [docs/solver-type-computation-analysis.md](docs/solver-type-computation-analysis.md) for the complete guide.
 
+> **⚠️ Current State (Jan 2026 Audit)**: The checker has accumulated 601 direct `TypeKey::` references while using visitor functions only 16 times. This violates the visitor pattern requirement below. See [Section 1.4 of solver-type-computation-analysis.md](docs/solver-type-computation-analysis.md#14-architecture-audit-january-2026) for details and migration plan.
+
 ### The Core Contract
 
+> **Binder handles SYMBOLS** (symbol table, scopes, control flow graph)
 > **Solver handles WHAT** (type operations and relations)
-> **Checker handles WHERE** (AST traversal, scoping, control flow)
+> **Checker handles WHERE** (AST traversal, diagnostics, orchestration)
 
 ### Rules
 
@@ -61,6 +64,8 @@ To manually install: `./scripts/install-hooks.sh`
 3. **Checker is a thin wrapper** - Checker extracts AST data, delegates to solver, and reports errors.
 
 4. **No duplicated type logic** - If the same type logic exists in multiple places, consolidate it in solver.
+
+5. **Binder never computes types** - Binder creates symbols, manages scopes, and builds CFG. Type computation happens in checker/solver.
 
 ### Example: Correct Delegation Pattern
 
@@ -124,11 +129,19 @@ fn check_type(&self, type_id: TypeId) {
 }
 ```
 
-Available visitor functions:
+Available visitor functions (from `src/solver/visitor.rs`):
+
+**Type classification:**
 - `is_literal_type`, `is_function_type`, `is_object_like_type`, `is_empty_object_type`
-- `is_union_type`, `is_intersection_type`, `is_array_type`, `is_tuple_type`
-- `is_type_parameter`, `is_conditional_type`, `is_mapped_type`
-- `contains_type_parameters`, `contains_error_type`, `contains_type_matching`
+- `is_primitive_type`, `is_union_type`, `is_intersection_type`
+- `is_array_type`, `is_tuple_type`, `is_type_parameter`
+- `is_conditional_type`, `is_mapped_type`, `is_index_access_type`
+- `is_template_literal_type`, `is_type_reference`, `is_generic_application`
+- `is_type_kind` (generic, takes `TypeKind` enum)
+
+**Type inspection:**
+- `contains_type_parameters`, `contains_infer_types`, `contains_error_type`
+- `contains_type_matching` (generic predicate)
 - `collect_all_types`, `collect_referenced_types`
 
 ---
