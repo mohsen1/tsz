@@ -48,6 +48,7 @@ bitflags = "2.6"  # Efficient TypeFlags for fast rejection
 tracing = "0.1"  # Structured tracing for diagnostics
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }  # Trining subscriber with RUST_LOG support
 bincode = "1.3"  # Fast binary serialization for pre-parsed lib cache
+once_cell = "1.19"  # Lazy static initialization for lib cache
 
 [build-dependencies]
 bincode = "1.3"

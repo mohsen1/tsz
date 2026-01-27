@@ -1,4 +1,7 @@
 use wasm_bindgen::prelude::*;
+use once_cell::sync::Lazy;
+use rustc_hash::FxHashMap;
+use std::sync::Mutex;
 
 // Initialize panic hook for WASM to prevent worker crashes
 #[cfg(target_arch = "wasm32")]
@@ -6,6 +9,54 @@ use wasm_bindgen::prelude::*;
 pub fn wasm_init() {
     // Set panic hook to log errors to console instead of crashing worker
     console_error_panic_hook::set_once();
+}
+
+// Global cache for parsed lib files to avoid re-parsing lib.d.ts per test
+// Key: (file_name, content_hash), Value: Arc<LibFile>
+static LIB_FILE_CACHE: Lazy<Mutex<FxHashMap<(String, u64), Arc<lib_loader::LibFile>>>> =
+    Lazy::new(|| Mutex::new(FxHashMap::default()));
+
+/// Simple hash function for lib file content
+fn hash_lib_content(content: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Get or create a cached lib file. This avoids re-parsing lib.d.ts for every test.
+fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loader::LibFile> {
+    let content_hash = hash_lib_content(&source_text);
+    let cache_key = (file_name.clone(), content_hash);
+    
+    // Try to get from cache
+    {
+        let cache = LIB_FILE_CACHE.lock().unwrap();
+        if let Some(cached) = cache.get(&cache_key) {
+            return Arc::clone(cached);
+        }
+    }
+    
+    // Not in cache - parse and bind
+    let mut lib_parser = ParserState::new(file_name.clone(), source_text);
+    let source_file_idx = lib_parser.parse_source_file();
+    
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
+    
+    let arena = Arc::new(lib_parser.into_arena());
+    let binder = Arc::new(lib_binder);
+    
+    let lib_file = Arc::new(lib_loader::LibFile::new(file_name, arena, binder));
+    
+    // Store in cache
+    {
+        let mut cache = LIB_FILE_CACHE.lock().unwrap();
+        cache.insert(cache_key, Arc::clone(&lib_file));
+    }
+    
+    lib_file
 }
 
 // Shared test fixtures for reduced allocation overhead
@@ -2001,28 +2052,12 @@ impl WasmProgram {
         }
 
         // Load lib files for binding
+        // Use cache to avoid re-parsing lib.d.ts for every test
         let lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
             .lib_files
             .iter()
-            .filter_map(|(file_name, source_text)| {
-                // Parse lib file
-                let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
-                let source_file_idx = lib_parser.parse_source_file();
-
-                // Keep lib files even with parse diagnostics.
-                // This matches tsc behavior and avoids missing global types.
-
-                let mut lib_binder = BinderState::new();
-                lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-                let arena = Arc::new(lib_parser.into_arena());
-                let binder = Arc::new(lib_binder);
-
-                Some(Arc::new(lib_loader::LibFile::new(
-                    file_name.clone(),
-                    arena,
-                    binder,
-                )))
+            .map(|(file_name, source_text)| {
+                get_or_create_lib_file(file_name.clone(), source_text.clone())
             })
             .collect();
 
@@ -2117,28 +2152,12 @@ impl WasmProgram {
         }
 
         // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
+        // Use cache to avoid re-parsing lib.d.ts for every test
         let mut lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
             .lib_files
             .iter()
-            .filter_map(|(file_name, source_text)| {
-                // Parse lib file
-                let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
-                let source_file_idx = lib_parser.parse_source_file();
-
-                // Keep lib files even with parse diagnostics.
-                // This matches tsc behavior and avoids missing global types.
-
-                let mut lib_binder = BinderState::new();
-                lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-                let arena = Arc::new(lib_parser.into_arena());
-                let binder = Arc::new(lib_binder);
-
-                Some(Arc::new(lib_loader::LibFile::new(
-                    file_name.clone(),
-                    arena,
-                    binder,
-                )))
+            .map(|(file_name, source_text)| {
+                get_or_create_lib_file(file_name.clone(), source_text.clone())
             })
             .collect();
 
@@ -2196,28 +2215,12 @@ impl WasmProgram {
         }
 
         // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
+        // Use cache to avoid re-parsing lib.d.ts for every test
         let mut lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
             .lib_files
             .iter()
-            .filter_map(|(file_name, source_text)| {
-                // Parse lib file
-                let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
-                let source_file_idx = lib_parser.parse_source_file();
-
-                // Keep lib files even with parse diagnostics.
-                // This matches tsc behavior and avoids missing global types.
-
-                let mut lib_binder = BinderState::new();
-                lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-                let arena = Arc::new(lib_parser.into_arena());
-                let binder = Arc::new(lib_binder);
-
-                Some(Arc::new(lib_loader::LibFile::new(
-                    file_name.clone(),
-                    arena,
-                    binder,
-                )))
+            .map(|(file_name, source_text)| {
+                get_or_create_lib_file(file_name.clone(), source_text.clone())
             })
             .collect();
 
