@@ -111,6 +111,10 @@ impl<'a> CheckerState<'a> {
     /// - Spread elements (`[...arr]`)
     /// - Common type inference for mixed elements
     pub(crate) fn get_type_of_array_literal(&mut self, idx: NodeIndex) -> TypeId {
+        eprintln!(
+            "DEBUG: get_type_of_array_literal called for node {:?}, contextual_type: {:?}",
+            idx, self.ctx.contextual_type
+        );
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
@@ -128,13 +132,18 @@ impl<'a> CheckerState<'a> {
         }
 
         let tuple_context = match self.ctx.contextual_type {
-            Some(ctx_type) => match self.ctx.types.lookup(ctx_type) {
-                Some(TypeKey::Tuple(elements)) => {
-                    let elements = self.ctx.types.tuple_list(elements);
-                    Some(elements.as_ref().to_vec())
+            Some(ctx_type) => {
+                // Evaluate Application types to get their structural form
+                // This handles cases like: type MyTuple<T, U> = [T, U]; function f<A, B>(): MyTuple<A, B>
+                let evaluated = self.evaluate_application_type(ctx_type);
+                match self.ctx.types.lookup(evaluated) {
+                    Some(TypeKey::Tuple(elements)) => {
+                        let elements = self.ctx.types.tuple_list(elements);
+                        Some(elements.as_ref().to_vec())
+                    }
+                    _ => None,
                 }
-                _ => None,
-            },
+            }
             None => None,
         };
 
