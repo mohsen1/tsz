@@ -9099,20 +9099,23 @@ impl<'a> CheckerState<'a> {
                         }
 
                         // Report implicit any return
-                        let func_name = self.get_function_name_from_node(stmt_idx);
-                        let name_node = if !func.name.is_none() {
-                            Some(func.name)
-                        } else {
-                            None
-                        };
-                        self.maybe_report_implicit_any_return(
-                            func_name,
-                            name_node,
-                            return_type,
-                            has_type_annotation,
-                            false,
-                            stmt_idx,
-                        );
+                        // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
+                        if !func.is_async {
+                            let func_name = self.get_function_name_from_node(stmt_idx);
+                            let name_node = if !func.name.is_none() {
+                                Some(func.name)
+                            } else {
+                                None
+                            };
+                            self.maybe_report_implicit_any_return(
+                                func_name,
+                                name_node,
+                                return_type,
+                                has_type_annotation,
+                                false,
+                                stmt_idx,
+                            );
+                        }
 
                         // TS2705: Async function must return Promise
                         if func.is_async && !func.asterisk_token && has_type_annotation {

@@ -244,6 +244,20 @@ impl<'a> CheckerState<'a> {
             // Check that parameter default values are assignable to declared types (TS2322)
             self.check_parameter_initializers(&parameters.nodes);
 
+            // Check async function requirements (needed before TS7010 check)
+            let (is_async, is_generator, _async_node_idx): (bool, bool, NodeIndex) =
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    (func.is_async, func.asterisk_token, func.name)
+                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    (
+                        self.has_async_modifier(&method.modifiers),
+                        method.asterisk_token,
+                        method.name,
+                    )
+                } else {
+                    (false, false, NodeIndex::NONE)
+                };
+
             let mut has_contextual_return = false;
             if !has_type_annotation {
                 let return_context = ctx_helper
@@ -258,8 +272,9 @@ impl<'a> CheckerState<'a> {
             // TS7010/TS7011 (implicit any return) is emitted for functions without
             // return type annotations when noImplicitAny is enabled and the return
             // type cannot be inferred (e.g., is 'any' or only returns undefined)
+            // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
             // maybe_report_implicit_any_return handles the noImplicitAny check internally
-            if !is_function_declaration {
+            if !is_function_declaration && !is_async {
                 self.maybe_report_implicit_any_return(
                     name_for_error,
                     name_node,
@@ -269,20 +284,6 @@ impl<'a> CheckerState<'a> {
                     idx,
                 );
             }
-
-            // Check async function requirements
-            let (is_async, is_generator, _async_node_idx): (bool, bool, NodeIndex) =
-                if let Some(func) = self.ctx.arena.get_function(node) {
-                    (func.is_async, func.asterisk_token, func.name)
-                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                    (
-                        self.has_async_modifier(&method.modifiers),
-                        method.asterisk_token,
-                        method.name,
-                    )
-                } else {
-                    (false, false, NodeIndex::NONE)
-                };
 
             // TS2697: Check if async function has access to Promise type
             // DISABLED: Causes too many false positives (313x extra errors)

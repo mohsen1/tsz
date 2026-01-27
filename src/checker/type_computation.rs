@@ -1899,7 +1899,12 @@ impl<'a> CheckerState<'a> {
                 let mut all_constructable = true;
 
                 for &member in members.iter() {
-                    let construct_sig_return = self.get_construct_signature_return_type(member);
+                    // Resolve Refs (type alias references) to their actual types
+                    let resolved_member = self.resolve_type_for_property_access(member);
+                    // Then evaluate any Application types
+                    let evaluated_member = self.evaluate_application_type(resolved_member);
+                    let construct_sig_return =
+                        self.get_construct_signature_return_type(evaluated_member);
                     if let Some(return_type) = construct_sig_return {
                         instance_types.push(return_type);
                     } else {
