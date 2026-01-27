@@ -10033,9 +10033,16 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an expression is `this` (helper to avoid conflict with existing method).
     fn is_this_expression_in_constructor(&mut self, expr_idx: NodeIndex) -> bool {
+        use crate::scanner::SyntaxKind;
+
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
+
+        // Check if it's ThisKeyword (node.kind == 110)
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
 
         // Check if it's an identifier with text "this"
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
