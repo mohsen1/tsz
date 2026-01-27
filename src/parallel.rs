@@ -47,6 +47,42 @@ fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBu
     Ok(Vec::new())
 }
 
+/// Conditionally use parallel or sequential iteration based on target.
+/// For WASM, Rayon parallelism creates oversubscription when combined with
+/// external worker-level parallelism (e.g., Node worker threads in conformance tests).
+/// This causes worker crashes and OOM issues.
+///
+/// Usage:
+/// - `maybe_parallel_iter!(collection)` for `.par_iter()` / `.iter()`
+/// - `maybe_parallel_into!(collection)` for `.into_par_iter()` / `.into_iter()`
+#[cfg(target_arch = "wasm32")]
+macro_rules! maybe_parallel_iter {
+    ($iter:expr) => {
+        $iter.iter()
+    };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! maybe_parallel_iter {
+    ($iter:expr) => {
+        $iter.par_iter()
+    };
+}
+
+#[cfg(target_arch = "wasm32")]
+macro_rules! maybe_parallel_into {
+    ($iter:expr) => {
+        $iter.into_iter()
+    };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! maybe_parallel_into {
+    ($iter:expr) => {
+        $iter.into_par_iter()
+    };
+}
+
 /// Result of parsing a single file
 pub struct ParseResult {
     /// File name
@@ -70,8 +106,7 @@ pub struct ParseResult {
 /// # Returns
 /// Vector of ParseResult for each file
 pub fn parse_files_parallel(files: Vec<(String, String)>) -> Vec<ParseResult> {
-    files
-        .into_par_iter()
+    maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
             let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
@@ -172,8 +207,7 @@ pub struct BindResult {
 /// # Returns
 /// Vector of BindResult for each file
 pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> {
-    files
-        .into_par_iter()
+    maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
             // Parse
             let mut parser = ParserState::new(file_name.clone(), source_text);
@@ -367,8 +401,7 @@ pub fn parse_and_bind_parallel_with_libs(
     files: Vec<(String, String)>,
     lib_files: &[Arc<lib_loader::LibFile>],
 ) -> Vec<BindResult> {
-    files
-        .into_par_iter()
+    maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
             // Parse
             let mut parser = ParserState::new(file_name.clone(), source_text);
@@ -1162,9 +1195,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     // Check functions in parallel
     // Note: We need to be careful here - CheckerState holds mutable references
     // For now, we group by file and check each file's functions together
-    let file_results: Vec<FileCheckResult> = program
-        .files
-        .par_iter()
+    let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
         .enumerate()
         .map(|(file_idx, file)| {
             let functions = collect_functions(&file.arena, file.source_file);
@@ -1237,9 +1268,7 @@ pub fn check_files_parallel(
         })
         .collect();
 
-    let file_results: Vec<FileCheckResult> = program
-        .files
-        .par_iter()
+    let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
         .enumerate()
         .map(|(file_idx, file)| {
             let binder = create_binder_from_bound_file(file, program, file_idx);
