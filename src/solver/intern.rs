@@ -837,7 +837,8 @@ impl TypeInterner {
                             existing.write_type =
                                 self.intersection2(existing.write_type, prop.write_type);
                             existing.optional = existing.optional && prop.optional;
-                            existing.readonly = existing.readonly || prop.readonly;
+                            // Intersection: readonly only if ALL constituents are readonly
+                            existing.readonly = existing.readonly && prop.readonly;
                         } else {
                             properties.push(prop.clone());
                         }
@@ -849,7 +850,8 @@ impl TypeInterner {
                             string_index = Some(IndexSignature {
                                 key_type: existing.key_type,
                                 value_type: self.intersection2(existing.value_type, idx.value_type),
-                                readonly: existing.readonly || idx.readonly,
+                                // Intersection: readonly only if ALL constituents are readonly
+                                readonly: existing.readonly && idx.readonly,
                             });
                         }
                         _ => {}
@@ -860,7 +862,8 @@ impl TypeInterner {
                             number_index = Some(IndexSignature {
                                 key_type: existing.key_type,
                                 value_type: self.intersection2(existing.value_type, idx.value_type),
-                                readonly: existing.readonly || idx.readonly,
+                                // Intersection: readonly only if ALL constituents are readonly
+                                readonly: existing.readonly && idx.readonly,
                             });
                         }
                         _ => {}
@@ -1003,7 +1006,8 @@ impl TypeInterner {
                     merged_number_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersection2(existing.value_type, idx.value_type),
-                        readonly: existing.readonly || idx.readonly,
+                        // Intersection: readonly only if ALL constituents are readonly
+                        readonly: existing.readonly && idx.readonly,
                     });
                 }
                 _ => {}

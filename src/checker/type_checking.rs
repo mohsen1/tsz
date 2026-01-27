@@ -3923,30 +3923,57 @@ impl<'a> CheckerState<'a> {
                 // Also check if base is directly a Callable with construct signatures
                 self.has_construct_sig(app.base)
             }
-            // Ref to a symbol - check if it's a class symbol
-            // This handles cases like `class C extends MyClass` where MyClass is a class
-            // Note: We can't call get_type_of_symbol here because this is &self, not &mut self
-            // But class symbols are always constructor types, so we can return true directly
+            // Ref to a symbol - check if it's a class symbol or resolve to the actual type
+            // This handles cases like:
+            // 1. `class C extends MyClass` where MyClass is a class
+            // 2. `function f<T>(ctor: T)` then `class B extends ctor` where ctor has a constructor type
             Some(TypeKey::Ref(symbol_ref)) => {
                 use crate::binder::SymbolId;
                 let symbol_id = SymbolId(symbol_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
-                    // Check if this is a class symbol
+                    // Check if this is a class symbol - classes are always constructors
                     if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                        // Class symbols have constructor types
                         return true;
                     }
+
+                    // For other symbols (variables, parameters, type aliases), check their cached type
+                    // This handles cases like:
+                    //   function f<T extends typeof A>(ctor: T) {
+                    //     class B extends ctor {}  // ctor should be recognized as constructible
+                    //   }
+                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                        // Recursively check if the resolved type is a constructor
+                        // Avoid infinite recursion by checking if cached_type == type_id
+                        if cached_type != type_id {
+                            return self.is_constructor_type(cached_type);
+                        }
+                    }
                 }
-                // For other symbols (namespaces, enums, etc.), they're not constructors
+                // For other symbols (namespaces, enums, etc.) without cached types, they're not constructors
                 false
             }
-            // TypeQuery (typeof X) - similar to Ref
+            // TypeQuery (typeof X) - similar to Ref but for typeof expressions
+            // This handles cases like:
+            //   class A {}
+            //   function f<T extends typeof A>(ctor: T) {
+            //     class B extends ctor {}  // ctor: T where T extends typeof A
+            //   }
             Some(TypeKey::TypeQuery(symbol_ref)) => {
                 use crate::binder::SymbolId;
                 let symbol_id = SymbolId(symbol_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                    // Classes have constructor types
                     if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
                         return true;
+                    }
+
+                    // Check cached type for variables/parameters with constructor types
+                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                        // Recursively check if the resolved type is a constructor
+                        // Avoid infinite recursion by checking if cached_type == type_id
+                        if cached_type != type_id {
+                            return self.is_constructor_type(cached_type);
+                        }
                     }
                 }
                 false
