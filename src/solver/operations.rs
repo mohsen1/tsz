@@ -262,7 +262,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     {
                         *actual
                     } else {
-                        TypeId::UNKNOWN
+                        // Should never reach here, but use ERROR instead of UNKNOWN
+                        TypeId::ERROR
                     };
 
                 return CallResult::ArgumentTypeMismatch {
@@ -344,6 +345,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         func: &FunctionShape,
         arg_types: &[TypeId],
     ) -> CallResult {
+        // Check argument count BEFORE type inference
+        // This prevents false positive TS2554 errors for generic functions with optional/rest params
+        let (min_args, max_args) = self.arg_count_bounds(&func.params);
+
+        if arg_types.len() < min_args {
+            return CallResult::ArgumentCountMismatch {
+                expected_min: min_args,
+                expected_max: max_args,
+                actual: arg_types.len(),
+            };
+        }
+
+        if let Some(max) = max_args
+            && arg_types.len() > max
+        {
+            return CallResult::ArgumentCountMismatch {
+                expected_min: min_args,
+                expected_max: Some(max),
+                actual: arg_types.len(),
+            };
+        }
+
         let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::solver::infer::InferenceVar> =
@@ -2256,16 +2279,21 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         from_index_signature: false,
                     };
                 }
-                if members.contains(&TypeId::UNKNOWN) {
+                // Filter out UNKNOWN members - they shouldn't cause the entire union to be unknown
+                // Only return IsUnknown if ALL members are UNKNOWN
+                let non_unknown_members: Vec<_> = members.iter().filter(|&&t| t != TypeId::UNKNOWN).copied().collect();
+                if non_unknown_members.is_empty() {
+                    // All members are UNKNOWN
                     return PropertyAccessResult::IsUnknown;
                 }
+                // Continue with non-UNKNOWN members
                 // Property access on union: partition into nullable and non-nullable members
                 let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                 let mut valid_results = Vec::new();
                 let mut nullable_causes = Vec::new();
                 let mut any_from_index = false; // Track if any member used index signature
 
-                for &member in members.iter() {
+                for &member in non_unknown_members.iter() {
                     // Check for null/undefined directly
                     if member == TypeId::NULL
                         || member == TypeId::UNDEFINED
