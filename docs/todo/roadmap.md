@@ -11,18 +11,18 @@ Last updated: 2026-01-27
 
 **✅ Completed (2026-01-27)**:
 - P0 (TS2749): #179, #181 merged - Value-only symbol checks fixed
+- P1 (TS2540): #183 merged - Property existence check before readonly
 - P2 (TS2339): #182 merged - Union property access preserved
 - P3 (TS2318): #178 merged - noLib global type resolution honored
 - P4 (TS2322): #180 merged - Tracing added for assignability analysis
 
-**🚧 Remaining**:
-- P1 (TS2540): Readonly check ordering - PR #183 created
+**🎉 All P0-P4 items completed!**
 
 ## Priority status (P0-P4)
 | Priority | Issue | Status | PRs |
 |----------|-------|--------|-----|
 | **P0** | TS2749 (14,175 extra) | ✅ Merged | #179, #181 |
-| **P1** | TS2540 (10,381 extra) | 🟡 PR Open | #183 |
+| **P1** | TS2540 (10,381 extra) | ✅ Merged | #183 |
 | **P2** | TS2339 (8,176 extra) | ✅ Merged | #182 |
 | **P3** | TS2318 (3,386 missing) | ✅ Merged | #178 |
 | **P4** | TS2322 (13,671 extra) | ✅ Merged | #180 |
@@ -57,22 +57,20 @@ PR links:
 
 ---
 
-## P1: TS2540 - Readonly assignment (extra errors) 🟡
+## P1: TS2540 - Readonly assignment (extra errors) ✅
 **Impact**: Large false positive source.
 
 **Root cause**: Readonly check happens before property existence check, diverging from tsc ordering.
 
-**Current work**: #183 https://github.com/mohsen1/tsz/pull/183
+**Completed work**:
+- ✅ #183 `fix(checker): Check property existence before readonly check` - Merged
 
-**Implementation**:
-- ✅ Located `check_readonly_assignment()` in `src/checker/state.rs`
-- ✅ Added property existence check using `property_access_type()` before readonly check
-- ✅ Added test `test_nonexistent_property_should_not_report_ts2540`
-- ✅ Existing readonly tests still pass
+**Status**: PR merged successfully. Fixes include:
+- Added property existence check using `property_access_type()` before readonly check
+- If property doesn't exist, skip readonly check (TS2339 reported elsewhere)
+- Added test `test_nonexistent_property_should_not_report_ts2540`
 
 **Next steps**:
-- [ ] Wait for CI to pass on PR #183
-- [ ] Merge PR #183
 - [ ] Monitor conformance test results for TS2540 error reduction
 
 ---
