@@ -637,12 +637,17 @@ impl<'a> CheckerState<'a> {
         }
 
         // === PHASE 4: Check lib binders' file_locals directly ===
+        // Skip this phase if lib symbols are merged - they're all in file_locals already
+        // with unique remapped IDs (no collision risk).
+        let skip_lib_binder_scan = self.ctx.binder.lib_symbols_are_merged();
         if debug {
             trace!(
                 lib_binders_count = lib_binders.len(),
+                skip_lib_binder_scan,
                 "[BIND_RESOLVE] Checking lib binders' file_locals"
             );
         }
+        if !skip_lib_binder_scan {
         for (i, lib_binder) in lib_binders.iter().enumerate() {
             if debug {
                 trace!(
@@ -713,6 +718,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        } // end if !skip_lib_binder_scan
 
         // === PHASE 5: Symbol not found - diagnostic dump ===
         if debug {
@@ -903,18 +909,22 @@ impl<'a> CheckerState<'a> {
         }
 
         // === PHASE 3: Check lib binders' file_locals directly ===
-        for lib_binder in &lib_binders {
-            if let Some(sym_id) = lib_binder.file_locals.get(name) {
-                let symbol_opt = lib_binder.get_symbol_with_libs(sym_id, &lib_binders);
-                if let Some(symbol) = symbol_opt {
-                    let is_class_member = Self::is_class_member_symbol(symbol.flags);
-                    if !is_class_member || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
-                        if accept_type_symbol(sym_id) {
-                            return TypeSymbolResolution::Type(sym_id);
+        // Skip this phase if lib symbols are merged - they're all in file_locals already
+        // with unique remapped IDs (no collision risk).
+        if !self.ctx.binder.lib_symbols_are_merged() {
+            for lib_binder in &lib_binders {
+                if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                    let symbol_opt = lib_binder.get_symbol_with_libs(sym_id, &lib_binders);
+                    if let Some(symbol) = symbol_opt {
+                        let is_class_member = Self::is_class_member_symbol(symbol.flags);
+                        if !is_class_member || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
+                            if accept_type_symbol(sym_id) {
+                                return TypeSymbolResolution::Type(sym_id);
+                            }
                         }
+                    } else {
+                        return TypeSymbolResolution::Type(sym_id);
                     }
-                } else {
-                    return TypeSymbolResolution::Type(sym_id);
                 }
             }
         }
@@ -1402,14 +1412,19 @@ impl<'a> CheckerState<'a> {
     /// This is used for looking up global values like `console`, `Math`, `globalThis`, etc.
     /// It checks:
     /// 1. Local file_locals (for user-defined globals and merged lib symbols)
-    /// 2. Lib binders' file_locals (for symbols from lib.d.ts that haven't been merged)
+    /// 2. Lib binders' file_locals (only when lib_symbols_merged is false)
     pub(crate) fn resolve_global_value_symbol(&self, name: &str) -> Option<SymbolId> {
         // First check local file_locals
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             return Some(sym_id);
         }
 
-        // Then check lib binders for global symbols
+        // Skip lib binder scan if lib symbols are merged - they're all in file_locals already
+        if self.ctx.binder.lib_symbols_are_merged() {
+            return None;
+        }
+
+        // Legacy path: check lib binders for global symbols
         let lib_binders = self.get_lib_binders();
         for lib_binder in &lib_binders {
             if let Some(sym_id) = lib_binder.file_locals.get(name) {

@@ -699,20 +699,8 @@ impl Parser {
         if let Some(root_idx) = self.source_file_idx {
             let mut binder = BinderState::new();
             // Use bind_source_file_with_libs to merge lib symbols into the binder
+            // This properly remaps SymbolIds to avoid collisions across lib files
             binder.bind_source_file_with_libs(self.parser.get_arena(), root_idx, &self.lib_files);
-
-            // Inject lib file symbols for global type resolution (console, Array, Promise, etc.)
-            if !self.lib_files.is_empty() {
-                let lib_contexts: Vec<crate::binder::LibContext> = self
-                    .lib_files
-                    .iter()
-                    .map(|lib| crate::binder::LibContext {
-                        arena: Arc::clone(&lib.arena),
-                        binder: Arc::clone(&lib.binder),
-                    })
-                    .collect();
-                binder.inject_lib_symbols(&lib_contexts);
-            }
 
             // Collect symbol names for the result
             let symbols: std::collections::HashMap<String, u32> = binder
