@@ -7079,7 +7079,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
                     .collect();
-                self.ctx.types.union(resolved_members)
+                self.ctx.types.union_preserve_members(resolved_members)
             }
             TypeKey::Intersection(members_id) => {
                 let members = self.ctx.types.type_list(members_id);
