@@ -1339,7 +1339,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // First try get_node_symbol, then fall back to resolve_identifier
-        self.ctx.binder.get_node_symbol(idx)
+        self.ctx
+            .binder
+            .get_node_symbol(idx)
             .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
     }
 

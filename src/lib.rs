@@ -39,6 +39,10 @@ pub mod syntax;
 #[cfg(test)]
 mod parser_state_tests;
 
+// Regex flag error detection tests
+#[cfg(test)]
+mod regex_flag_tests;
+
 // Binder types and implementation (Phase 4)
 pub mod binder;
 

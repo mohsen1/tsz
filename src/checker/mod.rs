@@ -74,13 +74,13 @@ mod spread_rest_tests;
 #[cfg(test)]
 mod stability_validation_tests;
 #[cfg(test)]
+mod string_literal_arithmetic_tests;
+#[cfg(test)]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
 mod ts2304_tests;
 #[cfg(test)]
 mod value_usage_tests;
-#[cfg(test)]
-mod string_literal_arithmetic_tests;
 
 // Re-export key types
 pub use arena::TypeArena;

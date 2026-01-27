@@ -641,7 +641,7 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
     let default_lib = default_lib_name_for_target(target);
     match resolve_lib_files(&[default_lib.to_string()]) {
         Ok(files) => return Ok(files),
-        Err(_) => {}, // Fall through to fallbacks
+        Err(_) => {} // Fall through to fallbacks
     };
 
     let mut fallbacks = Vec::new();

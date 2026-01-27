@@ -736,6 +736,12 @@ impl BinderState {
         for lib_ctx in lib_contexts {
             // Copy symbol references from lib binder's file_locals into our file_locals
             for (name, &sym_id) in lib_ctx.binder.file_locals.iter() {
+                // Defensive: Validate that the symbol actually exists in the lib binder
+                // before adding it to file_locals. This prevents crashes from invalid symbol IDs.
+                if lib_ctx.binder.symbols.get(sym_id).is_none() {
+                    continue; // Skip invalid symbol references
+                }
+
                 // Store the symbol reference
                 self.file_locals.set(name.clone(), sym_id);
 

@@ -2441,14 +2441,14 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 /// to ensure global types are always available.
 fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
     use crate::binder::BinderState;
-    use crate::parser::ParserState;
     use crate::lib_loader;
+    use crate::parser::ParserState;
     use std::sync::Arc;
 
     let mut lib_contexts = Vec::new();
 
     // First, try to load from disk files
-    let mut has_core_types = false;  // Track if we loaded essential types like Object, Array
+    let mut has_core_types = false; // Track if we loaded essential types like Object, Array
     for lib_path in lib_files {
         // Skip if the file doesn't exist
         if !lib_path.exists() {
@@ -2489,7 +2489,12 @@ fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
 
     // If no disk files were loaded OR core types are missing, fall back to embedded libs
     // This ensures global types are always available even when disk files fail to parse
-    if lib_contexts.is_empty() || !has_core_types {
+    // IMPORTANT: Only load embedded libs if lib_files was not intentionally empty (i.e., noLib is false)
+    // When lib_files is empty and we tried to load disk files, it means either:
+    // 1. noLib is true (don't load ANY libs)
+    // 2. Disk files don't exist (load embedded libs as fallback)
+    let should_fallback_to_embedded = !lib_files.is_empty() || !lib_contexts.is_empty();
+    if (lib_contexts.is_empty() || !has_core_types) && should_fallback_to_embedded {
         // Load embedded libs for ES2020 with DOM as a reasonable default
         let embedded_libs = lib_loader::load_embedded_libs(
             crate::emitter::ScriptTarget::ES2020,

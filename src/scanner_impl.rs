@@ -45,11 +45,18 @@ pub enum TokenFlags {
 // Scanner State
 // =============================================================================
 
-/// Kind of regex flag error detected during scanning.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum RegexFlagError {
-    #[default]
-    None,
+/// A regex flag error detected during scanning.
+#[derive(Clone, Debug)]
+pub struct RegexFlagError {
+    /// Kind of error
+    pub kind: RegexFlagErrorKind,
+    /// Position of the error character
+    pub pos: usize,
+}
+
+/// Kind of regex flag error
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegexFlagErrorKind {
     /// Duplicate flag (e.g., /foo/gg)
     Duplicate,
     /// Invalid flag character (e.g., /foo/x)
@@ -70,8 +77,7 @@ pub struct ScannerSnapshot {
     pub token_atom: Atom,
     pub token_invalid_separator_pos: Option<usize>,
     pub token_invalid_separator_is_consecutive: bool,
-    pub regex_flag_error: RegexFlagError,
-    pub regex_flag_error_pos: Option<usize>,
+    pub regex_flag_errors: Vec<RegexFlagError>,
 }
 
 /// The scanner state that holds the current position and token information.
@@ -104,10 +110,8 @@ pub struct ScannerState {
     token_invalid_separator_pos: Option<usize>,
     /// Whether the first invalid numeric separator is consecutive
     token_invalid_separator_is_consecutive: bool,
-    /// Kind of regex flag error, if any
-    regex_flag_error: RegexFlagError,
-    /// Position of regex flag error, if any
-    regex_flag_error_pos: Option<usize>,
+    /// Regex flag errors detected during scanning
+    regex_flag_errors: Vec<RegexFlagError>,
     /// Whether to skip trivia (whitespace, comments)
     skip_trivia: bool,
     /// String interner for identifier deduplication
@@ -138,8 +142,7 @@ impl ScannerState {
             token_flags: 0,
             token_invalid_separator_pos: None,
             token_invalid_separator_is_consecutive: false,
-            regex_flag_error: RegexFlagError::None,
-            regex_flag_error_pos: None,
+            regex_flag_errors: Vec::new(),
             skip_trivia,
             interner,
             token_atom: Atom::NONE,
@@ -358,8 +361,7 @@ impl ScannerState {
         self.token_flags = 0;
         self.token_invalid_separator_pos = None;
         self.token_invalid_separator_is_consecutive = false;
-        self.regex_flag_error = RegexFlagError::None;
-        self.regex_flag_error_pos = None;
+        self.regex_flag_errors.clear();
         self.token_value.clear();
         self.token_atom = Atom::NONE; // Reset atom for non-identifier tokens
 
@@ -1285,19 +1287,19 @@ impl ScannerState {
                     if let Some(bit) = flag_bit {
                         let mask = 1 << bit;
                         if seen_flags & mask != 0 {
-                            // Duplicate flag
-                            if self.regex_flag_error == RegexFlagError::None {
-                                self.regex_flag_error = RegexFlagError::Duplicate;
-                                self.regex_flag_error_pos = Some(self.pos);
-                            }
+                            // Duplicate flag - emit error for each duplicate
+                            self.regex_flag_errors.push(RegexFlagError {
+                                kind: RegexFlagErrorKind::Duplicate,
+                                pos: self.pos,
+                            });
                         }
                         seen_flags |= mask;
                     } else if is_identifier_part(ch) {
                         // Invalid flag character (identifier char but not a valid flag)
-                        if self.regex_flag_error == RegexFlagError::None {
-                            self.regex_flag_error = RegexFlagError::InvalidFlag;
-                            self.regex_flag_error_pos = Some(self.pos);
-                        }
+                        self.regex_flag_errors.push(RegexFlagError {
+                            kind: RegexFlagErrorKind::InvalidFlag,
+                            pos: self.pos,
+                        });
                     }
 
                     // Use char_len_at for proper UTF-8 handling (handles non-ASCII flags)
@@ -1305,10 +1307,12 @@ impl ScannerState {
                 }
 
                 // Check for incompatible u and v flags
-                if has_u && has_v && self.regex_flag_error == RegexFlagError::None {
-                    self.regex_flag_error = RegexFlagError::IncompatibleFlags;
-                    // Position is set to end of flags since we detected this after scanning
-                    self.regex_flag_error_pos = Some(self.pos);
+                if has_u && has_v {
+                    // Emit error at the end of flags (similar to TypeScript)
+                    self.regex_flag_errors.push(RegexFlagError {
+                        kind: RegexFlagErrorKind::IncompatibleFlags,
+                        pos: self.pos,
+                    });
                 }
             }
 
@@ -2103,8 +2107,7 @@ impl ScannerState {
             token_atom: self.token_atom,
             token_invalid_separator_pos: self.token_invalid_separator_pos,
             token_invalid_separator_is_consecutive: self.token_invalid_separator_is_consecutive,
-            regex_flag_error: self.regex_flag_error,
-            regex_flag_error_pos: self.regex_flag_error_pos,
+            regex_flag_errors: self.regex_flag_errors.clone(),
         }
     }
 
@@ -2120,8 +2123,7 @@ impl ScannerState {
         self.token_invalid_separator_pos = snapshot.token_invalid_separator_pos;
         self.token_invalid_separator_is_consecutive =
             snapshot.token_invalid_separator_is_consecutive;
-        self.regex_flag_error = snapshot.regex_flag_error;
-        self.regex_flag_error_pos = snapshot.regex_flag_error_pos;
+        self.regex_flag_errors = snapshot.regex_flag_errors;
     }
 
     /// Get the interned atom for the current identifier token.
@@ -2139,14 +2141,9 @@ impl ScannerState {
         self.token_invalid_separator_is_consecutive
     }
 
-    /// Get the regex flag error kind, if any.
-    pub fn get_regex_flag_error(&self) -> RegexFlagError {
-        self.regex_flag_error
-    }
-
-    /// Get the position of the regex flag error, if any.
-    pub fn get_regex_flag_error_pos(&self) -> Option<usize> {
-        self.regex_flag_error_pos
+    /// Get the regex flag errors detected during scanning.
+    pub fn get_regex_flag_errors(&self) -> &[RegexFlagError] {
+        &self.regex_flag_errors
     }
 
     /// Resolve an atom back to its string value.
