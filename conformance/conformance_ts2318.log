@@ -1,0 +1,43 @@
+╔══════════════════════════════════════════════════════════╗
+║      TSZ Conformance Runner (Docker + WASM)             ║
+╠══════════════════════════════════════════════════════════╣
+║  Tests:      500                                         ║
+║  Workers:    2                                           ║
+║  Categories: conformance,compiler,projects               ║
+║  Timeout:    600s                                        ║
+╚══════════════════════════════════════════════════════════╝
+
+📦 Building WASM...
+[INFO]: 🎯  Checking for the Wasm target...
+[INFO]: 🌀  Compiling to Wasm...
+   Compiling wasm v0.1.0 (/Users/mohsenazimi/code/tsz)
+error[E0063]: missing field `typeof_resolution_stack` in initializer of `CheckerContext<'_>`
+   --> src/checker/context.rs:395:9
+    |
+395 |         CheckerContext {
+    |         ^^^^^^^^^^^^^^ missing `typeof_resolution_stack`
+
+error[E0063]: missing field `typeof_resolution_stack` in initializer of `CheckerContext<'_>`
+   --> src/checker/context.rs:462:9
+    |
+462 |         CheckerContext {
+    |         ^^^^^^^^^^^^^^ missing `typeof_resolution_stack`
+
+error[E0063]: missing field `typeof_resolution_stack` in initializer of `CheckerContext<'_>`
+   --> src/checker/context.rs:531:9
+    |
+531 |         CheckerContext {
+    |         ^^^^^^^^^^^^^^ missing `typeof_resolution_stack`
+
+error[E0063]: missing field `typeof_resolution_stack` in initializer of `CheckerContext<'_>`
+   --> src/checker/context.rs:599:9
+    |
+599 |         CheckerContext {
+    |         ^^^^^^^^^^^^^^ missing `typeof_resolution_stack`
+
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `wasm` (lib) due to 4 previous errors
+Error: Compiling your crate to WebAssembly failed
+Caused by: Compiling your crate to WebAssembly failed
+Caused by: failed to execute `cargo build`: exited with exit status: 101
+  full command: cd "/Users/mohsenazimi/code/tsz" && "cargo" "build" "--lib" "--release" "--target" "wasm32-unknown-unknown"

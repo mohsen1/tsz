@@ -5332,14 +5332,13 @@ impl<'a> CheckerState<'a> {
             // Check if the type exists in the binder's file_locals
             if !self.ctx.binder.file_locals.has(type_name) {
                 // Emit TS2318 at position 0 (beginning of file)
-                self.ctx.push_diagnostic(
-                    lib_loader::emit_error_global_type_missing(
+                self.ctx
+                    .push_diagnostic(lib_loader::emit_error_global_type_missing(
                         type_name,
                         self.ctx.file_name.clone(),
                         0,
                         0,
-                    ),
-                );
+                    ));
             }
         }
     }
@@ -10253,12 +10252,56 @@ impl<'a> CheckerState<'a> {
         };
 
         match key {
-            TypeKey::TypeQuery(SymbolRef(sym_id)) => self.get_type_of_symbol(SymbolId(sym_id)),
+            TypeKey::TypeQuery(SymbolRef(sym_id)) => {
+                // Check for cycle in typeof resolution
+                if self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) {
+                    // Cycle detected - return ERROR to prevent infinite loop
+                    eprintln!(
+                        "Warning: typeof resolution cycle detected for symbol {} in {}",
+                        sym_id, self.ctx.file_name
+                    );
+                    return TypeId::ERROR;
+                }
+
+                // Mark as visiting
+                self.ctx.typeof_resolution_stack.borrow_mut().insert(sym_id);
+
+                // Resolve the symbol type
+                let result = self.get_type_of_symbol(SymbolId(sym_id));
+
+                // Unmark after resolution
+                self.ctx
+                    .typeof_resolution_stack
+                    .borrow_mut()
+                    .remove(&sym_id);
+
+                result
+            }
             TypeKey::Application(app_id) => {
                 let app = self.ctx.types.type_application(app_id);
                 if let Some(TypeKey::TypeQuery(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base)
                 {
+                    // Check for cycle in typeof resolution (for application base)
+                    if self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) {
+                        eprintln!(
+                            "Warning: typeof resolution cycle detected for symbol {} in application in {}",
+                            sym_id, self.ctx.file_name
+                        );
+                        return TypeId::ERROR;
+                    }
+
+                    // Mark as visiting
+                    self.ctx.typeof_resolution_stack.borrow_mut().insert(sym_id);
+
+                    // Resolve the base type
                     let base = self.get_type_of_symbol(SymbolId(sym_id));
+
+                    // Unmark after resolution
+                    self.ctx
+                        .typeof_resolution_stack
+                        .borrow_mut()
+                        .remove(&sym_id);
+
                     return self.ctx.types.application(base, app.args.clone());
                 }
                 type_id
