@@ -3342,11 +3342,20 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
         Some(TypeKey::ObjectWithIndex(shape_id)) => {
             indexed_object_property_is_readonly(interner, shape_id, prop_name)
         }
-        Some(TypeKey::Union(types)) | Some(TypeKey::Intersection(types)) => {
+        Some(TypeKey::Union(types)) => {
+            // For unions: property is readonly if it's readonly in ANY constituent type
             let types = interner.type_list(types);
             types
                 .iter()
                 .any(|t| property_is_readonly(interner, *t, prop_name))
+        }
+        Some(TypeKey::Intersection(types)) => {
+            // For intersections: property is readonly ONLY if it's readonly in ALL constituent types
+            // This allows assignment to `{ readonly a: number } & { a: number }` (mixed readonly/mutable)
+            let types = interner.type_list(types);
+            types
+                .iter()
+                .all(|t| property_is_readonly(interner, *t, prop_name))
         }
         _ => false,
     }
