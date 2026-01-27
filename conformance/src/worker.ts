@@ -544,8 +544,15 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
             }
           }
 
+          // Exit code 1 with error codes is normal (tsz reports type errors)
+          // Only treat as crash if:
+          // 1. Exit code is not 0 or 1, OR
+          // 2. Exit code is 1 but no error codes found (unexpected error)
+          const hasErrors = codes.length > 0;
+          const actuallyCrashed = (code !== 0 && code !== 1) || (code === 1 && !hasErrors);
+
           cleanup();
-          resolve({ codes, crashed: false, oom: false });
+          resolve({ codes, crashed: actuallyCrashed, oom: false });
         });
 
         child.on('error', (err: Error) => {
