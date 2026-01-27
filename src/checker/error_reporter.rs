@@ -18,6 +18,7 @@ use crate::checker::types::diagnostics::{
 };
 use crate::parser::NodeIndex;
 use crate::solver::TypeId;
+use tracing::{Level, trace};
 
 // =============================================================================
 // Core Error Emission (Low-Level)
@@ -85,11 +86,29 @@ impl<'a> CheckerState<'a> {
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         // ERROR TYPE SUPPRESSION
         if source == TypeId::ERROR || target == TypeId::ERROR {
+            if tracing::enabled!(Level::TRACE) {
+                trace!(
+                    source = source.0,
+                    target = target.0,
+                    node_idx = idx.0,
+                    file = %self.ctx.file_name,
+                    "suppressing TS2322 for error type"
+                );
+            }
             return;
         }
 
         // ANY TYPE SUPPRESSION
         if source == TypeId::ANY || target == TypeId::ANY {
+            if tracing::enabled!(Level::TRACE) {
+                trace!(
+                    source = source.0,
+                    target = target.0,
+                    node_idx = idx.0,
+                    file = %self.ctx.file_name,
+                    "suppressing TS2322 for any type"
+                );
+            }
             return;
         }
 
@@ -144,6 +163,20 @@ impl<'a> CheckerState<'a> {
             checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
             checker.explain_failure(source, target)
         };
+
+        if tracing::enabled!(Level::TRACE) {
+            let source_type = self.format_type(source);
+            let target_type = self.format_type(target);
+            let reason_ref = reason.as_ref();
+            trace!(
+                source = %source_type,
+                target = %target_type,
+                reason = ?reason_ref,
+                node_idx = idx.0,
+                file = %self.ctx.file_name,
+                "assignability failure diagnostics"
+            );
+        }
 
         match reason {
             Some(failure_reason) => {
