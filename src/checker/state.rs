@@ -9980,6 +9980,12 @@ impl<'a> CheckerState<'a> {
 
         // Check if the property is readonly in the object type (solver types)
         if self.is_property_readonly(obj_type, &prop_name) {
+            // Special case: readonly properties can be assigned in constructors
+            // if the property is declared in the current class (not inherited)
+            if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
+                return;
+            }
+
             self.error_readonly_property_at(&prop_name, target_idx);
             return;
         }
@@ -9989,8 +9995,112 @@ impl<'a> CheckerState<'a> {
         if let Some(class_name) = self.get_class_name_from_expression(access.expression)
             && self.is_class_property_readonly(&class_name, &prop_name)
         {
+            // Special case: readonly properties can be assigned in constructors
+            // if the property is declared in the current class (not inherited)
+            if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
+                return;
+            }
+
             self.error_readonly_property_at(&prop_name, target_idx);
         }
+    }
+
+    /// Check if a readonly property assignment is allowed in the current constructor context.
+    ///
+    /// Returns true if ALL of the following conditions are met:
+    /// 1. We're in a constructor body
+    /// 2. The assignment is to `this.property` (not some other object)
+    /// 3. The property is declared in the current class (not inherited)
+    fn is_readonly_assignment_allowed_in_constructor(
+        &mut self,
+        prop_name: &str,
+        object_expr: NodeIndex,
+    ) -> bool {
+        // Must be in a constructor
+        let class_idx = match &self.ctx.enclosing_class {
+            Some(info) if info.in_constructor => info.class_idx,
+            _ => return false,
+        };
+
+        // Must be assigning to `this.property` (not some other object)
+        if !self.is_this_expression_in_constructor(object_expr) {
+            return false;
+        }
+
+        // The property must be declared in the current class (not inherited)
+        self.is_property_declared_in_class(prop_name, class_idx)
+    }
+
+    /// Check if an expression is `this` (helper to avoid conflict with existing method).
+    fn is_this_expression_in_constructor(&mut self, expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        // Check if it's an identifier with text "this"
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return ident.escaped_text == "this";
+        }
+
+        false
+    }
+
+    /// Check if a property is declared in a specific class (not inherited).
+    fn is_property_declared_in_class(&mut self, prop_name: &str, class_idx: NodeIndex) -> bool {
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+
+        let Some(class) = self.ctx.arena.get_class(class_node) else {
+            return false;
+        };
+
+        // Check all class members for a property declaration
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            // Check property declarations
+            if let Some(prop_decl) = self.ctx.arena.get_property_decl(member_node) {
+                if let Some(name_node) = self.ctx.arena.get(prop_decl.name) {
+                    if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                        if ident.escaped_text == prop_name {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Check parameter properties (constructor parameters with readonly/private/etc)
+            // Find the constructor kind
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                if let Some(ctor) = self.ctx.arena.get_constructor(member_node) {
+                    for &param_idx in &ctor.parameters.nodes {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+
+                        // Check if it's a parameter property
+                        if let Some(param_decl) = self.ctx.arena.get_parameter(param_node) {
+                            // Parameter properties have modifiers and a name but no type annotation is required
+                            // They're identified by having modifiers (readonly, private, public, protected)
+                            if param_decl.modifiers.is_some() {
+                                if let Some(name_node) = self.ctx.arena.get(param_decl.name) {
+                                    if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                                        if ident.escaped_text == prop_name {
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Get the class name from an expression, if it's a class instance.

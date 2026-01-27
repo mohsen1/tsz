@@ -9322,10 +9322,8 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        if self.symbol_has_type_declaration(target) {
-            return false;
-        }
-
+        // symbol_is_value_only already checks TYPE flags and declarations
+        // No need for redundant declaration check here
         self.symbol_is_value_only(target)
     }
 
