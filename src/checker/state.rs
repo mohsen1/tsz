@@ -10262,6 +10262,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else {
+                    eprintln!("DEBUG: heritage symbol not resolved, checking expr type");
                     // Could not resolve as a heritage symbol - check if it's an identifier
                     // that references a value with a constructor type
                     let is_valid_constructor = if let Some(expr_node) = self.ctx.arena.get(expr_idx)
@@ -10269,6 +10270,11 @@ impl<'a> CheckerState<'a> {
                     {
                         // Try to get the type of the expression to check if it's a constructor
                         let expr_type = self.get_type_of_node(expr_idx);
+                        eprintln!(
+                            "DEBUG: expr_type={:?}, is_constructor_type={}",
+                            self.ctx.types.lookup(expr_type),
+                            self.is_constructor_type(expr_type)
+                        );
                         self.is_constructor_type(expr_type)
                     } else {
                         false
