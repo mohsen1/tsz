@@ -1,5 +1,13 @@
 use wasm_bindgen::prelude::*;
 
+// Initialize panic hook for WASM to prevent worker crashes
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub fn wasm_init() {
+    // Set panic hook to log errors to console instead of crashing worker
+    console_error_panic_hook::set_once();
+}
+
 // Shared test fixtures for reduced allocation overhead
 #[cfg(test)]
 pub mod test_fixtures;
