@@ -6175,7 +6175,9 @@ impl ParserState {
 
                 result
             } else {
+                // Check for => or { (error recovery: user forgot =>)
                 self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                    || self.is_token(SyntaxKind::OpenBraceToken)
             };
             self.scanner.restore_state(snapshot);
             self.current_token = current;
@@ -6214,7 +6216,9 @@ impl ParserState {
 
             result
         } else {
+            // Check for => or { (error recovery: user forgot =>)
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                || self.is_token(SyntaxKind::OpenBraceToken)
         };
         self.scanner.restore_state(snapshot);
         self.current_token = current;

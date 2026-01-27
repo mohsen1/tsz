@@ -81,14 +81,28 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
 
+        // Use global class_instance_resolution_set for cross-call-chain cycle detection
+        // This is critical for detecting cycles across different entry points
+        if let Some(sym_id) = current_sym {
+            if !self.ctx.class_instance_resolution_set.insert(sym_id) {
+                return TypeId::ERROR; // Circular reference detected
+            }
+        }
+
         // Check for cycles using both symbol ID (for same-file cycles)
         // and node index (for cross-file cycles with @Filename annotations)
         if let Some(sym_id) = current_sym {
             if !visited.insert(sym_id) {
+                // Cleanup global set before returning
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
                 return TypeId::ERROR; // Circular reference detected via symbol
             }
         }
         if !visited_nodes.insert(class_idx) {
+            // Cleanup global set before returning (if we have a symbol)
+            if let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
             return TypeId::ERROR; // Circular reference detected via node index
         }
 
@@ -516,8 +530,12 @@ impl<'a> CheckerState<'a> {
                     type_args.truncate(base_type_params.len());
                 }
 
-                let base_instance_type =
-                    self.get_class_instance_type_inner(base_class_idx, base_class, visited, visited_nodes);
+                let base_instance_type = self.get_class_instance_type_inner(
+                    base_class_idx,
+                    base_class,
+                    visited,
+                    visited_nodes,
+                );
                 let substitution =
                     TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                 let base_instance_type =
@@ -770,6 +788,7 @@ impl<'a> CheckerState<'a> {
             }
             visited.remove(&sym_id);
             visited_nodes.remove(&class_idx);
+            self.ctx.class_instance_resolution_set.remove(&sym_id);
         }
         instance_type
     }
