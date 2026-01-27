@@ -960,11 +960,12 @@ impl TypeInterner {
                         existing.write_type =
                             self.intersection2(existing.write_type, prop.write_type);
                     }
-                    // Merge flags: required wins over optional, readonly is cumulative
+                    // Merge flags: required wins over optional, readonly requires ALL readonly
                     // For optional: only optional if ALL are optional (required wins)
                     existing.optional = existing.optional && prop.optional;
-                    // For readonly: readonly if ANY is readonly
-                    existing.readonly = existing.readonly || prop.readonly;
+                    // For readonly: readonly ONLY if ALL are readonly (mutable wins)
+                    // This allows assignment to { readonly a: number } & { a: number }
+                    existing.readonly = existing.readonly && prop.readonly;
                 } else {
                     merged_props.push(prop.clone());
                 }
@@ -983,7 +984,8 @@ impl TypeInterner {
                     merged_string_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersection2(existing.value_type, idx.value_type),
-                        readonly: existing.readonly || idx.readonly,
+                        // Intersection: readonly only if ALL constituents are readonly
+                        readonly: existing.readonly && idx.readonly,
                     });
                 }
                 _ => {}
