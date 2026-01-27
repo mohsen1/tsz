@@ -98,6 +98,15 @@ impl<'a> CheckerState<'a> {
                     false
                 }
             }
+            // Indexed access types (T[K]) - these should be resolved by the type system
+            // For now, treat as non-iterable (will emit TS2488)
+            Some(TypeKey::IndexAccess(_, _)) => false,
+            // Conditional types (T extends U ? X : Y) - these should be resolved
+            // For now, treat as non-iterable (will emit TS2488)
+            Some(TypeKey::Conditional(_)) => false,
+            // Mapped types ({ [K in Keys]: ValueType }) - generally not iterable
+            // unless they resolve to an array-like structure
+            Some(TypeKey::Mapped(_)) => false,
             // Functions, classes without Symbol.iterator are not iterable
             Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_)) => false,
             _ => false,
