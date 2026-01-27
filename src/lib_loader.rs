@@ -199,9 +199,13 @@ impl LibFile {
 
 /// Merge lib file symbols into a target symbol table.
 ///
-/// This is called during binder initialization to ensure global symbols
-/// from lib.d.ts (like `Object`, `Function`, `console`, etc.) are available
-/// during type checking.
+/// **DEPRECATED**: This function copies raw SymbolIds from lib binders, which can
+/// collide across different lib files. Use `BinderState::merge_lib_contexts_into_binder`
+/// instead, which properly remaps SymbolIds to avoid collisions.
+///
+/// This function is kept for backward compatibility but should not be used directly.
+/// The binder's `merge_lib_symbols` method now uses the proper remap-based approach.
+#[deprecated(note = "Use BinderState::merge_lib_contexts_into_binder instead")]
 pub fn merge_lib_symbols(target: &mut SymbolTable, lib_files: &[Arc<LibFile>]) {
     for lib in lib_files {
         for (name, sym_id) in lib.binder.file_locals.iter() {
@@ -407,7 +411,10 @@ pub fn validate_lib_es2015_support(
     let mut diagnostics = Vec::new();
 
     // Collect all available global types from lib files
+    // Note: We use the deprecated function here because we only need name existence checks,
+    // not proper symbol resolution. The raw SymbolIds don't matter for this validation.
     let mut available_globals = SymbolTable::new();
+    #[allow(deprecated)]
     merge_lib_symbols(&mut available_globals, lib_files);
 
     // Check for missing ES2015+ types

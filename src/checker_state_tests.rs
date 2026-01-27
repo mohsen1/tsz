@@ -31788,3 +31788,147 @@ class MyClass {
         codes
     );
 }
+
+// =============================================================================
+// Lib Symbol Merging Tests (SymbolId Collision Fix)
+// =============================================================================
+
+/// Regression test: When lib symbols are merged with unique IDs, basic global
+/// types like Array and Object should resolve correctly without TS2318.
+#[test]
+fn test_lib_merge_no_ts2318_for_basic_globals() {
+    use crate::binder::LibContext as BinderLibContext;
+    use crate::checker::context::LibContext as CheckerLibContext;
+    use std::sync::Arc;
+
+    // Create a minimal lib binder with Array and Object
+    let mut lib_binder = BinderState::new();
+    let array_id = lib_binder
+        .symbols
+        .alloc(crate::binder::symbol_flags::INTERFACE, "Array".to_string());
+    let object_id = lib_binder
+        .symbols
+        .alloc(crate::binder::symbol_flags::INTERFACE, "Object".to_string());
+    lib_binder.file_locals.set("Array".to_string(), array_id);
+    lib_binder.file_locals.set("Object".to_string(), object_id);
+
+    let lib_arena = Arc::new(NodeArena::new());
+    let lib_binder_arc = Arc::new(lib_binder);
+    
+    // Create binder LibContext for merging
+    let binder_lib_context = BinderLibContext {
+        arena: Arc::clone(&lib_arena),
+        binder: Arc::clone(&lib_binder_arc),
+    };
+    
+    // Create checker LibContext for the checker
+    let checker_lib_context = CheckerLibContext {
+        arena: Arc::clone(&lib_arena),
+        binder: Arc::clone(&lib_binder_arc),
+    };
+
+    // Source that references Array
+    let source = r#"
+const arr: Array<number> = [1, 2, 3];
+const obj: Object = {};
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    // Merge lib symbols with proper remapping
+    binder.merge_lib_contexts_into_binder(&[binder_lib_context]);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // Verify lib symbols are merged
+    assert!(binder.lib_symbols_are_merged(), "lib_symbols_merged should be true");
+    assert!(binder.file_locals.has("Array"), "Array should be in file_locals");
+    assert!(binder.file_locals.has("Object"), "Object should be in file_locals");
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    
+    // Set lib contexts for checker
+    checker.ctx.set_lib_contexts(vec![checker_lib_context]);
+    
+    checker.check_source_file(root);
+
+    // Should NOT have TS2318 (global type not found)
+    let ts2318_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2318)
+        .collect();
+    assert!(
+        ts2318_errors.is_empty(),
+        "Should not emit TS2318 for Array/Object when libs are properly merged, got: {:?}",
+        ts2318_errors
+    );
+}
+
+/// Test that after lib symbol merge, symbol lookups return consistent data
+/// even when lib binders had colliding SymbolIds.
+#[test]
+fn test_lib_merge_consistent_symbol_resolution() {
+    use crate::binder::LibContext;
+    use std::sync::Arc;
+
+    // Create two lib binders with intentionally colliding IDs
+    let mut lib1 = BinderState::new();
+    let lib1_sym = lib1
+        .symbols
+        .alloc(crate::binder::symbol_flags::INTERFACE, "Foo".to_string());
+    lib1.file_locals.set("Foo".to_string(), lib1_sym);
+
+    let mut lib2 = BinderState::new();
+    let lib2_sym = lib2
+        .symbols
+        .alloc(crate::binder::symbol_flags::INTERFACE, "Bar".to_string());
+    lib2.file_locals.set("Bar".to_string(), lib2_sym);
+
+    // Both should start at SymbolId(0) - the collision scenario
+    assert_eq!(lib1_sym.0, 0);
+    assert_eq!(lib2_sym.0, 0);
+
+    let lib_arena = Arc::new(NodeArena::new());
+    let lib_contexts = vec![
+        LibContext {
+            arena: Arc::clone(&lib_arena),
+            binder: Arc::new(lib1),
+        },
+        LibContext {
+            arena: Arc::clone(&lib_arena),
+            binder: Arc::new(lib2),
+        },
+    ];
+
+    let source = "const x = 1;"; // Minimal source
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.merge_lib_contexts_into_binder(&lib_contexts);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // Get remapped IDs
+    let foo_id = binder.file_locals.get("Foo").expect("Foo should exist");
+    let bar_id = binder.file_locals.get("Bar").expect("Bar should exist");
+
+    // IDs must be unique
+    assert_ne!(foo_id, bar_id, "Foo and Bar must have different IDs after merge");
+
+    // Symbol resolution must return correct names
+    let foo_sym = binder.get_symbol(foo_id).expect("Foo symbol must resolve");
+    assert_eq!(foo_sym.escaped_name, "Foo", "Foo symbol name mismatch");
+
+    let bar_sym = binder.get_symbol(bar_id).expect("Bar symbol must resolve");
+    assert_eq!(bar_sym.escaped_name, "Bar", "Bar symbol name mismatch");
+}
