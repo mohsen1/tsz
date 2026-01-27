@@ -2282,6 +2282,14 @@ impl<'a> CheckerState<'a> {
                         // Return a Ref to the class as the instance type
                         return Some(self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id))));
                     }
+                    // Check other symbols for cached types with construct signatures
+                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                        // Recursively check the cached type
+                        // Avoid infinite loops by checking if it's the same as the input
+                        if cached_type != type_id {
+                            return self.get_construct_signature_return_type(cached_type);
+                        }
+                    }
                 }
                 None
             }
