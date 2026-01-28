@@ -27,7 +27,7 @@ export interface TscCacheData {
   entries: Record<string, CacheEntry>;
 }
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 4;
 
 function getCacheDir(): string {
   return path.resolve(__dirname, '../.tsc-cache');
