@@ -732,13 +732,16 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
 
         // Run from project directory so CLI can find its built-in lib files
         const projectDir = path.resolve(__dirname, '../..');
+
+        // Only set TSZ_LIB_DIR if we wrote lib files to the temp directory
+        const spawnEnv = nativeLibFiles.size > 0
+          ? { ...process.env, TSZ_LIB_DIR: tmpDir }
+          : process.env;
+
         const child = spawn(nativeBinaryPath, args, {
           cwd: projectDir,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: {
-            ...process.env,
-            TSZ_LIB_DIR: tmpDir,
-          },
+          env: spawnEnv,
         });
 
         let stderr = '';
