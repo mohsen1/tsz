@@ -285,9 +285,10 @@ build_native_for_docker() {
     # Build for Linux
     CARGO_TARGET=x86_64-unknown-linux-gnu cargo build --release --bin tsz
 
-    # Create .target/linux symlink for easy access
-    mkdir -p .target/linux
-    ln -sf "../x86_64-unknown-linux-gnu/release/tsz" .target/linux/tsz
+    # Create symlink at .target/release/tsz pointing to cross-compiled binary
+    # This ensures the worker can find the binary when running in Docker
+    mkdir -p .target/release
+    ln -sf "../x86_64-unknown-linux-gnu/release/tsz" .target/release/tsz
 
     log_success "Native binary for Linux built"
 }
