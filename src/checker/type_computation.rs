@@ -2156,7 +2156,10 @@ impl<'a> CheckerState<'a> {
         if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
             if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
                 // Check if the cached type has construct signatures
-                if self.has_construct_sig(cached_type) {
+                if crate::solver::type_queries::has_construct_signatures(
+                    self.ctx.types,
+                    cached_type,
+                ) {
                     return Some(type_id);
                 }
                 // For Ref (not TypeQuery), also check if it's an object type
@@ -2851,7 +2854,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Check if it's specifically a class constructor called without 'new' (TS2348)
                 // Only emit TS2348 for types that have construct signatures but zero call signatures
-                if self.is_class_constructor_type(callee_type) {
+                if self.is_constructor_type(callee_type) {
                     self.error_class_constructor_without_new_at(callee_type, call.expression);
                 } else {
                     // For other non-callable types, emit the generic not-callable error

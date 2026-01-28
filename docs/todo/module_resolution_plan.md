@@ -27,6 +27,23 @@ This document outlines the gaps in module resolution and import handling for Pro
 - `src/checker/module_validation.rs` - Import member validation
 - `src/binder/state.rs` - Symbol creation for imports
 
+### Solver-First Architecture Requirements
+
+Per `AGENTS.md`, module resolution must follow the **solver-first** principle:
+
+| Component | Responsibility |
+|-----------|---------------|
+| **Binder** | Creates symbol table for modules, tracks exports/imports |
+| **Solver** | Converts symbols to types, constructs `ModuleNamespace` type |
+| **Checker** | Asks "What is the type of this import?" - delegates to solver |
+| **Driver** | Coordinates file resolution, passes graphs to checker |
+
+**Critical Rules:**
+- No AST nodes passed to Solver
+- No file I/O in Solver
+- Checker must NOT compute export types (Binder's job)
+- Use **Visitor Pattern** for all type operations
+
 ### Gap 1: Module Resolver ↔ Checker Integration
 
 **Problem:** The `ModuleResolver` resolves file paths but doesn't integrate with the checker's type computation pipeline.
@@ -39,7 +56,7 @@ Import statement → Binder creates symbol → Checker resolves symbol → ???
 **Missing:**
 ```
 Import statement → Binder creates symbol → ModuleResolver finds file
-→ Checker gets module's type environment → Computes imported member types
+→ Checker gets target file's binder → Resolves exported symbol → Computes type ON DEMAND
 ```
 
 **Evidence:**
@@ -56,6 +73,8 @@ if let Some(ref module_name) = symbol.import_module {
 }
 ```
 
+**Critical Issue:** `CheckerContext` has `all_arenas` (ASTs) but **lacks `all_binders`** (symbol tables). Cross-file type resolution is impossible without access to target file's symbols.
+
 ### Gap 2: Dynamic Import Return Types
 
 **Problem:** Dynamic imports return `Promise<any>` instead of `Promise<typeof module>`.
@@ -67,7 +86,7 @@ if self.is_dynamic_import(call) {
     self.check_dynamic_import_module_specifier(call);
     // Dynamic imports return Promise<typeof module>
     // For unresolved modules, return any to allow type flow to continue
-    return TypeId::ANY;  // <-- Should be Promise<ModuleType>
+    return TypeId::ANY;  // <-- Should be Promise<ModuleNamespace>
 }
 ```
 
@@ -85,7 +104,7 @@ mod.someExport;  // Should have proper typing
 > `conformance/ambient/ambientDeclarationsPatterns.ts` still emits TS2307
 > Indicates declared module patterns may **not** be populated in merged binder
 
-**Root cause:** The `declared_modules` set doesn't include pattern matching logic.
+**Root cause:** The `declared_modules` uses a `HashSet<String>` which only supports exact string matching, not glob patterns.
 
 ### Gap 4: Missing customConditions Support
 
@@ -96,14 +115,14 @@ mod.someExport;  // Should have proper typing
 custom_conditions: Vec::new(), // TODO: Add customConditions to ResolvedCompilerOptions
 ```
 
-### Gap 5: Cross-File Module Type Computation
+### Gap 5: Missing Edge Cases
 
-**Problem:** When file A imports from file B, getting B's exported types requires:
-1. B to be parsed and bound
-2. B's type environment to be accessible from A's checker
-3. Type instantiation to work correctly across module boundaries
+Additional gaps identified via code analysis:
 
-Currently, `module_exports` only tracks symbol IDs, not computed types.
+1. **Symlink Preservation** - `preserveSymlinks` compiler option not implemented
+2. **`NODE_PATH` Fallback** - Legacy environment variable support missing
+3. **Side-Effect Imports** - `import "mod"` handling for `isolatedModules`
+4. **Node16/NodeNext Directory Restriction** - Currently too permissive with directory resolution
 
 ---
 
@@ -111,70 +130,152 @@ Currently, `module_exports` only tracks symbol IDs, not computed types.
 
 ### 1.1 Integrate ModuleResolver with Checker Context
 
-**Goal:** Make resolved modules available to type computation.
+**Goal:** Make resolved modules available to type computation with **lazy evaluation**.
+
+**Architecture:**
+```
+Driver resolves paths → CheckerContext gets FileId map + all binders
+→ Checker requests type → Looks up target binder → Computes type ON DEMAND
+```
 
 **Tasks:**
-- [ ] Add `resolved_module_types: HashMap<String, TypeId>` to `CheckerContext`
-- [ ] After binding, populate module type environments in the checker
-- [ ] Update `get_type_of_symbol` to use resolved module types for imports
-- [ ] Establish a strategy for **cross-file type sharing** (e.g., shared Module Type Cache or ModuleRegistry)
+- [ ] Add `all_binders: Vec<Arc<BinderState>>` to `CheckerContext`
+- [ ] Add `resolved_module_paths: HashMap<(FileId, String), FileId>` to map (source, specifier) → target
+- [ ] Update `get_type_of_symbol` to:
+  1. Look up target FileId from `resolved_module_paths`
+  2. Get target binder from `all_binders`
+  3. Find exported symbol in target binder's `file_locals` or `module_exports`
+  4. Compute type of target symbol **lazily** (on demand)
+- [ ] **Do NOT** store pre-computed `TypeId` for entire modules (eager evaluation is a performance killer)
 
 **Files to modify:**
-- `src/checker/context.rs` - Add resolved_module_types and shared cache references
-- `src/checker/state.rs` - Populate during initialization
-- `src/cli/driver.rs` - Pass resolution results and shared cache to checker
-
-### 1.2 Fix Dynamic Import Return Types
-
-**Goal:** Return `Promise<typeof module>` instead of `Promise<any>`.
-
-**Tasks:**
-- [ ] Create `get_module_type(specifier: &str)` helper in checker using **Visitor Pattern**
-- [ ] Wrap result in `Promise<T>` using `create_promise_type` from solver
-- [ ] Handle unresolved modules gracefully (fall back to `any`)
-- [ ] Add recursion guards for circular imports in dynamic import chains
+- `src/checker/context.rs` - Add `all_binders` and `resolved_module_paths`
+- `src/checker/state.rs` - Implement cross-file symbol lookup in `get_type_of_symbol`
+- `src/cli/driver.rs` - Populate `all_binders` and resolution map
+- `src/wasm_api/program.rs` - **Critical:** Must also populate `all_binders` for WASM builds
+- `src/wasm_api/type_checker.rs` - Ensure WASM API has access to global binder map
 
 **Example implementation:**
 ```rust
-fn get_dynamic_import_type(&mut self, specifier: &str) -> TypeId {
-    // Add recursion guard for circular imports
-    if self.ctx.import_resolution_stack.contains(&specifier.to_string()) {
-        return TypeId::ANY; 
-    }
+// In src/checker/state.rs - get_type_of_symbol
+if let Some(ref module_specifier) = symbol.import_module {
+    // 1. Resolve to FileId (not TypeId!)
+    let key = (self.ctx.current_file_id, module_specifier.clone());
+    let target_file_id = self.ctx.resolved_module_paths.get(&key)?;
     
-    let module_type = match self.get_module_type(specifier) {
-        Some(ty) => ty,
-        None => TypeId::ANY,  // Unresolved module
-    };
+    // 2. Get target binder
+    let target_binder = &self.ctx.all_binders[target_file_id.0];
     
-    // Use visitor pattern from src/solver/visitor.rs for type inspection if needed
+    // 3. Find exported symbol
+    let export_name = symbol.import_name.as_deref().unwrap_or(&symbol.escaped_name);
+    let target_sym_id = target_binder.resolve_export(export_name)?;
     
-    self.solver.create_promise_type(module_type)
+    // 4. Compute type lazily with file context switch
+    return self.with_file_context(*target_file_id, |checker| {
+        checker.get_type_of_symbol(target_sym_id)
+    });
 }
 ```
 
-### 1.3 Wildcard Ambient Module Pattern Matching
+### 1.2 Wildcard Ambient Module Pattern Matching
 
-**Goal:** Support `declare module "foo*"` and `declare module "*bar"` patterns.
+**Goal:** Support `declare module "foo*"` and `declare module "*bar"` patterns with **TSC-compatible specificity rules**.
+
+**TSC Algorithm (must match exactly):**
+1. **Exact match first** - Check `declared_modules` HashSet
+2. **Pattern matching fallback** - Iterate through `pattern_ambient_modules`
+3. **Specificity rules** (longest prefix wins, suffix as tiebreaker):
+   - Calculate matching prefix length (text before `*`)
+   - Calculate matching suffix length (text after `*`)
+   - **Longest prefix wins**
+   - **If prefix lengths equal, longest suffix wins**
+
+**Example:**
+```
+Patterns: "foo*", "foo*bar"
+Import: "foobar"
+  - "foo*" matches (prefix="foo", len=3)
+  - "foo*bar" matches (prefix="foo", len=3; suffix="bar", len=3)
+  - Winner: "foo*bar" (same prefix, longer suffix)
+```
 
 **Tasks:**
-- [ ] Implement glob-style pattern matching for `declared_modules` supporting "longest match" rule
-- [ ] Add `ambient_module_patterns: Vec<(String, SymbolId)>` to binder
+- [ ] Add `pattern_ambient_modules: Vec<(String, SymbolId)>` to binder
+- [ ] Implement specificity-aware pattern matching algorithm
 - [ ] Update `is_declared_module` to check patterns after exact match fails
 - [ ] Add TS5061 error for multiple wildcards (`foo*bar*baz`)
 
 **Pattern matching algorithm:**
 ```rust
-fn matches_ambient_pattern(pattern: &str, specifier: &str) -> bool {
-    if !pattern.contains('*') {
-        return pattern == specifier;
+fn find_best_ambient_pattern(
+    patterns: &[(String, SymbolId)],
+    specifier: &str
+) -> Option<SymbolId> {
+    let mut best_match: Option<(usize, usize, SymbolId)> = None; // (prefix_len, suffix_len, symbol)
+    
+    for (pattern, symbol) in patterns {
+        if let Some((prefix, suffix)) = pattern.split_once('*') {
+            if specifier.starts_with(prefix) && specifier.ends_with(suffix) {
+                let prefix_len = prefix.len();
+                let suffix_len = suffix.len();
+                
+                // Check if this is a better match (longer prefix, or same prefix + longer suffix)
+                let is_better = match best_match {
+                    None => true,
+                    Some((best_prefix, best_suffix, _)) => {
+                        prefix_len > best_prefix || 
+                        (prefix_len == best_prefix && suffix_len > best_suffix)
+                    }
+                };
+                
+                if is_better {
+                    best_match = Some((prefix_len, suffix_len, *symbol));
+                }
+            }
+        }
     }
-    // Single * acts like glob
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() != 2 {
-        return false;  // Multiple * not supported (TS5061)
+    
+    best_match.map(|(_, _, sym)| sym)
+}
+```
+
+### 1.3 Fix Dynamic Import Return Types
+
+**Goal:** Return `Promise<ModuleNamespace>` instead of `Promise<any>`.
+
+**Architecture (Solver-First):**
+- **Solver** constructs `TypeKey::Application(Promise, ModuleNamespace)`
+- **Checker** calls solver to create the type
+- **No AST nodes passed to solver**
+
+**Tasks:**
+- [ ] Add `TypeKey::ModuleNamespace(ObjectShapeId)` to solver (see Phase 2.2)
+- [ ] Create `get_module_namespace_type(specifier: &str) -> TypeId` in checker
+- [ ] Wrap result in `Promise<T>` using `TypeKey::Application`
+- [ ] Handle unresolved modules gracefully (fall back to `any`)
+- [ ] Add recursion guards for circular imports:
+  - `symbol_resolution_stack` (existing) - prevents `type T = typeof T`
+  - `import_resolution_stack` (new) - for `export * from` cycles
+
+**Example implementation:**
+```rust
+fn get_dynamic_import_type(&mut self, specifier: &str) -> TypeId {
+    // Recursion guard for circular imports
+    if self.ctx.import_resolution_stack.contains(&specifier.to_string()) {
+        return self.create_promise_of_any();
     }
-    specifier.starts_with(parts[0]) && specifier.ends_with(parts[1])
+    self.ctx.import_resolution_stack.insert(specifier.to_string());
+    
+    let module_type = match self.get_module_namespace_type(specifier) {
+        Some(ty) => ty,
+        None => TypeId::ANY,  // Unresolved module
+    };
+    
+    self.ctx.import_resolution_stack.remove(&specifier.to_string());
+    
+    // Construct Promise<ModuleNamespace> via TypeKey::Application
+    let promise_symbol = self.resolve_global_type("Promise");
+    self.ctx.types.application(promise_symbol, vec![module_type])
 }
 ```
 
@@ -192,19 +293,56 @@ fn matches_ambient_pattern(pattern: &str, specifier: &str) -> bool {
 - [ ] Pass to `ModuleResolver::get_export_conditions`
 - [ ] Prepend to default conditions list
 
-### 2.2 Module Namespace Types
+### 2.2 Module Namespace Types (Solver Addition)
 
-**Goal:** Properly type `import * as ns from 'module'` namespace objects.
+**Goal:** Add proper `TypeKey::ModuleNamespace` to represent `import * as ns`.
+
+**Why not anonymous object?** Module namespaces are ECMAScript "Module Namespace Exotic Objects" with special semantics:
+- `null` prototype
+- Immutable
+- `[Symbol.toStringTag]` = `"Module"`
+- Lazy export evaluation for cycle handling
+
+**Critical: Use SymbolId, NOT ObjectShapeId**
+
+Using `ObjectShapeId` would require computing `TypeId` for every export at construction time, forcing **eager evaluation** and causing infinite recursion on circular imports. Instead, use `SymbolId` for lazy evaluation:
+
+```rust
+// WRONG - Eager evaluation, causes cycles
+TypeKey::ModuleNamespace(ObjectShapeId)  
+
+// CORRECT - Lazy evaluation via symbol lookup
+TypeKey::ModuleNamespace(SymbolId)
+```
+
+When the Solver needs to check a property access on a `ModuleNamespace`, it:
+1. Looks up the export name in the underlying `Symbol` (via Binder)
+2. Computes **only that specific export's type** on demand
 
 **Tasks:**
-- [ ] Create `ModuleNamespace` type in solver for namespace imports
-- [ ] Populate namespace type with all module exports
-- [ ] Support `typeof ns` correctly
+- [ ] Add `TypeKey::ModuleNamespace(SymbolId)` to `src/solver/types.rs`
+- [ ] Add `visit_module_namespace` to `src/solver/visitor.rs`
+- [ ] Add `is_module_namespace_type` predicate to visitor
+- [ ] Implement lazy property resolution in solver for namespace types
+- [ ] Use `TypeKey::Ref(SymbolRef)` for circular dependencies
 
-**Current gap:**
-```typescript
-import * as utils from './utils';
-utils.helper();  // Currently may not have proper typing
+**Type representation:**
+```rust
+// src/solver/types.rs
+pub enum TypeKey {
+    // ... existing variants
+    /// Module Namespace Exotic Object (import * as ns)
+    /// Uses SymbolId for lazy export resolution - do NOT use ObjectShapeId
+    ModuleNamespace(SymbolId),
+}
+```
+
+**Visitor addition:**
+```rust
+// src/solver/visitor.rs
+pub fn is_module_namespace_type(types: &TypeInterner, type_id: TypeId) -> bool {
+    matches!(types.lookup(type_id), Some(TypeKey::ModuleNamespace(_)))
+}
 ```
 
 ### 2.3 Export Validation Improvements
@@ -247,33 +385,42 @@ utils.helper();  // Currently may not have proper typing
 - [ ] Elide `import type` statements
 - [ ] Elide `import { type X }` bindings
 
+### 3.4 Additional Edge Cases
+
+**Tasks:**
+- [ ] Implement `preserveSymlinks` compiler option
+- [ ] Support `NODE_PATH` environment variable fallback
+- [ ] Handle side-effect imports for `isolatedModules`
+- [ ] Enforce Node16/NodeNext directory import restrictions
+
 ---
 
 ## Implementation Priority
 
 ### Week 1: Critical Fixes
-1. **1.3 Wildcard Ambient Patterns** - Unblocks conformance tests (High Priority)
-2. **1.2 Dynamic Import Return Types** - High conformance impact (TS2711)
+1. **1.2 Wildcard Ambient Patterns** - Unblocks conformance tests (highest priority)
+2. **1.1 ModuleResolver ↔ Checker Integration** - Foundation for all other fixes
 
-### Week 2: Integration
-3. **1.1 ModuleResolver ↔ Checker Integration** - Foundation for all other fixes
-4. **2.3 Export Validation** - Reduces TS2305 errors
+### Week 2: Type Accuracy
+3. **1.3 Dynamic Import Return Types** - High conformance impact (TS2711)
+4. **2.2 Module Namespace Types** - Solver addition required for 1.3
 
-### Week 3: Enhancement
-5. **2.1 customConditions** - Config completeness
-6. **2.2 Module Namespace Types** - Type accuracy
+### Week 3: Validation
+5. **2.3 Export Validation** - Reduces TS2305 errors
+6. **2.1 customConditions** - Config completeness
 
 ### Week 4: Polish
-7. **3.1-3.3** - Advanced features as time permits
+7. **3.1-3.4** - Advanced features as time permits
 
 ---
 
 ## Testing Strategy
 
 ### Unit Tests
-- Module pattern matching edge cases
+- Module pattern matching with specificity edge cases
 - Dynamic import type computation
-- Cross-module type resolution
+- Cross-module type resolution with circular dependencies
+- `TypeKey::ModuleNamespace` visitor behavior
 
 ### Conformance Tests to Monitor
 ```
@@ -311,15 +458,62 @@ conformance/exportsAndImports/*
 | `src/exports.rs` | Export tracking data structures |
 | `src/checker/module_checker.rs` | Dynamic import validation |
 | `src/checker/module_validation.rs` | Import member validation |
+| `src/checker/context.rs` | CheckerContext (needs `all_binders`, `resolved_module_paths`) |
 | `src/checker/state.rs` | `get_type_of_symbol` for imports (line ~4600) |
 | `src/checker/type_computation.rs` | `check_call_expression` for dynamic imports |
-| `src/binder/state.rs` | Import symbol creation |
+| `src/binder/state.rs` | Import symbol creation, `pattern_ambient_modules` |
 | `src/cli/driver.rs` | Multi-file resolution coordination |
+| `src/solver/types.rs` | Add `TypeKey::ModuleNamespace` |
+| `src/solver/visitor.rs` | Add `is_module_namespace_type` predicate |
+
+---
+
+## Additional Gaps (from Gemini review)
+
+### Wildcard `export *` Ambiguity Detection
+
+**Issue:** Current `resolve_import_with_reexports_inner` returns the **first** match found. TSC requires checking **all** wildcards to detect collisions.
+
+**TSC Behavior:** If two `export *` declarations export the same name, that name is considered **ambiguous** and is **not exported** (unless explicitly re-exported by name).
+
+**Task:** Update wildcard resolution to:
+- Check ALL wildcards for the same export name
+- Return `None` (ambiguous) if multiple sources define the same name
+- Only return definitive result if exactly one source provides the name
+
+### `export =` vs `export default` with esModuleInterop
+
+**Issue:** `ModuleNamespace` type needs to handle:
+- `import x = require('mod')` → resolves to value of `export =`
+- `import * as x from 'mod'` → may resolve differently based on `esModuleInterop`
+- `import x from 'mod'` with `esModuleInterop` → synthesized default export
+
+**Task:** Add `esModuleInterop` awareness to module type construction.
+
+### Module Augmentation Merging
+
+**Issue:** `binder/state.rs` tracks `module_augmentations`. The `ModuleNamespace` type must merge these augmentations into the resolved type.
+
+**Example:**
+```typescript
+// In node_modules/express/index.d.ts
+declare namespace Express { interface Request {} }
+
+// In user code
+declare module 'express' {
+    interface Request { user?: User; }  // Augmentation
+}
+```
+
+**Task:** When constructing `TypeKey::ModuleNamespace`, merge declarations from `module_augmentations` into the base module type.
 
 ---
 
 ## Open Questions
 
 1. **Module caching strategy**: Should we cache parsed/bound modules globally or per-worker?
+   - Recommendation: Global cache with `Arc<BinderState>` for shared access
 2. **Incremental resolution**: How to invalidate module resolution when dependencies change?
-3. **Circular module handling**: Current approach may need refinement for complex cycles.
+3. **Circular module handling**: Use `TypeKey::Ref(SymbolRef)` for lazy evaluation
+4. **Performance**: Lazy type computation is critical - never pre-compute entire module type environments
+5. **esModuleInterop complexity**: How to handle synthetic default exports correctly?
