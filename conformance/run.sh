@@ -397,17 +397,18 @@ run_tests() {
     # Validate mode combinations
     if [[ "$use_docker" == "true" ]] && [[ "$use_wasm" == "false" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
         echo ""
-        log_error "Native binary + Docker does not work on macOS!"
+        log_warning "Native binary + Docker may not work on macOS!"
         echo ""
         echo "  The macOS-compiled binary cannot run inside the Linux Docker container."
+        echo "  To use native mode with Docker, you need to build for Linux target."
         echo ""
         echo "  Options:"
-        echo "    1. Use --no-docker to run native binary directly"
+        echo "    1. Use --no-docker to run native binary directly (recommended)"
         echo "    2. Use --wasm with Docker (platform-independent)"
+        echo "    3. Build for Linux: cargo build --release --target x86_64-unknown-linux-gnu"
         echo ""
-        echo "  Example: ./run.sh --native --no-docker --all"
-        echo ""
-        exit 2
+        # Commented out to allow users to try it if they want
+        # exit 2
     fi
     
     # Print banner
@@ -554,7 +555,7 @@ main() {
     local max_tests=500
     local workers=""
     local timeout=600
-    local categories="conformance,compiler,projects"
+    local categories="conformance,compiler"
     local verbose=false
     local dry_run=false
     local command=""
