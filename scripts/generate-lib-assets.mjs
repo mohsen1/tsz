@@ -296,10 +296,10 @@ async function main() {
   }, null, 2));
   console.log(`Wrote version: ${versionPath}`);
 
-  // Generate Rust include file (for reference, not used directly)
-  const rustIncludePath = path.join(targetDir, 'embedded_libs_generated.rs');
+  // Generate Rust include file directly to src/ for compilation
+  const rustIncludePath = path.join(ROOT_DIR, 'src/embedded_libs.rs');
   generateRustIncludes(manifest, rustIncludePath);
-  console.log(`Wrote Rust includes: ${rustIncludePath}`);
+  console.log(`Wrote Rust embedded_libs: ${rustIncludePath}`);
 
   console.log(`\nGenerated ${files.length} lib files in ${targetDir}`);
   console.log('Ready for cargo build - lib files are in place.');
@@ -310,7 +310,23 @@ async function main() {
  */
 function generateRustIncludes(manifest, outputPath) {
   const lines = [
-    '//! Auto-generated embedded TypeScript library files.',
+    '//! Embedded TypeScript Library Files',
+    '//!',
+    '//! This module embeds the official TypeScript library definition files directly into',
+    '//! the binary using `include_str!`. This allows tsz to work without requiring',
+    '//! separate lib file installation.',
+    '//!',
+    '//! The lib files are sourced from the TypeScript npm package, versioned via',
+    '//! `conformance/typescript-versions.json`.',
+    '//!',
+    '//! # Build Requirements',
+    '//!',
+    '//! Before building, ensure lib assets are generated:',
+    '//! ```bash',
+    '//! node scripts/generate-lib-assets.mjs',
+    '//! ```',
+    '//!',
+    '//! # Auto-Generated',
     '//!',
     `//! Generated from TypeScript npm version: ${manifest.version}`,
     `//! Generated at: ${manifest.generatedAt}`,
@@ -372,6 +388,15 @@ function generateRustIncludes(manifest, outputPath) {
   lines.push('}');
   lines.push('');
 
+  // Generate get_lib_by_file_name function
+  lines.push('/// Get an embedded lib by file name.');
+  lines.push('///');
+  lines.push('/// The file name should match the lib file name (e.g., "lib.es5.d.ts", "lib.dom.d.ts").');
+  lines.push('pub fn get_lib_by_file_name(file_name: &str) -> Option<&\'static EmbeddedLib> {');
+  lines.push('    ALL_LIBS.iter().find(|lib| lib.file_name == file_name)');
+  lines.push('}');
+  lines.push('');
+
   // Generate get_all_libs function
   lines.push('/// Get all embedded libs.');
   lines.push('pub fn get_all_libs() -> &\'static [EmbeddedLib] {');
@@ -428,10 +453,14 @@ function generateRustIncludes(manifest, outputPath) {
   lines.push('');
 
   // Generate default libs with DOM
-  lines.push('/// Get default libs for a script target (with DOM).');
+  lines.push('/// Get the default libs for a given script target (with DOM).');
+  lines.push('///');
+  lines.push('/// Returns the libs needed for the specified ECMAScript version plus DOM and ScriptHost.');
+  lines.push('/// This matches tsc\'s default behavior when no explicit `lib` option is specified.');
   lines.push('pub fn get_default_libs_for_target(target: ScriptTarget) -> Vec<&\'static EmbeddedLib> {');
   lines.push('    let mut libs = get_libs_for_target(target);');
-  lines.push('    // Add DOM libs');
+  lines.push('');
+  lines.push('    // Add DOM libs (same as tsc default)');
   lines.push('    if let Some(dom) = get_lib("dom") {');
   lines.push('        libs.push(dom);');
   lines.push('    }');
@@ -444,7 +473,117 @@ function generateRustIncludes(manifest, outputPath) {
   lines.push('    if let Some(scripthost) = get_lib("scripthost") {');
   lines.push('        libs.push(scripthost);');
   lines.push('    }');
+  lines.push('');
   lines.push('    libs');
+  lines.push('}');
+  lines.push('');
+
+  // Generate parse_lib_references function
+  lines.push('/// Parse `/// <reference lib="..." />` directives from lib content.');
+  lines.push('///');
+  lines.push('/// Returns a vector of referenced lib names.');
+  lines.push('pub fn parse_lib_references(content: &str) -> Vec<&str> {');
+  lines.push('    let mut refs = Vec::new();');
+  lines.push('    for line in content.lines() {');
+  lines.push('        let trimmed = line.trim();');
+  lines.push('        if trimmed.starts_with("/// <reference lib=") {');
+  lines.push('            // Parse: /// <reference lib="es5" />');
+  lines.push("            if let Some(start) = trimmed.find('\"') {");
+  lines.push("                if let Some(end) = trimmed[start + 1..].find('\"') {");
+  lines.push('                    refs.push(&trimmed[start + 1..start + 1 + end]);');
+  lines.push('                }');
+  lines.push('            }');
+  lines.push('        } else if !trimmed.starts_with("///") && !trimmed.is_empty() {');
+  lines.push('            // Stop at first non-reference line');
+  lines.push('            break;');
+  lines.push('        }');
+  lines.push('    }');
+  lines.push('    refs');
+  lines.push('}');
+  lines.push('');
+
+  // Generate tests
+  lines.push('#[cfg(test)]');
+  lines.push('mod tests {');
+  lines.push('    use super::*;');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_get_lib() {');
+  lines.push('        let es5 = get_lib("es5").expect("es5 lib should exist");');
+  lines.push('        assert_eq!(es5.name, "es5");');
+  lines.push('        assert!(es5.content.contains("interface Object"));');
+  lines.push('    }');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_get_lib_by_file_name() {');
+  lines.push('        let es5 = get_lib_by_file_name("lib.es5.d.ts").expect("lib.es5.d.ts should exist");');
+  lines.push('        assert_eq!(es5.name, "es5");');
+  lines.push('    }');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_all_libs_count() {');
+  lines.push('        // We should have all the expected libs');
+  lines.push('        assert!(ALL_LIBS.len() >= 80, "Should have at least 80 libs");');
+  lines.push('    }');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_parse_lib_references() {');
+  lines.push('        let content = r#"/// <reference lib="es5" />');
+  lines.push('/// <reference lib="es2015.promise" />');
+  lines.push('/// <reference lib="dom" />');
+  lines.push('');
+  lines.push('interface Foo {}');
+  lines.push('"#;');
+  lines.push('        let refs = parse_lib_references(content);');
+  lines.push('        assert_eq!(refs, vec!["es5", "es2015.promise", "dom"]);');
+  lines.push('    }');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_get_libs_for_target() {');
+  lines.push('        let es5_libs = get_libs_for_target(ScriptTarget::ES5);');
+  lines.push('        assert!(es5_libs.iter().any(|lib| lib.name == "es5"));');
+  lines.push('');
+  lines.push('        let es2015_libs = get_libs_for_target(ScriptTarget::ES2015);');
+  lines.push('        assert!(es2015_libs.iter().any(|lib| lib.name == "es5"));');
+  lines.push('        assert!(es2015_libs.iter().any(|lib| lib.name == "es2015.promise"));');
+  lines.push('    }');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_resolve_lib_with_dependencies() {');
+  lines.push('        let libs = resolve_lib_with_dependencies("es2015");');
+  lines.push('        // Should include es5 and all es2015 components');
+  lines.push('        let names: Vec<_> = libs.iter().map(|lib| lib.name).collect();');
+  lines.push('        assert!(names.contains(&"es5"));');
+  lines.push('        assert!(names.contains(&"es2015.promise"));');
+  lines.push('        assert!(names.contains(&"es2015.collection"));');
+  lines.push('    }');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_dom_lib_has_window() {');
+  lines.push('        let dom = get_lib("dom").expect("dom lib should exist");');
+  lines.push('        assert!(dom.content.contains("interface Window"));');
+  lines.push('        assert!(dom.content.contains("declare var window"));');
+  lines.push('    }');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_es5_has_core_types() {');
+  lines.push('        let es5 = get_lib("es5").expect("es5 lib should exist");');
+  lines.push('        assert!(es5.content.contains("interface Object"));');
+  lines.push('        assert!(es5.content.contains("interface Array<T>"));');
+  lines.push('        assert!(es5.content.contains("interface Function"));');
+  lines.push('        assert!(es5.content.contains("interface String"));');
+  lines.push('        assert!(es5.content.contains("interface Number"));');
+  lines.push('        assert!(es5.content.contains("interface Boolean"));');
+  lines.push('    }');
+  lines.push('');
+  lines.push('    #[test]');
+  lines.push('    fn test_references_field() {');
+  lines.push('        // ES2015 should reference its component libs');
+  lines.push('        let es2015 = get_lib("es2015").expect("es2015 lib should exist");');
+  lines.push('        assert!(es2015.references.contains(&"es5"));');
+  lines.push('        assert!(es2015.references.contains(&"es2015.promise"));');
+  lines.push('        assert!(es2015.references.contains(&"es2015.collection"));');
+  lines.push('    }');
   lines.push('}');
 
   fs.writeFileSync(outputPath, lines.join('\n'));
