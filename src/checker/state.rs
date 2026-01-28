@@ -3132,11 +3132,18 @@ impl<'a> CheckerState<'a> {
 
         if is_intrinsic {
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
-            // For now, return ANY as JSX namespace resolution requires additional infrastructure
-            // Full implementation would:
-            // 1. Look up JSX namespace in global scope
-            // 2. Find IntrinsicElements interface
-            // 3. Look up the specific tag name as an index access
+            // Try to resolve JSX.IntrinsicElements and create an indexed access type
+            if let Some(tag) = tag_name {
+                if let Some(intrinsic_elements_type) = self.get_intrinsic_elements_type() {
+                    // Create JSX.IntrinsicElements['tagName'] as an IndexAccess type
+                    let tag_literal = self.ctx.types.literal_string(tag);
+                    return self.ctx.types.intern(crate::solver::TypeKey::IndexAccess(
+                        intrinsic_elements_type,
+                        tag_literal,
+                    ));
+                }
+            }
+            // Fall back to ANY if JSX namespace is not available
             TypeId::ANY
         } else {
             // Component: resolve as variable expression
@@ -3145,13 +3152,74 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get the global JSX namespace type.
+    ///
+    /// Rule #36: Resolves the global `JSX` namespace which contains type definitions
+    /// for intrinsic elements and the Element type.
+    fn get_jsx_namespace_type(&mut self) -> Option<SymbolId> {
+        // First try file_locals (includes user-defined globals and merged lib symbols)
+        if let Some(sym_id) = self.ctx.binder.file_locals.get("JSX") {
+            return Some(sym_id);
+        }
+
+        // Then try using get_global_type to check lib binders
+        let lib_binders = self.get_lib_binders();
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_global_type_with_libs("JSX", &lib_binders)
+        {
+            return Some(sym_id);
+        }
+
+        None
+    }
+
+    /// Get the JSX.IntrinsicElements interface type.
+    ///
+    /// Rule #36: Resolves `JSX.IntrinsicElements` which maps tag names to their prop types.
+    /// Returns None if the JSX namespace or IntrinsicElements interface is not available.
+    fn get_intrinsic_elements_type(&mut self) -> Option<TypeId> {
+        // Get the JSX namespace symbol
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+
+        // Get lib binders for cross-arena symbol lookup
+        let lib_binders = self.get_lib_binders();
+
+        // Get the JSX namespace symbol data
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+
+        // Look up IntrinsicElements in the JSX namespace exports
+        let exports = symbol.exports.as_ref()?;
+        let intrinsic_elements_sym_id = exports.get("IntrinsicElements")?;
+
+        // Return the type reference for IntrinsicElements
+        Some(self.type_reference_symbol_type(intrinsic_elements_sym_id))
+    }
+
     /// Get the JSX.Element type for fragments.
     ///
     /// Rule #36: Fragments resolve to JSX.Element type.
     fn get_jsx_element_type(&mut self) -> TypeId {
         // Try to resolve JSX.Element from the JSX namespace
-        // For now, return ANY as the JSX namespace may not be available
-        // Full implementation would look up JSX.Element from global JSX namespace
+        if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
+            let lib_binders = self.get_lib_binders();
+            if let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+            {
+                if let Some(exports) = symbol.exports.as_ref() {
+                    if let Some(element_sym_id) = exports.get("Element") {
+                        return self.type_reference_symbol_type(element_sym_id);
+                    }
+                }
+            }
+        }
+        // Fall back to ANY if JSX namespace or Element type is not available
         TypeId::ANY
     }
 
@@ -4689,7 +4757,12 @@ impl<'a> CheckerState<'a> {
                         use crate::solver::PropertyInfo;
                         let mut props: Vec<PropertyInfo> = Vec::new();
                         for (name, &export_sym_id) in exports_table.iter() {
-                            let prop_type = self.get_type_of_symbol(export_sym_id);
+                            let mut prop_type = self.get_type_of_symbol(export_sym_id);
+
+                            // Rule #44: Apply module augmentations to each exported type
+                            prop_type =
+                                self.apply_module_augmentations(module_name, name, prop_type);
+
                             let name_atom = self.ctx.types.intern_string(name);
                             props.push(PropertyInfo {
                                 name: name_atom,
@@ -4715,7 +4788,12 @@ impl<'a> CheckerState<'a> {
                 if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name)
                     && let Some(export_sym_id) = exports_table.get(export_name)
                 {
-                    let result = self.get_type_of_symbol(export_sym_id);
+                    let mut result = self.get_type_of_symbol(export_sym_id);
+
+                    // Rule #44: Apply module augmentations to the imported type
+                    // If there are augmentations for this module+interface, merge them in
+                    result = self.apply_module_augmentations(module_name, export_name, result);
+
                     if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
                         debug!(
                             export_name = %export_name,

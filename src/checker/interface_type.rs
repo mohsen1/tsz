@@ -652,4 +652,199 @@ impl<'a> CheckerState<'a> {
         }
         merged.into_values().collect()
     }
+
+    // =============================================================================
+    // Module Augmentation Merging (Rule #44)
+    // =============================================================================
+
+    /// Get module augmentation declarations for a given module specifier and interface name.
+    ///
+    /// This function looks up interface/type declarations inside `declare module 'x'` blocks
+    /// that should be merged with the target module's interface.
+    ///
+    /// # Arguments
+    /// * `module_spec` - The module specifier (e.g., "express", "lodash")
+    /// * `interface_name` - The name of the interface to find augmentations for
+    ///
+    /// # Returns
+    /// A vector of NodeIndex pointing to augmentation declarations
+    ///
+    /// # Example
+    /// ```typescript
+    /// // In user code:
+    /// declare module 'express' {
+    ///     interface Request {
+    ///         user: User;  // This augments the original Request interface
+    ///     }
+    /// }
+    /// ```
+    pub(crate) fn get_module_augmentation_declarations(
+        &self,
+        module_spec: &str,
+        interface_name: &str,
+    ) -> Vec<NodeIndex> {
+        self.ctx
+            .binder
+            .module_augmentations
+            .get(module_spec)
+            .map(|augmentations| {
+                augmentations
+                    .iter()
+                    .filter(|(name, _)| name == interface_name)
+                    .map(|(_, idx)| *idx)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get all module augmentation members for a given module specifier and interface name.
+    ///
+    /// This function retrieves the properties from augmentation declarations and returns them
+    /// as PropertyInfo objects ready for merging with the original interface.
+    ///
+    /// # Arguments
+    /// * `module_spec` - The module specifier (e.g., "express", "lodash")
+    /// * `interface_name` - The name of the interface to find augmentation members for
+    ///
+    /// # Returns
+    /// A vector of PropertyInfo representing the augmented members
+    pub(crate) fn get_module_augmentation_members(
+        &mut self,
+        module_spec: &str,
+        interface_name: &str,
+    ) -> Vec<crate::solver::PropertyInfo> {
+        use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+        use crate::solver::PropertyInfo;
+
+        let augmentation_decls =
+            self.get_module_augmentation_declarations(module_spec, interface_name);
+        let mut members = Vec::new();
+
+        for decl_idx in augmentation_decls {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+
+            // Extract members from the augmentation interface
+            for &member_idx in &interface.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+
+                if member_node.kind == PROPERTY_SIGNATURE || member_node.kind == METHOD_SIGNATURE {
+                    if let Some(sig) = self.ctx.arena.get_signature(member_node)
+                        && let Some(name_node) = self.ctx.arena.get(sig.name)
+                        && let Some(id_data) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let type_id = if !sig.type_annotation.is_none() {
+                            self.get_type_of_node(sig.type_annotation)
+                        } else {
+                            crate::solver::TypeId::ANY
+                        };
+
+                        members.push(PropertyInfo {
+                            name: self.ctx.types.intern_string(&id_data.escaped_text),
+                            type_id,
+                            write_type: type_id,
+                            optional: sig.question_token,
+                            readonly: self.has_readonly_modifier(&sig.modifiers),
+                            is_method: member_node.kind == METHOD_SIGNATURE,
+                        });
+                    }
+                }
+            }
+        }
+
+        members
+    }
+
+    /// Apply module augmentations to an interface type.
+    ///
+    /// This function merges augmentation members into an existing interface type,
+    /// implementing Rule #44: Module Augmentation Merging.
+    ///
+    /// # Arguments
+    /// * `module_spec` - The module specifier being augmented
+    /// * `interface_name` - The name of the interface being augmented
+    /// * `base_type` - The original interface type
+    ///
+    /// # Returns
+    /// The merged TypeId including augmented members
+    ///
+    /// # Example
+    /// ```typescript
+    /// // Original express types:
+    /// declare module 'express' {
+    ///     interface Request { body: any; }
+    /// }
+    ///
+    /// // User augmentation:
+    /// declare module 'express' {
+    ///     interface Request { user: User; }
+    /// }
+    ///
+    /// // Result: Request has both body and user properties
+    /// ```
+    pub(crate) fn apply_module_augmentations(
+        &mut self,
+        module_spec: &str,
+        interface_name: &str,
+        base_type: crate::solver::TypeId,
+    ) -> crate::solver::TypeId {
+        use crate::solver::{ObjectShape, TypeKey};
+
+        let augmentation_members =
+            self.get_module_augmentation_members(module_spec, interface_name);
+
+        if augmentation_members.is_empty() {
+            return base_type;
+        }
+
+        // Get the base type's properties and merge with augmentation members
+        let base_key = self.ctx.types.lookup(base_type);
+
+        match base_key {
+            Some(TypeKey::Object(shape_id)) => {
+                let base_shape = self.ctx.types.object_shape(shape_id);
+                let merged_properties =
+                    Self::merge_properties(&augmentation_members, &base_shape.properties);
+                self.ctx.types.object(merged_properties)
+            }
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let base_shape = self.ctx.types.object_shape(shape_id);
+                let merged_properties =
+                    Self::merge_properties(&augmentation_members, &base_shape.properties);
+                self.ctx.types.object_with_index(ObjectShape {
+                    properties: merged_properties,
+                    string_index: base_shape.string_index.clone(),
+                    number_index: base_shape.number_index.clone(),
+                })
+            }
+            Some(TypeKey::Callable(shape_id)) => {
+                use crate::solver::CallableShape;
+                let base_shape = self.ctx.types.callable_shape(shape_id);
+                let merged_properties =
+                    Self::merge_properties(&augmentation_members, &base_shape.properties);
+                self.ctx.types.callable(CallableShape {
+                    call_signatures: base_shape.call_signatures.clone(),
+                    construct_signatures: base_shape.construct_signatures.clone(),
+                    properties: merged_properties,
+                    string_index: base_shape.string_index.clone(),
+                    number_index: base_shape.number_index.clone(),
+                })
+            }
+            _ => {
+                // For other types (like ANY), create a new object type with the augmentation members
+                if !augmentation_members.is_empty() {
+                    self.ctx.types.object(augmentation_members)
+                } else {
+                    base_type
+                }
+            }
+        }
+    }
 }
