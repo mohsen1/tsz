@@ -2539,6 +2539,36 @@ fn load_lib_files_for_contexts(
         }
     }
 
+    // Merge all lib binders into a single binder to avoid duplicate SymbolIds
+    // This is necessary because different lib files may declare the same symbols
+    // (e.g., "Intl" is declared in lib.esnext.d.ts, lib.es2024.d.ts, etc.)
+    if !lib_contexts.is_empty() {
+        use crate::binder::state::LibContext as BinderLibContext;
+
+        let mut merged_binder = crate::binder::BinderState::new();
+        let binder_lib_contexts: Vec<_> = lib_contexts
+            .iter()
+            .map(|ctx| BinderLibContext {
+                arena: std::sync::Arc::clone(&ctx.arena),
+                binder: std::sync::Arc::clone(&ctx.binder),
+            })
+            .collect();
+
+        merged_binder.merge_lib_contexts_into_binder(&binder_lib_contexts);
+
+        // Replace multiple lib contexts with a single merged one
+        let merged_arena = lib_contexts
+            .first()
+            .map(|ctx| std::sync::Arc::clone(&ctx.arena))
+            .unwrap();
+        let merged_binder = std::sync::Arc::new(merged_binder);
+
+        return vec![LibContext {
+            arena: merged_arena,
+            binder: merged_binder,
+        }];
+    }
+
     lib_contexts
 }
 
