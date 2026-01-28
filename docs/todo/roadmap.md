@@ -60,7 +60,7 @@ OOM Tests:
 
 ## Phase 2: Lib Symbol Resolution (TS2318)
 
-**Problem**: Our lib symbol merge fix isn't reaching the WASM conformance path.
+**Problem**: Lib selection and merging diverge between tsc and the WASM path, causing TS2318 mismatches.
 
 **Current Flow**:
 ```
@@ -83,6 +83,15 @@ WASM: addLibFile() → lib_files.push()
 1. **LibContext type mismatch** - Binder vs Checker LibContext
 2. **Ordering issue** - Symbols merged after binding, not before
 3. **Arena mismatch** - Symbol declarations point to wrong arena
+4. **Lib selection mismatch** - WASM path loads different libs than tsc for `@lib`
+
+### 2.4 TS2318 Tightening Pass (Immediate)
+- [x] Conformance harness loads `@lib` files from `TypeScript/src/lib`
+- [x] Preserve fallback to `tests/lib/lib.d.ts` for tests without `@lib`
+- [ ] Add targeted TS2318 tracing: log missing global names + lib set per test
+- [ ] Confirm `lib.*.d.ts` → embedded lib name mapping is used on WASM path
+- [ ] Run focused subset of TS2318-heavy tests to validate deltas
+ - [ ] **Fix mismatch**: `lib.d.ts` should not map to embedded `es5` (drops DOM globals)
 
 ---
 

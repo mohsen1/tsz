@@ -54,6 +54,8 @@ interface WorkerResult {
 let wasmModule: any = null;
 let libSource = '';
 let libPath = '';
+let libDir = '';
+let hasLibDir = false;
 let workerId = -1;
 let useWasm = true;
 let nativeBinaryPath = '';
@@ -73,6 +75,138 @@ const getMemoryUsage = () => process.memoryUsage().heapUsed + getWasmMemoryUsage
 // Heartbeat to detect hangs
 let lastActivity = Date.now();
 const HEARTBEAT_INTERVAL = 1000;
+
+const LIB_REFERENCE_RE = /\/\/\/\s*<reference\s+lib=["']([^"']+)["']\s*\/>/g;
+const libContentCache = new Map<string, string>();
+const libPathCache = new Map<string, string>();
+
+function parseLibReferences(source: string): string[] {
+  const refs: string[] = [];
+  for (const match of source.matchAll(LIB_REFERENCE_RE)) {
+    if (match[1]) refs.push(match[1].trim().toLowerCase());
+  }
+  return refs;
+}
+
+function resolveLibFilePath(libName: string): string | null {
+  const normalized = libName.trim().toLowerCase();
+  if (libPathCache.has(normalized)) return libPathCache.get(normalized)!;
+  if (!hasLibDir) return null;
+
+  const candidates = [
+    path.join(libDir, `${normalized}.d.ts`),
+    path.join(libDir, `${normalized}.generated.d.ts`),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      libPathCache.set(normalized, candidate);
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function readLibContent(libName: string): string | null {
+  const normalized = libName.trim().toLowerCase();
+  if (libContentCache.has(normalized)) return libContentCache.get(normalized)!;
+  const libFilePath = resolveLibFilePath(normalized);
+  if (!libFilePath) return null;
+  const content = fs.readFileSync(libFilePath, 'utf8');
+  libContentCache.set(normalized, content);
+  return content;
+}
+
+function loadLibRecursive(
+  libName: string,
+  out: Map<string, string>,
+  seen: Set<string>
+): void {
+  const normalized = libName.trim().toLowerCase();
+  if (seen.has(normalized)) return;
+  seen.add(normalized);
+
+  const content = readLibContent(normalized);
+  if (!content) return;
+
+  out.set(`lib.${normalized}.d.ts`, content);
+
+  for (const ref of parseLibReferences(content)) {
+    loadLibRecursive(ref, out, seen);
+  }
+}
+
+function normalizeTargetName(target: unknown): string {
+  if (typeof target === 'number') {
+    const name = (ts.ScriptTarget as any)[target];
+    if (typeof name === 'string') return name.toLowerCase();
+  }
+  return String(target ?? 'es2020').toLowerCase();
+}
+
+function defaultFullLibNameForTarget(targetName: string): string {
+  switch (targetName) {
+    case 'es3':
+    case 'es5':
+      return 'es5.full';
+    case 'es6':
+    case 'es2015':
+      return 'es2015.full';
+    case 'es2016':
+    case 'es2017':
+    case 'es2018':
+    case 'es2019':
+    case 'es2020':
+    case 'es2021':
+    case 'es2022':
+    case 'es2023':
+    case 'es2024':
+      return `${targetName}.full`;
+    case 'esnext':
+    default:
+      return 'esnext.full';
+  }
+}
+
+function defaultLibNamesForTarget(targetName: string): string[] {
+  const fullName = defaultFullLibNameForTarget(targetName);
+  const fullContent = readLibContent(fullName);
+  if (!fullContent) {
+    return [targetName === 'es6' ? 'es2015' : targetName];
+  }
+  const refs = parseLibReferences(fullContent);
+  return refs.length ? refs : [targetName === 'es6' ? 'es2015' : targetName];
+}
+
+function parseLibOption(libOpt: unknown): string[] {
+  if (typeof libOpt === 'string') {
+    return libOpt
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean);
+  }
+  if (Array.isArray(libOpt)) {
+    return libOpt.map(v => String(v).trim().toLowerCase()).filter(Boolean);
+  }
+  return [];
+}
+
+function getLibNamesForTestCase(
+  opts: Record<string, unknown>,
+  compilerOptionsTarget: ts.ScriptTarget | undefined
+): string[] {
+  if (opts.nolib) return [];
+  const explicit = parseLibOption(opts.lib);
+  return explicit;
+}
+
+function collectLibFiles(libNames: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const libName of libNames) {
+    loadLibRecursive(libName, out, seen);
+  }
+  return out;
+}
 
 function parseTestDirectives(code: string, filePath: string): ParsedTestCase {
   const lines = code.split('\n');
@@ -328,6 +462,12 @@ function runTsc(testCase: ParsedTestCase): number[] {
   const compilerOptions = toCompilerOptions(testCase.options);
   const sourceFiles = new Map<string, ts.SourceFile>();
   const fileNames: string[] = [];
+  const libNames = getLibNamesForTestCase(testCase.options, compilerOptions.target);
+  const libFiles = libNames.length ? collectLibFiles(libNames) : new Map<string, string>();
+
+  if (!compilerOptions.noLib && libNames.length) {
+    compilerOptions.lib = libNames;
+  }
 
   for (const file of testCase.files) {
     // Determine script kind based on file extension
@@ -348,25 +488,42 @@ function runTsc(testCase: ParsedTestCase): number[] {
     fileNames.push(file.name);
   }
 
-  // Add lib.d.ts unless noLib is set
-  if (!compilerOptions.noLib && libSource) {
-    sourceFiles.set('lib.d.ts', ts.createSourceFile(
-      'lib.d.ts', 
-      libSource, 
-      compilerOptions.target ?? ts.ScriptTarget.ES2020, 
-      true
-    ));
+  // Add lib files unless noLib is set
+  if (!compilerOptions.noLib && libFiles.size) {
+    for (const [name, content] of libFiles.entries()) {
+      sourceFiles.set(
+        name,
+        ts.createSourceFile(
+          name,
+          content,
+          compilerOptions.target ?? ts.ScriptTarget.ES2020,
+          true
+        )
+      );
+    }
+  } else if (!compilerOptions.noLib && libSource) {
+    sourceFiles.set(
+      'lib.d.ts',
+      ts.createSourceFile(
+        'lib.d.ts',
+        libSource,
+        compilerOptions.target ?? ts.ScriptTarget.ES2020,
+        true
+      )
+    );
   }
 
   const host = ts.createCompilerHost(compilerOptions);
   host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) => {
-    return sourceFiles.get(name);
+    return sourceFiles.get(name) ?? sourceFiles.get(path.basename(name));
   };
-  host.fileExists = (name) => sourceFiles.has(name);
+  host.fileExists = (name) => sourceFiles.has(name) || sourceFiles.has(path.basename(name));
   host.readFile = (name) => {
     const file = testCase.files.find(f => f.name === name);
     if (file) return file.content;
-    if (name === 'lib.d.ts') return libSource;
+    const libName = libFiles.has(name) ? name : path.basename(name);
+    if (libFiles.has(libName)) return libFiles.get(libName);
+    if (libSource && libName === 'lib.d.ts') return libSource;
     return undefined;
   };
   host.getDefaultLibFileName = () => 'lib.d.ts';
@@ -380,7 +537,7 @@ function runTsc(testCase: ParsedTestCase): number[] {
   const diags: number[] = [];
   
   for (const sf of sourceFiles.values()) {
-    if (sf.fileName === 'lib.d.ts') continue;
+    if (sf.fileName.startsWith('lib.')) continue;
     
     for (const d of program.getSyntacticDiagnostics(sf)) diags.push(d.code);
     for (const d of program.getSemanticDiagnostics(sf)) diags.push(d.code);
@@ -394,6 +551,8 @@ function runTsc(testCase: ParsedTestCase): number[] {
 
 async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[]; crashed: boolean; oom: boolean; error?: string }> {
   const memBefore = getMemoryUsage();
+  const wasmLibNames = getLibNamesForTestCase(testCase.options, undefined);
+  const wasmLibFiles = wasmLibNames.length ? collectLibFiles(wasmLibNames) : new Map<string, string>();
 
   if (useWasm) {
     // WASM mode - use the loaded WASM module
@@ -405,9 +564,15 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
           program.setCompilerOptions(JSON.stringify(toWasmOptions(testCase.options)));
         }
 
-        // Add lib.d.ts unless noLib - use addLibFile for library files
-        if (!testCase.options.nolib && libSource) {
-          program.addLibFile('lib.d.ts', libSource);
+        // Add lib files unless noLib - use addLibFile for library files
+        if (!testCase.options.nolib) {
+          if (wasmLibFiles.size) {
+            for (const [name, content] of wasmLibFiles.entries()) {
+              program.addLibFile(name, content);
+            }
+          } else if (libSource) {
+            program.addLibFile('lib.d.ts', libSource);
+          }
         }
 
         for (const file of testCase.files) {
@@ -421,9 +586,15 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         const file = testCase.files[0];
         const parser = new wasmModule.Parser(file.name, file.content);
 
-        // Add lib.d.ts unless noLib
-        if (!testCase.options.nolib && libSource) {
-          parser.addLibFile('lib.d.ts', libSource);
+        // Add lib files unless noLib
+        if (!testCase.options.nolib) {
+          if (wasmLibFiles.size) {
+            for (const [name, content] of wasmLibFiles.entries()) {
+              parser.addLibFile(name, content);
+            }
+          } else if (libSource) {
+            parser.addLibFile('lib.d.ts', libSource);
+          }
         }
 
         // Pass compiler options to WASM
@@ -686,9 +857,10 @@ process.on('unhandledRejection', (reason) => {
 
 // Initialize worker
 (async () => {
-  const data = workerData as { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; id: number; tscCacheEntries?: Record<string, CacheEntry> };
+  const data = workerData as { wasmPkgPath: string; libPath: string; libDir: string; useWasm: boolean; nativeBinaryPath?: string; id: number; tscCacheEntries?: Record<string, CacheEntry> };
   workerId = data.id;
   libPath = data.libPath;
+  libDir = data.libDir;
   useWasm = data.useWasm;
   nativeBinaryPath = data.nativeBinaryPath || '';
   tscCacheEntries = data.tscCacheEntries;
@@ -720,9 +892,16 @@ process.on('unhandledRejection', (reason) => {
     }
   }
 
-  // Load lib.d.ts once
+  // Load lib.d.ts once (if libPath is a file) or set libDir (if directory)
   try {
-    libSource = fs.readFileSync(libPath, 'utf8');
+    const stat = fs.statSync(libPath);
+    if (stat.isDirectory()) {
+      libDir = libPath;
+      hasLibDir = fs.existsSync(path.join(libDir, 'es5.d.ts'));
+    } else {
+      libSource = fs.readFileSync(libPath, 'utf8');
+      hasLibDir = fs.existsSync(path.join(libDir, 'es5.d.ts'));
+    }
   } catch {}
 
   // Signal ready with memory info

@@ -20,12 +20,15 @@
 
 use crate::binder::BinderState;
 use crate::binder::SymbolTable;
+use crate::binder::symbol_flags;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::common::ScriptTarget;
 use crate::embedded_libs::{self, EmbeddedLib};
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 // =============================================================================
 // Diagnostic Error Codes
@@ -390,6 +393,51 @@ const ES2015_PLUS_TYPES: &[&str] = &[
 /// instead of TS2318 (generic type not found).
 pub fn is_es2015_plus_type(name: &str) -> bool {
     ES2015_PLUS_TYPES.contains(&name)
+}
+
+// =============================================================================
+// Known Global Type Names
+// =============================================================================
+
+static KNOWN_GLOBAL_TYPE_NAMES: OnceLock<FxHashSet<String>> = OnceLock::new();
+
+/// Check if a name is a known global type (from any embedded lib).
+pub fn is_known_global_type_name(name: &str) -> bool {
+    KNOWN_GLOBAL_TYPE_NAMES
+        .get_or_init(build_known_global_type_names)
+        .contains(name)
+}
+
+fn build_known_global_type_names() -> FxHashSet<String> {
+    let mut names: FxHashSet<String> = FxHashSet::default();
+
+    if let Some(preparsed) = crate::preparsed_libs::get_preparsed_libs() {
+        for lib in preparsed.iter() {
+            for (name, sym_id) in lib.file_locals.iter() {
+                if let Some(sym) = lib.symbols.get(*sym_id) {
+                    if (sym.flags & symbol_flags::TYPE) != 0 {
+                        names.insert(name.clone());
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    // Fallback: parse embedded libs once to extract type symbols.
+    for lib in embedded_libs::get_all_libs() {
+        if let Some(lib_file) = load_embedded_lib_by_name(lib.name) {
+            for (name, sym_id) in lib_file.file_locals().iter() {
+                if let Some(sym) = lib_file.binder.symbols.get(*sym_id) {
+                    if (sym.flags & symbol_flags::TYPE) != 0 {
+                        names.insert(name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    names
 }
 
 /// Validate that the loaded lib files support the required ES2015+ features.

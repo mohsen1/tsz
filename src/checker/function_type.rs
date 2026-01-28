@@ -197,8 +197,9 @@ impl<'a> CheckerState<'a> {
                         outer_this_type.unwrap_or(TypeId::ANY)
                     }
                 } else {
-                    // Infer from contextual type
-                    contextual_type.unwrap_or(TypeId::UNKNOWN)
+                    // Infer from contextual type, default to ANY for implicit any parameters
+                    // TypeScript uses `any` (with TS7006) when no contextual type is available.
+                    contextual_type.unwrap_or(TypeId::ANY)
                 };
 
                 if is_this_param {

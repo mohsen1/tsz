@@ -162,6 +162,92 @@ concurrency. Mitigation: cap WASM worker count and clamp arena prealloc sizes.
 - TS2571 (138 extra): Object is possibly null/undefined
 - TS2339 (118 extra): Property does not exist
 
+### Latest Findings (2026-01-28, verbose 50 tests)
+**Persistent errors despite ambient pattern matching + unresolved import ANY:**
+- `conformance/ambient/ambientDeclarationsPatterns.ts` still emits TS2307
+  - Indicates declared module patterns may **not** be populated in merged binder,
+    or patterns are lost in multi-file WASM path.
+  - Next step: verify `program.declared_modules` includes `"foo*baz"` at check time.
+- `conformance/additionalChecks/noPropertyAccessFromIndexSignature1.ts` still emits TS2454
+  - Likely `declare const` is not recognized in definite assignment checks.
+  - Parent chain for variable declaration may still not reach modifier flags.
+- `compiler/APISample_*` files still emit TS2571
+  - Suggests `import ts = require("typescript")` still resolves to `unknown`,
+    not `any` when module resolution fails.
+  - Next step: inspect `resolve_import_if_needed` + `get_type_of_symbol` alias path
+    to ensure unresolved imports are always `any` for both import-equals and ES6.
+
+### Update After Implicit-Any Adjustments
+- TS2571 disappeared from the 50-test verbose run after:
+  - Defaulting implicit parameter types to `any`
+  - Defaulting index signature types to `any`
+- TS2454 reduced to just a couple APISample files (ambient `declare const` fixed)
+- New top extras in the sample are TS7010/TS7011 (implicit any return), which is expected
+
+### Package.json Resolution Attempt (Rolled Back)
+- Tried treating `package.json` modules as ambient any to suppress TS2307.
+- Result: TS2307 flipped to **missing** in APISample tests (tsc expects it there).
+- Reverted; proper fix needs real module resolution (or shipping the types file).
+
+### Current State (50-test verbose, after implicit any + pattern tweaks)
+- TS2571 eliminated from sample.
+- TS2307 still extra in:
+  - `ambientDeclarationsPatterns.ts` (wildcard module patterns still not matching)
+  - `APISample_*` and `NestedLocalModule` cases (module resolution gap)
+- Next likely fixes:
+  1. Verify `declared_modules` population for wildcard ambient modules in merged program.
+  2. Implement TS5061 for multiple `*` in ambient module names.
+  3. Add a lightweight module resolver for WASM (node_modules + package.json `types`).
+
+### Lib Loading Update
+- Conformance worker now loads `@lib` files from `TypeScript/src/lib` (explicit libs only).
+- Default behavior remains `tests/lib/lib.d.ts` for non-`@lib` tests.
+- Small 20-test sample: pass rate 23.8% (5/21); TS2318 missing still present in subset.
+
+### Full --all Run (2026-01-28, 2 workers)
+- Pass Rate: 33.8% (4117/12198)
+- Crashed: 21, OOM: 23, Timeout: 52
+- TS2318 missing: 3368 (unchanged scale)
+- Early panic: `alloc::raw_vec::capacity_overflow`
+
+### TS2318 Tightening: New Mismatch Hypothesis
+- `get_or_create_lib_file` maps `lib.d.ts` → embedded `es5` (via `lib_name_from_file_name`).
+- For non-`@lib` tests, the harness passes `tests/lib/lib.d.ts`, which is *full* and
+  includes DOM types. Mapping to embedded `es5` drops DOM globals and can create
+  thousands of TS2318 misses.
+- Fix idea: stop mapping plain `lib.d.ts` to embedded `es5`; only map `lib.es*.d.ts`
+  (and other `lib.<name>.d.ts`) to embedded libs. Keep `lib.d.ts` parsed from content.
+
+### TS2318 Tightening: After Fix (sample)
+- Change applied: `lib.d.ts` no longer maps to embedded `es5`.
+- 50-test sample run:
+  - Pass Rate: 47.1% (24/51)
+  - TS2318 missing: 4x (down from 6x in prior 20-test sample)
+
+### TS2318 Tightening: Known Global Types Set
+- Added a global type name cache built from embedded libs (type symbols only).
+- `CheckerContext::is_known_global_type` now checks this set.
+- 50-test sample unchanged (TS2318 missing still 4x); full run needed to validate impact.
+
+### TS2318 Tightening: Cache Baseline Fix
+- TSC cache generation did not honor `@lib` directives, causing baseline mismatches
+  (missing TS2318/TS2583 when tsz correctly loads `@lib`).
+- Updated `cache-worker` to load `@lib` libs from `TypeScript/src/lib` and
+  bumped cache version to invalidate stale baselines.
+
+### TS2318 Tightening Pass: Code Path Notes
+- TS2318 emission sites:
+  - `checker/type_checking.rs::check_missing_global_types` (gated by `ctx.has_lib_loaded()`)
+  - `checker/state.rs` (global type fallback when `!ctx.has_name_in_lib(name)`)
+- `CheckerContext::has_lib_loaded()` returns true only if `!no_lib && !lib_contexts.is_empty()`.
+- Tightening actions (implementation):
+  1. Ensure WASM `Parser` path constructs `lib_contexts` for *default* lib loading when
+     no explicit `@lib` is provided (to match tsc baseline).
+  2. Ensure WASM `WasmProgram` path loads all explicit `@lib` files and maps
+     `lib.*.d.ts` → embedded lib names (avoid parsing tests/lib file variants).
+  3. Add targeted logging around `ctx.has_name_in_lib(name)` to capture which
+     globals are missing for TS2318-heavy tests.
+
 ## Notes for Next Experiments
 
 - Run full suite with 2 workers to get complete picture

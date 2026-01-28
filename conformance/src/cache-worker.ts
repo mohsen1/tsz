@@ -21,7 +21,95 @@ interface ParsedTestCase {
 }
 
 const libSource: string = workerData.libSource;
+const libDir: string = workerData.libDir;
 const testsBasePath: string = workerData.testsBasePath;
+const hasLibDir = !!libDir && fs.existsSync(path.join(libDir, 'es5.d.ts'));
+
+const LIB_REFERENCE_RE = /\/\/\/\s*<reference\s+lib=["']([^"']+)["']\s*\/>/g;
+const libContentCache = new Map<string, string>();
+const libPathCache = new Map<string, string>();
+
+function parseLibReferences(source: string): string[] {
+  const refs: string[] = [];
+  for (const match of source.matchAll(LIB_REFERENCE_RE)) {
+    if (match[1]) refs.push(match[1].trim().toLowerCase());
+  }
+  return refs;
+}
+
+function resolveLibFilePath(libName: string): string | null {
+  const normalized = libName.trim().toLowerCase();
+  if (libPathCache.has(normalized)) return libPathCache.get(normalized)!;
+  if (!hasLibDir) return null;
+
+  const candidates = [
+    path.join(libDir, `${normalized}.d.ts`),
+    path.join(libDir, `${normalized}.generated.d.ts`),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      libPathCache.set(normalized, candidate);
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function readLibContent(libName: string): string | null {
+  const normalized = libName.trim().toLowerCase();
+  if (libContentCache.has(normalized)) return libContentCache.get(normalized)!;
+  const libFilePath = resolveLibFilePath(normalized);
+  if (!libFilePath) return null;
+  const content = fs.readFileSync(libFilePath, 'utf8');
+  libContentCache.set(normalized, content);
+  return content;
+}
+
+function loadLibRecursive(
+  libName: string,
+  out: Map<string, string>,
+  seen: Set<string>
+): void {
+  const normalized = libName.trim().toLowerCase();
+  if (seen.has(normalized)) return;
+  seen.add(normalized);
+
+  const content = readLibContent(normalized);
+  if (!content) return;
+
+  out.set(`lib.${normalized}.d.ts`, content);
+
+  for (const ref of parseLibReferences(content)) {
+    loadLibRecursive(ref, out, seen);
+  }
+}
+
+function parseLibOption(libOpt: unknown): string[] {
+  if (typeof libOpt === 'string') {
+    return libOpt
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean);
+  }
+  if (Array.isArray(libOpt)) {
+    return libOpt.map(v => String(v).trim().toLowerCase()).filter(Boolean);
+  }
+  return [];
+}
+
+function getLibNamesForTestCase(opts: Record<string, unknown>): string[] {
+  if (opts.nolib) return [];
+  return parseLibOption(opts.lib);
+}
+
+function collectLibFiles(libNames: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const libName of libNames) {
+    loadLibRecursive(libName, out, seen);
+  }
+  return out;
+}
 
 // Target string to ScriptTarget mapping
 const TARGET_MAP: Record<string, ts.ScriptTarget> = {
@@ -135,6 +223,12 @@ function runTsc(testCase: ParsedTestCase): number[] {
   const compilerOptions = toCompilerOptions(testCase.options);
   const sourceFiles = new Map<string, ts.SourceFile>();
   const fileNames: string[] = [];
+  const libNames = getLibNamesForTestCase(testCase.options);
+  const libFiles = libNames.length ? collectLibFiles(libNames) : new Map<string, string>();
+
+  if (!compilerOptions.noLib && libNames.length) {
+    compilerOptions.lib = libNames;
+  }
 
   for (const file of testCase.files) {
     let scriptKind = ts.ScriptKind.TS;
@@ -154,7 +248,19 @@ function runTsc(testCase: ParsedTestCase): number[] {
     fileNames.push(file.name);
   }
 
-  if (!compilerOptions.noLib && libSource) {
+  if (!compilerOptions.noLib && libFiles.size) {
+    for (const [name, content] of libFiles.entries()) {
+      sourceFiles.set(
+        name,
+        ts.createSourceFile(
+          name,
+          content,
+          compilerOptions.target ?? ts.ScriptTarget.ES2020,
+          true
+        )
+      );
+    }
+  } else if (!compilerOptions.noLib && libSource) {
     sourceFiles.set('lib.d.ts', ts.createSourceFile(
       'lib.d.ts',
       libSource,
@@ -164,12 +270,14 @@ function runTsc(testCase: ParsedTestCase): number[] {
   }
 
   const host = ts.createCompilerHost(compilerOptions);
-  host.getSourceFile = (name) => sourceFiles.get(name);
-  host.fileExists = (name) => sourceFiles.has(name);
+  host.getSourceFile = (name) => sourceFiles.get(name) ?? sourceFiles.get(path.basename(name));
+  host.fileExists = (name) => sourceFiles.has(name) || sourceFiles.has(path.basename(name));
   host.readFile = (name) => {
     const file = testCase.files.find(f => f.name === name);
     if (file) return file.content;
-    if (name === 'lib.d.ts') return libSource;
+    const libName = libFiles.has(name) ? name : path.basename(name);
+    if (libFiles.has(libName)) return libFiles.get(libName);
+    if (libSource && libName === 'lib.d.ts') return libSource;
     return undefined;
   };
   host.getDefaultLibFileName = () => 'lib.d.ts';
@@ -183,7 +291,7 @@ function runTsc(testCase: ParsedTestCase): number[] {
   const diags: number[] = [];
 
   for (const sf of sourceFiles.values()) {
-    if (sf.fileName === 'lib.d.ts') continue;
+    if (sf.fileName.startsWith('lib.')) continue;
     for (const d of program.getSyntacticDiagnostics(sf)) diags.push(d.code);
     for (const d of program.getSemanticDiagnostics(sf)) diags.push(d.code);
   }

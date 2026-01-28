@@ -19,6 +19,7 @@ interface RunnerConfig {
   wasmPkgPath: string;
   testsBasePath: string;
   libPath: string;
+  libDir: string;
   maxTests: number;
   verbose: boolean;
   categories: string[];
@@ -32,6 +33,7 @@ const DEFAULT_CONFIG: RunnerConfig = {
   wasmPkgPath: path.resolve(__dirname, '../../pkg'),
   testsBasePath: path.resolve(__dirname, '../../TypeScript/tests/cases'),
   libPath: path.resolve(__dirname, '../../TypeScript/tests/lib/lib.d.ts'),
+  libDir: path.resolve(__dirname, '../../TypeScript/src/lib'),
   maxTests: 500,
   verbose: false,
   categories: ['conformance', 'compiler', 'projects'],
@@ -202,7 +204,7 @@ class WorkerPool {
   private pending = new Map<number, PendingTest>();
   private nextId = 0;
   private workerPath: string;
-  private workerDataBase: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> };
+  private workerDataBase: { wasmPkgPath: string; libPath: string; libDir: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> };
   private timeout: number;
   private testsBasePath: string;
   private nextWorkerId = 0;
@@ -215,7 +217,7 @@ class WorkerPool {
   constructor(
     count: number,
     workerPath: string,
-    workerData: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> },
+    workerData: { wasmPkgPath: string; libPath: string; libDir: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> },
     timeout: number,
     testsBasePath: string
   ) {
@@ -541,9 +543,10 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
 
   // Create worker pool
   const workerPath = path.join(__dirname, 'worker.js');
-  const workerDataBase: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> } = {
+  const workerDataBase: { wasmPkgPath: string; libPath: string; libDir: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> } = {
     wasmPkgPath: cfg.wasmPkgPath,
     libPath: cfg.libPath,
+    libDir: cfg.libDir,
     useWasm: cfg.useWasm,
     nativeBinaryPath: cfg.nativeBinaryPath,
     tscCacheEntries: tscCache?.entries,

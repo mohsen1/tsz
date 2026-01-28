@@ -2311,19 +2311,10 @@ impl<'a> CheckerState<'a> {
         // Skip TS2307 for ambient module declarations.
         // Both shorthand ambient modules (`declare module "foo"`) and regular ambient modules
         // with body (`declare module "foo" { ... }`) provide type information for imports.
-        if self
-            .ctx
-            .binder
-            .shorthand_ambient_modules
-            .contains(module_name)
-        {
+        // We also support wildcard patterns (e.g., "foo*baz", "*!text").
+        if self.is_ambient_module_match(module_name) {
             self.ctx.import_resolution_stack.pop();
-            return; // Shorthand ambient module - imports typed as `any`
-        }
-
-        if self.ctx.binder.declared_modules.contains(module_name) {
-            self.ctx.import_resolution_stack.pop();
-            return; // Regular ambient module declaration
+            return; // Ambient module (pattern match)
         }
 
         // In single-file mode, any external import is considered unresolved.
@@ -8365,16 +8356,8 @@ impl<'a> CheckerState<'a> {
             if self.ctx.binder.module_exports.contains_key(module_name) {
                 return false; // Module is resolved
             }
-            if self
-                .ctx
-                .binder
-                .shorthand_ambient_modules
-                .contains(module_name)
-            {
-                return false; // Ambient module exists
-            }
-            if self.ctx.binder.declared_modules.contains(module_name) {
-                return false; // Declared module exists
+            if self.is_ambient_module_match(module_name) {
+                return false; // Ambient module pattern matches
             }
             if let Some(ref resolved) = self.ctx.resolved_modules {
                 if resolved.contains(module_name) {
@@ -8412,6 +8395,56 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        false
+    }
+
+    /// Check if a module specifier matches a declared or shorthand ambient module pattern.
+    ///
+    /// Supports simple wildcard patterns using `*` (e.g., "foo*baz", "*!text").
+    fn is_ambient_module_match(&self, module_name: &str) -> bool {
+        if self.matches_module_pattern(&self.ctx.binder.declared_modules, module_name)
+            || self.matches_module_pattern(&self.ctx.binder.shorthand_ambient_modules, module_name)
+        {
+            return true;
+        }
+
+        // Also check module_exports keys for wildcard module declarations with bodies.
+        // These are stored as exact pattern strings in module_exports.
+        self.ctx
+            .binder
+            .module_exports
+            .keys()
+            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
+    }
+
+    fn matches_module_pattern(
+        &self,
+        patterns: &rustc_hash::FxHashSet<String>,
+        module_name: &str,
+    ) -> bool {
+        patterns
+            .iter()
+            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
+    }
+
+    fn module_name_matches_pattern(pattern: &str, module_name: &str) -> bool {
+        let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
+        let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
+
+        if !pattern.contains('*') {
+            return pattern == module_name;
+        }
+
+        // Use globset for robust wildcard matching (handles multiple '*' correctly)
+        // Allow '*' to match path separators so patterns like "*!text" match "./file!text".
+        if let Ok(glob) = globset::GlobBuilder::new(pattern)
+            .literal_separator(false)
+            .build()
+        {
+            let matcher = glob.compile_matcher();
+            return matcher.is_match(module_name);
         }
 
         false

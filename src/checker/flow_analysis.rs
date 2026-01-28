@@ -1580,6 +1580,8 @@ impl<'a> CheckerState<'a> {
         _idx: NodeIndex,
     ) -> bool {
         use crate::binder::symbol_flags;
+        use crate::parser::node::NodeAccess;
+        use crate::scanner::SyntaxKind;
 
         // Get the symbol
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -1620,6 +1622,37 @@ impl<'a> CheckerState<'a> {
         // If there's a definite assignment assertion (!), skip check
         if var_data.exclamation_token {
             return false;
+        }
+
+        // Skip definite assignment checks in ambient declarations (declare const/let).
+        // Walk up the parent chain to find the variable statement/list and inspect modifiers.
+        let mut current = decl_id;
+        for _ in 0..5 {
+            let Some(info) = self.ctx.arena.node_info(current) else {
+                break;
+            };
+            if let Some(node) = self.ctx.arena.get(current) {
+                if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    || node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                {
+                    if let Some(var_data) = self.ctx.arena.get_variable(node) {
+                        if let Some(mods) = &var_data.modifiers {
+                            for &mod_idx in &mods.nodes {
+                                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            current = info.parent;
+            if current.is_none() {
+                break;
+            }
         }
 
         // Variable without initializer - should be checked for definite assignment
