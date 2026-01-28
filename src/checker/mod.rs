@@ -63,6 +63,7 @@ pub mod scope_finder;
 pub mod signature_builder;
 pub mod state;
 pub mod statements;
+pub mod super_checker;
 pub mod symbol_resolver;
 pub mod tuple_type;
 pub mod type_api;
