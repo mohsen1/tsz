@@ -16,6 +16,11 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { loadTscCache, type CacheEntry } from './tsc-cache.js';
+import {
+  parseDirectivesOnly,
+  directivesToCheckOptions,
+  type CheckOptions,
+} from './test-utils.js';
 
 // Memory configuration
 const MEMORY_USAGE_PERCENT = 0.80; // Use 80% of available memory
@@ -64,17 +69,8 @@ async function withTimeout<T>(
 // Default test timeout (3 seconds)
 const DEFAULT_TEST_TIMEOUT_MS = 3000;
 
-export interface CheckOptions {
-  strict?: boolean;
-  strictNullChecks?: boolean;
-  strictFunctionTypes?: boolean;
-  noImplicitAny?: boolean;
-  noImplicitThis?: boolean;
-  noImplicitReturns?: boolean;
-  noLib?: boolean;
-  lib?: string[];
-  target?: string;
-}
+// Lib directories for file-based resolution (set during test run)
+let libDirs: string[] = [];
 
 export interface CheckResult {
   codes: number[];
@@ -733,7 +729,13 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
 
   const testsBasePath = path.resolve(ROOT_DIR, 'TypeScript/tests/cases');
   const serverPath = process.env.TSZ_SERVER_BINARY || path.resolve(ROOT_DIR, '.target/release/tsz-server');
-  const libDir = process.env.TSZ_LIB_DIR || path.resolve(ROOT_DIR, 'node_modules/typescript/lib');
+  const localLibDir = process.env.TSZ_LIB_DIR || path.resolve(ROOT_DIR, 'node_modules/typescript/lib');
+
+  // Set lib directories for universal resolver (used by directivesToCheckOptions)
+  libDirs = [
+    localLibDir,
+    path.resolve(ROOT_DIR, 'TypeScript/tests/lib'),
+  ];
 
   // Load TSC cache
   const tscCache = loadTscCache(ROOT_DIR);
@@ -784,7 +786,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   log(`Found ${formatNumber(testFiles.length)} test files\n`, colors.dim);
 
   // Create server pool with memory limits
-  const pool = new TszServerPool(workerCount, { serverPath, libDir, memoryLimitMB });
+  const pool = new TszServerPool(workerCount, { serverPath, libDir: localLibDir, memoryLimitMB });
 
   try {
     await pool.start();
@@ -808,13 +810,17 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         const content = fs.readFileSync(testFile, 'utf-8');
         const files = { [path.basename(testFile)]: content };
 
+        // Parse test directives (@target, @lib, @strict, etc.)
+        const directives = parseDirectivesOnly(content);
+        const checkOptions = directivesToCheckOptions(directives, libDirs);
+
         // Get TSC baseline from cache or skip
         const cacheEntry = cacheEntries[relativePath];
         const tscCodes = cacheEntry?.codes || [];
 
         // Run check via server with timeout (kills worker on timeout)
         const { result, timedOut } = await pool.withClientTimeout(
-          (client) => client.check(files, { target: 'es5' }),
+          (client) => client.check(files, checkOptions),
           DEFAULT_TEST_TIMEOUT_MS
         );
 

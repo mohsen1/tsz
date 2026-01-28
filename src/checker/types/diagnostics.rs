@@ -489,6 +489,9 @@ pub mod diagnostic_codes {
     pub const AWAIT_IN_PARAMETER_DEFAULT: u32 = 2524; // 'await' expressions cannot be used in a parameter default value.
     pub const PARAMETER_CANNOT_REFERENCE_ITSELF: u32 = 2372; // Parameter '{0}' cannot reference itself.
 
+    // Const/variable declaration errors
+    pub const CONST_DECLARATIONS_MUST_BE_INITIALIZED: u32 = 1155;
+
     // Enum errors
     pub const ENUM_MEMBER_MUST_HAVE_INITIALIZER: u32 = 2432;
     pub const CONST_ENUM_MEMBER_MUST_BE_INITIALIZED: u32 = 2474;

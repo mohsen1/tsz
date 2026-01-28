@@ -170,3 +170,171 @@ export function resolveExplicitLibs(
 
   return resolved;
 }
+
+// ============================================================================
+// File-based lib resolution (fallback when manifest not available)
+// ============================================================================
+
+const LIB_REFERENCE_RE = /\/\/\/\s*<reference\s+lib=["']([^"']+)["']\s*\/>/g;
+
+/**
+ * Parse /// <reference lib="..." /> directives from lib file content.
+ */
+export function parseLibReferences(content: string): string[] {
+  const refs: string[] = [];
+  for (const match of content.matchAll(LIB_REFERENCE_RE)) {
+    if (match[1]) {
+      refs.push(normalizeLibName(match[1]));
+    }
+  }
+  return refs;
+}
+
+// Caches for file-based resolution
+const libContentCache = new Map<string, string>();
+const libPathCache = new Map<string, string | null>();
+
+/**
+ * Find the path to a lib file on disk.
+ * Searches in the provided lib directories.
+ */
+export function findLibFilePath(libName: string, libDirs: string[]): string | null {
+  const normalized = normalizeLibName(libName);
+  const cacheKey = `${normalized}:${libDirs.join(',')}`;
+
+  if (libPathCache.has(cacheKey)) {
+    return libPathCache.get(cacheKey)!;
+  }
+
+  for (const libDir of libDirs) {
+    const candidates = [
+      path.join(libDir, `lib.${normalized}.d.ts`),
+      path.join(libDir, `${normalized}.d.ts`),
+      path.join(libDir, `${normalized}.generated.d.ts`),
+    ];
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        libPathCache.set(cacheKey, candidate);
+        return candidate;
+      }
+    }
+  }
+
+  libPathCache.set(cacheKey, null);
+  return null;
+}
+
+/**
+ * Read lib file content with caching.
+ */
+export function readLibContent(libName: string, libDirs: string[]): string | null {
+  const normalized = normalizeLibName(libName);
+
+  if (libContentCache.has(normalized)) {
+    return libContentCache.get(normalized)!;
+  }
+
+  const libPath = findLibFilePath(normalized, libDirs);
+  if (!libPath) {
+    return null;
+  }
+
+  try {
+    const content = fs.readFileSync(libPath, 'utf8');
+    libContentCache.set(normalized, content);
+    return content;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve lib with dependencies by reading files and parsing references.
+ * Falls back to file-based resolution when manifest is unavailable.
+ */
+export function resolveLibWithDependenciesFromFiles(
+  libName: string,
+  libDirs: string[]
+): string[] {
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+
+  function resolveRecursive(name: string): void {
+    const normalized = normalizeLibName(name);
+    if (seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+
+    const content = readLibContent(normalized, libDirs);
+    if (!content) {
+      // Still add to resolved list - it may be loaded from embedded libs
+      resolved.push(normalized);
+      return;
+    }
+
+    // Resolve dependencies first (depth-first)
+    const refs = parseLibReferences(content);
+    for (const ref of refs) {
+      resolveRecursive(ref);
+    }
+
+    resolved.push(normalized);
+  }
+
+  resolveRecursive(libName);
+  return resolved;
+}
+
+/**
+ * Universal lib resolver - uses manifest if available, falls back to file parsing.
+ */
+export function resolveLibsUniversal(
+  libNames: string[],
+  libDirs: string[],
+  manifest: LibManifest | null
+): string[] {
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+
+  for (const name of libNames) {
+    let deps: string[];
+
+    if (manifest) {
+      // Prefer manifest for accurate dependency info
+      deps = resolveLibWithDependencies(name, manifest);
+    } else {
+      // Fall back to file-based resolution
+      deps = resolveLibWithDependenciesFromFiles(name, libDirs);
+    }
+
+    for (const dep of deps) {
+      if (!seen.has(dep)) {
+        seen.add(dep);
+        resolved.push(dep);
+      }
+    }
+  }
+
+  return resolved;
+}
+
+/**
+ * Get default lib name for a target (without dependencies, just the base name).
+ */
+export function getDefaultLibNameForTarget(target: string): string {
+  const t = target.toLowerCase();
+  switch (t) {
+    case 'es3':
+    case 'es5':
+      return 'es5';
+    case 'es6':
+      return 'es2015';
+    default:
+      if (t.startsWith('es20') || t === 'esnext') {
+        return t;
+      }
+      return 'es5';
+  }
+}
