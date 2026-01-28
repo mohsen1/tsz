@@ -263,11 +263,33 @@ build_wasm() {
 build_native() {
     log_step "Building native binary..."
     cd "$ROOT_DIR"
-    
+
     require_cmd cargo
     cargo build --release --bin tsz
     log_success "Native binary built"
     # Lib files are embedded in the binary (no copy needed).
+}
+
+build_native_for_docker() {
+    log_step "Building native binary for Linux (Docker)..."
+    cd "$ROOT_DIR"
+
+    require_cmd cargo
+
+    # Check if cross-compilation tools are available
+    if ! cargo target list --installed 2>/dev/null | grep -q "x86_64-unknown-linux-gnu"; then
+        log_warning "Cross-compilation target not found. Installing..."
+        rustup target add x86_64-unknown-linux-gnu
+    fi
+
+    # Build for Linux
+    CARGO_TARGET=x86_64-unknown-linux-gnu cargo build --release --bin tsz
+
+    # Create .target/linux symlink for easy access
+    mkdir -p .target/linux
+    ln -sf "../x86_64-unknown-linux-gnu/release/tsz" .target/linux/tsz
+
+    log_success "Native binary for Linux built"
 }
 
 build_runner() {
@@ -440,7 +462,11 @@ run_tests() {
     if [[ "$use_wasm" == "true" ]]; then
         build_wasm
     else
-        build_native
+        if [[ "$use_docker" == "true" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
+            build_native_for_docker
+        else
+            build_native
+        fi
     fi
     
     build_runner
@@ -524,8 +550,12 @@ run_direct() {
     # Set native binary path if using native mode
     if [[ "$use_wasm" == "false" ]]; then
         local target_dir
-        target_dir=$(get_target_dir)
-        export TSZ_BINARY="$target_dir/release/tsz"
+        if [[ "$use_docker" == "true" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
+            target_dir="$ROOT_DIR/.target/linux"
+        else
+            target_dir=$(get_target_dir)
+        fi
+        export TSZ_BINARY="$target_dir/tsz"
     fi
     
     # Run with timeout
