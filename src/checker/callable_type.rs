@@ -14,7 +14,8 @@
 //! operations, providing cleaner APIs for function type checking.
 
 use crate::checker::state::CheckerState;
-use crate::solver::{TypeId, TypeKey};
+use crate::solver::TypeId;
+use crate::solver::type_queries::get_callable_shape;
 
 // =============================================================================
 // Callable Type Utilities
@@ -29,12 +30,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Call signatures allow a type to be called as a function.
     pub fn has_call_signature(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                !shape.call_signatures.is_empty()
-            }
-            _ => false,
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            !shape.call_signatures.is_empty()
+        } else {
+            false
         }
     }
 
@@ -42,12 +41,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Multiple call signatures indicate function overloading.
     pub fn call_signature_count(&self, type_id: TypeId) -> usize {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                shape.call_signatures.len()
-            }
-            _ => 0,
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            shape.call_signatures.len()
+        } else {
+            0
         }
     }
 
@@ -67,12 +64,10 @@ impl<'a> CheckerState<'a> {
     /// Some callable types (like Function) have additional properties
     /// beyond their call signatures.
     pub fn callable_has_properties(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                !shape.properties.is_empty()
-            }
-            _ => false,
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            !shape.properties.is_empty()
+        } else {
+            false
         }
     }
 
@@ -80,12 +75,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the callable has a string or number index signature.
     pub fn callable_has_index_signature(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                shape.string_index.is_some() || shape.number_index.is_some()
-            }
-            _ => false,
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            shape.string_index.is_some() || shape.number_index.is_some()
+        } else {
+            false
         }
     }
 
@@ -97,18 +90,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the callable has type parameters.
     pub fn is_generic_callable(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                // Check if any call signature has type parameters
-                shape
-                    .call_signatures
-                    .iter()
-                    .any(|sig| !sig.type_params.is_empty())
-            }
-            _ => false,
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            // Check if any call signature has type parameters
+            shape
+                .call_signatures
+                .iter()
+                .any(|sig| !sig.type_params.is_empty())
+        } else {
+            false
         }
     }
 

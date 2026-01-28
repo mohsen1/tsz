@@ -16,7 +16,7 @@ use crate::checker::state::CheckerState;
 use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::solver::{ContextualTypeContext, TupleElement, TypeId, TypeKey};
+use crate::solver::{ContextualTypeContext, TupleElement, TypeId};
 
 // =============================================================================
 // Type Computation Methods
@@ -130,13 +130,7 @@ impl<'a> CheckerState<'a> {
                 // Evaluate Application types to get their structural form
                 // This handles cases like: type MyTuple<T, U> = [T, U]; function f<A, B>(): MyTuple<A, B>
                 let evaluated = self.evaluate_application_type(ctx_type);
-                match self.ctx.types.lookup(evaluated) {
-                    Some(TypeKey::Tuple(elements)) => {
-                        let elements = self.ctx.types.tuple_list(elements);
-                        Some(elements.as_ref().to_vec())
-                    }
-                    _ => None,
-                }
+                crate::solver::type_queries::get_tuple_elements(self.ctx.types, evaluated)
             }
             None => None,
         };
@@ -183,10 +177,10 @@ impl<'a> CheckerState<'a> {
                     self.check_spread_iterability(spread_expr_type, spread_data.expression);
 
                     // If it's a tuple type, expand its elements
-                    if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_expr_type)
-                    {
-                        let elems = self.ctx.types.tuple_list(elems_id);
-
+                    if let Some(elems) = crate::solver::type_queries::get_tuple_elements(
+                        self.ctx.types,
+                        spread_expr_type,
+                    ) {
                         if let Some(ref _expected) = tuple_context {
                             // For tuple context, add each element with spread flag
                             for elem in elems.iter() {
@@ -1608,7 +1602,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
     ) -> Vec<crate::solver::PropertyInfo> {
         use crate::interner::Atom;
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries::{SpreadPropertyKind, classify_for_spread_properties};
         use rustc_hash::FxHashMap;
 
         let resolved = self.resolve_type_for_property_access(type_id);
@@ -1619,26 +1613,25 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         }
 
-        let properties = match self.ctx.types.lookup(resolved) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        let properties = match classify_for_spread_properties(self.ctx.types, resolved) {
+            SpreadPropertyKind::Object(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
                 shape.properties.to_vec()
             }
-            Some(TypeKey::Callable(shape_id)) => {
+            SpreadPropertyKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 shape.properties.to_vec()
             }
-            Some(TypeKey::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
+            SpreadPropertyKind::Intersection(members) => {
                 let mut merged: FxHashMap<Atom, crate::solver::PropertyInfo> = FxHashMap::default();
-                for &member in members.iter() {
+                for member in members {
                     for prop in self.collect_object_spread_properties(member) {
                         merged.insert(prop.name, prop);
                     }
                 }
                 merged.into_values().collect()
             }
-            _ => Vec::new(),
+            SpreadPropertyKind::NoProperties => Vec::new(),
         };
 
         self.ctx.object_spread_property_set.remove(&resolved);
@@ -1661,7 +1654,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::diagnostic_codes;
-        use crate::solver::{CallEvaluator, CallResult, CallableShape, CompatChecker, TypeKey};
+        use crate::solver::{CallEvaluator, CallResult, CallableShape, CompatChecker};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -1779,8 +1772,11 @@ impl<'a> CheckerState<'a> {
         // This is critical for classes where we need the Callable with construct signatures
         let constructor_type = self.resolve_ref_type(constructor_type);
 
-        let construct_type = match self.ctx.types.lookup(constructor_type) {
-            Some(TypeKey::Callable(shape_id)) => {
+        let construct_type = match crate::solver::type_queries::classify_for_new_expression(
+            self.ctx.types,
+            constructor_type,
+        ) {
+            crate::solver::type_queries::NewExpressionTypeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.construct_signatures.is_empty() {
                     // Functions with a prototype property are constructable
@@ -1800,12 +1796,15 @@ impl<'a> CheckerState<'a> {
                     }))
                 }
             }
-            Some(TypeKey::Function(_)) => Some(constructor_type),
-            Some(TypeKey::Ref(sym_ref)) | Some(TypeKey::TypeQuery(sym_ref)) => {
+            crate::solver::type_queries::NewExpressionTypeKind::Function(_) => {
+                Some(constructor_type)
+            }
+            crate::solver::type_queries::NewExpressionTypeKind::SymbolRef(sym_ref)
+            | crate::solver::type_queries::NewExpressionTypeKind::TypeQuery(sym_ref) => {
                 // Ref to a symbol or TypeQuery (typeof X) - resolve to the symbol's type
                 use crate::binder::SymbolId;
                 let symbol_id = SymbolId(sym_ref.0);
-                if let Some(_symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                if self.ctx.binder.get_symbol(symbol_id).is_some() {
                     // Get the symbol's actual type which should be a Callable with construct signatures
                     let symbol_type = self.get_type_of_symbol(symbol_id);
                     // Check if the symbol's type is constructable
@@ -1814,13 +1813,12 @@ impl<'a> CheckerState<'a> {
                     None
                 }
             }
-            Some(TypeKey::Intersection(members_id)) => {
+            crate::solver::type_queries::NewExpressionTypeKind::Intersection(members) => {
                 // For intersection of constructors (mixin pattern), the result is an
                 // intersection of all instance types. Handle this specially.
-                let members = self.ctx.types.type_list(members_id);
                 let mut instance_types: Vec<TypeId> = Vec::new();
 
-                for &member in members.iter() {
+                for member in members {
                     // Evaluate Application types (e.g., Constructor<T>) to get their Callable shape
                     let evaluated_member = self.evaluate_application_type(member);
                     // Try to get construct signatures from the evaluated member
@@ -1842,25 +1840,25 @@ impl<'a> CheckerState<'a> {
                     return self.ctx.types.intersection(instance_types);
                 }
             }
-            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => {
+            crate::solver::type_queries::NewExpressionTypeKind::TypeParameter { constraint } => {
                 // For type parameters with constructor constraints (e.g., T extends typeof Base),
                 // check the constraint for constructor signatures.
                 // This handles patterns like:
                 //   function f<T extends typeof Base>(ctor: T) {
                 //       return new ctor();  // Should work - T has construct signatures from Base
                 //   }
-                if let Some(constraint) = info.constraint {
+                if let Some(constraint) = constraint {
                     // Evaluate the constraint to resolve Application types like Constructor<T>
                     let evaluated_constraint = self.evaluate_application_type(constraint);
 
                     // Check if the evaluated constraint is an Intersection - handle it specially
-                    if let Some(TypeKey::Intersection(members_id)) =
-                        self.ctx.types.lookup(evaluated_constraint)
-                    {
-                        let members = self.ctx.types.type_list(members_id);
+                    if let Some(members) = crate::solver::type_queries::get_intersection_members(
+                        self.ctx.types,
+                        evaluated_constraint,
+                    ) {
                         let mut instance_types: Vec<TypeId> = Vec::new();
 
-                        for &member in members.iter() {
+                        for member in members {
                             // Resolve Refs (type alias references) to their actual types
                             let resolved_member = self.resolve_type_for_property_access(member);
                             // Then evaluate any Application types
@@ -1889,14 +1887,13 @@ impl<'a> CheckerState<'a> {
                     None
                 }
             }
-            Some(TypeKey::Union(members_id)) => {
+            crate::solver::type_queries::NewExpressionTypeKind::Union(members) => {
                 // For union types, check if all members are constructors
                 // and return the union of their instance types
-                let members = self.ctx.types.type_list(members_id);
                 let mut instance_types: Vec<TypeId> = Vec::new();
                 let mut all_constructable = true;
 
-                for &member in members.iter() {
+                for member in members {
                     // Resolve Refs (type alias references) to their actual types
                     let resolved_member = self.resolve_type_for_property_access(member);
                     // Then evaluate any Application types
@@ -1917,7 +1914,7 @@ impl<'a> CheckerState<'a> {
                     None
                 }
             }
-            _ => None,
+            crate::solver::type_queries::NewExpressionTypeKind::NotConstructable => None,
         };
 
         let Some(construct_type) = construct_type else {
@@ -1933,8 +1930,11 @@ impl<'a> CheckerState<'a> {
             .map(|n| n.as_slice())
             .unwrap_or(&[]);
 
-        let overload_signatures = match self.ctx.types.lookup(construct_type) {
-            Some(TypeKey::Callable(shape_id)) => {
+        let overload_signatures = match crate::solver::type_queries::classify_for_call_signatures(
+            self.ctx.types,
+            construct_type,
+        ) {
+            crate::solver::type_queries::CallSignaturesKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.call_signatures.len() > 1 {
                     Some(shape.call_signatures.clone())
@@ -1942,7 +1942,7 @@ impl<'a> CheckerState<'a> {
                     None
                 }
             }
-            _ => None,
+            crate::solver::type_queries::CallSignaturesKind::NoSignatures => None,
         };
 
         if let Some(signatures) = overload_signatures.as_deref()
@@ -2027,17 +2027,13 @@ impl<'a> CheckerState<'a> {
     fn type_contains_abstract_class(&self, type_id: TypeId) -> bool {
         use crate::binder::SymbolId;
         use crate::binder::symbol_flags;
-        use crate::solver::{SymbolRef, TypeKey};
+        use crate::solver::type_queries::{AbstractClassCheckKind, classify_for_abstract_check};
 
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        match type_key {
+        match classify_for_abstract_check(self.ctx.types, type_id) {
             // TypeQuery is `typeof ClassName` - check if the symbol is abstract
             // Since get_type_from_type_query now uses real SymbolIds, we can directly look up
-            TypeKey::TypeQuery(SymbolRef(sym_id)) => {
-                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
+            AbstractClassCheckKind::TypeQuery(sym_ref) => {
+                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_ref.0))
                     && symbol.flags & symbol_flags::ABSTRACT != 0
                 {
                     return true;
@@ -2045,20 +2041,14 @@ impl<'a> CheckerState<'a> {
                 false
             }
             // Union type - check if ANY constituent is abstract
-            TypeKey::Union(members) => {
-                let members = self.ctx.types.type_list(members);
-                members
-                    .iter()
-                    .any(|&member| self.type_contains_abstract_class(member))
-            }
+            AbstractClassCheckKind::Union(members) => members
+                .iter()
+                .any(|&member| self.type_contains_abstract_class(member)),
             // Intersection type - check if ANY constituent is abstract
-            TypeKey::Intersection(members) => {
-                let members = self.ctx.types.type_list(members);
-                members
-                    .iter()
-                    .any(|&member| self.type_contains_abstract_class(member))
-            }
-            _ => false,
+            AbstractClassCheckKind::Intersection(members) => members
+                .iter()
+                .any(|&member| self.type_contains_abstract_class(member)),
+            AbstractClassCheckKind::NotAbstract => false,
         }
     }
 
@@ -2075,10 +2065,10 @@ impl<'a> CheckerState<'a> {
     /// with construct signatures, not just a symbolic reference.
     fn resolve_ref_type(&mut self, type_id: TypeId) -> TypeId {
         use crate::binder::SymbolId;
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries::{RefTypeKind, classify_for_ref_resolution};
 
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Ref(sym_ref)) => {
+        match classify_for_ref_resolution(self.ctx.types, type_id) {
+            RefTypeKind::Ref(sym_ref) => {
                 let symbol_id = SymbolId(sym_ref.0);
                 // Get the symbol's actual type
                 // This resolves the Ref to a Callable (for classes) or other concrete type
@@ -2091,7 +2081,7 @@ impl<'a> CheckerState<'a> {
                     symbol_type
                 }
             }
-            _ => type_id,
+            RefTypeKind::NotRef => type_id,
         }
     }
 
@@ -2198,31 +2188,30 @@ impl<'a> CheckerState<'a> {
     /// Returns None if the type doesn't have construct signatures.
     fn get_construct_signature_return_type(&self, type_id: TypeId) -> Option<TypeId> {
         use crate::binder::SymbolId;
-        use crate::solver::{SymbolRef, TypeKey};
-
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return None;
+        use crate::solver::SymbolRef;
+        use crate::solver::type_queries::{
+            ConstructSignatureKind, classify_for_construct_signature,
         };
 
-        match type_key {
-            TypeKey::Callable(shape_id) => {
+        match classify_for_construct_signature(self.ctx.types, type_id) {
+            ConstructSignatureKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 shape
                     .construct_signatures
                     .first()
                     .map(|sig| sig.return_type)
             }
-            TypeKey::Ref(SymbolRef(sym_id)) => {
+            ConstructSignatureKind::Ref(sym_ref) => {
                 // Ref to a symbol - get the symbol's type which should be a Callable
                 // This handles cases like `typeof M1` where M1 is a class
-                let symbol_id = SymbolId(sym_id);
+                let symbol_id = SymbolId(sym_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
                     // Check if this is a class symbol
                     if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
                         // For class symbols, the instance type is what we want
                         // The construct signature returns the instance type
                         // We create a Ref to this symbol as the instance type
-                        return Some(self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id))));
+                        return Some(self.ctx.types.reference(SymbolRef(sym_ref.0)));
                     }
                     // Check interfaces and other symbols for cached types with construct signatures
                     if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
@@ -2235,13 +2224,13 @@ impl<'a> CheckerState<'a> {
                 }
                 None
             }
-            TypeKey::TypeQuery(SymbolRef(sym_id)) => {
+            ConstructSignatureKind::TypeQuery(sym_ref) => {
                 // TypeQuery is `typeof ClassName` - the return type is an instance of the class
-                let symbol_id = SymbolId(sym_id);
+                let symbol_id = SymbolId(sym_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
                     if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
                         // Return a Ref to the class as the instance type
-                        return Some(self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id))));
+                        return Some(self.ctx.types.reference(SymbolRef(sym_ref.0)));
                     }
                     // Check other symbols for cached types with construct signatures
                     if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
@@ -2256,20 +2245,16 @@ impl<'a> CheckerState<'a> {
             }
             // Handle Application types (e.g., Constructor<T>)
             // Evaluate the application and check the result for construct signatures
-            TypeKey::Application(_) => {
+            ConstructSignatureKind::Application(app_id) => {
                 // We need to evaluate the application type to get its resolved form
                 // Since evaluate_application_type is on CheckerState (mutable), we
                 // check if the base type is a type alias that resolves to a Callable
-                let app = self.ctx.types.type_application(
-                    if let TypeKey::Application(app_id) = type_key {
-                        app_id
-                    } else {
-                        return None;
-                    },
-                );
+                let app = self.ctx.types.type_application(app_id);
                 // Check if base is a Ref to a type alias with a Callable body
-                if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base) {
-                    let symbol_id = SymbolId(sym_id);
+                if let Some(sym_ref) =
+                    crate::solver::type_queries::get_ref_if_symbol(self.ctx.types, app.base)
+                {
+                    let symbol_id = SymbolId(sym_ref.0);
                     if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
                         // For type aliases, get the cached resolved type
                         if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
@@ -2278,7 +2263,7 @@ impl<'a> CheckerState<'a> {
                         }
                         // Check if symbol is a class
                         if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                            return Some(self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id))));
+                            return Some(self.ctx.types.reference(SymbolRef(sym_ref.0)));
                         }
                     }
                 }
@@ -2286,11 +2271,10 @@ impl<'a> CheckerState<'a> {
                 self.get_construct_signature_return_type(app.base)
             }
             // Handle Union types - ALL members must be constructable
-            TypeKey::Union(members_id) => {
-                let members = self.ctx.types.type_list(members_id);
+            ConstructSignatureKind::Union(members) => {
                 let mut instance_types: Vec<TypeId> = Vec::new();
 
-                for &member in members.iter() {
+                for member in members {
                     if let Some(return_type) = self.get_construct_signature_return_type(member) {
                         instance_types.push(return_type);
                     } else {
@@ -2307,10 +2291,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Handle Intersection types - ANY member being constructable is sufficient
-            TypeKey::Intersection(members_id) => {
-                let members = self.ctx.types.type_list(members_id);
-
-                for &member in members.iter() {
+            ConstructSignatureKind::Intersection(members) => {
+                for member in members {
                     if let Some(return_type) = self.get_construct_signature_return_type(member) {
                         return Some(return_type);
                     }
@@ -2318,8 +2300,8 @@ impl<'a> CheckerState<'a> {
                 None
             }
             // Handle TypeParameter - check constraint for construct signatures
-            TypeKey::TypeParameter(ref info) | TypeKey::Infer(ref info) => {
-                if let Some(constraint) = info.constraint {
+            ConstructSignatureKind::TypeParameter { constraint } => {
+                if let Some(constraint) = constraint {
                     self.get_construct_signature_return_type(constraint)
                 } else {
                     None
@@ -2328,7 +2310,7 @@ impl<'a> CheckerState<'a> {
             // Handle Function types - check if it's actually a Callable
             // (Function types in TypeScript can have construct signatures via
             // overloading, but TypeKey::Function is for simple functions)
-            TypeKey::Function(shape_id) => {
+            ConstructSignatureKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
                 // If it's marked as a constructor, use its return type
                 if shape.is_constructor {
@@ -2337,7 +2319,7 @@ impl<'a> CheckerState<'a> {
                     None
                 }
             }
-            _ => None,
+            ConstructSignatureKind::NoConstruct => None,
         }
     }
 
@@ -2404,10 +2386,7 @@ impl<'a> CheckerState<'a> {
             // Handle readonly operator
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
                 // Wrap the inner type in ReadonlyType
-                return self
-                    .ctx
-                    .types
-                    .intern(crate::solver::TypeKey::ReadonlyType(inner_type));
+                return self.ctx.types.readonly_type(inner_type);
             }
 
             // Handle unique operator
@@ -2443,14 +2422,9 @@ impl<'a> CheckerState<'a> {
     /// // never
     /// ```
     pub(crate) fn get_keyof_type(&self, operand: TypeId) -> TypeId {
-        use crate::solver::{LiteralValue, TypeKey};
-
-        let Some(key) = self.ctx.types.lookup(operand) else {
-            return TypeId::NEVER;
-        };
-
-        match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        use crate::solver::type_queries::{KeyOfTypeKind, classify_for_keyof};
+        match classify_for_keyof(self.ctx.types, operand) {
+            KeyOfTypeKind::Object(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
                 if shape.properties.is_empty() {
                     return TypeId::NEVER;
@@ -2458,15 +2432,11 @@ impl<'a> CheckerState<'a> {
                 let key_types: Vec<TypeId> = shape
                     .properties
                     .iter()
-                    .map(|p| {
-                        self.ctx
-                            .types
-                            .intern(TypeKey::Literal(LiteralValue::String(p.name)))
-                    })
+                    .map(|p| self.ctx.types.literal_string_atom(p.name))
                     .collect();
                 self.ctx.types.union(key_types)
             }
-            _ => TypeId::NEVER,
+            KeyOfTypeKind::NoKeys => TypeId::NEVER,
         }
     }
 
@@ -2495,30 +2465,17 @@ impl<'a> CheckerState<'a> {
         &self,
         type_id: TypeId,
     ) -> Vec<crate::interner::Atom> {
-        use crate::solver::{LiteralValue, TypeKey};
-
-        let Some(key) = self.ctx.types.lookup(type_id) else {
-            return Vec::new();
+        use crate::solver::type_queries::{
+            StringLiteralKeyKind, classify_for_string_literal_keys, get_string_literal_value,
         };
 
-        match key {
-            TypeKey::Literal(LiteralValue::String(name)) => vec![name],
-            TypeKey::Union(list_id) => {
-                let members = self.ctx.types.type_list(list_id);
-                members
-                    .iter()
-                    .filter_map(|&member| {
-                        if let Some(TypeKey::Literal(LiteralValue::String(name))) =
-                            self.ctx.types.lookup(member)
-                        {
-                            Some(name)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            }
-            _ => Vec::new(),
+        match classify_for_string_literal_keys(self.ctx.types, type_id) {
+            StringLiteralKeyKind::SingleString(name) => vec![name],
+            StringLiteralKeyKind::Union(members) => members
+                .iter()
+                .filter_map(|&member| get_string_literal_value(self.ctx.types, member))
+                .collect(),
+            StringLiteralKeyKind::NotStringLiteral => Vec::new(),
         }
     }
 
@@ -2606,7 +2563,7 @@ impl<'a> CheckerState<'a> {
     /// - `None` - Type doesn't represent a class or couldn't determine
     pub(crate) fn get_class_decl_from_type(&self, type_id: TypeId) -> Option<NodeIndex> {
         use crate::binder::SymbolId;
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries::{ClassDeclTypeKind, classify_for_class_decl};
 
         fn parse_brand_name(name: &str) -> Option<Result<SymbolId, NodeIndex>> {
             const NODE_PREFIX: &str = "__private_brand_node_";
@@ -2629,12 +2586,8 @@ impl<'a> CheckerState<'a> {
             type_id: TypeId,
             out: &mut Vec<NodeIndex>,
         ) {
-            let Some(key) = checker.ctx.types.lookup(type_id) else {
-                return;
-            };
-
-            match key {
-                TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            match classify_for_class_decl(checker.ctx.types, type_id) {
+                ClassDeclTypeKind::Object(shape_id) => {
                     let shape = checker.ctx.types.object_shape(shape_id);
                     for prop in &shape.properties {
                         let name = checker.ctx.types.resolve_atom_ref(prop.name);
@@ -2649,13 +2602,12 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                TypeKey::Union(list_id) | TypeKey::Intersection(list_id) => {
-                    let list = checker.ctx.types.type_list(list_id);
-                    for &member in list.iter() {
+                ClassDeclTypeKind::Members(members) => {
+                    for member in members {
                         collect_candidates(checker, member, out);
                     }
                 }
-                _ => {}
+                ClassDeclTypeKind::NotObject => {}
             }
         }
 
@@ -2719,7 +2671,7 @@ impl<'a> CheckerState<'a> {
     /// Inner implementation of call expression type resolution.
     fn get_type_of_call_expression_inner(&mut self, idx: NodeIndex) -> TypeId {
         use crate::parser::node_flags;
-        use crate::solver::{CallEvaluator, CallResult, CompatChecker, TypeKey};
+        use crate::solver::{CallEvaluator, CallResult, CompatChecker};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -2826,8 +2778,11 @@ impl<'a> CheckerState<'a> {
             callee_type
         };
 
-        let overload_signatures = match self.ctx.types.lookup(callee_type_for_resolution) {
-            Some(TypeKey::Callable(shape_id)) => {
+        let overload_signatures = match crate::solver::type_queries::classify_for_call_signatures(
+            self.ctx.types,
+            callee_type_for_resolution,
+        ) {
+            crate::solver::type_queries::CallSignaturesKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.call_signatures.len() > 1 {
                     Some(shape.call_signatures.clone())
@@ -2835,7 +2790,7 @@ impl<'a> CheckerState<'a> {
                     None
                 }
             }
-            _ => None,
+            crate::solver::type_queries::CallSignaturesKind::NoSignatures => None,
         };
 
         // Overload candidates need signature-specific contextual typing.
@@ -3210,26 +3165,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// For a type like Map<string, number>, returns the Map base type.
     pub fn get_generic_base(&self, ty: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(ty) {
-            Some(crate::solver::TypeKey::Application(app)) => {
-                let app_info = self.ctx.types.type_application(app);
-                Some(app_info.base)
-            }
-            _ => None,
-        }
+        crate::solver::type_queries::get_application_info(self.ctx.types, ty).map(|(base, _)| base)
     }
 
     /// Get the type arguments from a generic application.
     ///
     /// For a type like Map<string, number>, returns [string, number].
     pub fn get_generic_args(&self, ty: TypeId) -> Option<Vec<TypeId>> {
-        match self.ctx.types.lookup(ty) {
-            Some(crate::solver::TypeKey::Application(app)) => {
-                let app_info = self.ctx.types.type_application(app);
-                Some(app_info.args.clone())
-            }
-            _ => None,
-        }
+        crate::solver::type_queries::get_application_info(self.ctx.types, ty).map(|(_, args)| args)
     }
 
     // =========================================================================
@@ -3249,41 +3192,37 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         visited: &mut std::collections::HashSet<TypeId>,
     ) -> bool {
+        use crate::solver::type_queries::{
+            TypeParameterContentKind, classify_for_type_parameter_content,
+        };
+
         if !visited.insert(ty) {
             return false;
         }
 
-        match self.ctx.types.lookup(ty) {
-            Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_)) => true,
-            Some(TypeKey::Array(elem)) => self.contains_type_parameter_inner(elem, visited),
-            Some(TypeKey::Tuple(list_id)) => {
+        match classify_for_type_parameter_content(self.ctx.types, ty) {
+            TypeParameterContentKind::IsTypeParameter => true,
+            TypeParameterContentKind::Array(elem) => {
+                self.contains_type_parameter_inner(elem, visited)
+            }
+            TypeParameterContentKind::Tuple(list_id) => {
                 let elems = self.ctx.types.tuple_list(list_id);
                 elems
                     .iter()
                     .any(|e| self.contains_type_parameter_inner(e.type_id, visited))
             }
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members
-                    .iter()
-                    .any(|m| self.contains_type_parameter_inner(*m, visited))
-            }
-            Some(TypeKey::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members
-                    .iter()
-                    .any(|m| self.contains_type_parameter_inner(*m, visited))
-            }
-            Some(TypeKey::Application(app)) => {
-                let app = self.ctx.types.type_application(app);
-                if self.contains_type_parameter_inner(app.base, visited) {
+            TypeParameterContentKind::Union(members)
+            | TypeParameterContentKind::Intersection(members) => members
+                .iter()
+                .any(|m| self.contains_type_parameter_inner(*m, visited)),
+            TypeParameterContentKind::Application { base, args } => {
+                if self.contains_type_parameter_inner(base, visited) {
                     return true;
                 }
-                app.args
-                    .iter()
+                args.iter()
                     .any(|a| self.contains_type_parameter_inner(*a, visited))
             }
-            _ => false,
+            TypeParameterContentKind::NotTypeParameter => false,
         }
     }
 
@@ -3307,13 +3246,15 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         visited: &mut std::collections::HashSet<TypeId>,
     ) -> usize {
+        use crate::solver::type_queries::{TypeDepthKind, classify_for_type_depth};
+
         if !visited.insert(ty) {
             return 0;
         }
 
-        match self.ctx.types.lookup(ty) {
-            Some(TypeKey::Array(elem)) => 1 + self.type_depth_inner(elem, visited),
-            Some(TypeKey::Tuple(list_id)) => {
+        match classify_for_type_depth(self.ctx.types, ty) {
+            TypeDepthKind::Array(elem) => 1 + self.type_depth_inner(elem, visited),
+            TypeDepthKind::Tuple(list_id) => {
                 let elems = self.ctx.types.tuple_list(list_id);
                 1 + elems
                     .iter()
@@ -3321,26 +3262,23 @@ impl<'a> CheckerState<'a> {
                     .max()
                     .unwrap_or(0)
             }
-            Some(TypeKey::Union(list_id) | TypeKey::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
+            TypeDepthKind::Members(members) => {
                 1 + members
                     .iter()
                     .map(|m| self.type_depth_inner(*m, visited))
                     .max()
                     .unwrap_or(0)
             }
-            Some(TypeKey::Application(app)) => {
-                let app = self.ctx.types.type_application(app);
+            TypeDepthKind::Application { base, args } => {
                 1 + std::cmp::max(
-                    self.type_depth_inner(app.base, visited),
-                    app.args
-                        .iter()
+                    self.type_depth_inner(base, visited),
+                    args.iter()
                         .map(|a| self.type_depth_inner(*a, visited))
                         .max()
                         .unwrap_or(0),
                 )
             }
-            _ => 1,
+            TypeDepthKind::Terminal => 1,
         }
     }
 

@@ -14,6 +14,7 @@
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::solver::TypeId;
+use crate::solver::type_queries::{LiteralTypeKind, classify_literal_type};
 
 // =============================================================================
 // Type Query Utilities
@@ -42,8 +43,6 @@ impl<'a> CheckerState<'a> {
     /// Returns the primitive type name that the typeof operator would return:
     /// - "undefined", "object", "boolean", "number", "bigint", "string", "symbol", "function"
     pub fn get_typeof_type_name_for_type(&self, type_id: TypeId) -> String {
-        use crate::solver::TypeKey;
-
         // First check TypeId constants
         if type_id == TypeId::UNDEFINED {
             return "undefined".to_string();
@@ -61,36 +60,25 @@ impl<'a> CheckerState<'a> {
             return "string".to_string();
         }
 
-        // Check TypeKey variants
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(_)) => {
-                // Literal types have typeof based on their kind
-                if type_id == TypeId::NULL {
-                    "object"
-                } else {
-                    // String, number, boolean literals return their primitive type name
-                    match type_id {
-                        TypeId::STRING => "string",
-                        TypeId::NUMBER => "number",
-                        TypeId::BOOLEAN => "boolean",
-                        _ => "object",
-                    }
-                }
-            }
-            _ => {
+        // Check for literal types
+        match classify_literal_type(self.ctx.types, type_id) {
+            LiteralTypeKind::String(_) => "string".to_string(),
+            LiteralTypeKind::Number(_) => "number".to_string(),
+            LiteralTypeKind::Boolean(_) => "boolean".to_string(),
+            LiteralTypeKind::BigInt(_) => "bigint".to_string(),
+            LiteralTypeKind::NotLiteral => {
                 // Check for function types
                 if self.is_callable_type(type_id) {
-                    "function"
+                    "function".to_string()
                 } else if self.is_object_type(type_id) {
-                    "object"
+                    "object".to_string()
                 } else if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
-                    "object" // Conservative fallback
+                    "object".to_string() // Conservative fallback
                 } else {
-                    "object"
+                    "object".to_string()
                 }
             }
         }
-        .to_string()
     }
 
     // =========================================================================
@@ -125,12 +113,7 @@ impl<'a> CheckerState<'a> {
     /// This is a convenience helper for creating string literal types,
     /// commonly used in typeof and keyof operations.
     pub fn string_literal_type(&self, value: &str) -> TypeId {
-        use crate::solver::{LiteralValue, TypeKey};
-
-        let atom = self.ctx.types.intern_string(value);
-        self.ctx
-            .types
-            .intern(TypeKey::Literal(LiteralValue::String(atom)))
+        self.ctx.types.literal_string(value)
     }
 
     /// Get the typeof result as a type (string literal type).

@@ -123,17 +123,16 @@ impl<'a> CheckerState<'a> {
         // See: docs/TS2571_INVESTIGATION.md
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
             // Check if ctx_type is an Application type that needs evaluation
-            use crate::solver::TypeKey;
-            let evaluated_type =
-                if let Some(TypeKey::Application(_)) = self.ctx.types.lookup(ctx_type) {
-                    // Evaluate Application type to get the actual function signature
-                    // This fixes cases like: Destructuring<TFuncs1, T> where the contextual type
-                    // is a generic type alias that needs to be instantiated
-                    self.evaluate_application_type(ctx_type)
-                } else {
-                    // Not an Application type, use as-is
-                    ctx_type
-                };
+            use crate::solver::type_queries::get_type_application;
+            let evaluated_type = if get_type_application(self.ctx.types, ctx_type).is_some() {
+                // Evaluate Application type to get the actual function signature
+                // This fixes cases like: Destructuring<TFuncs1, T> where the contextual type
+                // is a generic type alias that needs to be instantiated
+                self.evaluate_application_type(ctx_type)
+            } else {
+                // Not an Application type, use as-is
+                ctx_type
+            };
 
             Some(ContextualTypeContext::with_expected(
                 self.ctx.types,

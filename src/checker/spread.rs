@@ -6,10 +6,13 @@
 //! - Function calls: fn(...args)
 //! - Array destructuring: [a, ...rest] = arr
 
-use crate::parser::syntax_kind_ext;
-use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
-use crate::solver::{LiteralValue, TypeId, TypeInterner, TypeKey};
+use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
+use crate::solver::type_queries::{
+    SpreadTypeKind, classify_spread_type, get_iterable_element_type_from_db, is_iterable_type_kind,
+};
+use crate::solver::{TypeId, TypeInterner};
 
 /// Spread operator type checker
 pub struct SpreadChecker<'a> {
@@ -36,18 +39,15 @@ impl<'a> SpreadChecker<'a> {
             return SpreadResult::Error(SpreadError::NotSpreadable);
         }
         if spread_type == TypeId::STRING {
-            return SpreadResult::ArraySpread { element_type: TypeId::STRING };
+            return SpreadResult::ArraySpread {
+                element_type: TypeId::STRING,
+            };
         }
 
-        let Some(type_key) = self.types.lookup(spread_type) else {
-            return SpreadResult::Error(SpreadError::NotSpreadable);
-        };
-
-        match type_key {
-            TypeKey::Array(element_type) => {
-                SpreadResult::ArraySpread { element_type }
-            }
-            TypeKey::Tuple(tuple_list_id) => {
+        // Use the classification helper to determine spread type kind
+        match classify_spread_type(self.types, spread_type) {
+            SpreadTypeKind::Array(element_type) => SpreadResult::ArraySpread { element_type },
+            SpreadTypeKind::Tuple(tuple_list_id) => {
                 let elements = self.types.tuple_list(tuple_list_id);
                 if elements.is_empty() {
                     SpreadResult::EmptyTuple
@@ -56,19 +56,27 @@ impl<'a> SpreadChecker<'a> {
                     SpreadResult::TupleSpread { element_types }
                 }
             }
-            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => {
+            SpreadTypeKind::Object(_) | SpreadTypeKind::ObjectWithIndex(_) => {
                 // Object spread - all properties are spread
-                SpreadResult::ObjectSpread { source_type: spread_type }
+                SpreadResult::ObjectSpread {
+                    source_type: spread_type,
+                }
             }
-            TypeKey::Literal(LiteralValue::String(_)) => {
+            SpreadTypeKind::StringLiteral(_) => {
                 // String literals are iterable
-                SpreadResult::ArraySpread { element_type: TypeId::STRING }
+                SpreadResult::ArraySpread {
+                    element_type: TypeId::STRING,
+                }
             }
-            _ => {
-                // Try to check for iterable
-                if self.is_iterable(spread_type) {
-                    if let Some(iter_type) = self.get_iterable_element_type(spread_type) {
-                        SpreadResult::IterableSpread { element_type: iter_type }
+            SpreadTypeKind::Other => {
+                // Try to check for iterable using the solver helper
+                if is_iterable_type_kind(self.types, spread_type) {
+                    if let Some(iter_type) =
+                        get_iterable_element_type_from_db(self.types, spread_type)
+                    {
+                        SpreadResult::IterableSpread {
+                            element_type: iter_type,
+                        }
                     } else {
                         SpreadResult::Error(SpreadError::NotSpreadable)
                     }
@@ -76,6 +84,7 @@ impl<'a> SpreadChecker<'a> {
                     SpreadResult::Error(SpreadError::NotSpreadable)
                 }
             }
+            SpreadTypeKind::NotSpreadable => SpreadResult::Error(SpreadError::NotSpreadable),
         }
     }
 
@@ -90,72 +99,20 @@ impl<'a> SpreadChecker<'a> {
 
     /// Check if a type is iterable
     fn is_iterable(&self, type_id: TypeId) -> bool {
-        // Handle intrinsic string type
-        if type_id == TypeId::STRING {
-            return true;
-        }
-
-        // Check for Symbol.iterator method or known iterable types
-        let Some(type_key) = self.types.lookup(type_id) else {
-            return false;
-        };
-
-        match type_key {
-            TypeKey::Array(_) | TypeKey::Tuple(_) => true,
-            TypeKey::Literal(LiteralValue::String(_)) => true,
-            TypeKey::Object(shape_id) => {
-                // Check for [Symbol.iterator] method
-                let shape = self.types.object_shape(shape_id);
-                shape.properties.iter().any(|prop| {
-                    let prop_name = self.types.resolve_atom_ref(prop.name);
-                    (prop_name.as_ref() == "[Symbol.iterator]" || prop_name.as_ref() == "next") && prop.is_method
-                })
-            }
-            _ => false,
-        }
+        is_iterable_type_kind(self.types, type_id)
     }
 
     /// Get the element type of an iterable
     fn get_iterable_element_type(&self, type_id: TypeId) -> Option<TypeId> {
-        // Handle intrinsic string type
-        if type_id == TypeId::STRING {
-            return Some(TypeId::STRING);
-        }
-
-        let type_key = self.types.lookup(type_id)?;
-
-        match type_key {
-            TypeKey::Array(elem_type) => Some(elem_type),
-            TypeKey::Tuple(tuple_list_id) => {
-                let elements = self.types.tuple_list(tuple_list_id);
-                if elements.is_empty() {
-                    Some(TypeId::NEVER)
-                } else {
-                    let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
-                    Some(self.types.union(types))
-                }
-            }
-            TypeKey::Literal(LiteralValue::String(_)) => Some(TypeId::STRING),
-            TypeKey::Object(shape_id) => {
-                // For objects with [Symbol.iterator], we'd need to infer the element type
-                // from the iterator's return type. For now, return Any as a fallback.
-                let shape = self.types.object_shape(shape_id);
-                let has_iterator = shape.properties.iter().any(|prop| {
-                    let prop_name = self.types.resolve_atom_ref(prop.name);
-                    (prop_name.as_ref() == "[Symbol.iterator]" || prop_name.as_ref() == "next") && prop.is_method
-                });
-                if has_iterator {
-                    Some(TypeId::ANY)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
+        get_iterable_element_type_from_db(self.types, type_id)
     }
 
     /// Validate that a spread operation is valid in the current context
-    pub fn validate_spread(&self, spread_idx: NodeIndex, context: SpreadContext) -> Vec<SpreadError> {
+    pub fn validate_spread(
+        &self,
+        spread_idx: NodeIndex,
+        context: SpreadContext,
+    ) -> Vec<SpreadError> {
         let mut errors = Vec::new();
 
         let Some(spread_node) = self.arena.get(spread_idx) else {

@@ -8,11 +8,11 @@
 //! - Rest patterns: const [a, ...rest] = arr
 //! - Function parameter destructuring
 
-use crate::parser::syntax_kind_ext;
-use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
+use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::solver::{TypeId, TypeInterner, TypeKey};
+use crate::solver::{TypeId, TypeInterner};
 
 /// Destructuring pattern type checker
 pub struct DestructuringChecker<'a> {
@@ -47,14 +47,17 @@ impl<'a> DestructuringChecker<'a> {
         };
 
         for &element_idx in &binding_pattern.elements.nodes {
-            if let Some(binding) = self.check_binding_element(element_idx, source_type, BindingContext::Object) {
+            if let Some(binding) =
+                self.check_binding_element(element_idx, source_type, BindingContext::Object)
+            {
                 bindings.push(binding);
             }
         }
 
         // Check for missing required properties
-        if let Some(TypeKey::Object(obj_id) | TypeKey::ObjectWithIndex(obj_id)) = self.types.lookup(source_type) {
-            let obj_shape = self.types.object_shape(obj_id);
+        if let Some(obj_shape) =
+            crate::solver::type_queries::get_object_shape(self.types, source_type)
+        {
             for prop in obj_shape.properties.iter() {
                 if !prop.optional {
                     let prop_name = self.types.resolve_atom(prop.name);
@@ -114,7 +117,9 @@ impl<'a> DestructuringChecker<'a> {
                 }
             } else {
                 let element_type = self.get_array_element_type(source_type, index);
-                if let Some(binding) = self.check_binding_element(element_idx, element_type, BindingContext::Array) {
+                if let Some(binding) =
+                    self.check_binding_element(element_idx, element_type, BindingContext::Array)
+                {
                     bindings.push(binding);
                 }
             }
@@ -301,23 +306,19 @@ impl<'a> DestructuringChecker<'a> {
             return TypeId::ANY;
         }
 
-        let Some(type_key) = self.types.lookup(object_type) else {
-            return TypeId::ANY;
-        };
-
-        match type_key {
-            TypeKey::Object(obj_id) | TypeKey::ObjectWithIndex(obj_id) => {
-                let obj_shape = self.types.object_shape(obj_id);
-                let prop_atom = self.types.intern_string(property_name);
-                for prop in obj_shape.properties.iter() {
-                    if prop.name == prop_atom {
-                        return prop.type_id;
-                    }
+        if let Some(obj_shape) =
+            crate::solver::type_queries::get_object_shape(self.types, object_type)
+        {
+            let prop_atom = self.types.intern_string(property_name);
+            for prop in obj_shape.properties.iter() {
+                if prop.name == prop_atom {
+                    return prop.type_id;
                 }
-                // Property not found
-                TypeId::UNDEFINED
             }
-            _ => TypeId::UNDEFINED,
+            // Property not found
+            TypeId::UNDEFINED
+        } else {
+            TypeId::UNDEFINED
         }
     }
 
@@ -328,21 +329,17 @@ impl<'a> DestructuringChecker<'a> {
             return TypeId::ANY;
         }
 
-        let Some(type_key) = self.types.lookup(array_type) else {
-            return TypeId::ANY;
-        };
-
-        match type_key {
-            TypeKey::Array(elem_type) => elem_type,
-            TypeKey::Tuple(tuple_list_id) => {
-                let elements = self.types.tuple_list(tuple_list_id);
+        use crate::solver::type_queries::IterableTypeKind;
+        match crate::solver::type_queries::classify_iterable_type(self.types, array_type) {
+            IterableTypeKind::Array(elem_type) => elem_type,
+            IterableTypeKind::Tuple(elements) => {
                 if index < elements.len() {
                     elements[index].type_id
                 } else {
                     TypeId::UNDEFINED
                 }
             }
-            _ => TypeId::UNDEFINED,
+            IterableTypeKind::Other => TypeId::UNDEFINED,
         }
     }
 
@@ -353,18 +350,15 @@ impl<'a> DestructuringChecker<'a> {
             return self.types.array(TypeId::ANY);
         }
 
-        let Some(type_key) = self.types.lookup(source_type) else {
-            return self.types.array(TypeId::ANY);
-        };
-
-        match type_key {
-            TypeKey::Array(elem_type) => self.types.array(elem_type),
-            TypeKey::Tuple(tuple_list_id) => {
-                let elements = self.types.tuple_list(tuple_list_id);
+        use crate::solver::type_queries::IterableTypeKind;
+        match crate::solver::type_queries::classify_iterable_type(self.types, source_type) {
+            IterableTypeKind::Array(elem_type) => self.types.array(elem_type),
+            IterableTypeKind::Tuple(elements) => {
                 if start_index >= elements.len() {
                     return self.types.array(TypeId::NEVER);
                 }
-                let rest_types: Vec<TypeId> = elements[start_index..].iter().map(|e| e.type_id).collect();
+                let rest_types: Vec<TypeId> =
+                    elements[start_index..].iter().map(|e| e.type_id).collect();
                 if rest_types.is_empty() {
                     self.types.array(TypeId::NEVER)
                 } else {
@@ -372,7 +366,7 @@ impl<'a> DestructuringChecker<'a> {
                     self.types.array(union_type)
                 }
             }
-            _ => self.types.array(TypeId::UNDEFINED),
+            IterableTypeKind::Other => self.types.array(TypeId::UNDEFINED),
         }
     }
 
@@ -382,13 +376,15 @@ impl<'a> DestructuringChecker<'a> {
             return TypeId::NEVER;
         }
 
-        let Some(type_key) = self.types.lookup(type_id) else {
-            return type_id;
-        };
-
-        if let TypeKey::Union(type_list_id) = type_key {
-            let types = self.types.type_list(type_list_id);
-            let filtered: Vec<TypeId> = types.iter().copied().filter(|&t| t != TypeId::UNDEFINED).collect();
+        use crate::solver::type_queries::UnionMembersKind;
+        if let UnionMembersKind::Union(types) =
+            crate::solver::type_queries::classify_for_union_members(self.types, type_id)
+        {
+            let filtered: Vec<TypeId> = types
+                .iter()
+                .copied()
+                .filter(|&t| t != TypeId::UNDEFINED)
+                .collect();
             if filtered.is_empty() {
                 return TypeId::NEVER;
             }
@@ -439,7 +435,10 @@ pub struct Binding {
 #[derive(Debug, Clone)]
 pub enum DestructuringError {
     /// Property doesn't exist on the source type
-    PropertyNotFound { property_name: String, pos: NodeIndex },
+    PropertyNotFound {
+        property_name: String,
+        pos: NodeIndex,
+    },
     /// Cannot destructure from non-object type
     NotDestructurable { type_id: TypeId, pos: NodeIndex },
     /// Multiple rest elements in pattern

@@ -14,7 +14,12 @@
 //! operations, providing cleaner APIs for generic type checking.
 
 use crate::checker::state::CheckerState;
-use crate::solver::{TypeId, TypeKey};
+use crate::solver::TypeId;
+use crate::solver::type_queries::{
+    TypeParameterKind, classify_type_parameter, get_callable_type_param_count,
+    get_type_param_default, get_type_parameter_constraint as solver_get_type_parameter_constraint,
+    is_direct_type_parameter, is_generic_type,
+};
 
 // =============================================================================
 // Type Parameter Utilities
@@ -29,31 +34,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for types like T, U, etc. in generic contexts.
     pub fn is_type_parameter(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(TypeKey::TypeParameter(_))
-        )
+        is_direct_type_parameter(self.ctx.types, type_id)
     }
 
     /// Get the number of type parameters on a generic type.
     ///
     /// Returns the count of type parameters, or 0 if not a generic type.
     pub fn type_parameter_count(&self, type_id: TypeId) -> usize {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                // Count type parameters across all signatures
-                shape
-                    .call_signatures
-                    .iter()
-                    .map(|sig| sig.type_params.len())
-                    .max()
-                    .unwrap_or(0)
-            }
-            _ => 0,
-        }
+        get_callable_type_param_count(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -64,10 +52,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for types like `Array<T>`, `Map<K, V>`, etc.
     pub fn is_type_application(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(TypeKey::Application(_))
-        )
+        is_generic_type(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -79,10 +64,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the constraint type (e.g., `T extends string` returns string),
     /// or None if the type parameter has no constraint.
     pub fn get_type_parameter_constraint(&self, type_id: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::TypeParameter(info)) => info.constraint,
-            _ => None,
-        }
+        solver_get_type_parameter_constraint(self.ctx.types, type_id)
     }
 
     /// Check if a type parameter has a constraint.
@@ -133,10 +115,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the default type if specified, or None otherwise.
     pub fn get_type_parameter_default(&self, type_id: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::TypeParameter(info)) => info.default,
-            _ => None,
-        }
+        get_type_param_default(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -191,17 +170,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check if type contains type parameters in its structure
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
+        // Check if type contains type parameters in its structure using the classification helper
+        match classify_type_parameter(self.ctx.types, type_id) {
+            TypeParameterKind::TypeParameter(_) | TypeParameterKind::Infer(_) => true,
+            TypeParameterKind::Union(members) | TypeParameterKind::Intersection(members) => {
                 members.iter().any(|&m| self.contains_type_parameters(m))
             }
-            Some(TypeKey::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members.iter().any(|&m| self.contains_type_parameters(m))
-            }
-            Some(TypeKey::Application(app_id)) => {
+            TypeParameterKind::Application(app_id) => {
                 let app = self.ctx.types.type_application(app_id);
                 self.contains_type_parameters(app.base)
                     || app
@@ -209,7 +184,7 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .any(|&arg| self.contains_type_parameters(arg))
             }
-            _ => false,
+            TypeParameterKind::Callable(_) | TypeParameterKind::NotTypeParameter => false,
         }
     }
 
@@ -224,28 +199,24 @@ impl<'a> CheckerState<'a> {
             params.push(type_id);
         }
 
-        // Recursively check for type parameters in complex types
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
+        // Recursively check for type parameters in complex types using the classification helper
+        match classify_type_parameter(self.ctx.types, type_id) {
+            TypeParameterKind::TypeParameter(_) | TypeParameterKind::Infer(_) => {
+                // Already added above if is_type_parameter
+            }
+            TypeParameterKind::Union(members) | TypeParameterKind::Intersection(members) => {
                 for &member in members.iter() {
                     params.extend(self.get_referenced_type_parameters(member));
                 }
             }
-            Some(TypeKey::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                for &member in members.iter() {
-                    params.extend(self.get_referenced_type_parameters(member));
-                }
-            }
-            Some(TypeKey::Application(app_id)) => {
+            TypeParameterKind::Application(app_id) => {
                 let app = self.ctx.types.type_application(app_id);
                 params.extend(self.get_referenced_type_parameters(app.base));
                 for &arg in app.args.iter() {
                     params.extend(self.get_referenced_type_parameters(arg));
                 }
             }
-            _ => {}
+            TypeParameterKind::Callable(_) | TypeParameterKind::NotTypeParameter => {}
         }
 
         params

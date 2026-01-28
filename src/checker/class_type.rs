@@ -30,8 +30,8 @@ use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeKey,
-    TypeLowering, TypeSubstitution, instantiate_type,
+    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeLowering,
+    TypeSubstitution, instantiate_type,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -545,11 +545,10 @@ impl<'a> CheckerState<'a> {
                     instantiate_type(self.ctx.types, base_instance_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
 
-                if let Some(
-                    TypeKey::Object(base_shape_id) | TypeKey::ObjectWithIndex(base_shape_id),
-                ) = self.ctx.types.lookup(base_instance_type)
-                {
-                    let base_shape = self.ctx.types.object_shape(base_shape_id);
+                if let Some(base_shape) = crate::solver::type_queries::get_object_shape(
+                    self.ctx.types,
+                    base_instance_type,
+                ) {
                     for base_prop in base_shape.properties.iter() {
                         properties
                             .entry(base_prop.name)
@@ -633,27 +632,26 @@ impl<'a> CheckerState<'a> {
                             instantiate_type(self.ctx.types, interface_type, &substitution);
                     }
 
-                    match self.ctx.types.lookup(interface_type) {
-                        Some(TypeKey::Object(shape_id))
-                        | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                            let shape = self.ctx.types.object_shape(shape_id);
-                            for prop in shape.properties.iter() {
-                                properties.entry(prop.name).or_insert_with(|| prop.clone());
-                            }
-                            if let Some(ref idx) = shape.string_index {
-                                Self::merge_index_signature(&mut string_index, idx.clone());
-                            }
-                            if let Some(ref idx) = shape.number_index {
-                                Self::merge_index_signature(&mut number_index, idx.clone());
-                            }
+                    if let Some(shape) = crate::solver::type_queries::get_object_shape(
+                        self.ctx.types,
+                        interface_type,
+                    ) {
+                        for prop in shape.properties.iter() {
+                            properties.entry(prop.name).or_insert_with(|| prop.clone());
                         }
-                        Some(TypeKey::Callable(shape_id)) => {
-                            let shape = self.ctx.types.callable_shape(shape_id);
-                            for prop in shape.properties.iter() {
-                                properties.entry(prop.name).or_insert_with(|| prop.clone());
-                            }
+                        if let Some(ref idx) = shape.string_index {
+                            Self::merge_index_signature(&mut string_index, idx.clone());
                         }
-                        _ => {}
+                        if let Some(ref idx) = shape.number_index {
+                            Self::merge_index_signature(&mut number_index, idx.clone());
+                        }
+                    } else if let Some(shape) = crate::solver::type_queries::get_callable_shape(
+                        self.ctx.types,
+                        interface_type,
+                    ) {
+                        for prop in shape.properties.iter() {
+                            properties.entry(prop.name).or_insert_with(|| prop.clone());
+                        }
                     }
                 }
             }
@@ -693,35 +691,9 @@ impl<'a> CheckerState<'a> {
                 let interface_type =
                     self.merge_interface_heritage_types(&interface_decls, interface_type);
 
-                match self.ctx.types.lookup(interface_type) {
-                    Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                        let shape = self.ctx.types.object_shape(shape_id);
-                        for prop in shape.properties.iter() {
-                            properties.entry(prop.name).or_insert_with(|| prop.clone());
-                        }
-                        if let Some(ref idx) = shape.string_index {
-                            Self::merge_index_signature(&mut string_index, idx.clone());
-                        }
-                        if let Some(ref idx) = shape.number_index {
-                            Self::merge_index_signature(&mut number_index, idx.clone());
-                        }
-                    }
-                    Some(TypeKey::Callable(shape_id)) => {
-                        let shape = self.ctx.types.callable_shape(shape_id);
-                        for prop in shape.properties.iter() {
-                            properties.entry(prop.name).or_insert_with(|| prop.clone());
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Classes inherit Object members (toString, hasOwnProperty, etc.)
-        if let Some(object_type) = self.resolve_lib_type_by_name("Object") {
-            match self.ctx.types.lookup(object_type) {
-                Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                    let shape = self.ctx.types.object_shape(shape_id);
+                if let Some(shape) =
+                    crate::solver::type_queries::get_object_shape(self.ctx.types, interface_type)
+                {
                     for prop in shape.properties.iter() {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
                     }
@@ -731,14 +703,36 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref idx) = shape.number_index {
                         Self::merge_index_signature(&mut number_index, idx.clone());
                     }
-                }
-                Some(TypeKey::Callable(shape_id)) => {
-                    let shape = self.ctx.types.callable_shape(shape_id);
+                } else if let Some(shape) =
+                    crate::solver::type_queries::get_callable_shape(self.ctx.types, interface_type)
+                {
                     for prop in shape.properties.iter() {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
                     }
                 }
-                _ => {}
+            }
+        }
+
+        // Classes inherit Object members (toString, hasOwnProperty, etc.)
+        if let Some(object_type) = self.resolve_lib_type_by_name("Object") {
+            if let Some(shape) =
+                crate::solver::type_queries::get_object_shape(self.ctx.types, object_type)
+            {
+                for prop in shape.properties.iter() {
+                    properties.entry(prop.name).or_insert_with(|| prop.clone());
+                }
+                if let Some(ref idx) = shape.string_index {
+                    Self::merge_index_signature(&mut string_index, idx.clone());
+                }
+                if let Some(ref idx) = shape.number_index {
+                    Self::merge_index_signature(&mut number_index, idx.clone());
+                }
+            } else if let Some(shape) =
+                crate::solver::type_queries::get_callable_shape(self.ctx.types, object_type)
+            {
+                for prop in shape.properties.iter() {
+                    properties.entry(prop.name).or_insert_with(|| prop.clone());
+                }
             }
         }
 
@@ -1167,10 +1161,10 @@ impl<'a> CheckerState<'a> {
                     instantiate_type(self.ctx.types, base_constructor_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
 
-                if let Some(TypeKey::Callable(base_shape_id)) =
-                    self.ctx.types.lookup(base_constructor_type)
-                {
-                    let base_shape = self.ctx.types.callable_shape(base_shape_id);
+                if let Some(base_shape) = crate::solver::type_queries::get_callable_shape(
+                    self.ctx.types,
+                    base_constructor_type,
+                ) {
                     for base_prop in base_shape.properties.iter() {
                         properties
                             .entry(base_prop.name)

@@ -13,7 +13,8 @@
 //! operations, providing cleaner APIs for T[K] type checking.
 
 use crate::checker::state::CheckerState;
-use crate::solver::{TypeId, TypeKey};
+use crate::solver::TypeId;
+use crate::solver::type_queries::get_index_access_types;
 
 // =============================================================================
 // Indexed Access Type Utilities
@@ -28,10 +29,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for types like `T[K]` (object type with index access).
     pub fn is_indexed_access_type(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(TypeKey::IndexAccess(_, _))
-        )
+        get_index_access_types(self.ctx.types, type_id).is_some()
     }
 
     // =========================================================================
@@ -42,30 +40,21 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the `T` in `T[K]`, or None if not an indexed access type.
     pub fn get_indexed_access_object_type(&self, type_id: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::IndexAccess(object_type, _)) => Some(object_type),
-            _ => None,
-        }
+        get_index_access_types(self.ctx.types, type_id).map(|(obj, _)| obj)
     }
 
     /// Get the index key type from an indexed access type.
     ///
     /// Returns the `K` in `T[K]`, or None if not an indexed access type.
     pub fn get_indexed_access_key_type(&self, type_id: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::IndexAccess(_, key_type)) => Some(key_type),
-            _ => None,
-        }
+        get_index_access_types(self.ctx.types, type_id).map(|(_, key)| key)
     }
 
     /// Get both components from an indexed access type.
     ///
     /// Returns `(object_type, key_type)` for `T[K]`, or None if not an indexed access type.
     pub fn get_indexed_access_components(&self, type_id: TypeId) -> Option<(TypeId, TypeId)> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::IndexAccess(object_type, key_type)) => Some((object_type, key_type)),
-            _ => None,
-        }
+        get_index_access_types(self.ctx.types, type_id)
     }
 
     // =========================================================================
