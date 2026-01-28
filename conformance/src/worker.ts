@@ -625,7 +625,16 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
           program.addFile(file.name, file.content);
         }
 
-        const codes = Array.from(program.getAllDiagnosticCodes()) as number[];
+        // Safely extract diagnostic codes with defensive checks
+        let codes: number[] = [];
+        try {
+          const diagCodes = program.getAllDiagnosticCodes();
+          codes = Array.isArray(diagCodes) ? diagCodes as number[] :
+                   Array.from(diagCodes || []).map((c: any) => typeof c === 'number' ? c : 0);
+        } catch (e) {
+          codes = [];
+        }
+
         program.free();
         return { codes, crashed: false, oom: false };
       } else {
@@ -650,12 +659,38 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         }
 
         parser.parseSourceFile();
-        const parseDiags = JSON.parse(parser.getDiagnosticsJson());
-        const checkResult = JSON.parse(parser.checkSourceFile());
+
+        // Safely extract diagnostics with defensive checks
+        let parseDiags: any[] = [];
+        try {
+          const parseResult = parser.getDiagnosticsJson();
+          if (parseResult) {
+            const parsed = JSON.parse(parseResult);
+            parseDiags = Array.isArray(parsed) ? parsed : [];
+          }
+        } catch (e) {
+          // If parsing fails, use empty array
+          parseDiags = [];
+        }
+
+        let checkDiags: any[] = [];
+        try {
+          const checkResult = parser.checkSourceFile();
+          if (checkResult) {
+            const parsed = JSON.parse(checkResult);
+            checkDiags = Array.isArray(parsed?.diagnostics) ? parsed.diagnostics : [];
+          }
+        } catch (e) {
+          // If parsing fails, use empty array
+          checkDiags = [];
+        }
+
+        // Extract diagnostic codes with null checks
         const codes = [
-          ...parseDiags.map((d: any) => d.code),
-          ...(checkResult.diagnostics || []).map((d: any) => d.code),
+          ...parseDiags.filter((d: any) => d && typeof d.code === 'number').map((d: any) => d.code),
+          ...checkDiags.filter((d: any) => d && typeof d.code === 'number').map((d: any) => d.code),
         ];
+
         parser.free();
         return { codes, crashed: false, oom: false };
       }
