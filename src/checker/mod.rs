@@ -58,6 +58,7 @@ pub mod parameter_checker;
 pub mod promise_checker;
 pub mod property_checker;
 pub mod reachability_analyzer;
+pub mod scope_finder;
 pub mod signature_builder;
 pub mod state;
 pub mod statements;
