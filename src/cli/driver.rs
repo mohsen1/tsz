@@ -404,7 +404,7 @@ fn compile_inner(
         update_import_symbol_ids(&program, &resolved, &base_dir, cache);
     }
 
-    let lib_contexts = load_lib_files_for_contexts(&lib_paths);
+    let lib_contexts = load_lib_files_for_contexts(&lib_paths, resolved.printer.target);
     let mut diagnostics = collect_diagnostics(&program, &resolved, &base_dir, cache, &lib_contexts);
     diagnostics.sort_by(|left, right| {
         left.file
@@ -2438,8 +2438,11 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 /// symbols like `console`, `Array`, `Promise`, etc.
 ///
 /// If disk files are not available or fail to load, this function falls back to embedded libs
-/// to ensure global types are always available.
-fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
+/// for the specified target to ensure global types are always available.
+fn load_lib_files_for_contexts(
+    lib_files: &[PathBuf],
+    target: crate::emitter::ScriptTarget,
+) -> Vec<LibContext> {
     use crate::binder::BinderState;
     use crate::lib_loader;
     use crate::parser::ParserState;
@@ -2495,11 +2498,9 @@ fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
     // 2. Disk files don't exist (load embedded libs as fallback)
     let should_fallback_to_embedded = !lib_files.is_empty() || !lib_contexts.is_empty();
     if (lib_contexts.is_empty() || !has_core_types) && should_fallback_to_embedded {
-        // Load embedded libs for ES2020 with DOM as a reasonable default
-        let embedded_libs = lib_loader::load_embedded_libs(
-            crate::emitter::ScriptTarget::ES2020,
-            true, // include DOM
-        );
+        // Load embedded libs using the actual target from compiler options
+        let config = lib_loader::LibResolverConfig::new(target).with_include_dom(true);
+        let embedded_libs = lib_loader::resolve_libs(&config);
 
         // Add embedded libs to provide missing types
         for lib_file in embedded_libs {

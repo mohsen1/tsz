@@ -173,6 +173,131 @@ pub fn load_all_default_libs() -> Vec<Arc<LibFile>> {
     load_embedded_libs(ScriptTarget::ES2020, true)
 }
 
+// =============================================================================
+// Lib Resolver
+// =============================================================================
+
+/// Lib resolver configuration and result.
+///
+/// The LibResolver provides a unified API for resolving TypeScript library files
+/// based on compiler options (target, lib, noLib).
+#[derive(Debug, Clone)]
+pub struct LibResolverConfig {
+    /// The ECMAScript target version
+    pub target: ScriptTarget,
+    /// Explicit lib names from compiler options (if any)
+    pub explicit_libs: Vec<String>,
+    /// Whether noLib is enabled (skip all lib loading)
+    pub no_lib: bool,
+    /// Whether to include DOM by default (when no explicit libs)
+    pub include_dom: bool,
+}
+
+impl Default for LibResolverConfig {
+    fn default() -> Self {
+        Self {
+            target: ScriptTarget::ES2020,
+            explicit_libs: Vec::new(),
+            no_lib: false,
+            include_dom: true,
+        }
+    }
+}
+
+impl LibResolverConfig {
+    /// Create a new config with the given target.
+    pub fn new(target: ScriptTarget) -> Self {
+        Self {
+            target,
+            ..Default::default()
+        }
+    }
+
+    /// Set explicit lib names.
+    pub fn with_libs(mut self, libs: Vec<String>) -> Self {
+        self.explicit_libs = libs;
+        self
+    }
+
+    /// Set noLib flag.
+    pub fn with_no_lib(mut self, no_lib: bool) -> Self {
+        self.no_lib = no_lib;
+        self
+    }
+
+    /// Set include_dom flag.
+    pub fn with_include_dom(mut self, include_dom: bool) -> Self {
+        self.include_dom = include_dom;
+        self
+    }
+}
+
+/// Resolve libs based on configuration.
+///
+/// This function provides target-accurate lib resolution, avoiding the hardcoded
+/// ES2020+DOM fallback in favor of using the actual target from compiler options.
+///
+/// # Arguments
+/// * `config` - The lib resolver configuration
+///
+/// # Returns
+/// A vector of loaded LibFile instances in dependency order.
+pub fn resolve_libs(config: &LibResolverConfig) -> Vec<Arc<LibFile>> {
+    // If noLib is enabled, return empty
+    if config.no_lib {
+        return Vec::new();
+    }
+
+    // If explicit libs are specified, resolve them with dependencies
+    if !config.explicit_libs.is_empty() {
+        return resolve_explicit_libs(&config.explicit_libs);
+    }
+
+    // Otherwise, use default libs for target
+    load_embedded_libs(config.target, config.include_dom)
+}
+
+/// Resolve explicit lib names with their dependencies.
+///
+/// This function handles:
+/// - Lib name aliases (e.g., "es6" -> "es2015", "lib" -> "es5")
+/// - Dependency resolution via references
+/// - Deduplication
+fn resolve_explicit_libs(lib_names: &[String]) -> Vec<Arc<LibFile>> {
+    use rustc_hash::FxHashSet;
+
+    let mut loaded = Vec::new();
+    let mut seen = FxHashSet::default();
+
+    for name in lib_names {
+        // Normalize lib name
+        let normalized = normalize_lib_name(name);
+
+        // Resolve with dependencies
+        let resolved = embedded_libs::resolve_lib_with_dependencies(&normalized);
+        for lib in resolved {
+            if !seen.contains(lib.name) {
+                seen.insert(lib.name.to_string());
+                if let Some(loaded_lib) = load_embedded_lib(lib) {
+                    loaded.push(loaded_lib);
+                }
+            }
+        }
+    }
+
+    loaded
+}
+
+/// Normalize a lib name (handle aliases).
+fn normalize_lib_name(name: &str) -> String {
+    let lower = name.to_lowercase();
+    match lower.as_str() {
+        "lib" => "es5".to_string(),
+        "es6" => "es2015".to_string(),
+        _ => lower,
+    }
+}
+
 /// Loaded lib file with its arena and binder state.
 #[derive(Clone)]
 pub struct LibFile {
@@ -1525,5 +1650,141 @@ const typed = new BigInt64Array(10);
             ts2583_count,
             checker.ctx.diagnostics
         );
+    }
+
+    // ==========================================================================
+    // LibResolver Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_lib_resolver_config_default() {
+        let config = LibResolverConfig::default();
+        assert_eq!(config.target, ScriptTarget::ES2020);
+        assert!(config.explicit_libs.is_empty());
+        assert!(!config.no_lib);
+        assert!(config.include_dom);
+    }
+
+    #[test]
+    fn test_lib_resolver_config_builder() {
+        let config = LibResolverConfig::new(ScriptTarget::ES2015)
+            .with_libs(vec!["es2015.promise".to_string(), "dom".to_string()])
+            .with_no_lib(false)
+            .with_include_dom(false);
+
+        assert_eq!(config.target, ScriptTarget::ES2015);
+        assert_eq!(config.explicit_libs.len(), 2);
+        assert!(!config.no_lib);
+        assert!(!config.include_dom);
+    }
+
+    #[test]
+    fn test_lib_resolver_no_lib() {
+        let config = LibResolverConfig::new(ScriptTarget::ES2020).with_no_lib(true);
+        let libs = resolve_libs(&config);
+        assert!(libs.is_empty(), "noLib should return empty libs");
+    }
+
+    #[test]
+    fn test_lib_resolver_default_for_es5() {
+        let config = LibResolverConfig::new(ScriptTarget::ES5).with_include_dom(false);
+        let libs = resolve_libs(&config);
+
+        // Should have ES5 core types
+        let has_object = libs
+            .iter()
+            .any(|lib| lib.file_locals().has("Object"));
+        let has_array = libs.iter().any(|lib| lib.file_locals().has("Array"));
+
+        assert!(has_object, "ES5 libs should have Object");
+        assert!(has_array, "ES5 libs should have Array");
+    }
+
+    #[test]
+    fn test_lib_resolver_default_for_es2015() {
+        let config = LibResolverConfig::new(ScriptTarget::ES2015).with_include_dom(false);
+        let libs = resolve_libs(&config);
+
+        // Should have ES5 and ES2015 types
+        let has_object = libs
+            .iter()
+            .any(|lib| lib.file_locals().has("Object"));
+        let has_promise = libs
+            .iter()
+            .any(|lib| lib.file_locals().has("Promise"));
+        let has_map = libs.iter().any(|lib| lib.file_locals().has("Map"));
+
+        assert!(has_object, "ES2015 libs should have Object");
+        assert!(has_promise, "ES2015 libs should have Promise");
+        assert!(has_map, "ES2015 libs should have Map");
+    }
+
+    #[test]
+    fn test_lib_resolver_default_for_es2020() {
+        let config = LibResolverConfig::new(ScriptTarget::ES2020).with_include_dom(false);
+        let libs = resolve_libs(&config);
+
+        // Should have ES2020 types including BigInt
+        let has_bigint = libs
+            .iter()
+            .any(|lib| lib.file_locals().has("BigInt"));
+
+        assert!(has_bigint, "ES2020 libs should have BigInt");
+    }
+
+    #[test]
+    fn test_lib_resolver_with_dom() {
+        let config = LibResolverConfig::new(ScriptTarget::ES2020).with_include_dom(true);
+        let libs = resolve_libs(&config);
+
+        // Should have DOM globals
+        let has_console = libs
+            .iter()
+            .any(|lib| lib.file_locals().has("console"));
+        let has_window = libs
+            .iter()
+            .any(|lib| lib.file_locals().has("window"));
+
+        assert!(has_console, "With DOM, should have console");
+        assert!(has_window, "With DOM, should have window");
+    }
+
+    #[test]
+    fn test_lib_resolver_explicit_libs() {
+        let config = LibResolverConfig::new(ScriptTarget::ES5)
+            .with_libs(vec!["es2015.promise".to_string()]);
+        let libs = resolve_libs(&config);
+
+        // Should resolve es2015.promise and its dependencies (including es5)
+        let has_promise = libs
+            .iter()
+            .any(|lib| lib.file_locals().has("Promise"));
+
+        assert!(has_promise, "Explicit es2015.promise should provide Promise");
+    }
+
+    #[test]
+    fn test_normalize_lib_name() {
+        assert_eq!(normalize_lib_name("lib"), "es5");
+        assert_eq!(normalize_lib_name("LIB"), "es5");
+        assert_eq!(normalize_lib_name("es6"), "es2015");
+        assert_eq!(normalize_lib_name("ES6"), "es2015");
+        assert_eq!(normalize_lib_name("es2015"), "es2015");
+        assert_eq!(normalize_lib_name("ES2015.Promise"), "es2015.promise");
+        assert_eq!(normalize_lib_name("DOM"), "dom");
+    }
+
+    #[test]
+    fn test_lib_resolver_esnext() {
+        let config = LibResolverConfig::new(ScriptTarget::ESNext).with_include_dom(false);
+        let libs = resolve_libs(&config);
+
+        // Should have ESNext features
+        let has_object = libs
+            .iter()
+            .any(|lib| lib.file_locals().has("Object"));
+
+        assert!(has_object, "ESNext libs should include core types");
+        assert!(!libs.is_empty(), "ESNext should load some libs");
     }
 }

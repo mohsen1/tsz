@@ -1,101 +1,83 @@
-//! Build script for Project Zang
+//! Build script for tsz
 //!
-//! This build script:
-//! - Sets the `in_docker` cfg flag when running inside Docker
-//! - Installs git pre-commit hooks on first build
+//! This script ensures lib assets are generated before compilation.
+//! It runs `node scripts/generate-lib-assets.mjs` which:
+//! - Installs TypeScript npm package if needed
+//! - Copies lib.*.d.ts files to src/lib-assets/
+//! - Generates lib_manifest.json
 
+use std::env;
+use std::path::Path;
 use std::process::Command;
 
 fn main() {
-    // Always declare the cfg so rustc doesn't warn
-    println!("cargo::rustc-check-cfg=cfg(in_docker)");
-    println!("cargo::rustc-check-cfg=cfg(ci)");
+    // Only regenerate in debug builds or when LIB_ASSETS_FORCE is set
+    // Release builds should have lib-assets pre-generated
+    let force = env::var("LIB_ASSETS_FORCE").is_ok();
+    let profile = env::var("PROFILE").unwrap_or_default();
 
-    // Check if we're running inside Docker
-    // The standard way is to check for the /.dockerenv file
-    let in_docker = std::path::Path::new("/.dockerenv").exists();
+    // Check if lib-assets directory exists
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let lib_assets_dir = Path::new(&manifest_dir).join("src/lib-assets");
+    let version_file = lib_assets_dir.join("lib_version.json");
 
-    if in_docker {
-        println!("cargo:rustc-cfg=in_docker");
-    }
-
-    // Mark when running in CI (tests allowed outside Docker in CI)
-    if std::env::var("CI").is_ok() {
-        println!("cargo:rustc-cfg=ci");
-    }
-
-    // Install git hooks if not already configured (skip in Docker/CI)
-    if !in_docker && std::env::var("CI").is_err() {
-        install_git_hooks();
-    }
-}
-
-/// Install git hooks by configuring core.hooksPath
-///
-/// This function is careful to:
-/// - Only run in the project root (not when used as a dependency)
-/// - Never overwrite existing hook configurations (husky, lefthook, etc.)
-/// - Scope all git commands to the local repository
-fn install_git_hooks() {
-    // Get the manifest directory (where Cargo.toml lives)
-    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
-        Ok(dir) => std::path::PathBuf::from(dir),
-        Err(_) => return,
-    };
-
-    // Only install hooks if we're building the root project, not as a dependency
-    // Check if .git directory exists in this directory
-    if !manifest_dir.join(".git").exists() {
+    // Skip generation if lib-assets already exist and not forced
+    if version_file.exists() && !force {
+        println!("cargo:rerun-if-changed=src/lib-assets/lib_version.json");
+        println!("cargo:rerun-if-changed=conformance/typescript-versions.json");
         return;
     }
 
-    // Check if .githooks directory exists
-    if !manifest_dir.join(".githooks").exists() {
+    // Only auto-generate in debug builds
+    if profile == "release" && !force {
+        if !version_file.exists() {
+            panic!(
+                "src/lib-assets/ not found. Run `node scripts/generate-lib-assets.mjs` first.\n\
+                 For release builds, lib-assets must be pre-generated."
+            );
+        }
         return;
     }
 
-    // Check if any hooks path is already configured (don't overwrite user's setup)
-    let output = Command::new("git")
-        .args([
-            "-C",
-            manifest_dir.to_str().unwrap_or("."),
-            "config",
-            "--local",
-            "--get",
-            "core.hooksPath",
-        ])
-        .output();
+    println!("cargo:warning=Generating lib-assets from TypeScript npm package...");
 
-    match output {
-        Ok(result) => {
-            let current_path = String::from_utf8_lossy(&result.stdout);
-            let trimmed = current_path.trim();
-            // If any hooks path is configured, don't overwrite it
-            if !trimmed.is_empty() {
-                return;
-            }
-        }
-        Err(_) => {
-            // git not available, skip
-            return;
-        }
+    // Check if node is available
+    let node_check = Command::new("node").arg("--version").output();
+    if node_check.is_err() {
+        panic!(
+            "Node.js is required to generate lib-assets.\n\
+             Please install Node.js and run: node scripts/generate-lib-assets.mjs"
+        );
     }
 
-    // Configure git to use .githooks directory (scoped to local repo only)
-    let result = Command::new("git")
-        .args([
-            "-C",
-            manifest_dir.to_str().unwrap_or("."),
-            "config",
-            "--local",
-            "core.hooksPath",
-            ".githooks",
-        ])
+    // Run the generate script
+    let script_path = Path::new(&manifest_dir).join("scripts/generate-lib-assets.mjs");
+    let status = Command::new("node")
+        .arg(&script_path)
+        .current_dir(&manifest_dir)
         .status();
 
-    if let Ok(status) = result {
-        if status.success() {
-            println!("cargo:warning=Git hooks installed (core.hooksPath=.githooks)");
+    match status {
+        Ok(s) if s.success() => {
+            println!("cargo:warning=Lib-assets generated successfully.");
+        }
+        Ok(s) => {
+            panic!(
+                "Failed to generate lib-assets. Exit code: {:?}\n\
+                 Try running manually: node scripts/generate-lib-assets.mjs",
+                s.code()
+            );
+        }
+        Err(e) => {
+            panic!(
+                "Failed to run generate-lib-assets.mjs: {}\n\
+                 Try running manually: node scripts/generate-lib-assets.mjs",
+                e
+            );
         }
     }
+
+    // Tell Cargo to rerun if these files change
+    println!("cargo:rerun-if-changed=scripts/generate-lib-assets.mjs");
+    println!("cargo:rerun-if-changed=conformance/typescript-versions.json");
 }
