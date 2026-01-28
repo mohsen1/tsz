@@ -52,15 +52,15 @@ pub const LIB_DECORATORS_LEGACY: EmbeddedLib = EmbeddedLib {
     references: &[],
 };
 
-/// dom library
+/// dom library (TypeScript .generated version for completeness)
 pub const LIB_DOM: EmbeddedLib = EmbeddedLib {
     name: "dom",
     file_name: "lib.dom.d.ts",
     content: include_str!("lib-assets/dom.d.ts"),
-    references: &[],
+    references: &["es2015", "es2018.asynciterable"],
 };
 
-/// dom.asynciterable library
+/// dom.asynciterable library (TypeScript .generated version)
 pub const LIB_DOM_ASYNCITERABLE: EmbeddedLib = EmbeddedLib {
     name: "dom.asynciterable",
     file_name: "lib.dom.asynciterable.d.ts",
@@ -68,35 +68,11 @@ pub const LIB_DOM_ASYNCITERABLE: EmbeddedLib = EmbeddedLib {
     references: &[],
 };
 
-/// dom.iterable library
+/// dom.iterable library (TypeScript .generated version)
 pub const LIB_DOM_ITERABLE: EmbeddedLib = EmbeddedLib {
     name: "dom.iterable",
     file_name: "lib.dom.iterable.d.ts",
     content: include_str!("lib-assets/dom.iterable.d.ts"),
-    references: &[],
-};
-
-/// dom.generated library (TypeScript .generated version)
-pub const LIB_DOM_GENERATED: EmbeddedLib = EmbeddedLib {
-    name: "dom.generated",
-    file_name: "lib.dom.generated.d.ts",
-    content: include_str!("lib-assets/dom.generated.d.ts"),
-    references: &["es2015", "es2018.asynciterable"],
-};
-
-/// dom.asynciterable.generated library (TypeScript .generated version)
-pub const LIB_DOM_ASYNCITERABLE_GENERATED: EmbeddedLib = EmbeddedLib {
-    name: "dom.asynciterable.generated",
-    file_name: "lib.dom.asynciterable.generated.d.ts",
-    content: include_str!("lib-assets/dom.asynciterable.generated.d.ts"),
-    references: &[],
-};
-
-/// dom.iterable.generated library (TypeScript .generated version)
-pub const LIB_DOM_ITERABLE_GENERATED: EmbeddedLib = EmbeddedLib {
-    name: "dom.iterable.generated",
-    file_name: "lib.dom.iterable.generated.d.ts",
-    content: include_str!("lib-assets/dom.iterable.generated.d.ts"),
     references: &[],
 };
 
@@ -1021,35 +997,11 @@ pub const LIB_WEBWORKER_IMPORTSCRIPTS: EmbeddedLib = EmbeddedLib {
     references: &[],
 };
 
-/// webworker.iterable library
+/// webworker.iterable library (TypeScript .generated version)
 pub const LIB_WEBWORKER_ITERABLE: EmbeddedLib = EmbeddedLib {
     name: "webworker.iterable",
     file_name: "lib.webworker.iterable.d.ts",
     content: include_str!("lib-assets/webworker.iterable.d.ts"),
-    references: &[],
-};
-
-/// webworker.generated library (TypeScript .generated version)
-pub const LIB_WEBWORKER_GENERATED: EmbeddedLib = EmbeddedLib {
-    name: "webworker.generated",
-    file_name: "lib.webworker.generated.d.ts",
-    content: include_str!("lib-assets/webworker.generated.d.ts"),
-    references: &[],
-};
-
-/// webworker.asynciterable.generated library (TypeScript .generated version)
-pub const LIB_WEBWORKER_ASYNCITERABLE_GENERATED: EmbeddedLib = EmbeddedLib {
-    name: "webworker.asynciterable.generated",
-    file_name: "lib.webworker.asynciterable.generated.d.ts",
-    content: include_str!("lib-assets/webworker.asynciterable.generated.d.ts"),
-    references: &[],
-};
-
-/// webworker.iterable.generated library (TypeScript .generated version)
-pub const LIB_WEBWORKER_ITERABLE_GENERATED: EmbeddedLib = EmbeddedLib {
-    name: "webworker.iterable.generated",
-    file_name: "lib.webworker.iterable.generated.d.ts",
-    content: include_str!("lib-assets/webworker.iterable.generated.d.ts"),
     references: &[],
 };
 
@@ -1060,9 +1012,6 @@ pub static ALL_LIBS: &[EmbeddedLib] = &[
     LIB_DOM,
     LIB_DOM_ASYNCITERABLE,
     LIB_DOM_ITERABLE,
-    LIB_DOM_GENERATED,
-    LIB_DOM_ASYNCITERABLE_GENERATED,
-    LIB_DOM_ITERABLE_GENERATED,
     LIB_ES2015,
     LIB_ES2015_COLLECTION,
     LIB_ES2015_CORE,
@@ -1160,9 +1109,6 @@ pub static ALL_LIBS: &[EmbeddedLib] = &[
     LIB_WEBWORKER_ASYNCITERABLE,
     LIB_WEBWORKER_IMPORTSCRIPTS,
     LIB_WEBWORKER_ITERABLE,
-    LIB_WEBWORKER_GENERATED,
-    LIB_WEBWORKER_ASYNCITERABLE_GENERATED,
-    LIB_WEBWORKER_ITERABLE_GENERATED,
 ];
 
 /// Get an embedded lib by name.
