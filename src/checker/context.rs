@@ -704,16 +704,8 @@ impl<'a> CheckerContext<'a> {
         // Check if we've already emitted this diagnostic
         let key = (start, code);
         if self.emitted_diagnostics.contains(&key) {
-            eprintln!(
-                "DEBUG: Duplicate diagnostic suppressed: start={}, code={}",
-                start, code
-            );
             return;
         }
-        eprintln!(
-            "DEBUG: Emitting diagnostic: start={}, code={}, message={}",
-            start, code, message
-        );
         self.emitted_diagnostics.insert(key);
         self.diagnostics.push(Diagnostic::error(
             self.file_name.clone(),
