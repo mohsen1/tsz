@@ -15,7 +15,7 @@ use crate::lib_loader;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::solver::{TypeId, TypeInterner};
-use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts, TestContext};
+use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
 
 // =============================================================================
 // Basic Type Checker Tests

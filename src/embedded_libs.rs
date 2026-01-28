@@ -17,7 +17,7 @@
 //! # Auto-Generated
 //!
 //! Generated from TypeScript npm version: 5.9.3
-//! Generated at: 2026-01-28T02:15:05.193Z
+//! Generated at: 2026-01-28T17:59:28.089Z
 //!
 //! DO NOT EDIT - regenerate with: node scripts/generate-lib-assets.mjs
 
@@ -52,15 +52,15 @@ pub const LIB_DECORATORS_LEGACY: EmbeddedLib = EmbeddedLib {
     references: &[],
 };
 
-/// dom library (TypeScript .generated version for completeness)
+/// dom library
 pub const LIB_DOM: EmbeddedLib = EmbeddedLib {
     name: "dom",
     file_name: "lib.dom.d.ts",
     content: include_str!("lib-assets/dom.d.ts"),
-    references: &["es2015", "es2018.asynciterable"],
+    references: &[],
 };
 
-/// dom.asynciterable library (TypeScript .generated version)
+/// dom.asynciterable library
 pub const LIB_DOM_ASYNCITERABLE: EmbeddedLib = EmbeddedLib {
     name: "dom.asynciterable",
     file_name: "lib.dom.asynciterable.d.ts",
@@ -68,7 +68,7 @@ pub const LIB_DOM_ASYNCITERABLE: EmbeddedLib = EmbeddedLib {
     references: &[],
 };
 
-/// dom.iterable library (TypeScript .generated version)
+/// dom.iterable library
 pub const LIB_DOM_ITERABLE: EmbeddedLib = EmbeddedLib {
     name: "dom.iterable",
     file_name: "lib.dom.iterable.d.ts",
@@ -997,7 +997,7 @@ pub const LIB_WEBWORKER_IMPORTSCRIPTS: EmbeddedLib = EmbeddedLib {
     references: &[],
 };
 
-/// webworker.iterable library (TypeScript .generated version)
+/// webworker.iterable library
 pub const LIB_WEBWORKER_ITERABLE: EmbeddedLib = EmbeddedLib {
     name: "webworker.iterable",
     file_name: "lib.webworker.iterable.d.ts",
