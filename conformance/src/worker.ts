@@ -18,8 +18,15 @@ import {
   loadLibManifest,
   normalizeLibName,
   resolveLibWithDependencies,
+  parseLibReferences,
+  readLibContent,
   type LibManifest,
 } from './lib-manifest.js';
+import {
+  parseTestCase,
+  getLibNamesForDirectives,
+  type ParsedTestCase as SharedParsedTestCase,
+} from './test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,60 +112,24 @@ const getMemoryUsage = () => process.memoryUsage().heapUsed + getWasmMemoryUsage
 let lastActivity = Date.now();
 const HEARTBEAT_INTERVAL = 1000;
 
-const LIB_REFERENCE_RE = /\/\/\/\s*<reference\s+lib=["']([^"']+)["']\s*\/>/g;
+// Lib content cache (shared across tests for efficiency)
 const libContentCache = new Map<string, string>();
-const libPathCache = new Map<string, string>();
 
-function parseLibReferences(source: string): string[] {
-  const refs: string[] = [];
-  for (const match of source.matchAll(LIB_REFERENCE_RE)) {
-    if (match[1]) refs.push(match[1].trim().toLowerCase());
+// Build lib directories list (set during worker init)
+let workerLibDirs: string[] = [];
+
+/**
+ * Read lib content using shared utilities with local caching.
+ */
+function readLibContentLocal(libName: string): string | null {
+  const normalized = normalizeLibName(libName);
+  if (libContentCache.has(normalized)) {
+    return libContentCache.get(normalized)!;
   }
-  return refs;
-}
-
-function resolveLibFilePath(libName: string): string | null {
-  const normalized = libName.trim().toLowerCase();
-  if (libPathCache.has(normalized)) return libPathCache.get(normalized)!;
-
-  // First check tests/lib directory (for lib.d.ts, react.d.ts, etc.)
-  if (hasLibDir && libDir) {
-    const candidates = [
-      path.join(libDir, `lib.${normalized}.d.ts`),
-      path.join(libDir, `${normalized}.d.ts`),
-      path.join(libDir, `${normalized}.generated.d.ts`),
-    ];
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        libPathCache.set(normalized, candidate);
-        return candidate;
-      }
-    }
+  const content = readLibContent(normalized, workerLibDirs);
+  if (content) {
+    libContentCache.set(normalized, content);
   }
-
-  // Fallback to TypeScript node_modules lib directory (for es2015, dom, etc.)
-  if (tsLibDir) {
-    const candidates = [
-      path.join(tsLibDir, `lib.${normalized}.d.ts`),
-    ];
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        libPathCache.set(normalized, candidate);
-        return candidate;
-      }
-    }
-  }
-
-  return null;
-}
-
-function readLibContent(libName: string): string | null {
-  const normalized = libName.trim().toLowerCase();
-  if (libContentCache.has(normalized)) return libContentCache.get(normalized)!;
-  const libFilePath = resolveLibFilePath(normalized);
-  if (!libFilePath) return null;
-  const content = fs.readFileSync(libFilePath, 'utf8');
-  libContentCache.set(normalized, content);
   return content;
 }
 
@@ -167,15 +138,16 @@ function loadLibRecursive(
   out: Map<string, string>,
   seen: Set<string>
 ): void {
-  const normalized = libName.trim().toLowerCase();
+  const normalized = normalizeLibName(libName);
   if (seen.has(normalized)) return;
   seen.add(normalized);
 
-  const content = readLibContent(normalized);
+  const content = readLibContentLocal(normalized);
   if (!content) return;
 
   out.set(`lib.${normalized}.d.ts`, content);
 
+  // Use shared parseLibReferences from lib-manifest.ts
   for (const ref of parseLibReferences(content)) {
     loadLibRecursive(ref, out, seen);
   }
@@ -285,61 +257,24 @@ function collectLibFiles(libNames: string[]): Map<string, string> {
   return out;
 }
 
+/**
+ * Parse test directives using shared utility.
+ * Adds isolatedModules: true for WASM mode (no filesystem access).
+ */
 function parseTestDirectives(code: string, filePath: string): ParsedTestCase {
-  const lines = code.split('\n');
-  const options: Record<string, unknown> = {};
-  let isMultiFile = false;
-  const files: TestFile[] = [];
-  let currentFileName: string | null = null;
-  let currentFileLines: string[] = [];
-  const cleanLines: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/i);
-    if (filenameMatch) {
-      isMultiFile = true;
-      if (currentFileName) {
-        files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-      }
-      currentFileName = filenameMatch[1].trim();
-      currentFileLines = [];
-      continue;
-    }
-
-    const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
-    if (optionMatch) {
-      const [, key, value] = optionMatch;
-      const lowKey = key.toLowerCase();
-      if (value.toLowerCase() === 'true') options[lowKey] = true;
-      else if (value.toLowerCase() === 'false') options[lowKey] = false;
-      else if (!isNaN(Number(value))) options[lowKey] = Number(value);
-      else options[lowKey] = value;
-      continue;
-    }
-
-    if (isMultiFile && currentFileName) {
-      currentFileLines.push(line);
-    } else {
-      cleanLines.push(line);
-    }
-  }
-
-  if (isMultiFile && currentFileName) {
-    files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-  }
-  if (!isMultiFile) {
-    files.push({ name: path.basename(filePath), content: cleanLines.join('\n') });
-  }
-
-  const relativePath = filePath.replace(/.*tests\/cases\//, '');
-  const category = relativePath.split(path.sep)[0] || 'unknown';
+  const parsed = parseTestCase(code, filePath);
 
   // Set isolatedModules: true to avoid false TS2307 errors
   // (we don't have full filesystem access to resolve imports in WASM mode)
-  options.isolatedmodules = true;
+  parsed.directives.isolatedmodules = true;
 
-  return { options, isMultiFile, files, category };
+  // Return in expected format (options field for compatibility)
+  return {
+    options: parsed.directives,
+    isMultiFile: parsed.isMultiFile,
+    files: parsed.files,
+    category: parsed.category,
+  };
 }
 
 // Target string to ScriptTarget mapping
@@ -1061,6 +996,15 @@ process.on('unhandledRejection', (reason) => {
       }
     }
   } catch {}
+
+  // Build lib directories list for shared utilities
+  workerLibDirs = [];
+  if (hasLibDir && libDir) {
+    workerLibDirs.push(libDir);
+  }
+  if (tsLibDir) {
+    workerLibDirs.push(tsLibDir);
+  }
 
   // Load lib manifest for consistent resolution (optional - falls back to file-based)
   try {

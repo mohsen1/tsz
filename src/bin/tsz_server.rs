@@ -282,22 +282,40 @@ impl Server {
     fn load_libs(&mut self, options: &CheckOptions) -> Result<Vec<Arc<LibFile>>> {
         let lib_names = self.determine_libs(options);
         let mut result = Vec::new();
+        let mut loaded = rustc_hash::FxHashSet::default();
 
+        // Load libs with dependencies in order
         for lib_name in lib_names {
-            if let Some(lib) = self.load_lib(&lib_name)? {
-                result.push(lib);
-            }
+            self.load_lib_recursive(&lib_name, &mut result, &mut loaded)?;
         }
 
         Ok(result)
     }
 
-    fn load_lib(&mut self, lib_name: &str) -> Result<Option<Arc<LibFile>>> {
+    /// Load a lib and all its dependencies recursively.
+    /// Dependencies are loaded first (depth-first) to ensure proper ordering.
+    fn load_lib_recursive(
+        &mut self,
+        lib_name: &str,
+        result: &mut Vec<Arc<LibFile>>,
+        loaded: &mut rustc_hash::FxHashSet<String>,
+    ) -> Result<()> {
         let normalized = lib_name.trim().to_lowercase();
 
-        // Check cache
+        // Skip if already loaded
+        if loaded.contains(&normalized) {
+            return Ok(());
+        }
+
+        // Mark as loaded to prevent cycles
+        loaded.insert(normalized.clone());
+
+        // Check cache first
         if let Some(lib) = self.lib_cache.get(&normalized) {
-            return Ok(Some(lib.clone()));
+            // Even if cached, we need to load its dependencies first
+            // Parse references from the cached content (we don't store content, so skip deps for cached)
+            result.push(lib.clone());
+            return Ok(());
         }
 
         // Try to load from disk
@@ -311,7 +329,14 @@ impl Server {
                 let content = std::fs::read_to_string(candidate)
                     .with_context(|| format!("failed to read lib file: {}", candidate.display()))?;
 
-                // Parse and bind
+                // Parse /// <reference lib="..." /> directives BEFORE loading this lib
+                // This ensures dependencies are loaded first
+                let references = Self::parse_lib_references(&content);
+                for ref_lib in references {
+                    self.load_lib_recursive(&ref_lib, result, loaded)?;
+                }
+
+                // Now parse and bind this lib
                 let file_name = format!("lib.{}.d.ts", normalized);
                 let mut parser = ParserState::new(file_name.clone(), content);
                 let root_idx = parser.parse_source_file();
@@ -326,11 +351,43 @@ impl Server {
                 ));
 
                 self.lib_cache.insert(normalized, lib.clone());
-                return Ok(Some(lib));
+                result.push(lib);
+                return Ok(());
             }
         }
 
-        Ok(None)
+        Ok(())
+    }
+
+    /// Parse /// <reference lib="..." /> directives from lib file content.
+    /// Uses simple string parsing instead of regex for performance.
+    fn parse_lib_references(content: &str) -> Vec<String> {
+        let mut refs = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            // Look for: /// <reference lib="..." />
+            if !trimmed.starts_with("///") {
+                continue;
+            }
+            if let Some(start) = trimmed.find("<reference") {
+                let rest = &trimmed[start..];
+                // Find lib=" or lib='
+                if let Some(lib_start) = rest.find("lib=") {
+                    let after_lib = &rest[lib_start + 4..];
+                    // Get the quote character
+                    let quote = after_lib.chars().next();
+                    if quote == Some('"') || quote == Some('\'') {
+                        let quote_char = quote.unwrap();
+                        let value_start = 1; // skip the opening quote
+                        if let Some(end) = after_lib[value_start..].find(quote_char) {
+                            let lib_name = &after_lib[value_start..value_start + end];
+                            refs.push(lib_name.trim().to_lowercase());
+                        }
+                    }
+                }
+            }
+        }
+        refs
     }
 
     fn determine_libs(&self, options: &CheckOptions) -> Vec<String> {
