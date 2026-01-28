@@ -318,7 +318,7 @@ check_docker() {
 ensure_docker_image() {
     if ! docker image inspect "$DOCKER_IMAGE" &>/dev/null; then
         log_step "Building Docker image..."
-        docker build -t "$DOCKER_IMAGE" -f - "$SCRIPT_DIR" << 'DOCKERFILE'
+        docker build --platform linux/amd64 -t "$DOCKER_IMAGE" -f - "$SCRIPT_DIR" << 'DOCKERFILE'
 FROM node:22-slim
 WORKDIR /app
 RUN mkdir -p /app/conformance /app/pkg /app/target /app/TypeScript/tests
