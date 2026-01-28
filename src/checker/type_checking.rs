@@ -2157,7 +2157,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the type is a constructor type.
     pub(crate) fn is_constructor_type(&self, type_id: TypeId) -> bool {
         // First check if it directly has construct signatures
-        if self.has_construct_sig(type_id) {
+        if crate::solver::type_queries::has_construct_signatures(self.ctx.types, type_id) {
             return true;
         }
 
@@ -2226,7 +2226,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Also check if base is directly a Callable with construct signatures
-                self.has_construct_sig(base)
+                crate::solver::type_queries::has_construct_signatures(self.ctx.types, base)
             }
             // Ref to a symbol - check if it's a class symbol or resolve to the actual type
             // This handles cases like:
