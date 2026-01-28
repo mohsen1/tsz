@@ -89,6 +89,17 @@ pub struct BinderState {
     /// Flag indicating we're currently binding inside a `declare global` block
     in_global_augmentation: bool,
 
+    // ===== Module Augmentations (Rule #44) =====
+    /// Tracks interface/type declarations inside `declare module 'x'` blocks that should
+    /// merge with the target module's symbols. Maps module specifier to (decl_name, NodeIndex).
+    pub module_augmentations: FxHashMap<String, Vec<(String, NodeIndex)>>,
+
+    /// Flag indicating we're currently binding inside a module augmentation block
+    in_module_augmentation: bool,
+
+    /// The module specifier being augmented (set when in_module_augmentation is true)
+    current_augmented_module: Option<String>,
+
     /// Lib binders for automatic lib symbol resolution.
     /// When get_symbol() doesn't find a symbol locally, it checks these lib binders.
     pub lib_binders: Vec<Arc<BinderState>>,
@@ -178,6 +189,9 @@ impl BinderState {
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations: FxHashMap::default(),
             in_global_augmentation: false,
+            module_augmentations: FxHashMap::default(),
+            in_module_augmentation: false,
+            current_augmented_module: None,
             lib_binders: Vec::new(),
             lib_symbol_ids: FxHashSet::default(),
             module_exports: FxHashMap::default(),
@@ -213,6 +227,9 @@ impl BinderState {
         self.debugger.clear();
         self.global_augmentations.clear();
         self.in_global_augmentation = false;
+        self.module_augmentations.clear();
+        self.in_module_augmentation = false;
+        self.current_augmented_module = None;
         self.lib_binders.clear();
         self.lib_symbol_ids.clear();
         self.module_exports.clear();
@@ -279,6 +296,9 @@ impl BinderState {
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations: FxHashMap::default(),
             in_global_augmentation: false,
+            module_augmentations: FxHashMap::default(),
+            in_module_augmentation: false,
+            current_augmented_module: None,
             lib_binders: Vec::new(),
             lib_symbol_ids: FxHashSet::default(),
             module_exports: FxHashMap::default(),
@@ -365,6 +385,9 @@ impl BinderState {
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations,
             in_global_augmentation: false,
+            module_augmentations: FxHashMap::default(),
+            in_module_augmentation: false,
+            current_augmented_module: None,
             lib_binders: Vec::new(),
             lib_symbol_ids: FxHashSet::default(),
             module_exports,
@@ -3249,6 +3272,17 @@ impl BinderState {
                     .push(idx);
             }
 
+            // Rule #44: Track module augmentation interfaces
+            // These will be merged with the target module's interface at type resolution time
+            if self.in_module_augmentation {
+                if let Some(ref module_spec) = self.current_augmented_module {
+                    self.module_augmentations
+                        .entry(module_spec.clone())
+                        .or_default()
+                        .push((name.to_string(), idx));
+                }
+            }
+
             self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);
         }
     }
@@ -3267,6 +3301,16 @@ impl BinderState {
                     .entry(name.to_string())
                     .or_default()
                     .push(idx);
+            }
+
+            // Rule #44: Track module augmentation type aliases
+            if self.in_module_augmentation {
+                if let Some(ref module_spec) = self.current_augmented_module {
+                    self.module_augmentations
+                        .entry(module_spec.clone())
+                        .or_default()
+                        .push((name.to_string(), idx));
+                }
             }
 
             self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
@@ -3957,11 +4001,35 @@ impl BinderState {
                     || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
             {
                 // Ambient module declaration with string literal name
-                // These should always be tracked, regardless of whether the file is an external module
                 if let Some(lit) = arena.get_literal(name_node)
                     && !lit.text.is_empty()
                 {
-                    self.declared_modules.insert(lit.text.clone());
+                    let module_specifier = lit.text.clone();
+
+                    // Rule #44: Detect module augmentation
+                    // A `declare module "x"` in an external module (file with imports/exports)
+                    // is a module augmentation if it references an existing or external module.
+                    let is_augmentation = self.is_external_module
+                        && self.is_potential_module_augmentation(&module_specifier);
+
+                    if is_augmentation {
+                        // Track as module augmentation - bind body with augmentation context
+                        if !module.body.is_none() {
+                            self.node_scope_ids
+                                .insert(module.body.0, self.current_scope_id);
+                            let was_in_augmentation = self.in_module_augmentation;
+                            let prev_module = self.current_augmented_module.take();
+                            self.in_module_augmentation = true;
+                            self.current_augmented_module = Some(module_specifier.clone());
+                            self.bind_node(arena, module.body);
+                            self.in_module_augmentation = was_in_augmentation;
+                            self.current_augmented_module = prev_module;
+                        }
+                        return;
+                    }
+
+                    // Not an augmentation - track as ambient module declaration
+                    self.declared_modules.insert(module_specifier);
                 }
             }
 
@@ -4367,6 +4435,28 @@ impl BinderState {
     /// This is used by the checker to determine if ES module semantics apply.
     pub fn is_external_module(&self) -> bool {
         self.is_external_module
+    }
+
+    /// Check if a module specifier likely refers to an existing module that can be augmented.
+    /// Rule #44: Module augmentation vs ambient module declaration detection.
+    ///
+    /// Returns true if:
+    /// - The module specifier refers to an already declared module
+    /// - The specifier looks like an external package (not a relative path)
+    fn is_potential_module_augmentation(&self, module_specifier: &str) -> bool {
+        // Check if we've already declared this module
+        if self.declared_modules.contains(module_specifier) {
+            return true;
+        }
+
+        // Check if we have exports from this module (meaning it was resolved)
+        if self.module_exports.contains_key(module_specifier) {
+            return true;
+        }
+
+        // External packages (not relative paths) are assumed to exist and can be augmented
+        // This handles cases like `declare module 'express' { ... }`
+        !module_specifier.starts_with('.') && !module_specifier.starts_with('/')
     }
 
     /// Get the flow node that was active at a given AST node.

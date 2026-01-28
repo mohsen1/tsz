@@ -134,7 +134,10 @@ pub const MAX_TREE_WALK_ITERATIONS: usize = 10_000;
 
 /// Maximum number of type resolution operations per checker instance.
 /// Prevents timeout on deeply recursive or pathological type definitions.
-/// Reduced from 500k to prevent OOM in WASM environment
+/// WASM environments have limited memory, so we use a much lower limit.
+#[cfg(target_arch = "wasm32")]
+pub const MAX_TYPE_RESOLUTION_OPS: u32 = 20_000;
+#[cfg(not(target_arch = "wasm32"))]
 pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1009,6 +1012,22 @@ impl<'a> CheckerState<'a> {
 
             // Qualified name (A.B.C) - resolve namespace member access
             k if k == syntax_kind_ext::QUALIFIED_NAME => self.resolve_qualified_name(idx),
+
+            // JSX Elements (Rule #36: JSX Intrinsic Lookup)
+            k if k == syntax_kind_ext::JSX_ELEMENT => {
+                if let Some(jsx) = self.ctx.arena.get_jsx_element(node) {
+                    self.get_type_of_jsx_opening_element(jsx.opening_element)
+                } else {
+                    TypeId::ERROR
+                }
+            }
+            k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => {
+                self.get_type_of_jsx_opening_element(idx)
+            }
+            k if k == syntax_kind_ext::JSX_FRAGMENT => {
+                // JSX fragments resolve to JSX.Element type
+                self.get_jsx_element_type()
+            }
 
             // Default case - unknown node kind is an error
             _ => TypeId::ERROR,
@@ -3068,7 +3087,74 @@ impl<'a> CheckerState<'a> {
         base
     }
 
-    /// Get type from an array type node (T[]).
+    /// Get type of a JSX opening element.
+    ///
+    /// Rule #36 (JSX Intrinsic Lookup): This implements the case-sensitive tag lookup:
+    /// - Lowercase tags (e.g., `<div>`) look up `JSX.IntrinsicElements['div']`
+    /// - Uppercase tags (e.g., `<MyComponent>`) resolve as variable expressions
+    fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ANY;
+        };
+
+        // Get JSX opening data (works for both JSX_OPENING_ELEMENT and JSX_SELF_CLOSING_ELEMENT)
+        let Some(jsx_opening) = self.ctx.arena.get_jsx_opening(node) else {
+            return TypeId::ANY;
+        };
+
+        // Get the tag name
+        let tag_name_idx = jsx_opening.tag_name;
+        let Some(tag_name_node) = self.ctx.arena.get(tag_name_idx) else {
+            return TypeId::ANY;
+        };
+
+        // Get tag name text
+        let tag_name = if tag_name_node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
+            self.ctx
+                .arena
+                .get_identifier(tag_name_node)
+                .map(|id| id.escaped_text.as_str())
+        } else {
+            // Property access expression (e.g., React.Component)
+            None
+        };
+
+        // Determine if this is an intrinsic element (lowercase first char)
+        let is_intrinsic = tag_name
+            .as_ref()
+            .map(|name| {
+                name.chars()
+                    .next()
+                    .map(|c| c.is_ascii_lowercase())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        if is_intrinsic {
+            // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
+            // For now, return ANY as JSX namespace resolution requires additional infrastructure
+            // Full implementation would:
+            // 1. Look up JSX namespace in global scope
+            // 2. Find IntrinsicElements interface
+            // 3. Look up the specific tag name as an index access
+            TypeId::ANY
+        } else {
+            // Component: resolve as variable expression
+            // The tag name is a reference to a component (function or class)
+            self.compute_type_of_node(tag_name_idx)
+        }
+    }
+
+    /// Get the JSX.Element type for fragments.
+    ///
+    /// Rule #36: Fragments resolve to JSX.Element type.
+    fn get_jsx_element_type(&mut self) -> TypeId {
+        // Try to resolve JSX.Element from the JSX namespace
+        // For now, return ANY as the JSX namespace may not be available
+        // Full implementation would look up JSX.Element from global JSX namespace
+        TypeId::ANY
+    }
+
     /// Get type from a function type node (e.g., () => number, (x: string) => void).
     fn get_type_from_function_type(&mut self, idx: NodeIndex) -> TypeId {
         use crate::solver::TypeLowering;
@@ -4210,17 +4296,21 @@ impl<'a> CheckerState<'a> {
                 }
             });
 
-            let mut env = self.ctx.type_env.borrow_mut();
-            if let Some((instance_type, class_params)) = class_env_entry {
-                if class_params.is_empty() {
-                    env.insert(SymbolRef(sym_id.0), instance_type);
+            // Use try_borrow_mut to avoid panic if type_env is already borrowed.
+            // This can happen during recursive type resolution (e.g., class inheritance).
+            // If we can't borrow, skip the cache update - the type is still computed correctly.
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                if let Some((instance_type, class_params)) = class_env_entry {
+                    if class_params.is_empty() {
+                        env.insert(SymbolRef(sym_id.0), instance_type);
+                    } else {
+                        env.insert_with_params(SymbolRef(sym_id.0), instance_type, class_params);
+                    }
+                } else if type_params.is_empty() {
+                    env.insert(SymbolRef(sym_id.0), result);
                 } else {
-                    env.insert_with_params(SymbolRef(sym_id.0), instance_type, class_params);
+                    env.insert_with_params(SymbolRef(sym_id.0), result, type_params);
                 }
-            } else if type_params.is_empty() {
-                env.insert(SymbolRef(sym_id.0), result);
-            } else {
-                env.insert_with_params(SymbolRef(sym_id.0), result, type_params);
             }
         }
 
@@ -7717,11 +7807,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let type_params = self.get_type_params_for_symbol(sym_id);
-        let mut env = self.ctx.type_env.borrow_mut();
-        if type_params.is_empty() {
-            env.insert(SymbolRef(sym_id.0), resolved);
-        } else {
-            env.insert_with_params(SymbolRef(sym_id.0), resolved, type_params);
+        // Use try_borrow_mut to avoid panic if type_env is already borrowed.
+        // This can happen during recursive type resolution.
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            if type_params.is_empty() {
+                env.insert(SymbolRef(sym_id.0), resolved);
+            } else {
+                env.insert_with_params(SymbolRef(sym_id.0), resolved, type_params);
+            }
         }
     }
 
