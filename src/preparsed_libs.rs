@@ -17,9 +17,9 @@
 //! - Pre-parsed approach (deserialize only): ~20-50ms
 //! - Improvement: 10-15x faster startup
 
-use bincode::Options;
 use crate::binder::{SymbolArena, SymbolTable};
 use crate::parser::node::NodeArena;
+use bincode::Options;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -172,8 +172,10 @@ pub fn generate_preparsed_libs() -> PreParsedLibs {
 
     for embedded_lib in embedded_libs::get_all_libs() {
         // Parse the lib file
-        let mut parser =
-            ParserState::new(embedded_lib.file_name.to_string(), embedded_lib.content.to_string());
+        let mut parser = ParserState::new(
+            embedded_lib.file_name.to_string(),
+            embedded_lib.content.to_string(),
+        );
         let _source_file_idx = parser.parse_source_file();
 
         // Note: We continue even with parse errors because:
@@ -208,9 +210,9 @@ pub fn write_preparsed_libs(libs: &PreParsedLibs, path: &Path) -> std::io::Resul
     let config = bincode::DefaultOptions::new()
         .with_no_limit()
         .with_fixint_encoding();
-    let data = config.serialize(libs).map_err(|e| {
-        std::io::Error::other(format!("Serialization error: {}", e))
-    })?;
+    let data = config
+        .serialize(libs)
+        .map_err(|e| std::io::Error::other(format!("Serialization error: {}", e)))?;
 
     std::fs::write(path, data)?;
 
@@ -282,11 +284,7 @@ pub fn load_preparsed_libs_for_target(
         .map(|lib| Arc::new(lib.to_lib_file()))
         .collect();
 
-    if libs.is_empty() {
-        None
-    } else {
-        Some(libs)
-    }
+    if libs.is_empty() { None } else { Some(libs) }
 }
 
 #[cfg(test)]

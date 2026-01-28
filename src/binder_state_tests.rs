@@ -9,7 +9,7 @@
 //! - Scope chain traversal
 //! - Module import resolution
 
-use crate::binder::{symbol_flags, BinderState};
+use crate::binder::{BinderState, symbol_flags};
 use crate::parser::ParserState;
 
 // =============================================================================
@@ -2813,8 +2813,12 @@ fn test_lib_symbol_merge_avoids_id_collision() {
     let lib1_array_id = lib1_binder
         .symbols
         .alloc(symbol_flags::INTERFACE, "Array".to_string());
-    lib1_binder.file_locals.set("Object".to_string(), lib1_object_id);
-    lib1_binder.file_locals.set("Array".to_string(), lib1_array_id);
+    lib1_binder
+        .file_locals
+        .set("Object".to_string(), lib1_object_id);
+    lib1_binder
+        .file_locals
+        .set("Array".to_string(), lib1_array_id);
 
     // Lib 2: has "Promise" at SymbolId(0) and "Map" at SymbolId(1)
     // These IDs intentionally overlap with lib1's IDs!
@@ -2825,12 +2829,17 @@ fn test_lib_symbol_merge_avoids_id_collision() {
     let lib2_map_id = lib2_binder
         .symbols
         .alloc(symbol_flags::INTERFACE, "Map".to_string());
-    lib2_binder.file_locals.set("Promise".to_string(), lib2_promise_id);
+    lib2_binder
+        .file_locals
+        .set("Promise".to_string(), lib2_promise_id);
     lib2_binder.file_locals.set("Map".to_string(), lib2_map_id);
 
     // Verify the collision exists (both start at 0)
     assert_eq!(lib1_object_id.0, 0, "lib1 Object should be at ID 0");
-    assert_eq!(lib2_promise_id.0, 0, "lib2 Promise should be at ID 0 (collision!)");
+    assert_eq!(
+        lib2_promise_id.0, 0,
+        "lib2 Promise should be at ID 0 (collision!)"
+    );
 
     // Create a dummy NodeArena (needed for LibContext)
     let dummy_arena = Arc::new(crate::parser::node::NodeArena::new());
@@ -2852,13 +2861,28 @@ fn test_lib_symbol_merge_avoids_id_collision() {
     main_binder.merge_lib_contexts_into_binder(&lib_contexts);
 
     // The flag should be set
-    assert!(main_binder.lib_symbols_are_merged(), "lib_symbols_merged flag should be true");
+    assert!(
+        main_binder.lib_symbols_are_merged(),
+        "lib_symbols_merged flag should be true"
+    );
 
     // All four symbols should be in file_locals with UNIQUE IDs
-    let object_id = main_binder.file_locals.get("Object").expect("Object should exist");
-    let array_id = main_binder.file_locals.get("Array").expect("Array should exist");
-    let promise_id = main_binder.file_locals.get("Promise").expect("Promise should exist");
-    let map_id = main_binder.file_locals.get("Map").expect("Map should exist");
+    let object_id = main_binder
+        .file_locals
+        .get("Object")
+        .expect("Object should exist");
+    let array_id = main_binder
+        .file_locals
+        .get("Array")
+        .expect("Array should exist");
+    let promise_id = main_binder
+        .file_locals
+        .get("Promise")
+        .expect("Promise should exist");
+    let map_id = main_binder
+        .file_locals
+        .get("Map")
+        .expect("Map should exist");
 
     // All IDs must be unique (the fix)
     let ids = vec![object_id, array_id, promise_id, map_id];
@@ -2870,16 +2894,33 @@ fn test_lib_symbol_merge_avoids_id_collision() {
     );
 
     // Each symbol must resolve to correct data via get_symbol
-    let object_sym = main_binder.get_symbol(object_id).expect("Object symbol must resolve");
-    assert_eq!(object_sym.escaped_name, "Object", "Object symbol name mismatch");
+    let object_sym = main_binder
+        .get_symbol(object_id)
+        .expect("Object symbol must resolve");
+    assert_eq!(
+        object_sym.escaped_name, "Object",
+        "Object symbol name mismatch"
+    );
 
-    let promise_sym = main_binder.get_symbol(promise_id).expect("Promise symbol must resolve");
-    assert_eq!(promise_sym.escaped_name, "Promise", "Promise symbol name mismatch");
+    let promise_sym = main_binder
+        .get_symbol(promise_id)
+        .expect("Promise symbol must resolve");
+    assert_eq!(
+        promise_sym.escaped_name, "Promise",
+        "Promise symbol name mismatch"
+    );
 
-    let array_sym = main_binder.get_symbol(array_id).expect("Array symbol must resolve");
-    assert_eq!(array_sym.escaped_name, "Array", "Array symbol name mismatch");
+    let array_sym = main_binder
+        .get_symbol(array_id)
+        .expect("Array symbol must resolve");
+    assert_eq!(
+        array_sym.escaped_name, "Array",
+        "Array symbol name mismatch"
+    );
 
-    let map_sym = main_binder.get_symbol(map_id).expect("Map symbol must resolve");
+    let map_sym = main_binder
+        .get_symbol(map_id)
+        .expect("Map symbol must resolve");
     assert_eq!(map_sym.escaped_name, "Map", "Map symbol name mismatch");
 }
 
@@ -2895,13 +2936,17 @@ fn test_lib_symbol_merge_declaration_merging() {
     let lib1_array_id = lib1_binder
         .symbols
         .alloc(symbol_flags::INTERFACE, "Array".to_string());
-    lib1_binder.file_locals.set("Array".to_string(), lib1_array_id);
+    lib1_binder
+        .file_locals
+        .set("Array".to_string(), lib1_array_id);
 
     let mut lib2_binder = BinderState::new();
     let lib2_array_id = lib2_binder
         .symbols
         .alloc(symbol_flags::INTERFACE, "Array".to_string());
-    lib2_binder.file_locals.set("Array".to_string(), lib2_array_id);
+    lib2_binder
+        .file_locals
+        .set("Array".to_string(), lib2_array_id);
 
     // Create lib contexts
     let dummy_arena = Arc::new(crate::parser::node::NodeArena::new());
@@ -2921,8 +2966,13 @@ fn test_lib_symbol_merge_declaration_merging() {
     main_binder.merge_lib_contexts_into_binder(&lib_contexts);
 
     // Should have only ONE "Array" symbol (merged)
-    let array_id = main_binder.file_locals.get("Array").expect("Array should exist");
-    let array_sym = main_binder.get_symbol(array_id).expect("Array symbol must resolve");
+    let array_id = main_binder
+        .file_locals
+        .get("Array")
+        .expect("Array should exist");
+    let array_sym = main_binder
+        .get_symbol(array_id)
+        .expect("Array symbol must resolve");
 
     // The merged symbol should still be an interface
     assert!(
@@ -2943,7 +2993,9 @@ fn test_lib_symbol_merge_user_precedence() {
     let lib_sym_id = lib_binder
         .symbols
         .alloc(symbol_flags::VARIABLE, "myGlobal".to_string());
-    lib_binder.file_locals.set("myGlobal".to_string(), lib_sym_id);
+    lib_binder
+        .file_locals
+        .set("myGlobal".to_string(), lib_sym_id);
 
     let dummy_arena = Arc::new(crate::parser::node::NodeArena::new());
     let lib_contexts = vec![LibContext {

@@ -1,7 +1,7 @@
-use wasm_bindgen::prelude::*;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use std::sync::Mutex;
+use wasm_bindgen::prelude::*;
 
 // Initialize panic hook for WASM to prevent worker crashes
 #[cfg(target_arch = "wasm32")]
@@ -29,7 +29,7 @@ fn hash_lib_content(content: &str) -> u64 {
 fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loader::LibFile> {
     let content_hash = hash_lib_content(&source_text);
     let cache_key = (file_name.clone(), content_hash);
-    
+
     // Try to get from cache
     {
         let cache = LIB_FILE_CACHE.lock().unwrap();
@@ -37,25 +37,25 @@ fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loa
             return Arc::clone(cached);
         }
     }
-    
+
     // Not in cache - parse and bind
     let mut lib_parser = ParserState::new(file_name.clone(), source_text);
     let source_file_idx = lib_parser.parse_source_file();
-    
+
     let mut lib_binder = BinderState::new();
     lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-    
+
     let arena = Arc::new(lib_parser.into_arena());
     let binder = Arc::new(lib_binder);
-    
+
     let lib_file = Arc::new(lib_loader::LibFile::new(file_name, arena, binder));
-    
+
     // Store in cache
     {
         let mut cache = LIB_FILE_CACHE.lock().unwrap();
         cache.insert(cache_key, Arc::clone(&lib_file));
     }
-    
+
     lib_file
 }
 
@@ -122,8 +122,8 @@ pub use embedded_libs::{EmbeddedLib, get_default_libs_for_target, get_lib, get_l
 // Pre-parsed TypeScript Library Files - For faster startup
 pub mod preparsed_libs;
 pub use preparsed_libs::{
-    PreParsedLib, PreParsedLibs, generate_and_write_cache, get_preparsed_libs,
-    has_preparsed_libs, load_preparsed_libs_for_target,
+    PreParsedLib, PreParsedLibs, generate_and_write_cache, get_preparsed_libs, has_preparsed_libs,
+    load_preparsed_libs_for_target,
 };
 
 // Checker types and implementation (Phase 5)
@@ -233,6 +233,12 @@ pub mod cli;
 // WASM integration module - parallel type checking exports
 pub mod wasm;
 pub use wasm::{WasmParallelChecker, WasmParallelParser, WasmTypeInterner};
+
+// TypeScript API compatibility layer - exposes TS-compatible APIs via WASM
+pub mod wasm_api;
+pub use wasm_api::{
+    TsDiagnostic, TsProgram, TsSignature, TsSourceFile, TsSymbol, TsType, TsTypeChecker,
+};
 
 // Module Resolution Infrastructure (non-wasm targets only - requires file system access)
 #[cfg(not(target_arch = "wasm32"))]
