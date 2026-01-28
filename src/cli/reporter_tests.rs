@@ -56,7 +56,7 @@ fn reporter_formats_diagnostic_with_location() {
     let mut reporter = Reporter::new(false);
     let output = reporter.format_diagnostic(&diagnostic);
 
-    let expected_prefix = format!("{}:2:1 - error TS2304: ", diagnostic.file);
+    let expected_prefix = format!("{}(2,1): error TS2304: ", diagnostic.file);
     assert!(output.starts_with(&expected_prefix), "{output}");
 }
 
@@ -75,7 +75,7 @@ fn reporter_omits_code_when_missing() {
     let mut reporter = Reporter::new(false);
     let output = reporter.format_diagnostic(&diagnostic);
 
-    assert!(output.contains("- error: Parse error"), "{output}");
+    assert!(output.contains(": error: Parse error"), "{output}");
 }
 
 #[test]

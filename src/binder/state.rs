@@ -832,51 +832,51 @@ impl BinderState {
                 };
 
                 // Check if a symbol with this name already exists (cross-lib merging)
-                let new_id =
-                    if let Some(&existing_id) = merged_by_name.get(&lib_sym.escaped_name) {
-                        // Symbol already exists - check if we can merge
-                        if let Some(existing_sym) = self.symbols.get(existing_id) {
-                            if Self::can_merge_symbols(existing_sym.flags, lib_sym.flags) {
-                                // Merge: reuse existing symbol ID, merge declarations
-                                if let Some(existing_mut) = self.symbols.get_mut(existing_id) {
-                                    existing_mut.flags |= lib_sym.flags;
-                                    for decl in &lib_sym.declarations {
-                                        if !existing_mut.declarations.contains(decl) {
-                                            existing_mut.declarations.push(*decl);
-                                        }
-                                    }
-                                    // Update value_declaration if not set
-                                    if existing_mut.value_declaration.is_none()
-                                        && !lib_sym.value_declaration.is_none()
-                                    {
-                                        existing_mut.value_declaration = lib_sym.value_declaration;
+                let new_id = if let Some(&existing_id) = merged_by_name.get(&lib_sym.escaped_name) {
+                    // Symbol already exists - check if we can merge
+                    if let Some(existing_sym) = self.symbols.get(existing_id) {
+                        if Self::can_merge_symbols(existing_sym.flags, lib_sym.flags) {
+                            // Merge: reuse existing symbol ID, merge declarations
+                            if let Some(existing_mut) = self.symbols.get_mut(existing_id) {
+                                existing_mut.flags |= lib_sym.flags;
+                                for decl in &lib_sym.declarations {
+                                    if !existing_mut.declarations.contains(decl) {
+                                        existing_mut.declarations.push(*decl);
                                     }
                                 }
-                                existing_id
-                            } else {
-                                // Cannot merge - allocate new (shadowing)
-                                let new_id = self.symbols.alloc_from(lib_sym);
-                                merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
-                                new_id
+                                // Update value_declaration if not set
+                                if existing_mut.value_declaration.is_none()
+                                    && !lib_sym.value_declaration.is_none()
+                                {
+                                    existing_mut.value_declaration = lib_sym.value_declaration;
+                                }
                             }
+                            existing_id
                         } else {
-                            // Shouldn't happen - allocate new
+                            // Cannot merge - allocate new (shadowing)
                             let new_id = self.symbols.alloc_from(lib_sym);
                             merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
                             new_id
                         }
                     } else {
-                        // New symbol - allocate in local arena
+                        // Shouldn't happen - allocate new
                         let new_id = self.symbols.alloc_from(lib_sym);
                         merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
                         new_id
-                    };
+                    }
+                } else {
+                    // New symbol - allocate in local arena
+                    let new_id = self.symbols.alloc_from(lib_sym);
+                    merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
+                    new_id
+                };
 
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), new_id);
 
                 // Track which arena contains this symbol's declarations
-                self.symbol_arenas.insert(new_id, Arc::clone(&lib_ctx.arena));
+                self.symbol_arenas
+                    .insert(new_id, Arc::clone(&lib_ctx.arena));
             }
         }
 

@@ -47,7 +47,7 @@ impl Reporter {
             output.push_str("<unknown>");
         }
 
-        output.push_str(" - ");
+        output.push_str(": ");
         output.push_str(&category);
         if !code.is_empty() {
             output.push(' ');
@@ -166,7 +166,7 @@ impl Reporter {
         }
 
         let (line, column) = self.position_for(file, offset)?;
-        Some(format!("{}:{}:{}", file, line, column))
+        Some(format!("{}({},{})", file, line, column))
     }
 
     fn position_for(&mut self, file: &str, offset: u32) -> Option<(u32, u32)> {

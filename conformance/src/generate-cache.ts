@@ -134,6 +134,7 @@ async function generateCache(workerCount: number): Promise<void> {
   // Create a pool of workers
   const workerPath = path.join(__dirname, 'cache-worker.js');
   const libPath = path.join(ROOT_DIR, 'TypeScript/tests/lib/lib.d.ts');
+  const libDir = path.join(ROOT_DIR, 'TypeScript/src/lib');
   const libSource = fs.existsSync(libPath) ? fs.readFileSync(libPath, 'utf8') : '';
 
   const workers: Worker[] = [];
@@ -163,7 +164,7 @@ async function generateCache(workerCount: number): Promise<void> {
   // Create workers
   for (let i = 0; i < workerCount; i++) {
     const worker = new Worker(workerPath, {
-      workerData: { libSource, testsBasePath: TESTS_BASE_PATH },
+      workerData: { libSource, libDir, testsBasePath: TESTS_BASE_PATH },
     });
 
     worker.on('message', (msg: { id: number; codes: number[]; error?: string; type?: string }) => {

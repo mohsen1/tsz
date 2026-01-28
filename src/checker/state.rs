@@ -3571,14 +3571,14 @@ impl<'a> CheckerState<'a> {
                 let key_type = if !param_data.type_annotation.is_none() {
                     self.get_type_from_type_node_in_type_literal(param_data.type_annotation)
                 } else {
-                    // Return UNKNOWN instead of ANY for index signature key without annotation
-                    TypeId::UNKNOWN
+                    // Missing annotation defaults to ANY (TS7011 reported separately)
+                    TypeId::ANY
                 };
                 let value_type = if !index_sig.type_annotation.is_none() {
                     self.get_type_from_type_node_in_type_literal(index_sig.type_annotation)
                 } else {
-                    // Return UNKNOWN instead of ANY for index signature value without annotation
-                    TypeId::UNKNOWN
+                    // Missing annotation defaults to ANY (TS7011 reported separately)
+                    TypeId::ANY
                 };
                 let readonly = self.has_readonly_modifier(&index_sig.modifiers);
                 let info = IndexSignature {
@@ -4555,11 +4555,10 @@ impl<'a> CheckerState<'a> {
                             let module_type = self.ctx.types.object(props);
                             return (module_type, Vec::new());
                         }
-                        // Module not found - emit TS2307 error and return ERROR to expose type errors
-                        // Returning ANY would suppress downstream errors (poisoning)
-                        // Returning ERROR allows proper error propagation for invalid property access
+                        // Module not found - emit TS2307 error and return ANY
+                        // TypeScript treats unresolved imports as `any` to avoid cascading errors
                         self.emit_module_not_found_error(&module_specifier, value_decl);
-                        return (TypeId::ERROR, Vec::new());
+                        return (TypeId::ANY, Vec::new());
                     }
                     // Fall back to get_type_of_node for simple identifiers
                     return (self.get_type_of_node(import.module_specifier), Vec::new());
@@ -4605,9 +4604,10 @@ impl<'a> CheckerState<'a> {
                         let module_type = self.ctx.types.object(props);
                         return (module_type, Vec::new());
                     }
-                    // Module not found - emit TS2307 error and return ERROR
+                    // Module not found - emit TS2307 error and return ANY
+                    // TypeScript treats unresolved imports as `any` to avoid cascading errors
                     self.emit_module_not_found_error(module_name, value_decl);
-                    return (TypeId::ERROR, Vec::new());
+                    return (TypeId::ANY, Vec::new());
                 }
 
                 // This is a named import: import { X } from 'module'
