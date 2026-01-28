@@ -13,6 +13,7 @@ import 'dotenv/config';
 // ./scripts/ask-gemini.mjs --solver "How does type inference work?"
 // ./scripts/ask-gemini.mjs --checker "How are diagnostics reported?"
 // ./scripts/ask-gemini.mjs --include="src/solver" "Custom path question"
+// ./scripts/ask-gemini.mjs --no-use-vertex "Use direct Gemini API instead of Vertex"
 
 const DEFAULT_CONTEXT_LENGTH = '850k';
 const DEFAULT_MODEL = 'gemini-3-pro-preview';
@@ -152,8 +153,11 @@ const { values, positionals } = parseArgs({
     dry: { type: 'boolean', default: false },
     // List available presets
     list: { type: 'boolean', default: false },
+    // Use Vertex AI (default) or direct Gemini API (--no-use-vertex)
+    'use-vertex': { type: 'boolean', default: true },
   },
   allowPositionals: true,
+  allowNegative: true,
 });
 
 if (values.list) {
@@ -186,10 +190,14 @@ General Options:
   -m, --model=NAME    Gemini model (default: ${DEFAULT_MODEL})
   --dry               Show files that would be included without calling API
   --list              List all available presets with descriptions
+  --no-use-vertex     Use direct Gemini API instead of Vertex AI (fallback for
+                      rate limits or when Vertex credentials aren't available)
   -h, --help          Show this help message
 
 Environment:
-  GEMINI_API_KEY      Required. Your Google AI API key.
+  GOOGLE_CLOUD_PROJECT  Required for Vertex AI. Your GCP project ID.
+  GOOGLE_CLOUD_REGION   Vertex AI region (default: us-central1).
+  GEMINI_API_KEY        Required for direct Gemini API (--no-use-vertex).
 
 Examples:
   ./scripts/ask-gemini.mjs --solver "How does type inference work?"
@@ -200,6 +208,7 @@ Examples:
   ./scripts/ask-gemini.mjs --lsp "How does go-to-definition work?"
   ./scripts/ask-gemini.mjs --modules "How does module resolution work?"
   ./scripts/ask-gemini.mjs --include=src/solver "Custom path question"
+  ./scripts/ask-gemini.mjs --no-use-vertex "Use direct Gemini API (fallback)"
   ./scripts/ask-gemini.mjs --list  # Show all presets
 `);
   process.exit(0);
@@ -229,13 +238,27 @@ if (values.include) {
   includePaths = activePreset.paths.join(' ');
 }
 
+const useVertex = values['use-vertex'];
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GOOGLE_CLOUD_PROJECT = process.env.GOOGLE_CLOUD_PROJECT;
+const GOOGLE_CLOUD_REGION = process.env.GOOGLE_CLOUD_REGION || 'us-central1';
 
-if (!GEMINI_API_KEY && !values.dry) {
-  console.error('Error: GEMINI_API_KEY environment variable is not set.');
-  console.error('Get an API key at: https://aistudio.google.com/apikey');
-  console.error('(Use --dry to see files without calling API)');
-  process.exit(1);
+if (!values.dry) {
+  if (useVertex) {
+    if (!GOOGLE_CLOUD_PROJECT) {
+      console.error('Error: GOOGLE_CLOUD_PROJECT environment variable is not set.');
+      console.error('Set it to your GCP project ID, or use --no-use-vertex to use direct Gemini API.');
+      console.error('(Use --dry to see files without calling API)');
+      process.exit(1);
+    }
+  } else {
+    if (!GEMINI_API_KEY) {
+      console.error('Error: GEMINI_API_KEY environment variable is not set.');
+      console.error('Get an API key at: https://aistudio.google.com/apikey');
+      console.error('(Use --dry to see files without calling API)');
+      process.exit(1);
+    }
+  }
 }
 
 const prompt = positionals[0];
@@ -252,6 +275,7 @@ try {
     console.log(`Using preset: --${presetName} (${activePreset.description})`);
   }
   console.log(`Using model: ${values.model}`);
+  console.log(`Using API: ${useVertex ? `Vertex AI (${GOOGLE_CLOUD_REGION})` : 'Direct Gemini API'}`);
   console.log(`Token limit: ${tokenLimit}`);
   console.log('Gathering context with yek...');
 
@@ -344,9 +368,30 @@ ${fileTree}
     process.exit(0);
   }
 
-  console.log('Sending to Gemini...');
+  console.log(`Sending to Gemini via ${useVertex ? 'Vertex AI' : 'direct API'}...`);
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${values.model}:generateContent?key=${GEMINI_API_KEY}`;
+  let url;
+  let headers = { 'Content-Type': 'application/json' };
+
+  if (useVertex) {
+    // Vertex AI endpoint - requires gcloud auth
+    url = `https://${GOOGLE_CLOUD_REGION}-aiplatform.googleapis.com/v1/projects/${GOOGLE_CLOUD_PROJECT}/locations/${GOOGLE_CLOUD_REGION}/publishers/google/models/${values.model}:generateContent`;
+
+    // Get access token from gcloud
+    let accessToken;
+    try {
+      accessToken = execSync('gcloud auth print-access-token', { encoding: 'utf-8' }).trim();
+    } catch (error) {
+      console.error('Error: Failed to get access token from gcloud.');
+      console.error('Make sure you are authenticated: gcloud auth login');
+      console.error('Or use --no-use-vertex to use direct Gemini API instead.');
+      process.exit(1);
+    }
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  } else {
+    // Direct Gemini API endpoint
+    url = `https://generativelanguage.googleapis.com/v1beta/models/${values.model}:generateContent?key=${GEMINI_API_KEY}`;
+  }
 
   // Build system prompt based on preset
   let systemPrompt = 'You are an expert on the tsz TypeScript compiler codebase (TypeScript compiler written in Rust).';
@@ -435,15 +480,16 @@ Answer questions accurately based on the provided context. Reference specific fi
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
     console.error(`HTTP Error ${response.status}: ${errorText}`);
+    if (useVertex && (response.status === 429 || response.status === 503)) {
+      console.error('\nHint: If Vertex AI is rate-limited, try --no-use-vertex to use direct Gemini API.');
+    }
     process.exit(1);
   }
 
