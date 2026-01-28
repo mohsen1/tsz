@@ -14,6 +14,7 @@
 //! - Lazy evaluation - only compute types that are queried
 //! - Incremental recomputation via Salsa queries
 mod apparent;
+mod application;
 pub mod binary_ops;
 mod compat;
 mod contextual;
@@ -47,6 +48,7 @@ pub mod visitor;
 pub use visitor::*;
 
 pub(crate) use apparent::*;
+pub use application::*;
 pub use binary_ops::*;
 pub use compat::*;
 pub use contextual::*;
