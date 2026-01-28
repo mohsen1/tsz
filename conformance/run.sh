@@ -1,0 +1,698 @@
+#!/usr/bin/env bash
+#
+# TSZ Conformance Test Runner
+# ===========================
+#
+# A unified script for running TypeScript conformance tests against the tsz compiler.
+# Supports multiple execution modes: WASM in Docker, native binary in Docker, or native
+# binary directly on the host.
+#
+# Usage: ./run.sh [command] [options]
+#
+# Examples:
+#   ./run.sh                          # Run with defaults (WASM + Docker, 500 tests)
+#   ./run.sh --all                    # Run all tests
+#   ./run.sh --native --no-docker     # Run native binary without Docker (macOS)
+#   ./run.sh --max=100 --verbose      # Run 100 tests with verbose output
+#   ./run.sh cache generate           # Generate TSC cache for faster runs
+#   ./run.sh single path/to/test.ts   # Run a single test file
+#
+# For full help: ./run.sh --help
+#
+
+set -euo pipefail
+
+# ==============================================================================
+# Configuration
+# ==============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DOCKER_IMAGE="tsz-conformance"
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    RESET='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' RESET=''
+fi
+
+# ==============================================================================
+# Help System
+# ==============================================================================
+
+show_help() {
+    cat << 'EOF'
+TSZ Conformance Test Runner
+===========================
+
+USAGE:
+    ./run.sh [command] [options]
+    ./run.sh [options]
+
+COMMANDS:
+    (default)       Run conformance tests with the configured options
+    cache           Manage TSC result cache (see CACHE COMMANDS below)
+    single <file>   Run a single test file and show detailed output
+    help            Show this help message
+
+CACHE COMMANDS:
+    cache generate  Generate/update TSC cache (speeds up subsequent runs)
+    cache status    Show cache status and statistics
+    cache clear     Clear the TSC cache
+
+OPTIONS:
+    Execution Mode:
+    --wasm              Use WASM module (default)
+    --native            Use native binary (faster, requires Rust toolchain)
+    --docker            Run inside Docker container (default, provides isolation)
+    --no-docker         Run directly on host (faster, no isolation)
+
+    Test Selection:
+    --all               Run all available tests (overrides --max)
+    --max=N             Maximum number of tests to run (default: 500)
+    --category=CAT      Test categories to run, comma-separated
+                        Options: conformance, compiler, projects
+                        Default: conformance,compiler,projects
+    --filter=PATTERN    Only run tests matching glob pattern
+
+    Execution:
+    --workers=N         Number of parallel workers (default: auto-detect)
+    --timeout=SECS      Test timeout in seconds (default: 600 for normal, 3600 for --all)
+
+    Output:
+    -v, --verbose       Show detailed output for each test
+    -q, --quiet         Minimal output (only summary)
+    --json              Output results as JSON (implies --quiet)
+
+    Other:
+    -h, --help          Show this help message
+    --version           Show version information
+    --dry-run           Show what would be run without executing
+
+EXAMPLES:
+    # Quick test run with defaults (WASM + Docker, 500 tests)
+    ./run.sh
+
+    # Run all tests with native binary (macOS - no Docker)
+    ./run.sh --native --no-docker --all --workers=8
+
+    # Run compiler tests only, verbose output
+    ./run.sh --category=compiler --verbose
+
+    # Run specific number of tests with WASM
+    ./run.sh --wasm --max=1000
+
+    # Generate cache for faster subsequent runs
+    ./run.sh cache generate
+
+    # Test a single file
+    ./run.sh single TypeScript/tests/cases/conformance/types/tuple/test.ts
+
+EXECUTION MODES:
+    The runner supports four execution modes:
+
+    1. WASM + Docker (default, safest)
+       - Builds WASM module with wasm-pack
+       - Runs tests inside Docker container
+       - Best isolation from infinite loops/OOM
+       - Cross-platform compatible
+
+    2. WASM + No Docker
+       - Builds WASM module
+       - Runs directly on host
+       - Good isolation (WASM sandbox)
+       - Faster than Docker mode
+
+    3. Native + Docker (Linux only)
+       - Builds native binary with cargo
+       - Runs inside Docker container
+       - ⚠️  Does NOT work on macOS (binary architecture mismatch)
+
+    4. Native + No Docker (fastest)
+       - Builds native binary with cargo
+       - Runs directly on host
+       - Fastest execution
+       - ⚠️  No isolation - infinite loops can hang your system
+
+CONFIGURATION:
+    The script respects .cargo/config.toml settings:
+    - target-dir: Uses .target/ instead of target/ if configured
+
+    Environment variables:
+    - TSZ_BINARY: Override path to native binary
+    - RUST_LOG: Set logging level for native binary (debug, trace, etc.)
+
+FILES:
+    conformance/
+    ├── run.sh              This script
+    ├── src/                TypeScript runner source
+    ├── dist/               Compiled runner
+    ├── .tsc-cache/         TSC result cache
+    └── package.json        Node.js dependencies
+
+EXIT CODES:
+    0    All tests passed
+    1    Some tests failed or crashed
+    2    Invalid arguments or configuration error
+    124  Timeout exceeded
+
+EOF
+}
+
+show_version() {
+    echo "TSZ Conformance Test Runner v1.0.0"
+    echo "Rust: $(rustc --version 2>/dev/null || echo 'not installed')"
+    echo "Node: $(node --version 2>/dev/null || echo 'not installed')"
+    echo "Docker: $(docker --version 2>/dev/null || echo 'not installed')"
+}
+
+# ==============================================================================
+# Utility Functions
+# ==============================================================================
+
+log_info()    { echo -e "${BLUE}ℹ${RESET}  $*"; }
+log_success() { echo -e "${GREEN}✓${RESET}  $*"; }
+log_warning() { echo -e "${YELLOW}⚠${RESET}  $*"; }
+log_error()   { echo -e "${RED}✗${RESET}  $*" >&2; }
+log_step()    { echo -e "${CYAN}→${RESET}  $*"; }
+
+die() {
+    log_error "$@"
+    exit 2
+}
+
+# Detect number of CPU cores
+detect_cores() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sysctl -n hw.ncpu
+    elif [[ -f /proc/cpuinfo ]]; then
+        grep -c ^processor /proc/cpuinfo
+    else
+        echo 4
+    fi
+}
+
+# Check if a command exists
+require_cmd() {
+    if ! command -v "$1" &>/dev/null; then
+        die "Required command not found: $1"
+    fi
+}
+
+# Get target directory from cargo config
+get_target_dir() {
+    local config_file="$ROOT_DIR/.cargo/config.toml"
+    if [[ -f "$config_file" ]]; then
+        local dir
+        dir=$(grep -E '^target-dir\s*=' "$config_file" 2>/dev/null | sed 's/.*=\s*"\?\([^"]*\)"\?.*/\1/' | tr -d '[:space:]')
+        if [[ -n "$dir" ]]; then
+            echo "$ROOT_DIR/$dir"
+            return
+        fi
+    fi
+    echo "$ROOT_DIR/target"
+}
+
+# ==============================================================================
+# Build Functions
+# ==============================================================================
+
+build_wasm() {
+    log_step "Building WASM module..."
+    cd "$ROOT_DIR"
+    
+    if ! command -v wasm-pack &>/dev/null; then
+        die "wasm-pack not found. Install with: cargo install wasm-pack"
+    fi
+    
+    wasm-pack build --target nodejs --out-dir pkg --release
+    log_success "WASM module built"
+    
+    copy_lib_files "$ROOT_DIR/pkg/lib"
+}
+
+build_native() {
+    log_step "Building native binary..."
+    cd "$ROOT_DIR"
+    
+    require_cmd cargo
+    cargo build --release --bin tsz
+    log_success "Native binary built"
+    
+    local target_dir
+    target_dir=$(get_target_dir)
+    copy_lib_files "$target_dir/release/lib"
+}
+
+copy_lib_files() {
+    local dest_dir="$1"
+    local lib_src="$ROOT_DIR/TypeScript/lib"
+    local lib_src_alt="$ROOT_DIR/TypeScript/src/lib"
+    
+    if [[ -d "$lib_src" ]]; then
+        log_step "Copying TypeScript lib files..."
+        rm -rf "$dest_dir"
+        mkdir -p "$dest_dir"
+        cp -R "$lib_src/." "$dest_dir/"
+    elif [[ -d "$lib_src_alt" ]]; then
+        log_step "Copying TypeScript lib files (from source)..."
+        rm -rf "$dest_dir"
+        mkdir -p "$dest_dir"
+        cp -R "$lib_src_alt/." "$dest_dir/"
+    else
+        log_warning "TypeScript lib directory not found; skipping"
+    fi
+}
+
+build_runner() {
+    log_step "Building conformance runner..."
+    cd "$SCRIPT_DIR"
+    
+    if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/typescript" ]]; then
+        npm install --silent 2>/dev/null || npm install
+    fi
+    
+    npm run build --silent 2>/dev/null || npm run build
+    log_success "Runner built"
+}
+
+# ==============================================================================
+# Docker Functions
+# ==============================================================================
+
+check_docker() {
+    if ! command -v docker &>/dev/null; then
+        die "Docker not found. Install from: https://docs.docker.com/get-docker/"
+    fi
+    
+    if ! docker info &>/dev/null; then
+        die "Docker daemon not running. Start Docker Desktop or run: sudo systemctl start docker"
+    fi
+}
+
+ensure_docker_image() {
+    if ! docker image inspect "$DOCKER_IMAGE" &>/dev/null; then
+        log_step "Building Docker image..."
+        docker build -t "$DOCKER_IMAGE" -f - "$SCRIPT_DIR" << 'DOCKERFILE'
+FROM node:22-slim
+WORKDIR /app
+RUN mkdir -p /app/conformance /app/pkg /app/target /app/TypeScript/tests
+DOCKERFILE
+    fi
+    log_success "Docker image ready"
+}
+
+# ==============================================================================
+# Cache Commands
+# ==============================================================================
+
+cmd_cache() {
+    local subcmd="${1:-status}"
+    
+    build_runner
+    
+    case "$subcmd" in
+        generate)
+            log_step "Generating TSC cache..."
+            cd "$SCRIPT_DIR"
+            node dist/generate-cache.js
+            ;;
+        status)
+            cd "$SCRIPT_DIR"
+            node dist/generate-cache.js --status
+            ;;
+        clear)
+            log_step "Clearing TSC cache..."
+            cd "$SCRIPT_DIR"
+            node dist/generate-cache.js --clear
+            log_success "Cache cleared"
+            ;;
+        *)
+            die "Unknown cache command: $subcmd (use: generate, status, clear)"
+            ;;
+    esac
+}
+
+# ==============================================================================
+# Single Test Command
+# ==============================================================================
+
+cmd_single() {
+    local test_file="$1"
+    
+    if [[ -z "$test_file" ]]; then
+        die "Usage: ./run.sh single <path/to/test.ts>"
+    fi
+    
+    if [[ ! -f "$test_file" ]] && [[ ! -f "$ROOT_DIR/$test_file" ]]; then
+        die "Test file not found: $test_file"
+    fi
+    
+    # Resolve to absolute path
+    if [[ ! "$test_file" = /* ]]; then
+        if [[ -f "$ROOT_DIR/$test_file" ]]; then
+            test_file="$ROOT_DIR/$test_file"
+        else
+            test_file="$(pwd)/$test_file"
+        fi
+    fi
+    
+    build_native
+    
+    local target_dir
+    target_dir=$(get_target_dir)
+    local binary="$target_dir/release/tsz"
+    
+    echo ""
+    echo -e "${BOLD}Running: ${RESET}$test_file"
+    echo "─────────────────────────────────────────────────────────────"
+    echo ""
+    
+    cd "$ROOT_DIR"
+    "$binary" "$test_file" 2>&1 || true
+    
+    echo ""
+    echo "─────────────────────────────────────────────────────────────"
+}
+
+# ==============================================================================
+# Main Test Runner
+# ==============================================================================
+
+run_tests() {
+    local use_wasm="$1"
+    local use_docker="$2"
+    local max_tests="$3"
+    local workers="$4"
+    local timeout="$5"
+    local categories="$6"
+    local verbose="$7"
+    
+    # Validate mode combinations
+    if [[ "$use_docker" == "true" ]] && [[ "$use_wasm" == "false" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
+        echo ""
+        log_error "Native binary + Docker does not work on macOS!"
+        echo ""
+        echo "  The macOS-compiled binary cannot run inside the Linux Docker container."
+        echo ""
+        echo "  Options:"
+        echo "    1. Use --no-docker to run native binary directly"
+        echo "    2. Use --wasm with Docker (platform-independent)"
+        echo ""
+        echo "  Example: ./run.sh --native --no-docker --all"
+        echo ""
+        exit 2
+    fi
+    
+    # Print banner
+    local mode_desc
+    if [[ "$use_wasm" == "true" ]]; then
+        mode_desc="WASM"
+    else
+        mode_desc="Native"
+    fi
+    if [[ "$use_docker" == "true" ]]; then
+        mode_desc="$mode_desc + Docker"
+    else
+        mode_desc="$mode_desc (direct)"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                         ${RESET}${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
+    echo -e "${CYAN}║${RESET}  Mode:       $(printf '%-48s' "$mode_desc")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$max_tests")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Workers:    $(printf '%-48s' "$workers")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Categories: $(printf '%-48s' "$categories")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Timeout:    $(printf '%-48s' "${timeout}s")${CYAN}║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+    
+    # Build phase
+    if [[ "$use_wasm" == "true" ]]; then
+        build_wasm
+    else
+        build_native
+    fi
+    
+    build_runner
+    
+    # Build runner args
+    local runner_args="--max=$max_tests --workers=$workers --category=$categories --wasm=$use_wasm"
+    if [[ "$verbose" == "true" ]]; then
+        runner_args="$runner_args --verbose"
+    fi
+    
+    if [[ "$use_docker" == "true" ]]; then
+        run_in_docker "$use_wasm" "$workers" "$timeout" "$runner_args"
+    else
+        run_direct "$use_wasm" "$timeout" "$runner_args"
+    fi
+}
+
+run_in_docker() {
+    local use_wasm="$1"
+    local workers="$2"
+    local timeout="$3"
+    local runner_args="$4"
+    
+    check_docker
+    ensure_docker_image
+    
+    # Calculate memory: ~1.5GB per worker, minimum 4GB
+    local memory_gb=$(( workers * 3 / 2 ))
+    if (( memory_gb < 4 )); then memory_gb=4; fi
+    
+    log_step "Running tests in Docker (Memory: ${memory_gb}GB, CPUs: $workers)..."
+    echo ""
+    
+    local mount_dir
+    if [[ "$use_wasm" == "true" ]]; then
+        mount_dir="$ROOT_DIR/pkg"
+    else
+        mount_dir="$(get_target_dir)"
+    fi
+    
+    docker run --rm \
+        --memory="${memory_gb}g" \
+        --memory-swap="${memory_gb}g" \
+        --cpus="$workers" \
+        --pids-limit=1000 \
+        -v "$mount_dir:/app/target:ro" \
+        -v "$ROOT_DIR/pkg:/app/pkg:ro" \
+        -v "$SCRIPT_DIR/src:/app/conformance/src:ro" \
+        -v "$SCRIPT_DIR/dist:/app/conformance/dist:ro" \
+        -v "$SCRIPT_DIR/package.json:/app/conformance/package.json:ro" \
+        -v "$SCRIPT_DIR/.tsc-cache:/app/conformance/.tsc-cache:ro" \
+        -v "$ROOT_DIR/TypeScript/tests:/app/TypeScript/tests:ro" \
+        "$DOCKER_IMAGE" sh -c "
+            cd /app/conformance
+            npm install --silent 2>/dev/null || true
+            timeout ${timeout}s node --expose-gc dist/runner.js $runner_args
+            EXIT_CODE=\$?
+            if [ \$EXIT_CODE -eq 124 ]; then
+                echo ''
+                echo '⏱️  Tests timed out after ${timeout}s'
+            fi
+            exit \$EXIT_CODE
+        "
+}
+
+run_direct() {
+    local use_wasm="$1"
+    local timeout="$2"
+    local runner_args="$3"
+    
+    if [[ "$use_wasm" == "false" ]]; then
+        log_warning "Running without Docker isolation. Infinite loops may hang your system."
+        echo ""
+    fi
+    
+    log_step "Running tests..."
+    echo ""
+    
+    cd "$SCRIPT_DIR"
+    
+    # Set native binary path if using native mode
+    if [[ "$use_wasm" == "false" ]]; then
+        local target_dir
+        target_dir=$(get_target_dir)
+        export TSZ_BINARY="$target_dir/release/tsz"
+    fi
+    
+    # Run with timeout
+    if command -v timeout &>/dev/null; then
+        timeout "${timeout}s" node --expose-gc dist/runner.js $runner_args || {
+            local exit_code=$?
+            if [[ $exit_code -eq 124 ]]; then
+                echo ""
+                log_warning "Tests timed out after ${timeout}s"
+            fi
+            return $exit_code
+        }
+    else
+        # macOS doesn't have timeout by default
+        node --expose-gc dist/runner.js $runner_args
+    fi
+}
+
+# ==============================================================================
+# Argument Parsing
+# ==============================================================================
+
+main() {
+    # Defaults
+    local use_wasm=true
+    local use_docker=true
+    local max_tests=500
+    local workers=""
+    local timeout=600
+    local categories="conformance,compiler,projects"
+    local verbose=false
+    local dry_run=false
+    local command=""
+    local positional_args=()
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            # Commands
+            help|--help|-h)
+                show_help
+                exit 0
+                ;;
+            --version)
+                show_version
+                exit 0
+                ;;
+            cache)
+                command="cache"
+                shift
+                positional_args+=("$@")
+                break
+                ;;
+            single)
+                command="single"
+                shift
+                positional_args+=("$@")
+                break
+                ;;
+            
+            # Mode options
+            --wasm)
+                use_wasm=true
+                ;;
+            --native)
+                use_wasm=false
+                ;;
+            --docker)
+                use_docker=true
+                ;;
+            --no-docker|--no-sandbox)
+                use_docker=false
+                ;;
+            
+            # Test selection
+            --all)
+                max_tests=99999
+                timeout=3600
+                ;;
+            --max=*)
+                max_tests="${1#*=}"
+                ;;
+            --category=*)
+                categories="${1#*=}"
+                ;;
+            --filter=*)
+                # TODO: Implement filter
+                log_warning "--filter not yet implemented"
+                ;;
+            
+            # Execution
+            --workers=*)
+                workers="${1#*=}"
+                ;;
+            --timeout=*)
+                timeout="${1#*=}"
+                ;;
+            
+            # Output
+            -v|--verbose)
+                verbose=true
+                ;;
+            -q|--quiet)
+                # TODO: Implement quiet mode
+                ;;
+            --json)
+                # TODO: Implement JSON output
+                log_warning "--json not yet implemented"
+                ;;
+            
+            # Other
+            --dry-run)
+                dry_run=true
+                ;;
+            
+            # Unknown
+            -*)
+                die "Unknown option: $1 (use --help for usage)"
+                ;;
+            *)
+                positional_args+=("$1")
+                ;;
+        esac
+        shift
+    done
+    
+    # Auto-detect workers if not specified
+    if [[ -z "$workers" ]]; then
+        workers=$(detect_cores)
+        # Cap at reasonable number for default runs
+        if (( workers > 8 )) && (( max_tests < 1000 )); then
+            workers=8
+        fi
+    fi
+    
+    # Handle commands
+    case "$command" in
+        cache)
+            cmd_cache "${positional_args[@]:-status}"
+            exit $?
+            ;;
+        single)
+            cmd_single "${positional_args[@]:-}"
+            exit $?
+            ;;
+    esac
+    
+    # Dry run
+    if [[ "$dry_run" == "true" ]]; then
+        echo "Dry run - would execute:"
+        echo "  Mode: $([ "$use_wasm" == "true" ] && echo "WASM" || echo "Native")"
+        echo "  Docker: $use_docker"
+        echo "  Max tests: $max_tests"
+        echo "  Workers: $workers"
+        echo "  Timeout: ${timeout}s"
+        echo "  Categories: $categories"
+        echo "  Verbose: $verbose"
+        exit 0
+    fi
+    
+    # Run tests
+    run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
+}
+
+# ==============================================================================
+# Entry Point
+# ==============================================================================
+
+main "$@"
