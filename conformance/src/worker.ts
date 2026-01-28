@@ -70,6 +70,27 @@ let nativeBinary: any = null;
 let tscCacheEntries: Record<string, CacheEntry> | undefined = undefined;
 let libManifest: LibManifest | null = null;
 
+// Per-worker temp directory for native mode (reused across tests)
+let workerTempDir: string | null = null;
+let tempFileCounter = 0;
+
+function getWorkerTempDir(): string {
+  if (!workerTempDir) {
+    workerTempDir = fs.mkdtempSync(`/tmp/tsz-worker-${workerId}-`);
+  }
+  return workerTempDir;
+}
+
+function cleanWorkerTempDir(): void {
+  if (workerTempDir) {
+    try {
+      fs.rmSync(workerTempDir, { recursive: true, force: true });
+    } catch {}
+    workerTempDir = null;
+    tempFileCounter = 0;
+  }
+}
+
 // Memory monitoring
 const getWasmMemoryUsage = () => {
   try {
@@ -168,38 +189,48 @@ function normalizeTargetName(target: unknown): string {
   return String(target ?? 'es2020').toLowerCase();
 }
 
-function defaultFullLibNameForTarget(targetName: string): string {
+function defaultCoreLibNameForTarget(targetName: string): string {
+  // Return core lib name WITHOUT DOM (.full suffix includes DOM which is 1.8MB)
+  // Use ES5 as default for tests without explicit target - it's minimal (220KB)
+  // Tests needing newer features should specify @target
   switch (targetName) {
     case 'es3':
     case 'es5':
-      return 'es5.full';
+      return 'es5';
     case 'es6':
     case 'es2015':
-      return 'es2015.full';
+      return 'es2015';
     case 'es2016':
+      return 'es2016';
     case 'es2017':
+      return 'es2017';
     case 'es2018':
+      return 'es2018';
     case 'es2019':
+      return 'es2019';
     case 'es2020':
+      return 'es2020';
     case 'es2021':
+      return 'es2021';
     case 'es2022':
+      return 'es2022';
     case 'es2023':
+      return 'es2023';
     case 'es2024':
-      return `${targetName}.full`;
+      return 'es2024';
     case 'esnext':
+      return 'esnext';
     default:
-      return 'esnext.full';
+      // Default to ES5 for unknown/unspecified targets - minimal lib
+      return 'es5';
   }
 }
 
 function defaultLibNamesForTarget(targetName: string): string[] {
-  const fullName = defaultFullLibNameForTarget(targetName);
-  const fullContent = readLibContent(fullName);
-  if (!fullContent) {
-    return [targetName === 'es6' ? 'es2015' : targetName];
-  }
-  const refs = parseLibReferences(fullContent);
-  return refs.length ? refs : [targetName === 'es6' ? 'es2015' : targetName];
+  // Use core lib (without DOM) for better WASM memory usage
+  const coreLibName = defaultCoreLibNameForTarget(targetName);
+  // Return just the core lib name - collectLibFiles will recursively resolve dependencies
+  return [coreLibName];
 }
 
 function parseLibOption(libOpt: unknown): string[] {
@@ -221,7 +252,11 @@ function getLibNamesForTestCase(
 ): string[] {
   if (opts.nolib) return [];
   const explicit = parseLibOption(opts.lib);
-  return explicit;
+  if (explicit.length > 0) return explicit;
+
+  // No explicit @lib - return default libs based on target
+  const targetName = normalizeTargetName(compilerOptionsTarget ?? opts.target);
+  return defaultLibNamesForTarget(targetName);
 }
 
 function collectLibFiles(libNames: string[]): Map<string, string> {
@@ -300,6 +335,10 @@ function parseTestDirectives(code: string, filePath: string): ParsedTestCase {
   const relativePath = filePath.replace(/.*tests\/cases\//, '');
   const category = relativePath.split(path.sep)[0] || 'unknown';
 
+  // Set isolatedModules: true to avoid false TS2307 errors
+  // (we don't have full filesystem access to resolve imports in WASM mode)
+  options.isolatedmodules = true;
+
   return { options, isMultiFile, files, category };
 }
 
@@ -361,12 +400,12 @@ function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
     noEmit: true,
   };
 
-  // Target
+  // Target - default to ES5 for minimal lib loading (220KB vs 2MB+ for ES2020)
   if (opts.target !== undefined) {
     const t = String(opts.target).toLowerCase();
-    options.target = TARGET_MAP[t] ?? ts.ScriptTarget.ES2020;
+    options.target = TARGET_MAP[t] ?? ts.ScriptTarget.ES5;
   } else {
-    options.target = ts.ScriptTarget.ES2020;
+    options.target = ts.ScriptTarget.ES5;
   }
 
   // Module
@@ -491,6 +530,7 @@ function toWasmOptions(opts: Record<string, unknown>): Record<string, unknown> {
     module: 'module',
     nolib: 'noLib',
     lib: 'lib',
+    isolatedmodules: 'isolatedModules',
   };
 
   for (const [key, value] of Object.entries(opts)) {
@@ -613,8 +653,10 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
             for (const [name, content] of wasmLibFiles.entries()) {
               program.addLibFile(name, content);
             }
-          } else if (libSource && !wasmLibNames.length) {
-            // No explicit libs - load default lib.d.ts (ES5 base)
+          } else if (libSource) {
+            // No explicit lib files found - load default lib.d.ts (ES5 base)
+            // This handles the case where lib names were specified but files not found,
+            // or no libs were specified at all.
             // Note: The WASM compiler will use embedded ES2015+ libs based on target
             program.addLibFile('lib.d.ts', libSource);
           }
@@ -646,8 +688,10 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
             for (const [name, content] of wasmLibFiles.entries()) {
               parser.addLibFile(name, content);
             }
-          } else if (libSource && !wasmLibNames.length) {
-            // No explicit libs - load default lib.d.ts (ES5 base)
+          } else if (libSource) {
+            // No explicit lib files found - load default lib.d.ts (ES5 base)
+            // This handles the case where lib names were specified but files not found,
+            // or no libs were specified at all.
             // Note: The WASM compiler will use embedded ES2015+ libs based on target
             parser.addLibFile('lib.d.ts', libSource);
           }
@@ -715,9 +759,15 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
     }
   } else {
     // Native mode - spawn the binary as a child process
+    // Use per-worker temp directory for better performance (reused across tests)
     return new Promise((resolve) => {
-      const tmpDir = fs.mkdtempSync('/tmp/tsz-test-');
+      const baseDir = getWorkerTempDir();
+      const testId = tempFileCounter++;
+      const tmpDir = path.join(baseDir, `test-${testId}`);
+      fs.mkdirSync(tmpDir, { recursive: true });
+
       const cleanup = () => {
+        // Only clean the test subdirectory, not the whole worker temp dir
         try {
           fs.rmSync(tmpDir, { recursive: true, force: true });
         } catch {
@@ -913,8 +963,14 @@ async function processTest(job: TestJob): Promise<WorkerResult> {
   }
 }
 
+// Clean up temp directory on process exit
+process.on('exit', () => {
+  cleanWorkerTempDir();
+});
+
 // Uncaught exception handler - report and exit
 process.on('uncaughtException', (err) => {
+  cleanWorkerTempDir();
   try {
     parentPort?.postMessage({
       type: 'crash',
@@ -1021,7 +1077,15 @@ process.on('unhandledRejection', (reason) => {
   });
 
   // Process jobs
-  parentPort!.on('message', async (job: TestJob) => {
+  parentPort!.on('message', async (msg: TestJob | { type: string }) => {
+    // Handle recycle signal from parent (clean temp dir before termination)
+    if ('type' in msg && msg.type === 'recycle') {
+      cleanWorkerTempDir();
+      return;
+    }
+
+    // Process test job
+    const job = msg as TestJob;
     const result = await processTest(job);
     parentPort!.postMessage(result);
   });
