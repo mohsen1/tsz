@@ -217,6 +217,7 @@ impl<'a> TypeInstantiator<'a> {
             this_type,
             return_type,
             type_predicate,
+            is_method: sig.is_method,
         }
     }
 

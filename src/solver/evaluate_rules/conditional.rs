@@ -81,6 +81,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut inferred = check_type;
             if let Some(constraint) = info.constraint {
                 let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                checker.allow_bivariant_rest = true;
                 let Some(filtered) =
                     self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                 else {
@@ -152,6 +153,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 && let Some(constraint) = param.constraint
             {
                 let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                checker.allow_bivariant_rest = true;
                 let mut bindings = FxHashMap::default();
                 let mut visited = FxHashSet::default();
                 if self.match_infer_pattern(
@@ -171,6 +173,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Step 3: Perform subtype check or infer pattern matching
         let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+        checker.allow_bivariant_rest = true;
 
         if self.type_contains_infer(extends_type) {
             let mut bindings = FxHashMap::default();
@@ -335,6 +338,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeKey::Union(_)));
             if is_union && !cond.is_distributive {
                 // For unions in non-distributive conditionals, use filter that adds undefined
@@ -440,6 +444,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            checker.allow_bivariant_rest = true;
             let Some(filtered) =
                 self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
             else {
@@ -609,6 +614,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeKey::Union(_)));
             if prop_optional {
                 let Some(filtered) =
@@ -741,6 +747,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeKey::Union(_)));
             if is_union || cond.is_distributive {
                 // For unions or distributive conditionals, use filter that adds undefined

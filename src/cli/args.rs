@@ -41,11 +41,6 @@ pub struct CliArgs {
     #[arg(short = 'w', long)]
     pub watch: bool,
 
-    /// Generate pre-parsed lib cache for faster startup.
-    /// Creates src/preparsed_libs.bin which can be embedded with --features preparsed_libs.
-    #[arg(long = "generate-lib-cache")]
-    pub generate_lib_cache: bool,
-
     /// Path to tsconfig.json or a directory containing it.
     #[arg(short = 'p', long = "project")]
     pub project: Option<PathBuf>,

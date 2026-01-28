@@ -1045,6 +1045,7 @@ impl<'a> TypeLowering<'a> {
             this_type,
             return_type,
             type_predicate,
+            is_method: false,
         }
     }
 

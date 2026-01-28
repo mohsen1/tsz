@@ -2446,11 +2446,10 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 /// duplicate symbol declarations.
 fn load_lib_files_for_contexts(
     lib_files: &[PathBuf],
-    target: crate::emitter::ScriptTarget,
+    _target: crate::emitter::ScriptTarget,
 ) -> Vec<LibContext> {
     use crate::binder::BinderState;
     use crate::cli::config::{extract_lib_references, resolve_lib_files};
-    use crate::lib_loader;
     use crate::parser::ParserState;
     use std::collections::{HashSet, VecDeque};
     use std::sync::Arc;
@@ -2520,22 +2519,6 @@ fn load_lib_files_for_contexts(
                     }
                 }
             }
-        }
-    }
-
-    // Only load embedded libs if NO disk files were loaded at all
-    // This prevents duplicate declarations when disk libs are available
-    if lib_contexts.is_empty() && !lib_files.is_empty() {
-        // Load embedded libs using the actual target from compiler options
-        let config = lib_loader::LibResolverConfig::new(target).with_include_dom(true);
-        let embedded_libs = lib_loader::resolve_libs(&config);
-
-        // Add embedded libs as fallback
-        for lib_file in embedded_libs {
-            lib_contexts.push(LibContext {
-                arena: lib_file.arena.clone(),
-                binder: lib_file.binder.clone(),
-            });
         }
     }
 

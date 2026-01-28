@@ -5,9 +5,8 @@
 //!
 //! # Shared Lib Context
 //!
-//! For tests that need global types (Array, Promise, etc.), use:
-//! - `TestContext::new()` - Creates a context with lib files loaded
-//! - `SHARED_LIB_FILES` - Static lazy-loaded lib files that can be reused
+//! For tests that need global types (Array, Promise, etc.), lib files must
+//! be provided explicitly since embedded libs have been removed.
 //!
 //! For tests that explicitly test behavior WITHOUT lib files:
 //! - `TestContext::new_without_lib()` - Creates a context without lib files
@@ -18,7 +17,6 @@ use std::sync::Arc;
 use crate::binder::BinderState;
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
-use crate::lib_loader::load_default_lib_dts;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::solver::TypeInterner;
@@ -32,34 +30,14 @@ pub static TEST_TSX_FILE_NAME: Lazy<String> = Lazy::new(|| "test.tsx".to_string(
 /// Default checker options - created once
 pub static DEFAULT_CHECKER_OPTIONS: Lazy<CheckerOptions> = Lazy::new(CheckerOptions::default);
 
-/// Shared lib files for global type resolution (Array, Promise, etc.)
-/// This is lazily loaded once and reused across all tests.
+/// Shared lib files for global type resolution.
 ///
-/// Uses ES2020 WITHOUT DOM to avoid declaration conflicts in tests.
-/// Includes:
-/// - Core types: Array, Object, Function, String, Number, Boolean
-/// - ES2015+ types: Promise, Map, Set, Symbol, Iterator
-/// - Async types: AsyncIterator, Awaited, IterableIterator
-///
-/// Does NOT include DOM types (console, Document, Element) to avoid
-/// redeclaration conflicts with test code.
-pub static SHARED_LIB_FILES: Lazy<Vec<Arc<crate::lib_loader::LibFile>>> = Lazy::new(|| {
-    use crate::common::ScriptTarget;
-    use crate::lib_loader::load_embedded_libs;
-    // Load ES2020 WITHOUT DOM - avoids conflicts with ActiveXObject, etc.
-    load_embedded_libs(ScriptTarget::ES2020, false)
-});
+/// NOTE: Embedded libs have been removed. This now returns an empty vector.
+/// Tests that need lib symbols should load them explicitly from disk.
+pub static SHARED_LIB_FILES: Lazy<Vec<Arc<crate::lib_loader::LibFile>>> = Lazy::new(Vec::new);
 
 /// Shared lib contexts for checker - derived from SHARED_LIB_FILES
-pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> = Lazy::new(|| {
-    SHARED_LIB_FILES
-        .iter()
-        .map(|lib| crate::checker::context::LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect()
-});
+pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> = Lazy::new(Vec::new);
 
 /// Test context builder for common test setup patterns.
 /// Reduces boilerplate while allowing test-specific customization.
@@ -72,19 +50,24 @@ pub struct TestContext {
 }
 
 impl TestContext {
-    /// Create a new test context with fresh allocations and ES2020 lib files loaded.
+    /// Create a new test context with fresh allocations.
     ///
-    /// This uses the shared lib files (ES2020 without DOM) which includes:
-    /// - Core types: Array, Object, Function, String, Number, Boolean
-    /// - ES2015+ types: Promise, Map, Set, Symbol, Iterator  
-    /// - Async types: AsyncIterator, Awaited, IterableIterator
-    ///
-    /// Does NOT include DOM types to avoid declaration conflicts in tests.
+    /// NOTE: Embedded libs have been removed. This creates a context WITHOUT
+    /// lib files. Tests that need global types should use `new_with_libs()`
+    /// and provide lib files explicitly.
     #[inline]
     pub fn new() -> Self {
-        // Use shared lib files to avoid re-parsing for every test
-        let lib_files: Vec<Arc<crate::lib_loader::LibFile>> =
-            SHARED_LIB_FILES.iter().map(Arc::clone).collect();
+        Self {
+            arena: NodeArena::new(),
+            binder: BinderState::new(),
+            types: TypeInterner::new(),
+            lib_files: Vec::new(),
+        }
+    }
+
+    /// Create a new test context with provided lib files.
+    #[inline]
+    pub fn new_with_libs(lib_files: Vec<Arc<crate::lib_loader::LibFile>>) -> Self {
         Self {
             arena: NodeArena::new(),
             binder: BinderState::new(),
@@ -95,30 +78,18 @@ impl TestContext {
 
     /// Create a new test context with just ES5 lib (smaller, faster).
     /// Use this for tests that only need basic types (Array, Object, Function).
+    ///
+    /// NOTE: Embedded libs have been removed. This now returns an empty context.
     #[inline]
     pub fn new_es5_only() -> Self {
-        let mut libs = Vec::new();
-        if let Some(lib_file) = load_default_lib_dts() {
-            libs.push(lib_file);
-        }
-        Self {
-            arena: NodeArena::new(),
-            binder: BinderState::new(),
-            types: TypeInterner::new(),
-            lib_files: libs,
-        }
+        Self::new()
     }
 
     /// Create a new test context WITHOUT loading lib.d.ts.
     /// Use this for testing error emission when lib symbols are missing.
     #[inline]
     pub fn new_without_lib() -> Self {
-        Self {
-            arena: NodeArena::new(),
-            binder: BinderState::new(),
-            types: TypeInterner::new(),
-            lib_files: Vec::new(),
-        }
+        Self::new()
     }
 
     /// Create a checker from this context with lib contexts set.
@@ -239,35 +210,18 @@ macro_rules! test_checker {
 
 /// Set up shared lib contexts on a checker.
 ///
-/// This is a helper for tests that create checkers manually but need global types.
-/// It uses the shared lib contexts to avoid re-parsing lib files.
-///
-/// # Example
-/// ```rust
-/// let mut checker = CheckerState::new(...);
-/// setup_lib_contexts(&mut checker);
-/// ```
+/// NOTE: Embedded libs have been removed. This is now a no-op.
+/// Tests that need global types should load lib files explicitly.
 #[inline]
-pub fn setup_lib_contexts(checker: &mut CheckerState<'_>) {
-    if !SHARED_LIB_CONTEXTS.is_empty() {
-        checker.ctx.set_lib_contexts(SHARED_LIB_CONTEXTS.clone());
-    }
+pub fn setup_lib_contexts(_checker: &mut CheckerState<'_>) {
+    // No-op: embedded libs removed
 }
 
 /// Merge shared lib symbols into a binder.
 ///
-/// This is a helper for tests that create binders manually but need global types.
-/// It uses the shared lib files to avoid re-parsing.
-///
-/// # Example
-/// ```rust
-/// let mut binder = BinderState::new();
-/// merge_shared_lib_symbols(&mut binder);
-/// binder.bind_source_file(arena, root);
-/// ```
+/// NOTE: Embedded libs have been removed. This is now a no-op.
+/// Tests that need global types should load lib files explicitly.
 #[inline]
-pub fn merge_shared_lib_symbols(binder: &mut BinderState) {
-    if !SHARED_LIB_FILES.is_empty() {
-        binder.merge_lib_symbols(&SHARED_LIB_FILES);
-    }
+pub fn merge_shared_lib_symbols(_binder: &mut BinderState) {
+    // No-op: embedded libs removed
 }

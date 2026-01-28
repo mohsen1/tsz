@@ -8,6 +8,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import { loadTscCache, type CacheEntry } from './tsc-cache.js';
@@ -32,8 +33,8 @@ interface RunnerConfig {
 const DEFAULT_CONFIG: RunnerConfig = {
   wasmPkgPath: path.resolve(__dirname, '../../pkg'),
   testsBasePath: path.resolve(__dirname, '../../TypeScript/tests/cases'),
-  libPath: path.resolve(__dirname, '../../TypeScript/tests/lib/lib.d.ts'),
-  libDir: path.resolve(__dirname, '../../TypeScript/tests/lib'),
+  libPath: path.resolve(__dirname, '../../TypeScript/src/lib/es5.d.ts'),
+  libDir: path.resolve(__dirname, '../../TypeScript/src/lib'),
   maxTests: 500,
   verbose: false,
   categories: ['conformance', 'compiler', 'projects'],
@@ -46,8 +47,21 @@ const DEFAULT_CONFIG: RunnerConfig = {
 
 // Recycle workers after this many tests to prevent memory leaks
 const TESTS_BEFORE_RECYCLE = 2000;
-// Memory threshold in bytes - restart worker if it exceeds this (2GB)
-const MEMORY_THRESHOLD = 2 * 1024 * 1024 * 1024;
+
+// Adaptive memory threshold configuration
+const MEMORY_PERCENT_THRESHOLD = 0.30; // Recycle when worker uses > 30% of available memory per worker
+const MIN_MEMORY_THRESHOLD = 512 * 1024 * 1024; // Minimum 512MB
+const MAX_MEMORY_THRESHOLD = 4 * 1024 * 1024 * 1024; // Maximum 4GB
+
+// Calculate adaptive memory threshold based on system state
+function getAdaptiveMemoryThreshold(workerCount: number): number {
+  const freeMem = os.freemem();
+  const availablePerWorker = freeMem / Math.max(workerCount, 1);
+  return Math.min(
+    Math.max(availablePerWorker * MEMORY_PERCENT_THRESHOLD, MIN_MEMORY_THRESHOLD),
+    MAX_MEMORY_THRESHOLD
+  );
+}
 
 interface TestResult {
   tscCodes: number[];
@@ -167,6 +181,43 @@ async function collectProjectFiles(dir: string, maxFiles: number): Promise<strin
   return files;
 }
 
+// Streaming file collection using async generators
+async function* walkDirectoryStream(dir: string): AsyncGenerator<string> {
+  try {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        yield* walkDirectoryStream(p);
+      } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+        yield p;
+      }
+    }
+  } catch {
+    // Ignore errors (e.g., permission denied)
+  }
+}
+
+async function* streamTestFiles(
+  testsBasePath: string,
+  categories: string[],
+  maxTests: number
+): AsyncGenerator<{ file: string; category: string }> {
+  let yielded = 0;
+
+  for (const cat of categories) {
+    if (yielded >= maxTests) return;
+    const dir = path.join(testsBasePath, cat);
+    if (!fs.existsSync(dir)) continue;
+
+    for await (const file of walkDirectoryStream(dir)) {
+      if (yielded >= maxTests) return;
+      yield { file, category: cat };
+      yielded++;
+    }
+  }
+}
+
 function compareResults(tsc: number[], wasm: number[]): { match: boolean; missing: number[]; extra: number[] } {
   const tscMap = new Map<number, number>();
   const wasmMap = new Map<number, number>();
@@ -209,6 +260,7 @@ class WorkerPool {
   private timeout: number;
   private testsBasePath: string;
   private nextWorkerId = 0;
+  private workerCount: number;
 
   // Stats
   public workersSpawned = 0;
@@ -226,6 +278,7 @@ class WorkerPool {
     this.workerDataBase = workerData;
     this.timeout = timeout;
     this.testsBasePath = testsBasePath;
+    this.workerCount = count;
     for (let i = 0; i < count; i++) this.spawnWorker();
   }
 
@@ -264,9 +317,10 @@ class WorkerPool {
             info.memoryUsed = msg.memoryUsed;
           }
 
-          // Recycle worker after N tests or if memory is high
+          // Recycle worker after N tests or if memory is high (adaptive threshold)
+          const memoryThreshold = getAdaptiveMemoryThreshold(this.workerCount);
           const shouldRecycle = info.testsProcessed >= TESTS_BEFORE_RECYCLE ||
-                              (info.memoryUsed !== undefined && info.memoryUsed > MEMORY_THRESHOLD);
+                              (info.memoryUsed !== undefined && info.memoryUsed > memoryThreshold);
 
           pending.resolve({
             tscCodes: msg.tscCodes,
@@ -298,8 +352,9 @@ class WorkerPool {
         if (msg.memoryUsed !== undefined) {
           info.memoryUsed = msg.memoryUsed;
         }
-        // Recycle if memory is too high and worker is idle
-        if (msg.memoryUsed !== undefined && msg.memoryUsed > MEMORY_THRESHOLD && !info.busy) {
+        // Recycle if memory is too high and worker is idle (adaptive threshold)
+        const memoryThreshold = getAdaptiveMemoryThreshold(this.workerCount);
+        if (msg.memoryUsed !== undefined && msg.memoryUsed > memoryThreshold && !info.busy) {
           this.replaceWorker(info);
         }
         return;
@@ -377,12 +432,19 @@ class WorkerPool {
     if (idx >= 0) {
       this.workers.splice(idx, 1);
     }
-    
-    // Try to terminate if not already dead
+
+    // Signal worker to clean up temp directory before terminating
     try {
-      oldInfo.worker.terminate();
+      oldInfo.worker.postMessage({ type: 'recycle' });
     } catch {}
-    
+
+    // Give worker a moment to clean up, then terminate
+    setTimeout(() => {
+      try {
+        oldInfo.worker.terminate();
+      } catch {}
+    }, 50);
+
     // Spawn replacement
     this.workersRespawned++;
     this.spawnWorker();
@@ -465,11 +527,16 @@ class WorkerPool {
   }
 
   async terminate(): Promise<void> {
-    for (const info of this.workers) {
-      try {
-        await info.worker.terminate();
-      } catch {}
-    }
+    // Terminate all workers in parallel for faster shutdown
+    await Promise.all(
+      this.workers.map(async (info) => {
+        try {
+          // Signal cleanup, then terminate immediately (don't wait)
+          info.worker.postMessage({ type: 'recycle' });
+          await info.worker.terminate();
+        } catch {}
+      })
+    );
   }
 }
 
@@ -477,11 +544,12 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   const cfg: RunnerConfig = { ...DEFAULT_CONFIG, ...config };
   const startTime = Date.now();
 
-  if (cfg.useWasm) {
-    const maxWorkers = parseInt(process.env.TSZ_WASM_MAX_WORKERS || '2', 10);
-    if (Number.isFinite(maxWorkers) && cfg.workers > maxWorkers) {
+  // WASM worker cap is now opt-in only via environment variable
+  if (cfg.useWasm && process.env.TSZ_WASM_MAX_WORKERS) {
+    const maxWorkers = parseInt(process.env.TSZ_WASM_MAX_WORKERS, 10);
+    if (Number.isFinite(maxWorkers) && maxWorkers > 0 && cfg.workers > maxWorkers) {
       log(
-        `⚠️  WASM mode detected - capping workers to ${maxWorkers} (was ${cfg.workers})`,
+        `⚠️  WASM workers capped to ${maxWorkers} (TSZ_WASM_MAX_WORKERS)`,
         colors.yellow
       );
       cfg.workers = maxWorkers;
@@ -492,45 +560,8 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   log('║    High-Performance Parallel Conformance Test Runner     ║', colors.cyan);
   log('╚══════════════════════════════════════════════════════════╝', colors.cyan);
 
-  // Collect test files in parallel across categories
-  log(`\nCollecting test files...`, colors.cyan);
-  const allTestFiles: string[] = [];
-  const perCat = Math.ceil(cfg.maxTests / cfg.categories.length);
-
-  // Collect files from all categories in parallel
-  const collectionPromises = cfg.categories.map(async (cat) => {
-    const dir = path.join(cfg.testsBasePath, cat);
-    if (fs.existsSync(dir)) {
-      const remaining = cfg.maxTests - allTestFiles.length;
-      // Use specialized collector for projects category
-      const files = cat === 'projects'
-        ? await collectProjectFiles(dir, Math.min(perCat, remaining))
-        : await collectTestFiles(dir, Math.min(perCat, remaining));
-      return { category: cat, files };
-    }
-    return { category: cat, files: [] };
-  });
-
-  const results = await Promise.all(collectionPromises);
-  for (const { category, files } of results) {
-    if (files.length > 0) {
-      allTestFiles.push(...files);
-      log(`  ${category}: ${files.length} files`, colors.dim);
-    }
-  }
-
-  log(`  Total: ${allTestFiles.length} test files`, colors.cyan);
+  log(`\nStreaming test files...`, colors.cyan);
   log(`  Workers: ${cfg.workers} | Timeout: ${cfg.testTimeout}ms`, colors.dim);
-
-  if (allTestFiles.length === 0) {
-    log('\nNo test files found!', colors.yellow);
-    return { 
-      total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, timedOut: 0, oom: 0,
-      byCategory: {}, missingCodes: new Map(), extraCodes: new Map(),
-      crashedTests: [], oomTests: [], timedOutTests: [],
-      workerStats: { spawned: 0, crashed: 0, respawned: 0 },
-    };
-  }
 
   // Load TSC cache
   const tscCache = loadTscCache(ROOT_DIR);
@@ -565,9 +596,9 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   await pool.ready();
   log(`  Workers ready!`, colors.green);
 
-  // Stats
+  // Stats (total will be updated as we stream)
   const stats: TestStats = {
-    total: allTestFiles.length,
+    total: 0,
     passed: 0,
     failed: 0,
     crashed: 0,
@@ -584,74 +615,99 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   };
 
   let completed = 0;
+  let total = 0;
   const updateProgress = () => {
-    const pct = ((completed / allTestFiles.length) * 100).toFixed(1);
+    const pct = total > 0 ? ((completed / total) * 100).toFixed(1) : '0.0';
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const rate = completed > 0 ? (completed / ((Date.now() - startTime) / 1000)).toFixed(0) : '0';
     const workerStats = pool.getStats();
     const crashInfo = workerStats.crashed > 0 ? ` | ⚠ ${workerStats.crashed} crashes` : '';
-    process.stdout.write(`\r  Progress: ${completed}/${allTestFiles.length} (${pct}%) | ${rate}/s | ${elapsed}s${crashInfo}    `);
+    process.stdout.write(`\r  Progress: ${completed}/${total} (${pct}%) | ${rate}/s | ${elapsed}s${crashInfo}    `);
   };
 
-  // Run all tests
-  log(`\nRunning tests...`, colors.cyan);
-  
-  const promises = allTestFiles.map(async (filePath) => {
-    const result = await pool.run(filePath);
-    
-    completed++;
-    if (!cfg.verbose) updateProgress();
+  // Stream tests to workers as they're discovered
+  log(`\nRunning tests (streaming)...`, colors.cyan);
 
-    // Update stats
-    const cat = result.category;
-    if (!stats.byCategory[cat]) stats.byCategory[cat] = { total: 0, passed: 0 };
-    stats.byCategory[cat].total++;
+  const pendingResults: Promise<void>[] = [];
+  const categoryFileCounts: Record<string, number> = {};
 
-    if (result.timedOut) {
-      stats.timedOut++;
-      stats.failed++;
-      stats.timedOutTests.push(result.filePath || filePath);
-      if (cfg.verbose) log(`\n  ${result.filePath}: TIMEOUT`, colors.yellow);
-      return;
-    }
-    
-    if (result.oom) {
-      stats.oom++;
-      stats.crashed++;
-      stats.failed++;
-      stats.oomTests.push(result.filePath || filePath);
-      if (cfg.verbose) log(`\n  ${result.filePath}: OOM`, colors.red);
-      return;
-    }
-    
-    if (result.crashed) {
-    stats.crashed++;
-    stats.failed++;
-      stats.crashedTests.push({ path: result.filePath || filePath, error: result.error || 'Unknown' });
-      if (cfg.verbose) log(`\n  ${result.filePath}: CRASH - ${result.error}`, colors.red);
-    return;
-  }
+  for await (const { file: filePath, category } of streamTestFiles(cfg.testsBasePath, cfg.categories, cfg.maxTests)) {
+    total++;
+    categoryFileCounts[category] = (categoryFileCounts[category] || 0) + 1;
 
-    const cmp = compareResults(result.tscCodes, result.wasmCodes);
-    if (cmp.match) {
-    stats.passed++;
-      stats.byCategory[cat].passed++;
-  } else {
-    stats.failed++;
-      for (const c of cmp.missing) stats.missingCodes.set(c, (stats.missingCodes.get(c) || 0) + 1);
-      for (const c of cmp.extra) stats.extraCodes.set(c, (stats.extraCodes.get(c) || 0) + 1);
-      if (cfg.verbose) {
-        log(`\n  ${result.filePath}:`, colors.yellow);
-        if (cmp.missing.length) log(`    Missing: TS${[...new Set(cmp.missing)].join(', TS')}`, colors.dim);
-        if (cmp.extra.length) log(`    Extra: TS${[...new Set(cmp.extra)].join(', TS')}`, colors.dim);
-        if (cmp.missing.includes(2318) || cmp.extra.includes(2318)) {
-          log(`    TS2318: global type resolution mismatch`, colors.magenta);
+    const resultPromise = pool.run(filePath).then(result => {
+      completed++;
+      if (!cfg.verbose) updateProgress();
+
+      // Update stats
+      const cat = result.category;
+      if (!stats.byCategory[cat]) stats.byCategory[cat] = { total: 0, passed: 0 };
+      stats.byCategory[cat].total++;
+
+      if (result.timedOut) {
+        stats.timedOut++;
+        stats.failed++;
+        stats.timedOutTests.push(result.filePath || filePath);
+        if (cfg.verbose) log(`\n  ${result.filePath}: TIMEOUT`, colors.yellow);
+        return;
+      }
+
+      if (result.oom) {
+        stats.oom++;
+        stats.crashed++;
+        stats.failed++;
+        stats.oomTests.push(result.filePath || filePath);
+        if (cfg.verbose) log(`\n  ${result.filePath}: OOM`, colors.red);
+        return;
+      }
+
+      if (result.crashed) {
+        stats.crashed++;
+        stats.failed++;
+        stats.crashedTests.push({ path: result.filePath || filePath, error: result.error || 'Unknown' });
+        if (cfg.verbose) log(`\n  ${result.filePath}: CRASH - ${result.error}`, colors.red);
+        return;
+      }
+
+      const cmp = compareResults(result.tscCodes, result.wasmCodes);
+      if (cmp.match) {
+        stats.passed++;
+        stats.byCategory[cat].passed++;
+      } else {
+        stats.failed++;
+        for (const c of cmp.missing) stats.missingCodes.set(c, (stats.missingCodes.get(c) || 0) + 1);
+        for (const c of cmp.extra) stats.extraCodes.set(c, (stats.extraCodes.get(c) || 0) + 1);
+        if (cfg.verbose) {
+          log(`\n  ${result.filePath}:`, colors.yellow);
+          if (cmp.missing.length) log(`    Missing: TS${[...new Set(cmp.missing)].join(', TS')}`, colors.dim);
+          if (cmp.extra.length) log(`    Extra: TS${[...new Set(cmp.extra)].join(', TS')}`, colors.dim);
+          if (cmp.missing.includes(2318) || cmp.extra.includes(2318)) {
+            log(`    TS2318: global type resolution mismatch`, colors.magenta);
+          }
         }
       }
-    }
-  });
+    });
 
-  await Promise.all(promises);
+    pendingResults.push(resultPromise);
+  }
+
+  // Update final total
+  stats.total = total;
+
+  // Log category counts
+  for (const [cat, count] of Object.entries(categoryFileCounts)) {
+    log(`  ${cat}: ${count} files`, colors.dim);
+  }
+  log(`  Total: ${total} test files`, colors.cyan);
+
+  if (total === 0) {
+    log('\nNo test files found!', colors.yellow);
+    await pool.terminate();
+    return stats;
+  }
+
+  // Wait for all in-flight tests to complete
+  await Promise.all(pendingResults);
   
   stats.workerStats = pool.getStats();
   await pool.terminate();
@@ -659,7 +715,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   if (!cfg.verbose) process.stdout.write('\r' + ' '.repeat(100) + '\r');
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  const rate = (allTestFiles.length / ((Date.now() - startTime) / 1000)).toFixed(0);
+  const rate = (stats.total / ((Date.now() - startTime) / 1000)).toFixed(0);
 
   // Results
   log('\n' + '═'.repeat(60), colors.dim);

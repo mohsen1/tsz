@@ -2107,6 +2107,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
                 this_type: None,
                 return_type: TypeId::STRING,
                 type_predicate: None,
+                is_method: false,
             },
             CallSignature {
                 type_params: Vec::new(),
@@ -2127,6 +2128,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
                 this_type: None,
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
+                is_method: false,
             },
         ],
         construct_signatures: Vec::new(),

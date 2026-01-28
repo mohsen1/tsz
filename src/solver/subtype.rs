@@ -488,6 +488,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.check_type_parameter_subtype(s_info, target, target_key)
             }
 
+            // Rule #31: Base Constraint Assignability - concrete type to TypeParameter
+            // source <: T where T is a type parameter
+            // TypeScript allows this if source is a subtype of T's base constraint
+            (_, TypeKey::TypeParameter(t_info)) | (_, TypeKey::Infer(t_info)) => {
+                if let Some(constraint) = t_info.constraint {
+                    // Source must be a subtype of T's constraint
+                    self.check_subtype(source, constraint)
+                } else {
+                    // Unconstrained type parameter: any concrete type can't be assigned
+                    // to an unconstrained type parameter (T could be anything)
+                    SubtypeResult::False
+                }
+            }
+
             // object keyword accepts any non-primitive type
             (_, TypeKey::Intrinsic(IntrinsicKind::Object)) => {
                 if self.is_object_keyword_type(source) {

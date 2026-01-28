@@ -172,6 +172,7 @@ impl<'a> CheckerState<'a> {
             this_type: None,
             return_type,
             type_predicate: None,
+            is_method: false,
         };
 
         let shape = CallableShape {

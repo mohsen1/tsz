@@ -905,10 +905,6 @@ impl<'a> CheckerContext<'a> {
             return true;
         }
 
-        if lib_loader::is_known_global_type_name(name) {
-            return true;
-        }
-
         // Pre-ES2015 global types that are commonly used
         // These are always available in lib.d.ts but should emit TS2318 when @noLib is enabled
         match name {
