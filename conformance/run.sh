@@ -505,6 +505,7 @@ run_in_docker() {
     fi
     
     docker run --rm \
+        --platform linux/amd64 \
         --memory="${memory_gb}g" \
         --memory-swap="${memory_gb}g" \
         --cpus="$workers" \
