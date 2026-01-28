@@ -614,9 +614,8 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
               program.addLibFile(name, content);
             }
           } else if (libSource && !wasmLibNames.length) {
-            // Only add default lib.d.ts if no explicit libs were requested
-            // When explicit libs are specified via // @lib:, the WASM compiler
-            // will use its embedded libs based on the 'lib' compiler option
+            // No explicit libs - load default lib.d.ts (ES5 base)
+            // Note: The WASM compiler will use embedded ES2015+ libs based on target
             program.addLibFile('lib.d.ts', libSource);
           }
         }
@@ -648,7 +647,8 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
               parser.addLibFile(name, content);
             }
           } else if (libSource && !wasmLibNames.length) {
-            // Only add default lib.d.ts if no explicit libs were requested
+            // No explicit libs - load default lib.d.ts (ES5 base)
+            // Note: The WASM compiler will use embedded ES2015+ libs based on target
             parser.addLibFile('lib.d.ts', libSource);
           }
         }
