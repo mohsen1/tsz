@@ -41,7 +41,7 @@ mod subtype;
 mod subtype_rules;
 pub mod tracer;
 pub mod type_queries;
-mod types;
+pub mod types;
 pub mod unsoundness_audit;
 mod utils;
 pub mod visitor;

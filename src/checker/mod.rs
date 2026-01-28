@@ -40,6 +40,7 @@ pub mod flow_analyzer;
 pub mod flow_graph_builder;
 pub mod flow_narrowing;
 pub mod function_type;
+pub mod generic_checker;
 pub mod indexed_access_type;
 pub mod interface_type;
 pub mod intersection_type;
