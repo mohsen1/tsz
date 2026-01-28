@@ -2526,8 +2526,22 @@ fn load_lib_files_for_contexts(
     // Only load embedded libs if NO disk files were loaded at all
     // This prevents duplicate declarations when disk libs are available
     if lib_contexts.is_empty() && !lib_files.is_empty() {
-        // Load embedded libs using the actual target from compiler options
-        let config = lib_loader::LibResolverConfig::new(target).with_include_dom(true);
+        // Extract lib names from lib_files for embedded lib loading
+        let explicit_libs: Vec<String> = lib_files
+            .iter()
+            .filter_map(|path| {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.strip_prefix("lib."))
+                    .and_then(|s| s.strip_suffix(".generated"))
+                    .map(|s| s.to_string())
+            })
+            .collect();
+
+        // Load embedded libs using the actual target and explicit libs from compiler options
+        let config = lib_loader::LibResolverConfig::new(target)
+            .with_include_dom(true)
+            .with_libs(explicit_libs);
         let embedded_libs = lib_loader::resolve_libs(&config);
 
         // Add embedded libs as fallback
