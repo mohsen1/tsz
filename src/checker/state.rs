@@ -2130,6 +2130,7 @@ impl<'a> CheckerState<'a> {
                         this_type: None,
                         return_type: shape.return_type,
                         type_predicate: None,
+                        is_method: shape.is_method,
                     },
                     &type_args,
                 );
@@ -2190,6 +2191,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             return_type,
             type_predicate,
+            is_method: sig.is_method,
         }
     }
 
@@ -2232,6 +2234,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             return_type,
             type_predicate,
+            is_method: sig.is_method,
         }
     }
 
@@ -3484,6 +3487,7 @@ impl<'a> CheckerState<'a> {
                             this_type,
                             return_type,
                             type_predicate,
+                            is_method: false,
                         });
                         self.pop_type_parameters(type_param_updates);
                     }
@@ -3500,6 +3504,7 @@ impl<'a> CheckerState<'a> {
                             this_type,
                             return_type,
                             type_predicate,
+                            is_method: false,
                         });
                         self.pop_type_parameters(type_param_updates);
                     }
@@ -4058,6 +4063,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             return_type,
             type_predicate,
+            is_method: false,
         }
     }
 
@@ -4077,6 +4083,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             return_type,
             type_predicate,
+            is_method: true,
         }
     }
 
@@ -4101,6 +4108,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             return_type: instance_type,
             type_predicate: None,
+            is_method: false,
         }
     }
 
@@ -7452,6 +7460,7 @@ impl<'a> CheckerState<'a> {
                         this_type: this_param,
                         return_type,
                         type_predicate,
+                        is_method: sig.is_method,
                     }
                 };
                 let call_signatures: Vec<CallSignature> = shape
@@ -10018,8 +10027,22 @@ impl<'a> CheckerState<'a> {
                 // Check for excess properties in source that don't exist in target
                 // This is the "freshness" or "strict object literal" check
                 for source_prop in source_props {
-                    let exists_in_target = target_props.iter().any(|p| p.name == source_prop.name);
-                    if !exists_in_target {
+                    let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
+                    if let Some(target_prop) = target_prop {
+                        // Property exists in target - check nested object literals (Rule #4)
+                        // If the source property is a fresh object literal, recursively check
+                        if self
+                            .ctx
+                            .freshness_tracker
+                            .should_check_excess_properties(source_prop.type_id)
+                        {
+                            self.check_object_literal_excess_properties(
+                                source_prop.type_id,
+                                target_prop.type_id,
+                                idx,
+                            );
+                        }
+                    } else {
                         let prop_name = self.ctx.types.resolve_atom(source_prop.name);
                         self.error_excess_property_at(&prop_name, target, idx);
                     }
@@ -10058,15 +10081,38 @@ impl<'a> CheckerState<'a> {
                 }
 
                 for source_prop in source_props {
-                    let exists_in_target = target_shapes.iter().any(|shape| {
-                        shape
-                            .properties
-                            .iter()
-                            .any(|prop| prop.name == source_prop.name)
-                    });
-                    if !exists_in_target {
+                    // For unions, check if property exists in ANY member
+                    let target_prop_types: Vec<TypeId> = target_shapes
+                        .iter()
+                        .filter_map(|shape| {
+                            shape
+                                .properties
+                                .iter()
+                                .find(|prop| prop.name == source_prop.name)
+                                .map(|prop| prop.type_id)
+                        })
+                        .collect();
+
+                    if target_prop_types.is_empty() {
                         let prop_name = self.ctx.types.resolve_atom(source_prop.name);
                         self.error_excess_property_at(&prop_name, target, idx);
+                    } else if self
+                        .ctx
+                        .freshness_tracker
+                        .should_check_excess_properties(source_prop.type_id)
+                    {
+                        // Property exists in target - check nested object literals (Rule #4)
+                        // For unions, create a union of the matching property types
+                        let target_prop_type = if target_prop_types.len() == 1 {
+                            target_prop_types[0]
+                        } else {
+                            self.ctx.types.union(target_prop_types)
+                        };
+                        self.check_object_literal_excess_properties(
+                            source_prop.type_id,
+                            target_prop_type,
+                            idx,
+                        );
                     }
                 }
             }

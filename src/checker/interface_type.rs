@@ -115,6 +115,7 @@ impl<'a> CheckerState<'a> {
                         this_type,
                         return_type,
                         type_predicate,
+                        is_method: false,
                     });
                     self.pop_type_parameters(type_param_updates);
                 }
@@ -147,6 +148,7 @@ impl<'a> CheckerState<'a> {
                         this_type,
                         return_type,
                         type_predicate,
+                        is_method: false,
                     });
                     self.pop_type_parameters(type_param_updates);
                 }

@@ -43,6 +43,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::ANY;
         }
 
+        // Rule #38: Distribute over index union at the top level (Cartesian product expansion)
+        // T[A | B] -> T[A] | T[B]
+        // This must happen before checking the object type to ensure full cross-product expansion
+        // when both object and index are unions: (X | Y)[A | B] -> X[A] | X[B] | Y[A] | Y[B]
+        if let Some(TypeKey::Union(members_id)) = self.interner().lookup(index_type) {
+            let members = self.interner().type_list(members_id);
+            // Limit to prevent OOM with large unions
+            const MAX_UNION_INDEX_SIZE: usize = 100;
+            if members.len() > MAX_UNION_INDEX_SIZE {
+                self.set_depth_exceeded(true);
+                return TypeId::ERROR;
+            }
+            let mut results = Vec::new();
+            for &member in members.iter() {
+                if self.is_depth_exceeded() {
+                    return TypeId::ERROR;
+                }
+                let result = self.recurse_index_access(object_type, member);
+                if result == TypeId::ERROR && self.is_depth_exceeded() {
+                    return TypeId::ERROR;
+                }
+                if result != TypeId::UNDEFINED || self.no_unchecked_indexed_access() {
+                    results.push(result);
+                }
+            }
+            if results.is_empty() {
+                return TypeId::UNDEFINED;
+            }
+            return self.interner().union(results);
+        }
+
         // Get the object structure
         let obj_key = match self.interner().lookup(object_type) {
             Some(k) => k,

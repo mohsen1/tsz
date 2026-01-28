@@ -684,11 +684,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         // Compare fixed parameters
+        // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
+        let is_method = source.is_method || target.is_method;
         let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
         for i in 0..fixed_compare_count {
             let s_param = &source.params[i];
             let t_param = &target.params[i];
-            if !self.are_parameters_compatible(s_param.type_id, t_param.type_id) {
+            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
                 return SubtypeResult::False;
             }
         }
@@ -704,7 +706,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             for i in target_fixed_count..source_fixed_count {
                 let s_param = &source.params[i];
-                if !self.are_parameters_compatible(s_param.type_id, rest_elem_type) {
+                if !self.are_parameters_compatible_impl(s_param.type_id, rest_elem_type, is_method)
+                {
                     return SubtypeResult::False;
                 }
             }
@@ -714,7 +717,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 };
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
+                if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
                     return SubtypeResult::False;
                 }
             }
@@ -733,7 +736,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if !rest_is_top {
                 for i in source_fixed_count..target_fixed_count {
                     let t_param = &target.params[i];
-                    if !self.are_parameters_compatible(rest_elem_type, t_param.type_id) {
+                    if !self.are_parameters_compatible_impl(
+                        rest_elem_type,
+                        t_param.type_id,
+                        is_method,
+                    ) {
                         return SubtypeResult::False;
                     }
                 }
@@ -805,11 +812,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         // Compare fixed parameters
+        // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
+        let is_method = source.is_method || target.is_method;
         let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
         for i in 0..fixed_compare_count {
             let s_param = &source.params[i];
             let t_param = &target.params[i];
-            if !self.are_parameters_compatible(s_param.type_id, t_param.type_id) {
+            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
                 return SubtypeResult::False;
             }
         }
@@ -825,7 +834,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             for i in target_fixed_count..source_fixed_count {
                 let s_param = &source.params[i];
-                if !self.are_parameters_compatible(s_param.type_id, rest_elem_type) {
+                if !self.are_parameters_compatible_impl(s_param.type_id, rest_elem_type, is_method)
+                {
                     return SubtypeResult::False;
                 }
             }
@@ -835,7 +845,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 };
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
+                if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
                     return SubtypeResult::False;
                 }
             }
@@ -854,7 +864,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if !rest_is_top {
                 for i in source_fixed_count..target_fixed_count {
                     let t_param = &target.params[i];
-                    if !self.are_parameters_compatible(rest_elem_type, t_param.type_id) {
+                    if !self.are_parameters_compatible_impl(
+                        rest_elem_type,
+                        t_param.type_id,
+                        is_method,
+                    ) {
                         return SubtypeResult::False;
                     }
                 }
@@ -926,11 +940,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         // Compare fixed parameters
+        // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
+        let is_method = source.is_method || target.is_method;
         let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
         for i in 0..fixed_compare_count {
             let s_param = &source.params[i];
             let t_param = &target.params[i];
-            if !self.are_parameters_compatible(s_param.type_id, t_param.type_id) {
+            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
                 return SubtypeResult::False;
             }
         }
@@ -946,7 +962,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             for i in target_fixed_count..source_fixed_count {
                 let s_param = &source.params[i];
-                if !self.are_parameters_compatible(s_param.type_id, rest_elem_type) {
+                if !self.are_parameters_compatible_impl(s_param.type_id, rest_elem_type, is_method)
+                {
                     return SubtypeResult::False;
                 }
             }
@@ -956,7 +973,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 };
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
+                if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
                     return SubtypeResult::False;
                 }
             }
@@ -975,7 +992,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if !rest_is_top {
                 for i in source_fixed_count..target_fixed_count {
                     let t_param = &target.params[i];
-                    if !self.are_parameters_compatible(rest_elem_type, t_param.type_id) {
+                    if !self.are_parameters_compatible_impl(
+                        rest_elem_type,
+                        t_param.type_id,
+                        is_method,
+                    ) {
                         return SubtypeResult::False;
                     }
                 }

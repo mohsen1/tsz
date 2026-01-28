@@ -24,11 +24,6 @@ fn main() -> Result<()> {
         return handle_init(&cwd);
     }
 
-    // Handle --generate-lib-cache: generate pre-parsed lib cache
-    if args.generate_lib_cache {
-        return handle_generate_lib_cache();
-    }
-
     // Handle --showConfig: print resolved configuration
     if args.show_config {
         return handle_show_config(&args, &cwd);
@@ -617,25 +612,3 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn handle_generate_lib_cache() -> Result<()> {
-    use wasm::preparsed_libs;
-
-    println!("Generating pre-parsed lib cache...");
-
-    let start = std::time::Instant::now();
-    let (lib_count, file_size) = preparsed_libs::generate_and_write_cache()
-        .context("failed to generate lib cache")?;
-    let elapsed = start.elapsed();
-
-    println!(
-        "Generated pre-parsed cache for {} lib files ({} bytes) in {:.2}s",
-        lib_count,
-        file_size,
-        elapsed.as_secs_f64()
-    );
-    println!();
-    println!("To use the pre-parsed cache, rebuild with:");
-    println!("  cargo build --release --features preparsed_libs");
-
-    Ok(())
-}

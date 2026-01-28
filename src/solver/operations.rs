@@ -3283,6 +3283,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             this_type: None,
             return_type: element_type,
             type_predicate: None,
+            is_method: false,
         };
 
         let u_param = self.type_param("U");
@@ -3297,6 +3298,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             this_type: None,
             return_type: u_type,
             type_predicate: None,
+            is_method: false,
         };
 
         CallableShape {

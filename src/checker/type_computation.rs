@@ -2669,6 +2669,7 @@ impl<'a> CheckerState<'a> {
             this_type: None,
             return_type: TypeId::SYMBOL,
             type_predicate: None,
+            is_method: false,
         };
 
         let well_known = [

@@ -9,8 +9,7 @@ use wasm_bindgen::prelude::*;
 use crate::binder::BinderState;
 use crate::checker::context::CheckerOptions;
 use crate::checker::types::DiagnosticCategory;
-use crate::common::ScriptTarget;
-use crate::lib_loader::{LibFile, LibResolverConfig, resolve_libs};
+use crate::lib_loader::LibFile;
 use crate::parallel::{
     MergedProgram, check_files_parallel, merge_bind_results, parse_and_bind_parallel,
     parse_and_bind_parallel_with_libs,
@@ -20,21 +19,6 @@ use crate::solver::TypeInterner;
 
 use super::source_file::TsSourceFile;
 use super::type_checker::TsTypeChecker;
-
-/// Map u8 target value to ScriptTarget
-fn u8_to_script_target(target: Option<u8>) -> ScriptTarget {
-    match target {
-        Some(0) => ScriptTarget::ES3,
-        Some(1) => ScriptTarget::ES5,
-        Some(2) => ScriptTarget::ES2015,
-        Some(3) => ScriptTarget::ES2016,
-        Some(4) => ScriptTarget::ES2017,
-        Some(5) => ScriptTarget::ES2018,
-        Some(6) => ScriptTarget::ES2019,
-        Some(7) => ScriptTarget::ES2020,
-        _ => ScriptTarget::ESNext,
-    }
-}
 
 /// Compiler options passed from JavaScript
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -216,36 +200,11 @@ impl TsProgram {
         }
 
         // Determine which lib files to use
-        let lib_files_to_use = if !self.lib_files.is_empty() {
-            // Use explicitly added lib files from addLibFile()
-            self.lib_files.clone()
-        } else if self.options.no_lib != Some(true) {
-            // No explicit libs and noLib is false - load from embedded based on lib option
-            let target = u8_to_script_target(self.options.target);
-
-            // Parse lib option (e.g., "es2015,dom" -> ["es2015", "dom"])
-            let lib_names = if let Some(ref lib_str) = self.options.lib {
-                lib_str
-                    .split(',')
-                    .map(|s: &str| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            } else {
-                // No explicit lib option - use defaults based on target
-                vec![]
-            };
-
-            // Use lib resolver to get appropriate libs
-            let config = if !lib_names.is_empty() {
-                LibResolverConfig::new(target).with_libs(lib_names)
-            } else {
-                LibResolverConfig::new(target) // Uses defaults
-            };
-
-            resolve_libs(&config)
-        } else {
-            // noLib is true - no lib files
+        // Libs must be provided externally via addLibFile() - no embedded lib fallback
+        let lib_files_to_use = if self.options.no_lib == Some(true) {
             vec![]
+        } else {
+            self.lib_files.clone()
         };
 
         // Parse and bind all files

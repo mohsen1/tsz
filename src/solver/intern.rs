@@ -853,6 +853,7 @@ impl TypeInterner {
                         this_type: func.this_type,
                         return_type: func.return_type,
                         type_predicate: func.type_predicate.clone(),
+                        is_method: func.is_method,
                     });
                 }
                 Some(TypeKey::Callable(callable_id)) => {
@@ -1195,21 +1196,48 @@ impl TypeInterner {
             if prop.optional {
                 continue;
             }
-            let Some(left_set) = self.literal_set_from_type(prop.type_id) else {
-                continue;
-            };
             let Some(other) = Self::find_property(large, prop.name) else {
                 continue;
             };
             if other.optional {
                 continue;
             }
-            let Some(right_set) = self.literal_set_from_type(other.type_id) else {
-                continue;
-            };
-            if self.literal_sets_disjoint(&left_set, &right_set) {
+
+            // Rule #21: Check if property types are disjoint primitives
+            // { a: string } & { a: number } should be never
+            if self.property_types_disjoint(prop.type_id, other.type_id) {
                 return true;
             }
+
+            // Also check literal sets for discriminant-based reduction
+            // { kind: "a" } & { kind: "b" } should be never
+            if let Some(left_set) = self.literal_set_from_type(prop.type_id) {
+                if let Some(right_set) = self.literal_set_from_type(other.type_id) {
+                    if self.literal_sets_disjoint(&left_set, &right_set) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if two property types are disjoint (Rule #21: Intersection Reduction).
+    /// Returns true if the intersection of these types would be never.
+    fn property_types_disjoint(&self, left: TypeId, right: TypeId) -> bool {
+        // Same type is not disjoint
+        if left == right {
+            return false;
+        }
+
+        // Check for disjoint primitives: string & number, boolean & string, etc.
+        let left_class = self.primitive_class_for(left);
+        let right_class = self.primitive_class_for(right);
+
+        if let (Some(lc), Some(rc)) = (left_class, right_class) {
+            // Different primitive classes are disjoint
+            return lc != rc;
         }
 
         false

@@ -28,9 +28,19 @@ set -euo pipefail
 
 # Track child PIDs for cleanup
 CHILD_PIDS=()
+DOCKER_CONTAINER_NAME=""
 
 cleanup() {
     local exit_code=$?
+    echo "" # Newline after ^C
+
+    # Stop Docker container if running
+    if [[ -n "$DOCKER_CONTAINER_NAME" ]]; then
+        echo "Stopping Docker container..."
+        docker stop "$DOCKER_CONTAINER_NAME" 2>/dev/null || true
+        docker rm -f "$DOCKER_CONTAINER_NAME" 2>/dev/null || true
+    fi
+
     # Kill any child processes
     for pid in "${CHILD_PIDS[@]:-}"; do
         kill -TERM "$pid" 2>/dev/null || true
@@ -491,9 +501,9 @@ run_in_docker() {
     check_docker
     ensure_docker_image
     
-    # Calculate memory: ~1.5GB per worker, minimum 4GB
-    local memory_gb=$(( workers * 3 / 2 ))
-    if (( memory_gb < 4 )); then memory_gb=4; fi
+    # Calculate memory: ~3GB per worker for WASM (needs more headroom), minimum 8GB
+    local memory_gb=$(( workers * 3 ))
+    if (( memory_gb < 8 )); then memory_gb=8; fi
     
     log_step "Running tests in Docker (Memory: ${memory_gb}GB, CPUs: $workers)..."
     echo ""
@@ -505,7 +515,11 @@ run_in_docker() {
         mount_dir="$(get_target_dir)"
     fi
     
+    # Generate unique container name for cleanup
+    DOCKER_CONTAINER_NAME="tsz-conformance-$$"
+
     docker run --rm \
+        --name "$DOCKER_CONTAINER_NAME" \
         --platform linux/arm64 \
         --memory="${memory_gb}g" \
         --memory-swap="${memory_gb}g" \
@@ -518,6 +532,7 @@ run_in_docker() {
         -v "$SCRIPT_DIR/package.json:/app/conformance/package.json:ro" \
         -v "$SCRIPT_DIR/.tsc-cache:/app/conformance/.tsc-cache:ro" \
         -v "$ROOT_DIR/TypeScript/tests:/app/TypeScript/tests:ro" \
+        -v "$ROOT_DIR/TypeScript/src/lib:/app/TypeScript/src/lib:ro" \
         "$DOCKER_IMAGE" sh -c "
             cd /app/conformance
             npm install --silent 2>/dev/null || true
@@ -529,6 +544,9 @@ run_in_docker() {
             fi
             exit \$EXIT_CODE
         "
+    local docker_exit=$?
+    DOCKER_CONTAINER_NAME=""  # Clear so cleanup doesn't try to stop it
+    return $docker_exit
 }
 
 run_direct() {
@@ -686,6 +704,11 @@ main() {
         workers=$(detect_cores)
         # Cap at reasonable number for default runs
         if (( workers > 8 )) && (( max_tests < 1000 )); then
+            workers=8
+        fi
+        # Cap WASM + Docker at 8 workers to prevent OOM (WASM needs ~3GB per worker)
+        if [[ "$use_wasm" == "true" ]] && [[ "$use_docker" == "true" ]] && (( workers > 8 )); then
+            log_warning "Capping WASM+Docker workers to 8 (was $workers) to prevent OOM"
             workers=8
         fi
     fi

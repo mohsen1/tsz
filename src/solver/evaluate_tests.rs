@@ -20633,6 +20633,7 @@ fn test_return_type_overloaded_function() {
                 this_type: None,
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
+                is_method: false,
             },
             CallSignature {
                 type_params: Vec::new(),
@@ -20645,6 +20646,7 @@ fn test_return_type_overloaded_function() {
                 this_type: None,
                 return_type: TypeId::BOOLEAN,
                 type_predicate: None,
+                is_method: false,
             },
         ],
         construct_signatures: Vec::new(),
@@ -26395,6 +26397,7 @@ fn test_parameters_with_overloads() {
                 this_type: None,
                 return_type: TypeId::STRING,
                 type_predicate: None,
+                is_method: false,
             },
             CallSignature {
                 type_params: vec![],
@@ -26415,6 +26418,7 @@ fn test_parameters_with_overloads() {
                 this_type: None,
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
+                is_method: false,
             },
         ],
         construct_signatures: vec![],
@@ -26735,6 +26739,7 @@ fn test_return_type_overloads() {
                 this_type: None,
                 return_type: TypeId::STRING,
                 type_predicate: None,
+                is_method: false,
             },
             CallSignature {
                 type_params: vec![],
@@ -26747,6 +26752,7 @@ fn test_return_type_overloads() {
                 this_type: None,
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
+                is_method: false,
             },
         ],
         construct_signatures: vec![],
@@ -39569,6 +39575,7 @@ fn test_infer_from_overloaded_callable() {
                 this_type: None,
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
+                is_method: false,
             },
             CallSignature {
                 type_params: vec![],
@@ -39581,6 +39588,7 @@ fn test_infer_from_overloaded_callable() {
                 this_type: None,
                 return_type: TypeId::STRING,
                 type_predicate: None,
+                is_method: false,
             },
         ],
         construct_signatures: vec![],

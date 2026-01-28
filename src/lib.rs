@@ -25,31 +25,8 @@ fn hash_lib_content(content: &str) -> u64 {
     hasher.finish()
 }
 
-fn lib_name_from_file_name(file_name: &str) -> Option<String> {
-    let trimmed = file_name.trim().to_ascii_lowercase();
-    if let Some(rest) = trimmed.strip_prefix("lib.") {
-        if let Some(name) = rest.strip_suffix(".d.ts") {
-            // Empty name (from "lib.d.ts") should not map to any embedded lib
-            if name.is_empty() {
-                return None;
-            }
-            if name == "es6" {
-                return Some("es2015".to_string());
-            }
-            return Some(name.to_string());
-        }
-    }
-    None
-}
-
 /// Get or create a cached lib file. This avoids re-parsing lib.d.ts for every test.
 fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loader::LibFile> {
-    if let Some(lib_name) = lib_name_from_file_name(&file_name) {
-        if let Some(lib) = lib_loader::load_embedded_lib_by_name(&lib_name) {
-            return lib;
-        }
-    }
-
     let content_hash = hash_lib_content(&source_text);
     let cache_key = (file_name.clone(), content_hash);
 
@@ -2182,21 +2159,13 @@ impl WasmProgram {
 
         // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
         // Use cache to avoid re-parsing lib.d.ts for every test
-        let mut lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
+        let lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
             .lib_files
             .iter()
             .map(|(file_name, source_text)| {
                 get_or_create_lib_file(file_name.clone(), source_text.clone())
             })
             .collect();
-
-        // Ensure default libs are loaded if none are provided and noLib is false
-        if lib_file_objects.is_empty() && self.compiler_options.no_lib != Some(true) {
-            // Fallback to embedded ES5 lib if no libs are provided explicitly
-            if let Some(lib) = lib_loader::load_default_lib_dts() {
-                lib_file_objects.push(lib);
-            }
-        }
 
         // Parse and bind all files in parallel with lib symbols
         let bind_results = if !lib_file_objects.is_empty() {
@@ -2245,21 +2214,13 @@ impl WasmProgram {
 
         // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
         // Use cache to avoid re-parsing lib.d.ts for every test
-        let mut lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
+        let lib_file_objects: Vec<Arc<lib_loader::LibFile>> = self
             .lib_files
             .iter()
             .map(|(file_name, source_text)| {
                 get_or_create_lib_file(file_name.clone(), source_text.clone())
             })
             .collect();
-
-        // Ensure default libs are loaded if none are provided and noLib is false
-        if lib_file_objects.is_empty() && self.compiler_options.no_lib != Some(true) {
-            // Fallback to embedded ES5 lib if no libs are provided explicitly
-            if let Some(lib) = lib_loader::load_default_lib_dts() {
-                lib_file_objects.push(lib);
-            }
-        }
 
         // Parse and bind all files in parallel with lib symbols
         let bind_results = if !lib_file_objects.is_empty() {

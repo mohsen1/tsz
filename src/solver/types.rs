@@ -549,6 +549,9 @@ pub struct CallSignature {
     pub this_type: Option<TypeId>,
     pub return_type: TypeId,
     pub type_predicate: Option<TypePredicate>,
+    /// Whether this call signature is from a method (uses bivariant parameter checking).
+    /// Methods in TypeScript are intentionally bivariant for compatibility reasons.
+    pub is_method: bool,
 }
 
 /// Callable type with multiple overloaded call signatures
