@@ -395,11 +395,11 @@ impl UnsoundnessAudit {
             rule_number: 44,
             name: "Module Augmentation Merging",
             phase: ImplementationPhase::Phase4,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::PartiallyImplemented,
+            implementation_files: vec!["src/binder/state.rs"],
+            test_coverage: 30.0,
             dependencies: vec![],
-            notes: "NOT IMPLEMENTED. Interface merging across module boundaries. Declaration collection logic needed.",
+            notes: "PARTIAL. Binder tracks module augmentations via module_augmentations field. Interface/type declarations inside `declare module 'x'` are collected. Full merging with target module symbols not yet implemented in checker.",
         });
 
         // JSX
@@ -407,11 +407,11 @@ impl UnsoundnessAudit {
             rule_number: 36,
             name: "JSX Intrinsic Lookup (Case Sensitivity)",
             phase: ImplementationPhase::Phase4,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::PartiallyImplemented,
+            implementation_files: vec!["src/checker/state.rs", "src/checker/jsx.rs"],
+            test_coverage: 30.0,
             dependencies: vec![],
-            notes: "NOT IMPLEMENTED. Lowercase tags lookup in JSX.IntrinsicElements, uppercase tags as variables.",
+            notes: "PARTIAL. Case detection implemented (lowercase=intrinsic, uppercase=component). Component tag resolution works. Intrinsic lookup returns ANY (JSX namespace resolution not yet implemented).",
         });
 
         // OTHER PHASE 4 RULES
