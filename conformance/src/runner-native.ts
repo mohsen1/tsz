@@ -53,48 +53,48 @@ function parseTestDirectives(source: string, filePath: string): ParsedTestCase {
   const lines = source.split('\n');
   const cleanLines: string[] = [];
 
+  let currentFileName: string | null = null;
+  const currentFileLines: string[] = [];
+
   for (const line of lines) {
-    // Check for @filename directives (multi-file tests)
-    const filenameMatch = line.match(/^\/\/\/\s*File:\s*(\S+)/);
+    const trimmed = line.trim();
+    const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/i);
     if (filenameMatch) {
       isMultiFile = true;
-      if (files.length > 0) {
-        // Save previous file
-        files[files.length - 1].content = cleanLines.join('\n');
+      if (currentFileName) {
+        files.push({ name: currentFileName, content: currentFileLines.join('\n') });
       }
-      files.push({ name: filenameMatch[1], content: '' });
-      cleanLines.length = 0;
+      currentFileName = filenameMatch[1].trim();
+      currentFileLines.length = 0;
       continue;
     }
 
-    // Check for @compilerOptions
-    const optMatch = line.match(/@(\w+)\s*:\s*(.+)/);
-    if (optMatch) {
-      const [, key, value] = optMatch;
-      // Parse boolean, string, or number values
-      if (value === 'true') options[key] = true;
-      else if (value === 'false') options[key] = false;
-      else if (/^\d+$/.test(value)) options[key] = parseInt(value, 10);
-      else options[key] = value.replace(/^['"]|['"]$/g, '');
+    const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
+    if (optionMatch) {
+      const [, key, value] = optionMatch;
+      const lowKey = key.toLowerCase();
+      if (value.toLowerCase() === 'true') options[lowKey] = true;
+      else if (value.toLowerCase() === 'false') options[lowKey] = false;
+      else if (!isNaN(Number(value))) options[lowKey] = Number(value);
+      else options[lowKey] = value;
       continue;
     }
 
-    // Skip @ comments (they're directives, not code)
-    if (line.trim().startsWith('//')) {
-      // Check for @skip, @target, etc.
-      if (line.includes('@skip')) continue;
-      if (line.includes('@only')) continue;
+    if (isMultiFile && currentFileName) {
+      currentFileLines.push(line);
+    } else {
+      cleanLines.push(line);
     }
-
-    cleanLines.push(line);
   }
 
-  // Save last file content
-  if (files.length > 0) {
-    files[files.length - 1].content = cleanLines.join('\n');
-  } else {
-    // Single file test
-    files.push({ name: path.basename(filePath), content: source });
+  // Save last file
+  if (isMultiFile && currentFileName) {
+    files.push({ name: currentFileName, content: currentFileLines.join('\n') });
+  }
+
+  // Single file test
+  if (!isMultiFile) {
+    files.push({ name: path.basename(filePath), content: cleanLines.join('\n') });
   }
 
   // Determine category from file path
