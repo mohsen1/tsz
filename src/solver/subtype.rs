@@ -60,6 +60,13 @@ pub trait TypeResolver {
     fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
         None
     }
+
+    /// Get the boxed interface type for a primitive intrinsic (Rule #33).
+    /// For example, IntrinsicKind::Number -> TypeId of the Number interface.
+    /// This enables primitives to be subtypes of their boxed interfaces.
+    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
+        None
+    }
 }
 
 /// A no-op resolver that doesn't resolve any references.
@@ -80,6 +87,9 @@ pub struct TypeEnvironment {
     types: std::collections::HashMap<u32, TypeId>,
     /// Maps symbol references to their type parameters (for generic types).
     type_params: std::collections::HashMap<u32, Vec<TypeParamInfo>>,
+    /// Maps primitive intrinsic kinds to their boxed interface types (Rule #33).
+    /// e.g., IntrinsicKind::Number -> TypeId of the Number interface
+    boxed_types: std::collections::HashMap<IntrinsicKind, TypeId>,
 }
 
 impl TypeEnvironment {
@@ -87,12 +97,24 @@ impl TypeEnvironment {
         TypeEnvironment {
             types: std::collections::HashMap::new(),
             type_params: std::collections::HashMap::new(),
+            boxed_types: std::collections::HashMap::new(),
         }
     }
 
     /// Register a symbol's resolved type.
     pub fn insert(&mut self, symbol: SymbolRef, type_id: TypeId) {
         self.types.insert(symbol.0, type_id);
+    }
+
+    /// Register a boxed type for a primitive (Rule #33).
+    /// e.g., set_boxed_type(IntrinsicKind::Number, type_id_of_Number_interface)
+    pub fn set_boxed_type(&mut self, kind: IntrinsicKind, type_id: TypeId) {
+        self.boxed_types.insert(kind, type_id);
+    }
+
+    /// Get the boxed type for a primitive.
+    pub fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.boxed_types.get(&kind).copied()
     }
 
     /// Register a symbol's resolved type with type parameters.
@@ -141,6 +163,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
         self.get_params(symbol).cloned()
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        TypeEnvironment::get_boxed_type(self, kind)
     }
 }
 
@@ -444,6 +470,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         match (&source_key, &target_key) {
             // Intrinsic to intrinsic
             (TypeKey::Intrinsic(s), TypeKey::Intrinsic(t)) => self.check_intrinsic_subtype(*s, *t),
+
+            // Rule #33: Primitive to boxed interface (e.g., number to Number)
+            // Primitives are subtypes of their boxed wrapper interfaces
+            (TypeKey::Intrinsic(s_kind), _) => {
+                if self.is_boxed_primitive_subtype(*s_kind, target) {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                }
+            }
 
             // Literal to intrinsic
             (TypeKey::Literal(lit), TypeKey::Intrinsic(t)) => {
