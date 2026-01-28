@@ -752,6 +752,46 @@ pub fn process_template_escape_sequences(input: &str) -> String {
     result
 }
 
+/// Returns true if the type name corresponds to a built-in type that should
+/// be represented structurally or intrinsically, rather than by reference.
+///
+/// ## Built-in vs Referenced Types
+///
+/// **Built-in types** (managed by the compiler) are represented directly by their
+/// structure (e.g., `TypeKey::Array`) rather than by symbol reference (`TypeKey::Ref`).
+/// This ensures canonicalization: `Array<number>` and `number[]` resolve to the same type.
+///
+/// **Referenced types** (user-defined and lib types) are represented as `TypeKey::Ref(symbol_id)`
+/// and resolved lazily during type checking through the `TypeEnvironment`.
+///
+/// ## Examples
+///
+/// - `Array<T>` → `TypeKey::Array(T)` (structural, not `Ref`)
+/// - `Uppercase<S>` → `TypeKey::StringIntrinsic { kind: Uppercase, ... }`
+/// - `MyInterface` → `TypeKey::Ref(SymbolRef(sym_id))`
+///
+/// ## When to Add Types
+///
+/// Add a type to this list if:
+/// 1. It has special structural representation in `TypeKey` (e.g., `Array`)
+/// 2. It is a compiler intrinsic (e.g., `Uppercase`, `Lowercase`)
+/// 3. It needs canonicalization with alternative syntax (e.g., `T[]` vs `Array<T>`)
+///
+/// **DO NOT** add:
+/// - Regular lib types like `Promise`, `Map`, `Set` (these use `Ref`)
+/// - User-defined interfaces or type aliases
+pub fn is_compiler_managed_type(name: &str) -> bool {
+    matches!(
+        name,
+        "Array" |          // Canonicalizes with T[] syntax
+        "ReadonlyArray" |   // Built-in readonly array type
+        "Uppercase" |       // String intrinsic
+        "Lowercase" |       // String intrinsic
+        "Capitalize" |      // String intrinsic
+        "Uncapitalize"      // String intrinsic
+    )
+}
+
 #[cfg(test)]
 #[path = "types_tests.rs"]
 mod tests;
