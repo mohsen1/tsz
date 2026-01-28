@@ -2,6 +2,10 @@
 name = "wasm"
 version = "0.1.0"
 edition = "2024"
+description = "TypeScript compiler and type checker with WASM support"
+repository = "https://github.com/mohsenazimi/tsz"
+license = "MIT"
+authors = ["Mohsen Azimi <mohsen@users.noreply.github.com>"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

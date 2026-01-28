@@ -957,7 +957,18 @@ process.on('unhandledRejection', (reason) => {
 
   // Set TypeScript lib directory (for es2015, dom, etc.)
   try {
-    tsLibDir = path.resolve(__dirname, '../../TypeScript/node_modules/typescript/lib');
+    // Try multiple possible locations for TypeScript lib files
+    const candidates = [
+      path.resolve(__dirname, '../../TypeScript/node_modules/typescript/lib'),
+      path.resolve(process.cwd(), 'TypeScript/node_modules/typescript/lib'),
+      '/work/TypeScript/node_modules/typescript/lib',
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        tsLibDir = candidate;
+        break;
+      }
+    }
   } catch {}
 
   // Load lib manifest for consistent resolution (optional - falls back to file-based)
