@@ -686,6 +686,7 @@ const colors = {
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
+  magenta: '\x1b[35m',
   cyan: '\x1b[36m',
   dim: '\x1b[2m',
   bold: '\x1b[1m',
@@ -914,44 +915,82 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     stats.workerStats.crashed = poolStats.oomKills;
     stats.workerStats.respawned = poolStats.totalRestarts;
 
-    // Print summary
-    log(`\n${'═'.repeat(60)}`, colors.cyan);
-    log(`  Results`, colors.bold);
-    log(`${'═'.repeat(60)}`, colors.cyan);
+    // Print summary (matching WASM runner output format)
+    log('\n' + '═'.repeat(60), colors.dim);
+    log('CONFORMANCE TEST RESULTS', colors.bold);
+    log('═'.repeat(60), colors.dim);
+
     // Calculate actual failed (failed includes oom and timedOut, but NOT crashed)
     const actualFailed = stats.failed - stats.oom - stats.timedOut;
+    const passRate = stats.total > 0 ? ((stats.passed / stats.total) * 100).toFixed(1) : '0.0';
 
-    log(`  Total:   ${formatNumber(stats.total)}`, colors.dim);
-    log(`  Passed:  ${formatNumber(stats.passed)}`, colors.green);
-    log(`  Failed:  ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
-    log(`  Timeout: ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
-    log(`  OOM:     ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.yellow : colors.dim);
-    log(`  Crashed: ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
-    log(`  Time:    ${elapsed.toFixed(1)}s (${(stats.total / elapsed).toFixed(1)} tests/s)`, colors.dim);
+    log(`\nPass Rate: ${passRate}% (${formatNumber(stats.passed)}/${formatNumber(stats.total)})`, stats.passed === stats.total ? colors.green : colors.yellow);
+    log(`Time: ${elapsed.toFixed(1)}s (${(stats.total / elapsed).toFixed(0)} tests/sec)`, colors.dim);
 
-    if (poolStats.oomKills > 0) {
-      log(`\n  Worker OOM kills: ${poolStats.oomKills}`, colors.yellow);
-      log(`  Worker restarts:  ${poolStats.totalRestarts}`, colors.yellow);
+    log('\nSummary:', colors.bold);
+    log(`  ✓ Passed:   ${formatNumber(stats.passed)}`, colors.green);
+    log(`  ✗ Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
+    log(`  💥 Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
+    log(`  💾 OOM:      ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.magenta : colors.dim);
+    log(`  ⏱ Timeout:  ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
+
+    // Worker stats
+    log('\nWorker Health:', colors.bold);
+    log(`  Spawned:   ${workerCount}`, colors.dim);
+    log(`  Crashed:   ${poolStats.oomKills}`, poolStats.oomKills > 0 ? colors.red : colors.dim);
+    log(`  Respawned: ${poolStats.totalRestarts}`, poolStats.totalRestarts > 0 ? colors.yellow : colors.dim);
+
+    // By Category
+    log('\nBy Category:', colors.bold);
+    for (const [cat, s] of Object.entries(stats.byCategory)) {
+      const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
+      log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
     }
 
-    // Show crash breakdown if there are crashes
+    // Show problematic tests
     if (stats.crashedTests.length > 0) {
-      log(`\n  Crash breakdown:`, colors.red);
-      // Group by error message
-      const errorGroups = new Map<string, number>();
-      for (const { error } of stats.crashedTests) {
-        // Normalize error message (take first line, truncate)
-        const normalized = error.split('\n')[0].substring(0, 80);
-        errorGroups.set(normalized, (errorGroups.get(normalized) || 0) + 1);
+      log('\nCrashed Tests:', colors.red);
+      for (const t of stats.crashedTests.slice(0, 5)) {
+        log(`  ${t.path}`, colors.dim);
+        log(`    ${t.error.slice(0, 80)}`, colors.dim);
       }
-      // Sort by count and show top 5
-      const sorted = [...errorGroups.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-      for (const [error, count] of sorted) {
-        log(`    ${formatNumber(count)}x: ${error}`, colors.dim);
+      if (stats.crashedTests.length > 5) {
+        log(`  ... and ${stats.crashedTests.length - 5} more`, colors.dim);
       }
     }
 
-    log(`${'═'.repeat(60)}\n`, colors.cyan);
+    if (stats.oomTests.length > 0) {
+      log('\nOOM Tests:', colors.magenta);
+      for (const t of stats.oomTests.slice(0, 5)) {
+        log(`  ${t}`, colors.dim);
+      }
+      if (stats.oomTests.length > 5) {
+        log(`  ... and ${stats.oomTests.length - 5} more`, colors.dim);
+      }
+    }
+
+    if (stats.timedOutTests.length > 0) {
+      log('\nTimed Out Tests:', colors.yellow);
+      for (const t of stats.timedOutTests.slice(0, 5)) {
+        log(`  ${t}`, colors.dim);
+      }
+      if (stats.timedOutTests.length > 5) {
+        log(`  ... and ${stats.timedOutTests.length - 5} more`, colors.dim);
+      }
+    }
+
+    // Top errors
+    log('\nTop Missing Errors:', colors.bold);
+    for (const [c, n] of [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+      log(`  TS${c}: ${n}x`, colors.yellow);
+    }
+
+    log('\nTop Extra Errors:', colors.bold);
+    for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+      log(`  TS${c}: ${n}x`, colors.yellow);
+    }
+
+    log('\n' + '═'.repeat(60), colors.dim);
 
   } finally {
     await pool.stop();
