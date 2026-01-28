@@ -272,23 +272,19 @@ build_native() {
 
 build_native_for_docker() {
     log_step "Building native binary for Linux (Docker)..."
-    cd "$ROOT_DIR"
 
-    require_cmd cargo
+    # Build the binary inside Docker to avoid cross-compilation issues
+    log_info "Building in Docker container..."
 
-    # Check if cross-compilation tools are available
-    if ! cargo target list --installed 2>/dev/null | grep -q "x86_64-unknown-linux-gnu"; then
-        log_warning "Cross-compilation target not found. Installing..."
-        rustup target add x86_64-unknown-linux-gnu
-    fi
-
-    # Build for Linux
-    CARGO_TARGET=x86_64-unknown-linux-gnu cargo build --release --bin tsz
-
-    # Create symlink at .target/release/tsz pointing to cross-compiled binary
-    # This ensures the worker can find the binary when running in Docker
-    mkdir -p .target/release
-    ln -sf "../x86_64-unknown-linux-gnu/release/tsz" .target/release/tsz
+    docker run --rm \
+        -v "$ROOT_DIR:/work:rw" \
+        -w /work \
+        --platform linux/amd64 \
+        rust:1-slim \
+        bash -c "
+            apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev >/dev/null 2>&1
+            cargo build --release --bin tsz
+        "
 
     log_success "Native binary for Linux built"
 }
