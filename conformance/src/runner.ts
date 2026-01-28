@@ -796,6 +796,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
   const config: Partial<RunnerConfig> = {};
+  let useServer = false;
 
   for (const arg of args) {
     if (arg.startsWith('--max=')) config.maxTests = parseInt(arg.split('=')[1], 10);
@@ -806,9 +807,21 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (arg.startsWith('--wasm=')) config.useWasm = arg.split('=')[1] === 'true';
     else if (arg === '--wasm') config.useWasm = true;
     else if (arg === '--native') config.useWasm = false;
+    else if (arg === '--server') useServer = true;
   }
 
-  runConformanceTests(config).then(stats => {
-    process.exit(stats.failed > 0 ? 1 : 0);
-  });
+  if (useServer) {
+    // Server mode: use tsz-server with persistent process
+    import('./runner-server.js').then(async ({ runServerConformanceTests }) => {
+      const stats = await runServerConformanceTests(config);
+      process.exit(stats.failed > 0 ? 1 : 0);
+    }).catch(err => {
+      console.error('Failed to load server runner:', err);
+      process.exit(2);
+    });
+  } else {
+    runConformanceTests(config).then(stats => {
+      process.exit(stats.failed > 0 ? 1 : 0);
+    });
+  }
 }

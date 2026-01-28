@@ -341,8 +341,10 @@ pub struct ModuleResolver {
     /// Cache of resolved modules
     resolution_cache: FxHashMap<(PathBuf, String), Result<ResolvedModule, ResolutionFailure>>,
     /// Extensions to try for TypeScript resolution
+    #[allow(dead_code)] // Infrastructure for future extension-based resolution
     ts_extensions: Vec<&'static str>,
     /// Extensions to try for JavaScript resolution
+    #[allow(dead_code)] // Infrastructure for future extension-based resolution
     js_extensions: Vec<&'static str>,
     /// Declaration extensions to try
     #[allow(dead_code)] // Infrastructure for .d.ts resolution

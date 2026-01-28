@@ -10536,8 +10536,11 @@ impl<'a> CheckerState<'a> {
 
         match key {
             TypeKey::TypeQuery(SymbolRef(sym_id)) => {
-                // Check for cycle in typeof resolution
-                if self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) {
+                // Check for cycle in typeof resolution (scoped borrow)
+                let is_cycle = {
+                    self.ctx.typeof_resolution_stack.borrow().contains(&sym_id)
+                };
+                if is_cycle {
                     // Cycle detected - return ERROR to prevent infinite loop
                     eprintln!(
                         "Warning: typeof resolution cycle detected for symbol {} in {}",
@@ -10546,17 +10549,18 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
-                // Mark as visiting
-                self.ctx.typeof_resolution_stack.borrow_mut().insert(sym_id);
+                // Mark as visiting (use try_borrow_mut to avoid panic on nested borrow)
+                if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
+                    stack.insert(sym_id);
+                }
 
                 // Resolve the symbol type
                 let result = self.get_type_of_symbol(SymbolId(sym_id));
 
                 // Unmark after resolution
-                self.ctx
-                    .typeof_resolution_stack
-                    .borrow_mut()
-                    .remove(&sym_id);
+                if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
+                    stack.remove(&sym_id);
+                }
 
                 result
             }
@@ -10564,8 +10568,11 @@ impl<'a> CheckerState<'a> {
                 let app = self.ctx.types.type_application(app_id);
                 if let Some(TypeKey::TypeQuery(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base)
                 {
-                    // Check for cycle in typeof resolution (for application base)
-                    if self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) {
+                    // Check for cycle in typeof resolution (scoped borrow)
+                    let is_cycle = {
+                        self.ctx.typeof_resolution_stack.borrow().contains(&sym_id)
+                    };
+                    if is_cycle {
                         eprintln!(
                             "Warning: typeof resolution cycle detected for symbol {} in application in {}",
                             sym_id, self.ctx.file_name
@@ -10573,17 +10580,18 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
-                    // Mark as visiting
-                    self.ctx.typeof_resolution_stack.borrow_mut().insert(sym_id);
+                    // Mark as visiting (use try_borrow_mut to avoid panic on nested borrow)
+                    if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
+                        stack.insert(sym_id);
+                    }
 
                     // Resolve the base type
                     let base = self.get_type_of_symbol(SymbolId(sym_id));
 
                     // Unmark after resolution
-                    self.ctx
-                        .typeof_resolution_stack
-                        .borrow_mut()
-                        .remove(&sym_id);
+                    if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
+                        stack.remove(&sym_id);
+                    }
 
                     return self.ctx.types.application(base, app.args.clone());
                 }

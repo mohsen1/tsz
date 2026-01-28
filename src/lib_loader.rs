@@ -9,7 +9,72 @@ use crate::binder::SymbolTable;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
+use rustc_hash::FxHashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
+
+// =============================================================================
+// LibLoader - Cached lib file loading from disk
+// =============================================================================
+
+/// A lib file loader that caches loaded files.
+///
+/// Used by tsz-server to keep lib files in memory across multiple checks.
+pub struct LibLoader {
+    /// Directory containing lib.*.d.ts files
+    lib_dir: PathBuf,
+    /// Cache of loaded lib file contents
+    cache: FxHashMap<String, String>,
+}
+
+impl LibLoader {
+    /// Create a new LibLoader with the given lib directory.
+    pub fn new(lib_dir: PathBuf) -> Self {
+        Self {
+            lib_dir,
+            cache: FxHashMap::default(),
+        }
+    }
+
+    /// Load a lib file by name (e.g., "es5", "es2015", "dom").
+    ///
+    /// Returns the file content, or None if not found.
+    pub fn load_lib(&mut self, lib_name: &str) -> Option<&str> {
+        let normalized = lib_name.trim().to_lowercase();
+
+        // Check cache first
+        if self.cache.contains_key(&normalized) {
+            return self.cache.get(&normalized).map(|s| s.as_str());
+        }
+
+        // Try to load from disk
+        let candidates = [
+            self.lib_dir.join(format!("lib.{}.d.ts", normalized)),
+            self.lib_dir.join(format!("{}.d.ts", normalized)),
+        ];
+
+        for candidate in &candidates {
+            if candidate.exists() {
+                if let Ok(content) = std::fs::read_to_string(candidate) {
+                    self.cache.insert(normalized.clone(), content);
+                    return self.cache.get(&normalized).map(|s| s.as_str());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Clear the cache.
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
+    }
+
+    /// Get the number of cached lib files.
+    pub fn cache_size(&self) -> usize {
+        self.cache.len()
+    }
+}
 
 // =============================================================================
 // Diagnostic Error Codes

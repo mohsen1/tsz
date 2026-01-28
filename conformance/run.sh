@@ -101,10 +101,11 @@ CACHE COMMANDS:
 
 OPTIONS:
     Execution Mode:
-    --wasm              Use WASM module (default)
-    --native            Use native binary (faster, requires Rust toolchain)
-    --docker            Run inside Docker container (default, provides isolation)
-    --no-docker         Run directly on host (faster, no isolation)
+    --server            Use tsz-server (persistent process, default - fastest)
+    --wasm              Use WASM module (slower, but good isolation)
+    --native            Use native binary spawned per test (legacy mode)
+    --docker            Run inside Docker container (provides isolation)
+    --no-docker         Run directly on host (default with --server)
 
     Test Selection:
     --all               Run all available tests (overrides --max)
@@ -148,29 +149,28 @@ EXAMPLES:
     ./run.sh single TypeScript/tests/cases/conformance/types/tuple/test.ts
 
 EXECUTION MODES:
-    The runner supports four execution modes:
+    The runner supports multiple execution modes:
 
-    1. WASM + Docker (default, safest)
+    1. Server Mode (default, fastest)
+       - Builds tsz-server binary
+       - Keeps libs cached in memory
+       - 5-10x faster than spawn-per-test
+       - Uses stdin/stdout JSON protocol
+
+    2. WASM + Docker (safest)
        - Builds WASM module with wasm-pack
        - Runs tests inside Docker container
        - Best isolation from infinite loops/OOM
        - Cross-platform compatible
 
-    2. WASM + No Docker
+    3. WASM + No Docker
        - Builds WASM module
        - Runs directly on host
        - Good isolation (WASM sandbox)
-       - Faster than Docker mode
 
-    3. Native + Docker (Linux only)
-       - Builds native binary with cargo
-       - Runs inside Docker container
-       - ⚠️  Does NOT work on macOS (binary architecture mismatch)
-
-    4. Native + No Docker (fastest)
-       - Builds native binary with cargo
-       - Runs directly on host
-       - Fastest execution
+    4. Native + No Docker (legacy)
+       - Spawns native binary per test
+       - Slower due to process overhead
        - ⚠️  No isolation - infinite loops can hang your system
 
 CONFIGURATION:
@@ -278,6 +278,15 @@ build_native() {
     cargo build --release --bin tsz
     log_success "Native binary built"
     # Lib files are embedded in the binary (no copy needed).
+}
+
+build_server() {
+    log_step "Building tsz-server..."
+    cd "$ROOT_DIR"
+
+    require_cmd cargo
+    cargo build --release --bin tsz-server
+    log_success "tsz-server built"
 }
 
 build_native_for_docker() {
@@ -591,14 +600,70 @@ run_direct() {
     fi
 }
 
+run_server() {
+    local max_tests="$1"
+    local workers="$2"
+    local timeout="$3"
+    local categories="$4"
+    local verbose="$5"
+
+    # Print banner
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                          ${RESET}${CYAN}║${RESET}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
+    echo -e "${CYAN}║${RESET}  Mode:       $(printf '%-48s' "Server (persistent)")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$max_tests")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Workers:    $(printf '%-48s' "$workers")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Categories: $(printf '%-48s' "$categories")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Timeout:    $(printf '%-48s' "${timeout}s")${CYAN}║${RESET}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
+    echo ""
+
+    build_server
+    build_runner
+
+    log_step "Starting tsz-server pool..."
+    echo ""
+
+    cd "$SCRIPT_DIR"
+
+    # Set server binary path
+    local target_dir
+    target_dir=$(get_target_dir)
+    export TSZ_SERVER_BINARY="$target_dir/release/tsz-server"
+    export TSZ_LIB_DIR="$ROOT_DIR/node_modules/typescript/lib"
+
+    # Build runner args
+    local runner_args="--max=$max_tests --workers=$workers --category=$categories --server"
+    if [[ "$verbose" == "true" ]]; then
+        runner_args="$runner_args --verbose"
+    fi
+
+    # Run with timeout
+    if command -v timeout &>/dev/null; then
+        timeout "${timeout}s" node --expose-gc dist/runner.js $runner_args || {
+            local exit_code=$?
+            if [[ $exit_code -eq 124 ]]; then
+                echo ""
+                log_warning "Tests timed out after ${timeout}s"
+            fi
+            return $exit_code
+        }
+    else
+        # macOS doesn't have timeout by default
+        node --expose-gc dist/runner.js $runner_args
+    fi
+}
+
 # ==============================================================================
 # Argument Parsing
 # ==============================================================================
 
 main() {
-    # Defaults
-    local use_wasm=true
-    local use_docker=true
+    # Defaults - server mode is now the default (fastest)
+    local mode="server"  # server, wasm, native
+    local use_docker=false
     local max_tests=500
     local workers=""
     local timeout=600
@@ -634,11 +699,15 @@ main() {
                 ;;
             
             # Mode options
+            --server)
+                mode="server"
+                use_docker=false  # Server mode doesn't use Docker
+                ;;
             --wasm)
-                use_wasm=true
+                mode="wasm"
                 ;;
             --native)
-                use_wasm=false
+                mode="native"
                 ;;
             --docker)
                 use_docker=true
@@ -707,7 +776,7 @@ main() {
             workers=8
         fi
         # Cap WASM + Docker at 8 workers to prevent OOM (WASM needs ~3GB per worker)
-        if [[ "$use_wasm" == "true" ]] && [[ "$use_docker" == "true" ]] && (( workers > 8 )); then
+        if [[ "$mode" == "wasm" ]] && [[ "$use_docker" == "true" ]] && (( workers > 8 )); then
             log_warning "Capping WASM+Docker workers to 8 (was $workers) to prevent OOM"
             workers=8
         fi
@@ -728,7 +797,7 @@ main() {
     # Dry run
     if [[ "$dry_run" == "true" ]]; then
         echo "Dry run - would execute:"
-        echo "  Mode: $([ "$use_wasm" == "true" ] && echo "WASM" || echo "Native")"
+        echo "  Mode: $mode"
         echo "  Docker: $use_docker"
         echo "  Max tests: $max_tests"
         echo "  Workers: $workers"
@@ -737,9 +806,21 @@ main() {
         echo "  Verbose: $verbose"
         exit 0
     fi
-    
-    # Run tests
-    run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
+
+    # Run tests based on mode
+    case "$mode" in
+        server)
+            run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
+            ;;
+        wasm)
+            local use_wasm=true
+            run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
+            ;;
+        native)
+            local use_wasm=false
+            run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
+            ;;
+    esac
 }
 
 # ==============================================================================

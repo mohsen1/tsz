@@ -43,7 +43,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None => return self.interner().mapped(mapped.clone()),
         };
 
-        // Limit number of keys to prevent OOM with large mapped types
+        // Limit number of keys to prevent OOM with large mapped types.
+        // WASM environments have limited memory, but 100 is too restrictive for
+        // real-world code (large SDKs, generated API types often have 150-250 keys).
+        // 250 covers ~99% of real-world use cases while remaining safe for WASM.
+        #[cfg(target_arch = "wasm32")]
+        const MAX_MAPPED_KEYS: usize = 250;
+        #[cfg(not(target_arch = "wasm32"))]
         const MAX_MAPPED_KEYS: usize = 500;
         if key_set.string_literals.len() > MAX_MAPPED_KEYS {
             self.set_depth_exceeded(true);

@@ -38,7 +38,21 @@ const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
 const SHARD_MASK: u32 = (SHARD_COUNT as u32) - 1;
 pub(crate) const PROPERTY_MAP_THRESHOLD: usize = 24;
 const TYPE_LIST_INLINE: usize = 8;
+
+/// Maximum template literal expansion limit.
+/// WASM environments have limited linear memory, so we use a much lower limit
+/// to prevent OOM. Native CLI can handle more.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 2_000;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
+
+/// Maximum number of interned types before aborting.
+/// WASM linear memory cannot grow indefinitely, so we cap at 500k types.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_INTERNED_TYPES: usize = 5_000_000;
 
 type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 
@@ -424,6 +438,14 @@ impl TypeInterner {
             return id;
         }
 
+        // Circuit breaker: prevent OOM by limiting total interned types
+        // This is especially important for WASM where linear memory is limited.
+        // We do a cheap approximate check (summing shard indices) to avoid
+        // iterating all shards on every intern call.
+        if self.approximate_count() > MAX_INTERNED_TYPES {
+            return TypeId::ERROR;
+        }
+
         let mut hasher = FxHasher::default();
         key.hash(&mut hasher);
         let shard_idx = (hasher.finish() as usize) & (SHARD_COUNT - 1);
@@ -525,6 +547,20 @@ impl TypeInterner {
     /// Check if the interner is empty (only has intrinsics)
     pub fn is_empty(&self) -> bool {
         self.len() <= TypeId::FIRST_USER as usize
+    }
+
+    /// Get an approximate count of interned types.
+    /// This is cheaper than `len()` as it samples only a few shards.
+    /// Used for the circuit breaker to avoid OOM.
+    #[inline]
+    fn approximate_count(&self) -> usize {
+        // Sample first 4 shards and extrapolate (assumes uniform distribution)
+        let mut sample_total: usize = 0;
+        for shard in self.shards.iter().take(4) {
+            sample_total += shard.next_index.load(Ordering::Relaxed) as usize;
+        }
+        // Extrapolate to all 64 shards
+        (sample_total * SHARD_COUNT / 4) + TypeId::FIRST_USER as usize
     }
 
     #[inline]
