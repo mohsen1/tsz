@@ -13,6 +13,7 @@
 //! operations, providing cleaner APIs for array type checking.
 
 use crate::checker::state::CheckerState;
+use crate::solver::type_queries;
 use crate::solver::{TypeId, TypeKey};
 
 // =============================================================================
@@ -28,7 +29,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for `T[]` types.
     pub fn is_mutable_array_type(&self, type_id: TypeId) -> bool {
-        crate::solver::type_queries::is_array_type(self.ctx.types, type_id)
+        type_queries::is_array_type(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -40,10 +41,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the element type if this is an array type,
     /// or the provided fallback type otherwise.
     pub fn get_array_element_type_or(&self, type_id: TypeId, fallback: TypeId) -> TypeId {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(element_type)) => element_type,
-            _ => fallback,
-        }
+        type_queries::get_array_element_type(self.ctx.types, type_id).unwrap_or(fallback)
     }
 
     // =========================================================================
@@ -55,14 +53,14 @@ impl<'a> CheckerState<'a> {
     /// Returns true if both are arrays and their element types are compatible.
     pub fn array_types_compatible(&mut self, array1: TypeId, array2: TypeId) -> bool {
         // Both must be arrays
-        let elem1 = match self.ctx.types.lookup(array1) {
-            Some(TypeKey::Array(e)) => e,
-            _ => return false,
+        let elem1 = match type_queries::get_array_element_type(self.ctx.types, array1) {
+            Some(e) => e,
+            None => return false,
         };
 
-        let elem2 = match self.ctx.types.lookup(array2) {
-            Some(TypeKey::Array(e)) => e,
-            _ => return false,
+        let elem2 = match type_queries::get_array_element_type(self.ctx.types, array2) {
+            Some(e) => e,
+            None => return false,
         };
 
         // Check element type assignability
@@ -99,44 +97,36 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the array element type is a primitive type.
     pub fn is_primitive_array(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(element_type)) => self.is_primitive_type(element_type),
-            _ => false,
-        }
+        type_queries::get_array_element_type(self.ctx.types, type_id)
+            .map(|element_type| self.is_primitive_type(element_type))
+            .unwrap_or(false)
     }
 
     /// Check if an array type contains only literal elements.
     ///
     /// Returns true if the array element type is a literal type.
     pub fn is_literal_array(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(element_type)) => self.is_literal_type(element_type),
-            _ => false,
-        }
+        type_queries::get_array_element_type(self.ctx.types, type_id)
+            .map(|element_type| self.is_literal_type(element_type))
+            .unwrap_or(false)
     }
 
     /// Check if an array type contains union elements.
     ///
     /// Returns true if the array element type is a union type.
     pub fn is_union_array(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(element_type)) => {
-                crate::solver::type_queries::is_union_type(self.ctx.types, element_type)
-            }
-            _ => false,
-        }
+        type_queries::get_array_element_type(self.ctx.types, type_id)
+            .map(|element_type| type_queries::is_union_type(self.ctx.types, element_type))
+            .unwrap_or(false)
     }
 
     /// Check if an array type is homogeneous (all elements same type).
     ///
     /// Returns false if the element type is a union or tuple type.
     pub fn is_homogeneous_array(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(element_type)) => {
-                !crate::solver::type_queries::is_union_type(self.ctx.types, element_type)
-            }
-            _ => false,
-        }
+        type_queries::get_array_element_type(self.ctx.types, type_id)
+            .map(|element_type| !type_queries::is_union_type(self.ctx.types, element_type))
+            .unwrap_or(false)
     }
 
     /// Get the common element type if array is homogeneous.
@@ -144,16 +134,7 @@ impl<'a> CheckerState<'a> {
     /// Returns Some(element_type) if the array has a single element type,
     /// or None if it's a union array or not an array.
     pub fn get_homogeneous_element_type(&self, type_id: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(element_type)) => {
-                // If element type is not a union, it's homogeneous
-                if !crate::solver::type_queries::is_union_type(self.ctx.types, element_type) {
-                    Some(element_type)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
+        type_queries::get_array_element_type(self.ctx.types, type_id)
+            .filter(|&element_type| !type_queries::is_union_type(self.ctx.types, element_type))
     }
 }

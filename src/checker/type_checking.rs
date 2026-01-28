@@ -3982,18 +3982,16 @@ impl<'a> CheckerState<'a> {
     /// new Foo(); // Valid if Foo.prototype exists
     /// ```
     pub(crate) fn type_has_prototype_property(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries;
 
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                // Check if properties contain 'prototype'
-                let prototype_atom = self.ctx.types.intern_string("prototype");
-                shape.properties.iter().any(|p| p.name == prototype_atom)
-            }
-            Some(TypeKey::Function(_)) => true, // Function types typically have prototype
-            _ => false,
+        // Check callable shape for prototype property
+        if let Some(shape) = type_queries::get_callable_shape(self.ctx.types, type_id) {
+            let prototype_atom = self.ctx.types.intern_string("prototype");
+            return shape.properties.iter().any(|p| p.name == prototype_atom);
         }
+
+        // Function types typically have prototype
+        type_queries::get_function_shape(self.ctx.types, type_id).is_some()
     }
 
     /// Check if a symbol is a class symbol.

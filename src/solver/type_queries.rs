@@ -440,3 +440,278 @@ where
         }
     }
 }
+
+// =============================================================================
+// Type Extraction Helpers
+// =============================================================================
+// These functions extract data from types, avoiding the need for checker code
+// to match on TypeKey directly.
+
+/// Get the members of a union type.
+///
+/// Returns None if the type is not a union.
+pub fn get_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            Some(members.to_vec())
+        }
+        _ => None,
+    }
+}
+
+/// Get the members of an intersection type.
+///
+/// Returns None if the type is not an intersection.
+pub fn get_intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            Some(members.to_vec())
+        }
+        _ => None,
+    }
+}
+
+/// Get the element type of an array.
+///
+/// Returns None if the type is not an array.
+pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Array(element_type)) => Some(element_type),
+        _ => None,
+    }
+}
+
+/// Get the elements of a tuple type.
+///
+/// Returns None if the type is not a tuple.
+/// Returns a vector of (TypeId, optional, rest, name) tuples.
+pub fn get_tuple_elements(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<crate::solver::types::TupleElement>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Tuple(list_id)) => {
+            let elements = db.tuple_list(list_id);
+            Some(elements.to_vec())
+        }
+        _ => None,
+    }
+}
+
+/// Get the object shape ID for an object type.
+///
+/// Returns None if the type is not an object type.
+pub fn get_object_shape_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::types::ObjectShapeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(shape_id)
+        }
+        _ => None,
+    }
+}
+
+/// Get the object shape for an object type.
+///
+/// Returns None if the type is not an object type.
+pub fn get_object_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<crate::solver::types::ObjectShape>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(db.object_shape(shape_id))
+        }
+        _ => None,
+    }
+}
+
+/// Unwrap readonly type wrappers.
+///
+/// Returns the inner type if this is a ReadonlyType, otherwise returns the original type.
+/// Does not recurse - call repeatedly to fully unwrap.
+pub fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        Some(TypeKey::ReadonlyType(inner)) => inner,
+        _ => type_id,
+    }
+}
+
+/// Unwrap all readonly type wrappers recursively.
+///
+/// Keeps unwrapping until the type is no longer a ReadonlyType.
+pub fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let mut current = type_id;
+    let mut depth = 0;
+    const MAX_DEPTH: usize = 100;
+
+    while let Some(TypeKey::ReadonlyType(inner)) = db.lookup(current) {
+        depth += 1;
+        if depth > MAX_DEPTH {
+            break;
+        }
+        current = inner;
+    }
+    current
+}
+
+/// Check if a type is an object type (Object or ObjectWithIndex) and return true.
+///
+/// This is a convenience alias for is_object_type for symmetry with extraction functions.
+pub fn is_object_type_with_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeKey::Object(_) | TypeKey::ObjectWithIndex(_))
+    )
+}
+
+/// Get the type parameter info if this is a type parameter.
+///
+/// Returns None if not a type parameter.
+pub fn get_type_parameter_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::types::TypeParamInfo> {
+    match db.lookup(type_id) {
+        Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => Some(info.clone()),
+        _ => None,
+    }
+}
+
+/// Get the constraint of a type parameter.
+///
+/// Returns None if not a type parameter or has no constraint.
+pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info.constraint,
+        _ => None,
+    }
+}
+
+/// Get the callable shape ID for a callable type.
+///
+/// Returns None if the type is not a Callable.
+pub fn get_callable_shape_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::types::CallableShapeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Callable(shape_id)) => Some(shape_id),
+        _ => None,
+    }
+}
+
+/// Get the callable shape for a callable type.
+///
+/// Returns None if the type is not a Callable.
+pub fn get_callable_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<crate::solver::types::CallableShape>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Callable(shape_id)) => Some(db.callable_shape(shape_id)),
+        _ => None,
+    }
+}
+
+/// Get the function shape ID for a function type.
+///
+/// Returns None if the type is not a Function.
+pub fn get_function_shape_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::types::FunctionShapeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Function(shape_id)) => Some(shape_id),
+        _ => None,
+    }
+}
+
+/// Get the function shape for a function type.
+///
+/// Returns None if the type is not a Function.
+pub fn get_function_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<crate::solver::types::FunctionShape>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Function(shape_id)) => Some(db.function_shape(shape_id)),
+        _ => None,
+    }
+}
+
+/// Get the conditional type info for a conditional type.
+///
+/// Returns None if the type is not a Conditional.
+pub fn get_conditional_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<crate::solver::types::ConditionalType>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Conditional(cond_id)) => Some(db.conditional_type(cond_id)),
+        _ => None,
+    }
+}
+
+/// Get the mapped type info for a mapped type.
+///
+/// Returns None if the type is not a Mapped type.
+pub fn get_mapped_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<crate::solver::types::MappedType>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Mapped(mapped_id)) => Some(db.mapped_type(mapped_id)),
+        _ => None,
+    }
+}
+
+/// Get the type application info for a generic application type.
+///
+/// Returns None if the type is not an Application.
+pub fn get_type_application(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<crate::solver::types::TypeApplication>> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Application(app_id)) => Some(db.type_application(app_id)),
+        _ => None,
+    }
+}
+
+/// Get the index access components (object type and index type).
+///
+/// Returns None if the type is not an IndexAccess.
+pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<(TypeId, TypeId)> {
+    match db.lookup(type_id) {
+        Some(TypeKey::IndexAccess(obj, idx)) => Some((obj, idx)),
+        _ => None,
+    }
+}
+
+/// Get the keyof inner type.
+///
+/// Returns None if the type is not a KeyOf.
+pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::KeyOf(inner)) => Some(inner),
+        _ => None,
+    }
+}
+
+/// Get the symbol reference from a Ref type.
+///
+/// Returns None if the type is not a Ref.
+pub fn get_ref_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::types::SymbolRef> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Ref(sym_ref)) => Some(sym_ref),
+        _ => None,
+    }
+}
