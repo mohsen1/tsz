@@ -671,15 +671,12 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         // Write test files to temp directory
         const filesToCheck: string[] = [];
 
-        // Collect lib files for native mode (same as WASM mode)
-        const nativeLibNames = getLibNamesForTestCase(testCase.options, undefined);
-        const nativeLibFiles = nativeLibNames.length ? collectLibFiles(nativeLibNames) : new Map<string, string>();
-
-        // Write lib files to temp directory and set TSZ_LIB_DIR
-        if (!testCase.options.nolib && nativeLibFiles.size > 0) {
-          for (const [name, content] of nativeLibFiles.entries()) {
-            fs.writeFileSync(path.join(tmpDir, name), content);
-          }
+        // For native mode, write lib.d.ts to the directory (for reference)
+        // but don't add it to the args list - the native CLI handles lib loading internally
+        // and parsing the huge lib.d.ts file for each test is too slow
+        if (!testCase.options.nolib && libSource) {
+          fs.writeFileSync(path.join(tmpDir, 'lib.d.ts'), libSource);
+          // Don't add to filesToCheck - native CLI handles its own lib loading
         }
 
         // Write test files
@@ -729,19 +726,12 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         
         // Add file paths
         args.push(...filesToCheck.map(f => path.join(tmpDir, f)));
-
+        
         // Run from project directory so CLI can find its built-in lib files
         const projectDir = path.resolve(__dirname, '../..');
-
-        // Only set TSZ_LIB_DIR if we wrote lib files to the temp directory
-        const spawnEnv = nativeLibFiles.size > 0
-          ? { ...process.env, TSZ_LIB_DIR: tmpDir }
-          : process.env;
-
         const child = spawn(nativeBinaryPath, args, {
           cwd: projectDir,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: spawnEnv,
         });
 
         let stderr = '';
