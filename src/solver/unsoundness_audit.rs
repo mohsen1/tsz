@@ -384,11 +384,11 @@ impl UnsoundnessAudit {
             rule_number: 39,
             name: "`import type` Erasure (Value vs Type Space)",
             phase: ImplementationPhase::Phase4,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/checker/type_checking.rs", "src/checker/type_computation.rs", "src/checker/symbol_resolver.rs"],
+            test_coverage: 0.90,
             dependencies: vec![],
-            notes: "NOT IMPLEMENTED. import type symbols should not exist in value space. Resolver phase check needed.",
+            notes: "FULLY IMPLEMENTED. alias_resolves_to_type_only() checks import type symbols. error_type_only_value_at() emits TS2693. Applied in get_type_of_identifier, new expressions, property access.",
         });
 
         rules.insert(44, RuleImplementation {
@@ -573,11 +573,11 @@ impl UnsoundnessAudit {
             rule_number: 33,
             name: "The \"Object\" vs \"Primitive\" boxing behavior",
             phase: ImplementationPhase::Phase4,
-            status: ImplementationStatus::PartiallyImplemented,
-            implementation_files: vec!["src/solver/subtype.rs", "src/solver/apparent.rs"],
-            test_coverage: 0.40,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/solver/subtype.rs", "src/solver/subtype_rules/intrinsics.rs"],
+            test_coverage: 0.85,
             dependencies: vec![20],
-            notes: "Primitive boxing partially implemented. apparent_primitive_members in subtype.rs. Need full Intrinsic::Number vs Ref(Symbol::Number) distinction.",
+            notes: "FULLY IMPLEMENTED. TypeResolver.get_boxed_type() enables primitives to be subtypes of boxed interfaces. is_boxed_primitive_subtype() checks number <: Number, string <: String, etc.",
         });
 
         rules.insert(35, RuleImplementation {

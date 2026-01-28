@@ -335,4 +335,54 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             _ => None,
         }
     }
+
+    /// Check if a primitive intrinsic is a subtype of a boxed interface type (Rule #33).
+    ///
+    /// In TypeScript, primitive values can be assigned to their boxed interface types:
+    /// - `number` is assignable to `Number`
+    /// - `string` is assignable to `String`
+    /// - `boolean` is assignable to `Boolean`
+    /// - `bigint` is assignable to `BigInt`
+    /// - `symbol` is assignable to `Symbol`
+    ///
+    /// This is because primitives auto-box when used in object contexts.
+    /// However, the reverse is NOT true: `Number` is not assignable to `number`.
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// let n: Number = 42;           // ✅ number <: Number
+    /// let m: number = new Number(); // ❌ Number is not assignable to number
+    /// let o: Object = 42;           // ✅ number <: Number <: Object
+    /// ```
+    pub(crate) fn is_boxed_primitive_subtype(
+        &mut self,
+        source_kind: IntrinsicKind,
+        target: TypeId,
+    ) -> bool {
+        // Only certain primitives have boxed equivalents
+        let boxable = matches!(
+            source_kind,
+            IntrinsicKind::Number
+                | IntrinsicKind::String
+                | IntrinsicKind::Boolean
+                | IntrinsicKind::Bigint
+                | IntrinsicKind::Symbol
+        );
+
+        if !boxable {
+            return false;
+        }
+
+        // Ask the resolver for the boxed type
+        if let Some(boxed_type) = self.resolver.get_boxed_type(source_kind) {
+            // If target is exactly the boxed interface (e.g., Number)
+            if target == boxed_type {
+                return true;
+            }
+            // Or if target is a supertype of the boxed interface (e.g., Object)
+            return self.check_subtype(boxed_type, target).is_true();
+        }
+
+        false
+    }
 }
