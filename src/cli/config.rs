@@ -617,20 +617,31 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
                     _ => None,
                 };
                 let Some(alias) = alias else {
-                    return Err(anyhow!("unsupported compilerOptions.lib '{}'", lib_name));
+                    // Lib not found on disk - return empty Vec to use embedded libs as fallback
+                    return Ok(Vec::new());
                 };
-                lib_map
-                    .get(alias)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("unsupported compilerOptions.lib '{}'", lib_name))?
+                match lib_map.get(alias) {
+                    Some(p) => p.clone(),
+                    None => {
+                        // Lib not found on disk - return empty Vec to use embedded libs as fallback
+                        return Ok(Vec::new());
+                    }
+                }
             }
         };
-        resolved.push(path.clone());
 
-        let contents = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read lib file {}", path.display()))?;
-        for reference in extract_lib_references(&contents) {
-            pending.push_back(reference);
+        // Try to read the lib file, skip if it doesn't exist
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                resolved.push(path);
+                for reference in extract_lib_references(&contents) {
+                    pending.push_back(reference);
+                }
+            }
+            Err(_) => {
+                // Lib file doesn't exist on disk - return empty Vec to use embedded libs
+                return Ok(Vec::new());
+            }
         }
     }
 
