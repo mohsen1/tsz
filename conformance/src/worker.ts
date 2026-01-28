@@ -701,7 +701,11 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         if (opts.lib) {
           const libVal = opts.lib;
           if (typeof libVal === 'string') {
-            args.push('--lib', libVal);
+            // Split comma-separated lib names
+            const libNames = libVal.split(',').map(s => s.trim());
+            for (const libName of libNames) {
+              args.push('--lib', libName);
+            }
           } else if (Array.isArray(libVal)) {
             args.push('--lib', libVal.join(','));
           }
