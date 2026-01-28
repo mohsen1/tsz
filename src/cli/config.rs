@@ -772,7 +772,9 @@ fn build_lib_map(lib_dir: &Path) -> Result<HashMap<String, PathBuf>> {
     Ok(map)
 }
 
-fn extract_lib_references(source: &str) -> Vec<String> {
+/// Extract /// <reference lib="..." /> directives from a lib file source.
+/// Returns a list of referenced lib names.
+pub(crate) fn extract_lib_references(source: &str) -> Vec<String> {
     let mut refs = Vec::new();
     let mut in_block_comment = false;
     for line in source.lines() {
