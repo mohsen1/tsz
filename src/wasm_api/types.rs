@@ -320,8 +320,6 @@ impl TsSignature {
     }
 }
 
-/// Create intrinsic type wrappers
-
 /// Create the `any` type
 #[wasm_bindgen(js_name = createAnyType)]
 pub fn create_any_type() -> TsType {

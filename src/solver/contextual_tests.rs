@@ -120,6 +120,7 @@ fn test_contextual_callable_signature() {
         this_type: Some(TypeId::BOOLEAN),
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        is_method: false,
     };
 
     let callable = interner.callable(CallableShape {
@@ -151,6 +152,7 @@ fn test_contextual_callable_overload_union() {
         this_type: Some(TypeId::STRING),
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        is_method: false,
     };
 
     let call_sig_b = CallSignature {
@@ -172,6 +174,7 @@ fn test_contextual_callable_overload_union() {
         this_type: Some(TypeId::BOOLEAN),
         return_type: TypeId::STRING,
         type_predicate: None,
+        is_method: false,
     };
 
     let callable = interner.callable(CallableShape {
@@ -208,6 +211,7 @@ fn test_contextual_callable_overload_by_arity() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        is_method: false,
     };
 
     let call_sig_b = CallSignature {
@@ -229,6 +233,7 @@ fn test_contextual_callable_overload_by_arity() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        is_method: false,
     };
 
     let callable = interner.callable(CallableShape {

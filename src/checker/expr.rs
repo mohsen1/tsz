@@ -3,9 +3,37 @@
 //! This module handles type inference and checking for expressions.
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! infer types, then use the solver to explain any failures.
+//!
+//! ## Integration with CheckerState
+//!
+//! `ExpressionChecker` serves as the primary dispatcher for expression types.
+//! Simple expressions are handled directly here, while complex expressions
+//! that need full `CheckerState` context return `TypeId::DELEGATE` to signal
+//! that `CheckerState::compute_type_of_node` should handle them.
+//!
+//! ### Expressions handled directly:
+//! - Simple literals without contextual typing (null)
+//! - typeof expressions (always string)
+//! - void expressions (always undefined)
+//! - Postfix unary (++/-- always return number)
+//! - Parenthesized expressions (pass through)
+//!
+//! ### Expressions delegated to CheckerState:
+//! - Literals with contextual typing (numeric, string, boolean, template)
+//! - Identifiers, this, super (need symbol resolution)
+//! - Binary expressions (need operator overloading, narrowing)
+//! - Call/new expressions (need signature resolution)
+//! - Property/element access (need object type resolution)
+//! - Function/arrow expressions (need signature building)
+//! - Object/array literals (need contextual typing)
+//! - Type assertions (as/satisfies) (need type node resolution)
+//! - Conditional expressions (need union type building)
+//! - Await expressions (need Promise unwrapping)
 
 use super::context::CheckerContext;
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
+use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 use std::cell::Cell;
 
@@ -57,26 +85,39 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
         result
     }
 
+    /// Compute the type of an expression without caching.
+    ///
+    /// This is called by `CheckerState::compute_type_of_node` to get an initial
+    /// type for expressions. Returns `TypeId::DELEGATE` if the expression needs
+    /// full `CheckerState` context for proper type resolution.
+    ///
+    /// Simple expressions that don't need contextual typing or symbol resolution
+    /// are handled directly here. Complex expressions delegate to CheckerState.
+    pub fn compute_type_uncached(&mut self, idx: NodeIndex) -> TypeId {
+        self.compute_type_impl(idx)
+    }
+
     /// Compute the type of an expression (internal, not cached).
     fn compute_type(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::parser::syntax_kind_ext;
-        use crate::scanner::SyntaxKind;
+        self.compute_type_impl(idx)
+    }
 
+    /// Core implementation for computing expression types.
+    ///
+    /// Returns `TypeId::DELEGATE` for complex expressions that need CheckerState.
+    fn compute_type_impl(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             // Return UNKNOWN instead of ANY to expose missing nodes as errors
             return TypeId::UNKNOWN;
         };
 
         match node.kind {
-            // Literals - use compile-time constant TypeIds
-            k if k == SyntaxKind::NumericLiteral as u16 => TypeId::NUMBER,
-            k if k == SyntaxKind::StringLiteral as u16 => TypeId::STRING,
-            k if k == SyntaxKind::TrueKeyword as u16 => self.ctx.types.literal_boolean(true),
-            k if k == SyntaxKind::FalseKeyword as u16 => self.ctx.types.literal_boolean(false),
-            k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
+            // =====================================================================
+            // Simple expressions handled directly
+            // =====================================================================
 
-            // Postfix unary expression - ++ and -- always return number
-            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => TypeId::NUMBER,
+            // Null literal - always TypeId::NULL
+            k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
 
             // typeof expression always returns string
             k if k == syntax_kind_ext::TYPE_OF_EXPRESSION => TypeId::STRING,
@@ -87,78 +128,118 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
             // Parenthesized expression - pass through to inner expression
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    self.check(paren.expression)
+                    // Recursively check inner expression
+                    self.compute_type_impl(paren.expression)
                 } else {
-                    // Return UNKNOWN instead of ANY to expose parsing failures
-                    TypeId::UNKNOWN
+                    // Return DELEGATE to let CheckerState handle malformed nodes
+                    TypeId::DELEGATE
                 }
             }
 
-            // Element access expression - array[index] or object[key]
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self.check_element_access(idx),
+            // =====================================================================
+            // Literals with contextual typing - DELEGATE to CheckerState
+            // These need contextual typing analysis to decide between literal types
+            // (e.g., `42` as literal) vs widened types (e.g., `number`).
+            // =====================================================================
+            k if k == SyntaxKind::NumericLiteral as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::StringLiteral as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::TrueKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::FalseKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => TypeId::DELEGATE,
 
-            // Default case - return UNKNOWN for unhandled expressions instead of ANY
-            // This exposes type errors that were previously hidden by the permissive ANY default
-            _ => TypeId::UNKNOWN,
-        }
-    }
+            // =====================================================================
+            // Expressions requiring symbol resolution - DELEGATE to CheckerState
+            // =====================================================================
+            k if k == SyntaxKind::Identifier as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::ThisKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::SuperKeyword as u16 => TypeId::DELEGATE,
 
-    /// Check element access expression (array[index] or object[key])
-    fn check_element_access(&mut self, idx: NodeIndex) -> TypeId {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::UNKNOWN;
-        };
+            // =====================================================================
+            // Complex expressions - DELEGATE to CheckerState
+            // =====================================================================
 
-        // Get the element access node data if available
-        if let Some(access_data) = self.ctx.arena.get_access_expr(node) {
-            // Check the target expression (the thing being accessed)
-            let target_type = self.check(access_data.expression);
+            // Binary expressions need operator type resolution and narrowing
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => TypeId::DELEGATE,
 
-            // Try to resolve array element type
-            if let Some(type_key) = self.ctx.types.lookup(target_type) {
-                match type_key {
-                    crate::solver::TypeKey::Array(element_type) => {
-                        // Direct array access - return the element type
-                        return element_type;
-                    }
-                    crate::solver::TypeKey::Tuple(tuple_list_id) => {
-                        // Proper tuple element access with index checking
-                        let index_type = self.check(access_data.name_or_argument);
-                        if let Some(crate::solver::TypeKey::Literal(literal_value)) =
-                            self.ctx.types.lookup(index_type)
-                            && let crate::solver::LiteralValue::Number(num) = literal_value
-                        {
-                            // Check if the numeric index is valid for this tuple
-                            let index = num.0 as usize;
-                            let tuple_list = self.ctx.types.tuple_list(tuple_list_id);
-                            if index < tuple_list.len() {
-                                // Return the specific element type
-                                return tuple_list[index].type_id;
-                            }
-                            // Index out of bounds - in TypeScript this is undefined
-                            return TypeId::UNDEFINED;
-                        }
-                        // For non-literal indices or invalid cases, return union of all tuple elements
-                        let tuple_list = self.ctx.types.tuple_list(tuple_list_id);
-                        if tuple_list.is_empty() {
-                            return TypeId::NEVER;
-                        }
-                        let element_types: Vec<TypeId> =
-                            tuple_list.iter().map(|elem| elem.type_id).collect();
-                        return self.ctx.types.union(element_types);
-                    }
-                    _ => {
-                        // Not an array or tuple - fall through to default behavior
-                    }
-                }
-            }
+            // Call/new expressions need signature resolution
+            k if k == syntax_kind_ext::CALL_EXPRESSION => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::NEW_EXPRESSION => TypeId::DELEGATE,
 
-            // If we can't resolve the specific element type, fall back to ANY
-            // Using ANY instead of UNKNOWN allows more code to work while we implement
-            // more sophisticated element access logic
-            TypeId::ANY
-        } else {
-            TypeId::UNKNOWN
+            // Property/element access need object type resolution
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => TypeId::DELEGATE,
+
+            // Conditional expressions need union type building
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => TypeId::DELEGATE,
+
+            // Function expressions need signature building
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::ARROW_FUNCTION => TypeId::DELEGATE,
+
+            // Object/array literals need contextual typing
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => TypeId::DELEGATE,
+
+            // Class expressions need class type building
+            k if k == syntax_kind_ext::CLASS_EXPRESSION => TypeId::DELEGATE,
+
+            // Unary expressions need operand type checking
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => TypeId::DELEGATE,
+
+            // Await expressions need Promise unwrapping
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION => TypeId::DELEGATE,
+
+            // Type assertions need type node resolution
+            k if k == syntax_kind_ext::AS_EXPRESSION => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::SATISFIES_EXPRESSION => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::TYPE_ASSERTION => TypeId::DELEGATE,
+
+            // Template expressions need string interpolation handling
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => TypeId::DELEGATE,
+
+            // Variable declarations need initializer/annotation handling
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => TypeId::DELEGATE,
+
+            // Function declarations need signature building
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => TypeId::DELEGATE,
+
+            // =====================================================================
+            // Type nodes - DELEGATE to CheckerState
+            // These are not expressions but may be passed through get_type_of_node
+            // =====================================================================
+            k if k == syntax_kind_ext::TYPE_REFERENCE => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::UNION_TYPE => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::INTERSECTION_TYPE => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::ARRAY_TYPE => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::TYPE_OPERATOR => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::FUNCTION_TYPE => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::TYPE_LITERAL => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::TYPE_QUERY => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::QUALIFIED_NAME => TypeId::DELEGATE,
+
+            // Type keywords - DELEGATE to CheckerState for consistency
+            k if k == SyntaxKind::NumberKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::StringKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::BooleanKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::VoidKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::AnyKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::NeverKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::UnknownKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::UndefinedKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::ObjectKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::BigIntKeyword as u16 => TypeId::DELEGATE,
+            k if k == SyntaxKind::SymbolKeyword as u16 => TypeId::DELEGATE,
+
+            // JSX elements - DELEGATE to CheckerState
+            k if k == syntax_kind_ext::JSX_ELEMENT => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => TypeId::DELEGATE,
+            k if k == syntax_kind_ext::JSX_FRAGMENT => TypeId::DELEGATE,
+
+            // =====================================================================
+            // Default - unknown node type, delegate to CheckerState
+            // =====================================================================
+            _ => TypeId::DELEGATE,
         }
     }
 
@@ -176,7 +257,38 @@ mod tests {
     use crate::solver::TypeInterner;
 
     #[test]
-    fn test_expression_checker_numeric_literal() {
+    fn test_expression_checker_null_literal() {
+        let source = "null";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        // Get the expression statement and its expression
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+            && let Some(stmt_node) = parser.get_arena().get(stmt_idx)
+            && let Some(expr_stmt) = parser.get_arena().get_expression_statement(stmt_node)
+        {
+            let mut checker = ExpressionChecker::new(&mut ctx);
+            let ty = checker.compute_type_uncached(expr_stmt.expression);
+            assert_eq!(ty, TypeId::NULL);
+        }
+    }
+
+    #[test]
+    fn test_expression_checker_delegates_numeric_literal() {
         let source = "42";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
@@ -201,8 +313,9 @@ mod tests {
             && let Some(expr_stmt) = parser.get_arena().get_expression_statement(stmt_node)
         {
             let mut checker = ExpressionChecker::new(&mut ctx);
-            let ty = checker.check(expr_stmt.expression);
-            assert_eq!(ty, TypeId::NUMBER);
+            // Numeric literals need contextual typing, so they should delegate
+            let ty = checker.compute_type_uncached(expr_stmt.expression);
+            assert_eq!(ty, TypeId::DELEGATE);
         }
     }
 }

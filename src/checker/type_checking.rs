@@ -456,11 +456,16 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the type is number, bigint, any, or an enum type.
     /// This is used to validate operands for TS2362/TS2363 errors.
     fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
-        use crate::solver::{BinaryOpEvaluator, SymbolRef, TypeKey};
+        use crate::solver::BinaryOpEvaluator;
+        use crate::solver::type_queries;
 
         // Check if this is an enum type (Ref to an enum symbol)
-        if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id) {
-            if let Some(symbol) = self.ctx.binder.get_symbol(crate::binder::SymbolId(sym_id)) {
+        if let Some(sym_ref) = type_queries::get_ref_symbol(self.ctx.types, type_id) {
+            if let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol(crate::binder::SymbolId(sym_ref.0))
+            {
                 // Check if the symbol is an enum (ENUM flags)
                 use crate::binder::symbol_flags;
                 if (symbol.flags & symbol_flags::ENUM) != 0 {
@@ -3856,6 +3861,9 @@ impl<'a> CheckerState<'a> {
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
         // For application types, check if the base type is a constructor type
+        // NOTE: Complex pattern - uses manual TypeKey matching because we need
+        // to recursively check constraints, intersections, and applications.
+        // A type_queries helper would need to handle all these cases.
         match self.ctx.types.lookup(type_id) {
             Some(TypeKey::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint {
@@ -7258,44 +7266,57 @@ impl<'a> CheckerState<'a> {
     /// Check if a type can be array-destructured.
     /// Returns true for arrays, tuples, strings, and types with [Symbol.iterator].
     pub(crate) fn is_array_destructurable_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries;
 
         // Handle primitive types
         if type_id == TypeId::STRING {
             return true;
         }
 
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        match type_key {
-            // Array types are destructurable
-            TypeKey::Array(_) => true,
-            // Tuple types are destructurable
-            TypeKey::Tuple(_) => true,
-            // Readonly arrays are destructurable
-            TypeKey::ReadonlyType(inner) => self.is_array_destructurable_type(inner),
-            // Union types: all members must be destructurable
-            TypeKey::Union(list_id) => {
-                let types = self.ctx.types.type_list(list_id);
-                types.iter().all(|&t| self.is_array_destructurable_type(t))
-            }
-            // Intersection types: at least one member must be array-like
-            TypeKey::Intersection(list_id) => {
-                let types = self.ctx.types.type_list(list_id);
-                types.iter().any(|&t| self.is_array_destructurable_type(t))
-            }
-            // Object types might have an iterator - for now conservatively return false
-            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => false,
-            // Literal types: check the base type
-            TypeKey::Literal(lit_value) => {
-                // String literals are destructurable
-                matches!(lit_value, crate::solver::LiteralValue::String(_))
-            }
-            // Other types are not array-destructurable
-            _ => false,
+        // Use type_queries for Array and Tuple detection
+        if type_queries::is_array_type(self.ctx.types, type_id) {
+            return true;
         }
+        if type_queries::is_tuple_type(self.ctx.types, type_id) {
+            return true;
+        }
+
+        // Handle ReadonlyType by unwrapping and recursing
+        let unwrapped = type_queries::unwrap_readonly(self.ctx.types, type_id);
+        if unwrapped != type_id {
+            return self.is_array_destructurable_type(unwrapped);
+        }
+
+        // Union types: all members must be destructurable
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, type_id) {
+            return members
+                .iter()
+                .all(|&t| self.is_array_destructurable_type(t));
+        }
+
+        // Intersection types: at least one member must be array-like
+        if let Some(members) = type_queries::get_intersection_members(self.ctx.types, type_id) {
+            return members
+                .iter()
+                .any(|&t| self.is_array_destructurable_type(t));
+        }
+
+        // Object types might have an iterator - for now conservatively return false
+        if type_queries::is_object_type(self.ctx.types, type_id) {
+            return false;
+        }
+
+        // Literal types: check the base type (string literals are destructurable)
+        if type_queries::is_literal_type(self.ctx.types, type_id) {
+            // Check if it's a string literal by looking up the type
+            if let Some(crate::solver::TypeKey::Literal(lit_value)) = self.ctx.types.lookup(type_id)
+            {
+                return matches!(lit_value, crate::solver::LiteralValue::String(_));
+            }
+        }
+
+        // Other types are not array-destructurable
+        false
     }
 
     // =========================================================================
@@ -7335,165 +7356,13 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type contains ERROR anywhere in its structure.
     /// Recursively checks all type components for error types.
+    ///
+    /// Uses the solver's visitor pattern which provides:
+    /// - Cycle detection via FxHashSet
+    /// - Max depth protection (20 levels)
+    /// - Comprehensive type traversal including function parameters
     pub(crate) fn type_contains_error(&self, type_id: TypeId) -> bool {
-        let mut visited = Vec::new();
-        self.type_contains_error_inner(type_id, &mut visited)
-    }
-
-    /// Inner implementation of type_contains_error with cycle detection.
-    fn type_contains_error_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
-        use crate::solver::{TemplateSpan, TypeKey};
-
-        if type_id == TypeId::ERROR {
-            return true;
-        }
-        if visited.contains(&type_id) {
-            return false;
-        }
-        visited.push(type_id);
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(elem)) => self.type_contains_error_inner(elem, visited),
-            Some(TypeKey::Tuple(list_id)) => self
-                .ctx
-                .types
-                .tuple_list(list_id)
-                .iter()
-                .any(|elem| self.type_contains_error_inner(elem.type_id, visited)),
-            Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => self
-                .ctx
-                .types
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.type_contains_error_inner(member, visited)),
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                if shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_error_inner(prop.type_id, visited))
-                {
-                    return true;
-                }
-                if let Some(ref index) = shape.string_index
-                    && self.type_contains_error_inner(index.value_type, visited)
-                {
-                    return true;
-                }
-                if let Some(ref index) = shape.number_index
-                    && self.type_contains_error_inner(index.value_type, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::Function(shape_id)) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                self.type_contains_error_inner(shape.return_type, visited)
-            }
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape
-                    .call_signatures
-                    .iter()
-                    .any(|sig| self.type_contains_error_inner(sig.return_type, visited))
-                {
-                    return true;
-                }
-                if shape
-                    .construct_signatures
-                    .iter()
-                    .any(|sig| self.type_contains_error_inner(sig.return_type, visited))
-                {
-                    return true;
-                }
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_error_inner(prop.type_id, visited))
-            }
-            Some(TypeKey::Application(app_id)) => {
-                let app = self.ctx.types.type_application(app_id);
-                if self.type_contains_error_inner(app.base, visited) {
-                    return true;
-                }
-                app.args
-                    .iter()
-                    .any(|&arg| self.type_contains_error_inner(arg, visited))
-            }
-            Some(TypeKey::Conditional(cond_id)) => {
-                let cond = self.ctx.types.conditional_type(cond_id);
-                self.type_contains_error_inner(cond.check_type, visited)
-                    || self.type_contains_error_inner(cond.extends_type, visited)
-                    || self.type_contains_error_inner(cond.true_type, visited)
-                    || self.type_contains_error_inner(cond.false_type, visited)
-            }
-            Some(TypeKey::Mapped(mapped_id)) => {
-                let mapped = self.ctx.types.mapped_type(mapped_id);
-                if self.type_contains_error_inner(mapped.constraint, visited) {
-                    return true;
-                }
-                if let Some(name_type) = mapped.name_type
-                    && self.type_contains_error_inner(name_type, visited)
-                {
-                    return true;
-                }
-                self.type_contains_error_inner(mapped.template, visited)
-            }
-            Some(TypeKey::IndexAccess(base, index)) => {
-                self.type_contains_error_inner(base, visited)
-                    || self.type_contains_error_inner(index, visited)
-            }
-            Some(TypeKey::TemplateLiteral(template_id)) => self
-                .ctx
-                .types
-                .template_list(template_id)
-                .iter()
-                .any(|span| match span {
-                    TemplateSpan::Type(span_type) => {
-                        self.type_contains_error_inner(*span_type, visited)
-                    }
-                    _ => false,
-                }),
-            Some(TypeKey::KeyOf(inner)) | Some(TypeKey::ReadonlyType(inner)) => {
-                self.type_contains_error_inner(inner, visited)
-            }
-            Some(TypeKey::TypeParameter(info)) => {
-                if let Some(constraint) = info.constraint
-                    && self.type_contains_error_inner(constraint, visited)
-                {
-                    return true;
-                }
-                if let Some(default) = info.default
-                    && self.type_contains_error_inner(default, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::Infer(info)) => {
-                if let Some(constraint) = info.constraint
-                    && self.type_contains_error_inner(constraint, visited)
-                {
-                    return true;
-                }
-                if let Some(default) = info.default
-                    && self.type_contains_error_inner(default, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::Error) => true,
-            Some(TypeKey::TypeQuery(_))
-            | Some(TypeKey::UniqueSymbol(_))
-            | Some(TypeKey::ThisType)
-            | Some(TypeKey::Ref(_))
-            | Some(TypeKey::Literal(_))
-            | Some(TypeKey::Intrinsic(_))
-            | Some(TypeKey::StringIntrinsic { .. })
-            | None => false,
-        }
+        crate::solver::contains_error_type(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -8324,135 +8193,6 @@ impl<'a> CheckerState<'a> {
         // For other alias symbols (not ES6 imports or import equals), return None
         // to indicate we couldn't resolve the alias
         None
-    }
-
-    /// Check if an identifier refers to an import from an unresolved module.
-    ///
-    /// This function detects imports from modules that cannot be resolved,
-    /// which is important for avoiding false errors in type checking.
-    ///
-    /// ## Unresolved Module Detection:
-    /// - Checks if the symbol is an alias (import)
-    /// - Verifies if the module is in module_exports
-    /// - Checks shorthand_ambient_modules
-    /// - Checks declared_modules
-    /// - Checks CLI-resolved modules
-    ///
-    /// ## Returns:
-    /// - `true` - The import is from an unresolved module
-    /// - `false` - The import is resolved or not an import
-    pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
-        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
-            return false;
-        };
-
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        // Check if this is an ALIAS symbol (import)
-        if symbol.flags & symbol_flags::ALIAS == 0 {
-            return false;
-        }
-
-        // Check if it has an import_module - if so, check if that module is resolved
-        if let Some(ref module_name) = symbol.import_module {
-            // Check various ways a module can be resolved
-            if self.ctx.binder.module_exports.contains_key(module_name) {
-                return false; // Module is resolved
-            }
-            if self.is_ambient_module_match(module_name) {
-                return false; // Ambient module pattern matches
-            }
-            if let Some(ref resolved) = self.ctx.resolved_modules {
-                if resolved.contains(module_name) {
-                    return false; // CLI resolved module
-                }
-            }
-            // Module is not resolved - this is an unresolved import
-            return true;
-        }
-
-        // For import equals declarations without import_module set,
-        // check if the value_declaration is an import equals with a require
-        if !symbol.value_declaration.is_none() {
-            let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
-                return false;
-            };
-            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                if let Some(import) = self.ctx.arena.get_import_decl(decl_node) {
-                    if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
-                        if ref_node.kind == SyntaxKind::StringLiteral as u16 {
-                            if let Some(lit) = self.ctx.arena.get_literal(ref_node) {
-                                let module_name = &lit.text;
-                                if !self.ctx.binder.module_exports.contains_key(module_name)
-                                    && !self
-                                        .ctx
-                                        .binder
-                                        .shorthand_ambient_modules
-                                        .contains(module_name)
-                                    && !self.ctx.binder.declared_modules.contains(module_name)
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if a module specifier matches a declared or shorthand ambient module pattern.
-    ///
-    /// Supports simple wildcard patterns using `*` (e.g., "foo*baz", "*!text").
-    fn is_ambient_module_match(&self, module_name: &str) -> bool {
-        if self.matches_module_pattern(&self.ctx.binder.declared_modules, module_name)
-            || self.matches_module_pattern(&self.ctx.binder.shorthand_ambient_modules, module_name)
-        {
-            return true;
-        }
-
-        // Also check module_exports keys for wildcard module declarations with bodies.
-        // These are stored as exact pattern strings in module_exports.
-        self.ctx
-            .binder
-            .module_exports
-            .keys()
-            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
-    }
-
-    fn matches_module_pattern(
-        &self,
-        patterns: &rustc_hash::FxHashSet<String>,
-        module_name: &str,
-    ) -> bool {
-        patterns
-            .iter()
-            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
-    }
-
-    fn module_name_matches_pattern(pattern: &str, module_name: &str) -> bool {
-        let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
-        let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
-
-        if !pattern.contains('*') {
-            return pattern == module_name;
-        }
-
-        // Use globset for robust wildcard matching (handles multiple '*' correctly)
-        // Allow '*' to match path separators so patterns like "*!text" match "./file!text".
-        if let Ok(glob) = globset::GlobBuilder::new(pattern)
-            .literal_separator(false)
-            .build()
-        {
-            let matcher = glob.compile_matcher();
-            return matcher.is_match(module_name);
-        }
-
-        false
     }
 
     /// Get the text representation of a heritage clause name.
@@ -9440,6 +9180,8 @@ impl<'a> CheckerState<'a> {
                     let spread_type = self.resolve_type_for_property_access_simple(spread_type);
 
                     // If it's a tuple type, it expands to multiple elements
+                    // NOTE: Manual lookup needed here - type_queries::get_tuple_elements
+                    // returns Vec, but we need the elems_id to call tuple_list directly
                     if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
                         let elems = self.ctx.types.tuple_list(elems_id);
                         let end_index = current_expanded_index + elems.len();
@@ -10852,14 +10594,12 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if type_id is a union and contains target_type.
     pub(crate) fn union_contains(&self, type_id: TypeId, target_type: TypeId) -> bool {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries;
 
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members.contains(&target_type)
-            }
-            _ => false,
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, type_id) {
+            members.contains(&target_type)
+        } else {
+            false
         }
     }
 
@@ -10895,16 +10635,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the symbol ID if the type refers to an enum, None otherwise.
     pub(crate) fn enum_symbol_from_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        use crate::solver::{SymbolRef, TypeKey};
+        use crate::solver::type_queries;
 
-        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id) else {
-            return None;
-        };
-        let symbol = self.ctx.binder.get_symbol(SymbolId(sym_id))?;
+        let sym_ref = type_queries::get_ref_symbol(self.ctx.types, type_id)?;
+        let symbol = self.ctx.binder.get_symbol(SymbolId(sym_ref.0))?;
         if symbol.flags & symbol_flags::ENUM == 0 {
             return None;
         }
-        Some(SymbolId(sym_id))
+        Some(SymbolId(sym_ref.0))
     }
 
     /// Get the enum symbol from a value type.
@@ -11153,10 +10891,17 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
     // Type Query Helper Functions
     // =========================================================================
+    // TODO(solver-visitor): Consider migrating to type_queries pattern.
+    // The functions below use manual TypeKey matching but could potentially
+    // use a generic contains_type_matching pattern like in type_queries.rs.
+    // This would require adding `contains_any_type` to type_queries.rs.
+    // =========================================================================
 
     /// Check if a type contains 'any' (recursively).
     ///
     /// Returns true if the type is ANY or contains ANY in its structure.
+    // TODO(solver-visitor): Could use type_queries::contains_type_matching_impl
+    // with predicate checking for TypeId::ANY
     pub(crate) fn type_contains_any(&self, type_id: TypeId) -> bool {
         let mut visited = Vec::new();
         self.type_contains_any_inner(type_id, &mut visited)
@@ -11473,34 +11218,32 @@ impl<'a> CheckerState<'a> {
     /// Check if we should emit a "property does not exist" error for the given type in destructuring.
     /// Returns false for any, unknown, or types that don't have concrete shapes.
     pub(crate) fn should_emit_property_not_exist_for_destructuring(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries;
 
         if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
             return false;
         }
 
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        match type_key {
-            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => true,
-            TypeKey::Union(list_id) => {
-                // For unions, emit error if any member is a concrete object
-                let types = self.ctx.types.type_list(list_id);
-                types
-                    .iter()
-                    .any(|&t| self.should_emit_property_not_exist_for_destructuring(t))
-            }
-            TypeKey::Intersection(list_id) => {
-                // For intersections, all members should be concrete objects
-                let types = self.ctx.types.type_list(list_id);
-                types
-                    .iter()
-                    .all(|&t| self.should_emit_property_not_exist_for_destructuring(t))
-            }
-            _ => false,
+        // Object types are concrete - emit errors for them
+        if type_queries::is_object_type(self.ctx.types, type_id) {
+            return true;
         }
+
+        // For unions, emit error if any member is a concrete object
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, type_id) {
+            return members
+                .iter()
+                .any(|&t| self.should_emit_property_not_exist_for_destructuring(t));
+        }
+
+        // For intersections, all members should be concrete objects
+        if let Some(members) = type_queries::get_intersection_members(self.ctx.types, type_id) {
+            return members
+                .iter()
+                .all(|&t| self.should_emit_property_not_exist_for_destructuring(t));
+        }
+
+        false
     }
 
     /// Get the class name from a variable declaration.

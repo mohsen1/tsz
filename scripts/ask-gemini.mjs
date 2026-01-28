@@ -15,7 +15,7 @@ import 'dotenv/config';
 // ./scripts/ask-gemini.mjs --include="src/solver" "Custom path question"
 
 const DEFAULT_CONTEXT_LENGTH = '850k';
-const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_MODEL = 'gemini-3-pro-preview';
 
 // Focused presets for different areas of the codebase
 // Each preset defines paths to include and recommended context for questions in that area

@@ -715,3 +715,330 @@ pub fn get_ref_symbol(
         _ => None,
     }
 }
+
+// =============================================================================
+// Constructor Type Collection Helpers
+// =============================================================================
+
+/// Result of classifying a type for constructor collection.
+///
+/// This enum tells the caller what kind of type this is and how to proceed
+/// when collecting constructor types from a composite type structure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstructorTypeKind {
+    /// This is a Callable type - always a constructor type
+    Callable,
+    /// This is a Function type - check is_constructor flag on the shape
+    Function(crate::solver::types::FunctionShapeId),
+    /// Recurse into these member types (Union, Intersection)
+    Members(Vec<TypeId>),
+    /// Recurse into the inner type (ReadonlyType)
+    Inner(TypeId),
+    /// Recurse into the constraint (TypeParameter, Infer)
+    Constraint(Option<TypeId>),
+    /// This type needs full type evaluation (Conditional, Mapped, IndexAccess, KeyOf)
+    NeedsTypeEvaluation,
+    /// This is a generic application that needs instantiation
+    NeedsApplicationEvaluation,
+    /// This is a TypeQuery - resolve the symbol reference to get its type
+    TypeQuery(crate::solver::types::SymbolRef),
+    /// This type cannot be a constructor (primitives, literals, etc.)
+    NotConstructor,
+}
+
+/// Classify a type for constructor type collection.
+///
+/// This function examines a TypeKey and returns information about how to handle it
+/// when collecting constructor types. The caller is responsible for:
+/// - Checking the `is_constructor` flag for Function types
+/// - Evaluating types when `NeedsTypeEvaluation` or `NeedsApplicationEvaluation` is returned
+/// - Resolving symbol references for TypeQuery
+/// - Recursing into members/inner types
+///
+/// # Example
+///
+/// ```rust
+/// use crate::solver::type_queries::{classify_constructor_type, ConstructorTypeKind};
+///
+/// match classify_constructor_type(db, type_id) {
+///     ConstructorTypeKind::Callable => {
+///         // This is a constructor type
+///         ctor_types.push(type_id);
+///     }
+///     ConstructorTypeKind::Function(shape_id) => {
+///         let shape = db.function_shape(shape_id);
+///         if shape.is_constructor {
+///             ctor_types.push(type_id);
+///         }
+///     }
+///     ConstructorTypeKind::Members(members) => {
+///         for member in members {
+///             // Recurse
+///         }
+///     }
+///     ConstructorTypeKind::NeedsTypeEvaluation => {
+///         // Use evaluate_type_with_env
+///     }
+///     ConstructorTypeKind::NeedsApplicationEvaluation => {
+///         // Use evaluate_application_type
+///     }
+///     // ... handle other cases
+/// }
+/// ```
+pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> ConstructorTypeKind {
+    let Some(key) = db.lookup(type_id) else {
+        return ConstructorTypeKind::NotConstructor;
+    };
+
+    match key {
+        TypeKey::Callable(_) => ConstructorTypeKind::Callable,
+        TypeKey::Function(shape_id) => ConstructorTypeKind::Function(shape_id),
+        TypeKey::Intersection(members_id) | TypeKey::Union(members_id) => {
+            let members = db.type_list(members_id);
+            ConstructorTypeKind::Members(members.to_vec())
+        }
+        TypeKey::ReadonlyType(inner) => ConstructorTypeKind::Inner(inner),
+        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+            ConstructorTypeKind::Constraint(info.constraint)
+        }
+        TypeKey::Conditional(_)
+        | TypeKey::Mapped(_)
+        | TypeKey::IndexAccess(_, _)
+        | TypeKey::KeyOf(_) => ConstructorTypeKind::NeedsTypeEvaluation,
+        TypeKey::Application(_) => ConstructorTypeKind::NeedsApplicationEvaluation,
+        TypeKey::TypeQuery(sym_ref) => ConstructorTypeKind::TypeQuery(sym_ref),
+        // All other types cannot be constructors
+        TypeKey::Intrinsic(_)
+        | TypeKey::Literal(_)
+        | TypeKey::Object(_)
+        | TypeKey::ObjectWithIndex(_)
+        | TypeKey::Array(_)
+        | TypeKey::Tuple(_)
+        | TypeKey::Ref(_)
+        | TypeKey::TemplateLiteral(_)
+        | TypeKey::UniqueSymbol(_)
+        | TypeKey::ThisType
+        | TypeKey::StringIntrinsic { .. }
+        | TypeKey::Error => ConstructorTypeKind::NotConstructor,
+    }
+}
+
+// =============================================================================
+// Static Property Collection Helpers
+// =============================================================================
+
+/// Result of extracting static properties from a type.
+///
+/// This enum allows the caller to handle recursion and type evaluation
+/// while keeping the TypeKey matching logic in the solver layer.
+#[derive(Debug, Clone)]
+pub enum StaticPropertySource {
+    /// Direct properties from Callable, Object, or ObjectWithIndex types.
+    Properties(Vec<crate::solver::PropertyInfo>),
+    /// Member types that should be recursively processed (Union/Intersection).
+    RecurseMembers(Vec<TypeId>),
+    /// Single type to recurse into (TypeParameter constraint, ReadonlyType inner).
+    RecurseSingle(TypeId),
+    /// Type that needs evaluation before property extraction (Conditional, Mapped, etc.).
+    NeedsEvaluation,
+    /// Type that needs application evaluation (Application type).
+    NeedsApplicationEvaluation,
+    /// No properties available (primitives, error types, etc.).
+    None,
+}
+
+/// Extract static property information from a type.
+///
+/// This function handles the TypeKey matching for property collection,
+/// returning a `StaticPropertySource` that tells the caller how to proceed.
+/// The caller is responsible for:
+/// - Handling recursion for `RecurseMembers` and `RecurseSingle` cases
+/// - Evaluating types for `NeedsEvaluation` and `NeedsApplicationEvaluation` cases
+/// - Tracking visited types to prevent infinite loops
+///
+/// # Example
+///
+/// ```ignore
+/// match get_static_property_source(&db, type_id) {
+///     StaticPropertySource::Properties(props) => {
+///         for prop in props {
+///             properties.entry(prop.name).or_insert(prop);
+///         }
+///     }
+///     StaticPropertySource::RecurseMembers(members) => {
+///         for member in members {
+///             // Recursively collect from member
+///         }
+///     }
+///     // ... handle other cases
+/// }
+/// ```
+pub fn get_static_property_source(db: &dyn TypeDatabase, type_id: TypeId) -> StaticPropertySource {
+    let Some(key) = db.lookup(type_id) else {
+        return StaticPropertySource::None;
+    };
+
+    match key {
+        TypeKey::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            StaticPropertySource::Properties(shape.properties.to_vec())
+        }
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            let shape = db.object_shape(shape_id);
+            StaticPropertySource::Properties(shape.properties.to_vec())
+        }
+        TypeKey::Intersection(members_id) | TypeKey::Union(members_id) => {
+            let members = db.type_list(members_id);
+            StaticPropertySource::RecurseMembers(members.to_vec())
+        }
+        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+            if let Some(constraint) = info.constraint {
+                StaticPropertySource::RecurseSingle(constraint)
+            } else {
+                StaticPropertySource::None
+            }
+        }
+        TypeKey::ReadonlyType(inner) => StaticPropertySource::RecurseSingle(inner),
+        TypeKey::Conditional(_)
+        | TypeKey::Mapped(_)
+        | TypeKey::IndexAccess(_, _)
+        | TypeKey::KeyOf(_) => StaticPropertySource::NeedsEvaluation,
+        TypeKey::Application(_) => StaticPropertySource::NeedsApplicationEvaluation,
+        _ => StaticPropertySource::None,
+    }
+}
+
+// =============================================================================
+// Construct Signature Queries
+// =============================================================================
+
+/// Check if a Callable type has construct signatures.
+///
+/// Returns true only for Callable types that have non-empty construct_signatures.
+/// This is a direct check and does not resolve through Ref or TypeQuery types.
+pub fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeKey::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            !shape.construct_signatures.is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// Get the symbol reference from a Ref or TypeQuery type.
+///
+/// Returns None if the type is not a Ref or TypeQuery.
+pub fn get_symbol_ref_from_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::types::SymbolRef> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Ref(sym_ref)) | Some(TypeKey::TypeQuery(sym_ref)) => Some(sym_ref),
+        _ => None,
+    }
+}
+
+/// Kind of constructable type for `get_construct_type_from_type`.
+///
+/// This enum represents the different ways a type can be constructable,
+/// allowing the caller to handle each case appropriately without matching
+/// directly on TypeKey.
+#[derive(Debug, Clone)]
+pub enum ConstructableTypeKind {
+    /// Callable type with construct signatures - return transformed callable
+    CallableWithConstruct,
+    /// Callable type without construct signatures - check for prototype property
+    CallableMaybePrototype,
+    /// Function type - always constructable
+    Function,
+    /// Reference to a symbol - need to check symbol flags
+    SymbolRef(crate::solver::types::SymbolRef),
+    /// TypeQuery (typeof expr) - need to check symbol flags
+    TypeQueryRef(crate::solver::types::SymbolRef),
+    /// Type parameter with a constraint to check recursively
+    TypeParameterWithConstraint(TypeId),
+    /// Type parameter without constraint - not constructable
+    TypeParameterNoConstraint,
+    /// Intersection type - all members must be constructable
+    Intersection(Vec<TypeId>),
+    /// Application (generic instantiation) - return as-is
+    Application,
+    /// Object type - return as-is (may have construct signatures)
+    Object,
+    /// Not constructable
+    NotConstructable,
+}
+
+/// Classify a type for constructability checking.
+///
+/// This function examines a type and returns information about how to handle it
+/// when determining if it can be used with `new`. This is specifically for
+/// the `get_construct_type_from_type` use case.
+///
+/// The caller is responsible for:
+/// - Checking symbol flags for SymbolRef/TypeQueryRef cases
+/// - Checking prototype property for CallableMaybePrototype
+/// - Recursing into constraint for TypeParameterWithConstraint
+/// - Checking all members for Intersection
+pub fn classify_for_constructability(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> ConstructableTypeKind {
+    let Some(key) = db.lookup(type_id) else {
+        return ConstructableTypeKind::NotConstructable;
+    };
+
+    match key {
+        TypeKey::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            if shape.construct_signatures.is_empty() {
+                ConstructableTypeKind::CallableMaybePrototype
+            } else {
+                ConstructableTypeKind::CallableWithConstruct
+            }
+        }
+        TypeKey::Function(_) => ConstructableTypeKind::Function,
+        TypeKey::Ref(sym_ref) => ConstructableTypeKind::SymbolRef(sym_ref),
+        TypeKey::TypeQuery(sym_ref) => ConstructableTypeKind::TypeQueryRef(sym_ref),
+        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+            if let Some(constraint) = info.constraint {
+                ConstructableTypeKind::TypeParameterWithConstraint(constraint)
+            } else {
+                ConstructableTypeKind::TypeParameterNoConstraint
+            }
+        }
+        TypeKey::Intersection(members_id) => {
+            let members = db.type_list(members_id);
+            ConstructableTypeKind::Intersection(members.to_vec())
+        }
+        TypeKey::Application(_) => ConstructableTypeKind::Application,
+        TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => ConstructableTypeKind::Object,
+        _ => ConstructableTypeKind::NotConstructable,
+    }
+}
+
+/// Create a callable type with construct signatures converted to call signatures.
+///
+/// This is used when resolving `new` expressions where we need to treat
+/// construct signatures as call signatures for type checking purposes.
+/// Returns None if the type doesn't have construct signatures.
+pub fn construct_to_call_callable(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            if shape.construct_signatures.is_empty() {
+                None
+            } else {
+                Some(db.callable(crate::solver::types::CallableShape {
+                    call_signatures: shape.construct_signatures.clone(),
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                }))
+            }
+        }
+        _ => None,
+    }
+}

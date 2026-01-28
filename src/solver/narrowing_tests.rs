@@ -839,6 +839,7 @@ fn test_narrow_by_typeof_function_includes_callable() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        is_method: false,
     };
     let callable = interner.callable(CallableShape {
         call_signatures: vec![sig],
@@ -1104,6 +1105,7 @@ fn test_call_signature_with_type_predicate() {
             target: TypePredicateTarget::Identifier(x_name),
             type_id: Some(TypeId::NUMBER),
         }),
+        is_method: false,
     };
 
     assert!(sig.type_predicate.is_some());

@@ -1509,6 +1509,129 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if an identifier refers to an unresolved import symbol.
+    ///
+    /// Returns true if:
+    /// - The symbol is an ALIAS (import)
+    /// - The imported module cannot be resolved through any of:
+    ///   - module_exports
+    ///   - shorthand_ambient_modules
+    ///   - declared_modules
+    ///   - CLI-resolved modules
+    pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Check if this is an ALIAS symbol (import)
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return false;
+        }
+
+        // Check if it has an import_module - if so, check if that module is resolved
+        if let Some(ref module_name) = symbol.import_module {
+            // Check various ways a module can be resolved
+            if self.ctx.binder.module_exports.contains_key(module_name) {
+                return false; // Module is resolved
+            }
+            if self.is_ambient_module_match(module_name) {
+                return false; // Ambient module pattern matches
+            }
+            if let Some(ref resolved) = self.ctx.resolved_modules {
+                if resolved.contains(module_name) {
+                    return false; // CLI resolved module
+                }
+            }
+            // Module is not resolved - this is an unresolved import
+            return true;
+        }
+
+        // For import equals declarations without import_module set,
+        // check if the value_declaration is an import equals with a require
+        if !symbol.value_declaration.is_none() {
+            let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                if let Some(import) = self.ctx.arena.get_import_decl(decl_node) {
+                    if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
+                        if ref_node.kind == SyntaxKind::StringLiteral as u16 {
+                            if let Some(lit) = self.ctx.arena.get_literal(ref_node) {
+                                let module_name = &lit.text;
+                                if !self.ctx.binder.module_exports.contains_key(module_name)
+                                    && !self
+                                        .ctx
+                                        .binder
+                                        .shorthand_ambient_modules
+                                        .contains(module_name)
+                                    && !self.ctx.binder.declared_modules.contains(module_name)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a module specifier matches a declared or shorthand ambient module pattern.
+    ///
+    /// Supports simple wildcard patterns using `*` (e.g., "foo*baz", "*!text").
+    pub(crate) fn is_ambient_module_match(&self, module_name: &str) -> bool {
+        if self.matches_module_pattern(&self.ctx.binder.declared_modules, module_name)
+            || self.matches_module_pattern(&self.ctx.binder.shorthand_ambient_modules, module_name)
+        {
+            return true;
+        }
+
+        // Also check module_exports keys for wildcard module declarations with bodies.
+        // These are stored as exact pattern strings in module_exports.
+        self.ctx
+            .binder
+            .module_exports
+            .keys()
+            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
+    }
+
+    fn matches_module_pattern(
+        &self,
+        patterns: &rustc_hash::FxHashSet<String>,
+        module_name: &str,
+    ) -> bool {
+        patterns
+            .iter()
+            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
+    }
+
+    fn module_name_matches_pattern(pattern: &str, module_name: &str) -> bool {
+        let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
+        let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
+
+        if !pattern.contains('*') {
+            return pattern == module_name;
+        }
+
+        // Use globset for robust wildcard matching (handles multiple '*' correctly)
+        // Allow '*' to match path separators so patterns like "*!text" match "./file!text".
+        if let Ok(glob) = globset::GlobBuilder::new(pattern)
+            .literal_separator(false)
+            .build()
+        {
+            let matcher = glob.compile_matcher();
+            return matcher.is_match(module_name);
+        }
+
+        false
+    }
+
     // =========================================================================
     // Require/Import Resolution
     // =========================================================================

@@ -874,6 +874,7 @@ fn test_property_access_callable_members() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        is_method: false,
     };
     let callable = interner.callable(CallableShape {
         call_signatures: vec![call_sig],
@@ -1760,6 +1761,7 @@ fn test_call_generic_callable_signature() {
             this_type: None,
             return_type: t_type,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1836,6 +1838,7 @@ fn test_infer_call_signature_identity() {
         this_type: None,
         return_type: t_type,
         type_predicate: None,
+        is_method: false,
     };
 
     let result = infer_call_signature(&interner, &mut subtype, &sig, &[TypeId::NUMBER]);
@@ -1948,6 +1951,7 @@ fn test_infer_generic_callable_param_from_function() {
             this_type: Some(t_type),
             return_type: TypeId::VOID,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -2042,6 +2046,7 @@ fn test_infer_generic_function_param_from_callable() {
             this_type: Some(TypeId::NUMBER),
             return_type: TypeId::VOID,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -2164,6 +2169,7 @@ fn test_infer_generic_callable_param_from_callable() {
             this_type: Some(t_type),
             return_type: TypeId::VOID,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -2197,6 +2203,7 @@ fn test_infer_generic_callable_param_from_callable() {
             this_type: Some(TypeId::NUMBER),
             return_type: TypeId::VOID,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -2232,6 +2239,7 @@ fn test_infer_generic_construct_signature_param() {
             this_type: None,
             return_type: t_type,
             type_predicate: None,
+            is_method: false,
         }],
         properties: Vec::new(),
         ..Default::default()
@@ -2265,6 +2273,7 @@ fn test_infer_generic_construct_signature_param() {
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
+            is_method: false,
         }],
         properties: Vec::new(),
         ..Default::default()
