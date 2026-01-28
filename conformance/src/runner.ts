@@ -33,7 +33,7 @@ const DEFAULT_CONFIG: RunnerConfig = {
   wasmPkgPath: path.resolve(__dirname, '../../pkg'),
   testsBasePath: path.resolve(__dirname, '../../TypeScript/tests/cases'),
   libPath: path.resolve(__dirname, '../../TypeScript/tests/lib/lib.d.ts'),
-  libDir: path.resolve(__dirname, '../../TypeScript/src/lib'),
+  libDir: path.resolve(__dirname, '../../TypeScript/tests/lib'),
   maxTests: 500,
   verbose: false,
   categories: ['conformance', 'compiler', 'projects'],
