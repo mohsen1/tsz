@@ -57,9 +57,9 @@ To manually install: `./scripts/install-hooks.sh`
 
 ## Solver-First Architecture
 
-**This is the most important architectural principle.** Read [docs/solver-type-computation-analysis.md](docs/solver-type-computation-analysis.md) for the complete guide.
+**This is the most important architectural principle.** Read [docs/architecture/NORTH_STAR.md](docs/architecture/NORTH_STAR.md) for the complete guide and [docs/architecture/MIGRATION_ROADMAP.md](docs/architecture/MIGRATION_ROADMAP.md) for the migration plan.
 
-> **⚠️ Current State (Jan 2026 Audit)**: The checker has accumulated 601 direct `TypeKey::` references while using visitor functions only 16 times. This violates the visitor pattern requirement below. See [Section 1.4 of solver-type-computation-analysis.md](docs/solver-type-computation-analysis.md#14-architecture-audit-january-2026) for details and migration plan.
+> **⚠️ Current State (Jan 2026 Audit)**: The checker has accumulated 601 direct `TypeKey::` references while using visitor functions only 16 times. This violates the visitor pattern requirement below. See [docs/architecture/MIGRATION_ROADMAP.md](docs/architecture/MIGRATION_ROADMAP.md) for details and migration plan.
 
 ### The Core Contract
 
@@ -119,7 +119,7 @@ pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
 
 ### Use the Visitor Pattern for Type Operations
 
-**MANDATORY**: When working with types (TypeKey, TypeId), always use the visitor pattern from `src/solver/visitor.rs` instead of writing manual match statements. Read [docs/TYPE_VISITOR_PATTERN_GUIDE.md](docs/TYPE_VISITOR_PATTERN_GUIDE.md) for the complete guide.
+**MANDATORY**: When working with types (TypeKey, TypeId), always use the visitor pattern from `src/solver/visitor.rs` instead of writing manual match statements. See [docs/architecture/NORTH_STAR.md](docs/architecture/NORTH_STAR.md) and [docs/architecture/MIGRATION_ROADMAP.md](docs/architecture/MIGRATION_ROADMAP.md) for the complete guide.
 
 ```rust
 // GOOD - Use visitor functions
@@ -192,9 +192,8 @@ The script provides focused presets (`--solver`, `--checker`, `--binder`, `--par
 
 | Document | Purpose |
 |----------|---------|
-| [docs/solver-type-computation-analysis.md](docs/solver-type-computation-analysis.md) | **Solver-first architecture guide** - How to structure type logic |
-| [docs/TYPE_VISITOR_PATTERN_GUIDE.md](docs/TYPE_VISITOR_PATTERN_GUIDE.md) | **Visitor pattern guide** - How to work with types |
-| [docs/SOLVER.md](docs/SOLVER.md) | Mathematical foundations of the type solver |
+| [docs/architecture/NORTH_STAR.md](docs/architecture/NORTH_STAR.md) | **Target architecture** - The ideal architecture we're converging toward |
+| [docs/architecture/MIGRATION_ROADMAP.md](docs/architecture/MIGRATION_ROADMAP.md) | **Migration plan** - How to get from current to target architecture |
 | [docs/specs/TS_UNSOUNDNESS_CATALOG.md](docs/specs/TS_UNSOUNDNESS_CATALOG.md) | TypeScript compatibility rules (intentional unsoundness) |
 
 **Additional references:**
@@ -202,18 +201,18 @@ The script provides focused presets (`--solver`, `--checker`, `--binder`, `--par
 | Document | Purpose |
 |----------|---------|
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Getting started, building, testing |
-| [docs/TESTING.md](docs/TESTING.md) | Testing infrastructure |
-| [docs/walkthrough/](docs/walkthrough/) | Deep dive into each compiler phase |
-| [docs/WASM_ARCHITECTURE.md](docs/WASM_ARCHITECTURE.md) | WASM build and architecture |
-| [docs/COMPILER_OPTIONS.md](docs/COMPILER_OPTIONS.md) | Supported compiler options |
-| [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) | Diagnostic message guidelines |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance benchmarks and optimization |
+| [docs/walkthrough/](docs/walkthrough/) | Deep dive into each compiler phase (01-scanner through 08-lsp-gaps) |
+| [docs/specs/DIAGNOSTICS.md](docs/specs/DIAGNOSTICS.md) | Diagnostic message guidelines |
+| [docs/specs/](docs/specs/) | TypeScript and ECMAScript specifications |
+| [docs/todo/roadmap.md](docs/todo/roadmap.md) | Development roadmap and planned features |
 | `scripts/ask-gemini.mjs` | AI assistant with full codebase context |
 | `.claudeskills/ask-gemini.md` | Documentation for ask-gemini skill |
 
 **External references:**
 
 - [TypeScript Compiler (tsc) - GitHub](https://github.com/microsoft/TypeScript): Reference behavior to match
-- [ECMAScript Language Specification](https://tc39.es/ecma262/): Language semantics
+- [ECMAScript Language Specification](https://tc39.es/ecma262/): Language semantics (also available locally at [docs/specs/ECMAScript® 2026 Language Specification.md](docs/specs/))
 
 ---
 
