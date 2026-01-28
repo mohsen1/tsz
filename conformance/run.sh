@@ -274,12 +274,13 @@ build_native_for_docker() {
     log_step "Building native binary for Linux (Docker)..."
 
     # Build the binary inside Docker to avoid cross-compilation issues
+    # Use the host architecture for better performance on Apple Silicon
     log_info "Building in Docker container..."
 
     docker run --rm \
         -v "$ROOT_DIR:/work:rw" \
         -w /work \
-        --platform linux/amd64 \
+        --platform linux/arm64 \
         rust:1-slim \
         bash -c "
             apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev >/dev/null 2>&1
@@ -318,7 +319,7 @@ check_docker() {
 ensure_docker_image() {
     if ! docker image inspect "$DOCKER_IMAGE" &>/dev/null; then
         log_step "Building Docker image..."
-        docker build --platform linux/amd64 -t "$DOCKER_IMAGE" -f - "$SCRIPT_DIR" << 'DOCKERFILE'
+        docker build --platform linux/arm64 -t "$DOCKER_IMAGE" -f - "$SCRIPT_DIR" << 'DOCKERFILE'
 FROM node:22-slim
 WORKDIR /app
 RUN mkdir -p /app/conformance /app/pkg /app/target /app/TypeScript/tests
@@ -505,7 +506,7 @@ run_in_docker() {
     fi
     
     docker run --rm \
-        --platform linux/amd64 \
+        --platform linux/arm64 \
         --memory="${memory_gb}g" \
         --memory-swap="${memory_gb}g" \
         --cpus="$workers" \
