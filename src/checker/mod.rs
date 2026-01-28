@@ -65,6 +65,7 @@ pub mod state;
 pub mod statements;
 pub mod symbol_resolver;
 pub mod tuple_type;
+pub mod type_api;
 pub mod type_checking;
 pub mod type_computation;
 // pub mod type_computing_visitor; // TODO: module not found
