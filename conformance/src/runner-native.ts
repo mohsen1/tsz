@@ -170,12 +170,8 @@ function runNative(testCase: ParsedTestCase): Promise<{ codes: number[]; crashed
       // Write test files to temp directory
       const filesToCheck: string[] = [];
 
-      // Add lib.d.ts unless noLib
-      if (!testCase.options.nolib) {
-        const libContent = fs.readFileSync(CONFIG.libPath, 'utf8');
-        fs.writeFileSync(path.join(tmpDir, 'lib.d.ts'), libContent);
-        filesToCheck.push('lib.d.ts');
-      }
+      // Don't add lib.d.ts - let tsz use its embedded libs instead
+      // This prevents duplicate identifier errors (TS2300, TS2451)
 
       // Write test files
       for (const file of testCase.files) {
