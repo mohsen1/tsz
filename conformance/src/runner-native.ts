@@ -32,7 +32,7 @@ const CONFIG = {
   maxTests: parseInt(process.env.MAX_TESTS || '500'),
   categories: (process.env.CATEGORIES || 'conformance,compiler').split(','),
   verbose: process.env.VERBOSE === 'true',
-  tszBinary: process.env.TSZ_BINARY || path.resolve(__dirname, '../../target/release/tsz'),
+  tszBinary: process.env.TSZ_BINARY || path.resolve(__dirname, '../../.target/release/tsz'),
 };
 
 // Track results
