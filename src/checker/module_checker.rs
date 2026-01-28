@@ -86,19 +86,12 @@ impl<'a> CheckerState<'a> {
             return; // Module exists
         }
 
-        // Check if this is a shorthand ambient module (declare module "foo")
-        if self
-            .ctx
-            .binder
-            .shorthand_ambient_modules
-            .contains(module_name)
-        {
-            return; // Ambient module exists
-        }
-
-        // Check declared modules (regular ambient modules with body)
-        if self.ctx.binder.declared_modules.contains(module_name) {
-            return; // Declared module exists
+        // Check if this is an ambient module declaration (exact or wildcard pattern match).
+        // Both shorthand ambient modules (`declare module "foo"`) and regular ambient modules
+        // with body (`declare module "foo" { ... }`) provide type information for imports.
+        // Also supports wildcard patterns like "*.json", "foo*bar", "*!text".
+        if self.is_ambient_module_match(module_name) {
+            return; // Ambient module exists (exact or pattern match)
         }
 
         // Module not found - emit TS2307
@@ -201,18 +194,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Skip TS2307 for ambient module declarations
-        if self
-            .ctx
-            .binder
-            .shorthand_ambient_modules
-            .contains(module_name)
-        {
-            self.ctx.import_resolution_stack.pop();
-            return;
-        }
-
-        if self.ctx.binder.declared_modules.contains(module_name) {
+        // Skip TS2307 for ambient module declarations (exact or wildcard pattern match).
+        // Both shorthand ambient modules (`declare module "foo"`) and regular ambient modules
+        // with body (`declare module "foo" { ... }`) provide type information.
+        // Also supports wildcard patterns like "*.json", "foo*bar", "*!text".
+        if self.is_ambient_module_match(module_name) {
             self.ctx.import_resolution_stack.pop();
             return;
         }

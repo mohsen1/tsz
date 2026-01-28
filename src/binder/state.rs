@@ -4009,27 +4009,33 @@ impl BinderState {
                     // Rule #44: Detect module augmentation
                     // A `declare module "x"` in an external module (file with imports/exports)
                     // is a module augmentation if it references an existing or external module.
+                    // IMPORTANT: Shorthand ambient modules (no body) are NEVER augmentations -
+                    // they're ambient declarations meant to provide types for matching imports.
+                    // Only modules WITH bodies can be augmentations.
                     let is_augmentation = self.is_external_module
+                        && !module.body.is_none()
                         && self.is_potential_module_augmentation(&module_specifier);
 
                     if is_augmentation {
                         // Track as module augmentation - bind body with augmentation context
-                        if !module.body.is_none() {
-                            self.node_scope_ids
-                                .insert(module.body.0, self.current_scope_id);
-                            let was_in_augmentation = self.in_module_augmentation;
-                            let prev_module = self.current_augmented_module.take();
-                            self.in_module_augmentation = true;
-                            self.current_augmented_module = Some(module_specifier.clone());
-                            self.bind_node(arena, module.body);
-                            self.in_module_augmentation = was_in_augmentation;
-                            self.current_augmented_module = prev_module;
-                        }
+                        self.node_scope_ids
+                            .insert(module.body.0, self.current_scope_id);
+                        let was_in_augmentation = self.in_module_augmentation;
+                        let prev_module = self.current_augmented_module.take();
+                        self.in_module_augmentation = true;
+                        self.current_augmented_module = Some(module_specifier.clone());
+                        self.bind_node(arena, module.body);
+                        self.in_module_augmentation = was_in_augmentation;
+                        self.current_augmented_module = prev_module;
                         return;
                     }
 
                     // Not an augmentation - track as ambient module declaration
-                    self.declared_modules.insert(module_specifier);
+                    // For modules with body, use declared_modules
+                    // For shorthand modules (no body), shorthand_ambient_modules is populated below
+                    if !module.body.is_none() {
+                        self.declared_modules.insert(module_specifier);
+                    }
                 }
             }
 

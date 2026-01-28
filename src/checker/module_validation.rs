@@ -55,18 +55,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check if this is a shorthand ambient module
-        if self
-            .ctx
-            .binder
-            .shorthand_ambient_modules
-            .contains(module_name)
-        {
-            return true;
-        }
-
-        // Check declared modules
-        if self.ctx.binder.declared_modules.contains(module_name) {
+        // Check if this is an ambient module declaration (exact or wildcard pattern match).
+        // Both shorthand ambient modules (`declare module "foo"`) and regular ambient modules
+        // with body (`declare module "foo" { ... }`) provide type information.
+        // Also supports wildcard patterns like "*.json", "foo*bar", "*!text".
+        if self.is_ambient_module_match(module_name) {
             return true;
         }
 

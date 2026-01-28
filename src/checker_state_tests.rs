@@ -3214,9 +3214,120 @@ import data from "./file.json";
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // Note: The import "./file.json" will still emit TS2307 because the shorthand module
-    // declaration is for "*.json" pattern, not "./file.json" literal.
-    // This is expected behavior - shorthand ambient module pattern matching is not implemented.
+    // Verify pattern matching works: import "./file.json" should NOT emit TS2307
+    // because "*.json" pattern matches "./file.json"
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE),
+        "Should NOT emit TS2307 when import matches shorthand ambient module pattern '*.json', got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test wildcard ambient module pattern matching with various patterns
+#[test]
+fn test_wildcard_ambient_module_pattern_matching() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    // Shorthand wildcard patterns and imports that should match.
+    // Note: In external modules (files with imports), non-relative ambient modules
+    // with bodies are treated as augmentations per Rule #44.
+    // So we use shorthand patterns (no body) for this test.
+    let source = r#"
+declare module "*!text";
+
+declare module "foo*baz";
+
+import text from "./styles.css!text";
+import something from "foobarbaz";
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // Verify patterns were registered as shorthand ambient modules
+    assert!(
+        binder.shorthand_ambient_modules.contains("*!text"),
+        "Expected '*!text' to be in shorthand_ambient_modules"
+    );
+    assert!(
+        binder.shorthand_ambient_modules.contains("foo*baz"),
+        "Expected 'foo*baz' to be in shorthand_ambient_modules"
+    );
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    // Verify no TS2307 errors - both imports should match patterns
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE),
+        "Should NOT emit TS2307 when imports match wildcard ambient module patterns, got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test declared modules with body in script files (no import/export)
+#[test]
+fn test_declared_module_with_body_in_script() {
+    use crate::parser::ParserState;
+
+    // In a script file (no imports/exports), declare module with body is an ambient declaration
+    let source = r#"
+declare module "*!text" {
+    const content: string;
+    export default content;
+}
+
+declare module "foo*baz" {
+    export function greet(): string;
+}
+"#;
+
+    let mut parser = ParserState::new("test.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // In script files, modules with body go to declared_modules
+    assert!(
+        binder.declared_modules.contains("*!text"),
+        "Expected '*!text' to be in declared_modules, got: {:?}",
+        binder.declared_modules
+    );
+    assert!(
+        binder.declared_modules.contains("foo*baz"),
+        "Expected 'foo*baz' to be in declared_modules, got: {:?}",
+        binder.declared_modules
+    );
 }
 
 /// Test TS2307 for scoped npm package import that cannot be resolved

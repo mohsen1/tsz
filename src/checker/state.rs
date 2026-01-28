@@ -4311,13 +4311,9 @@ impl<'a> CheckerState<'a> {
             // For ES6 imports with import_module set, resolve using module_exports
             if let Some(ref module_name) = symbol.import_module {
                 // Check if this is a shorthand ambient module (declare module "foo" without body)
-                // Imports from shorthand ambient modules are typed as `any`
-                if self
-                    .ctx
-                    .binder
-                    .shorthand_ambient_modules
-                    .contains(module_name)
-                {
+                // Imports from shorthand ambient modules are typed as `any`.
+                // Also supports wildcard patterns like "*.json", "foo*bar", "*!text".
+                if self.is_shorthand_ambient_module_match(module_name) {
                     return (TypeId::ANY, Vec::new());
                 }
 

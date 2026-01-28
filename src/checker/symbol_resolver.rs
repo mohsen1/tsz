@@ -1614,6 +1614,15 @@ impl<'a> CheckerState<'a> {
             .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
     }
 
+    /// Check if a module specifier matches a shorthand ambient module pattern.
+    ///
+    /// Shorthand ambient modules are `declare module "foo"` without body.
+    /// Imports from these modules are typed as `any`.
+    /// Supports wildcard patterns like "*.json", "foo*bar", "*!text".
+    pub(crate) fn is_shorthand_ambient_module_match(&self, module_name: &str) -> bool {
+        self.matches_module_pattern(&self.ctx.binder.shorthand_ambient_modules, module_name)
+    }
+
     fn matches_module_pattern(
         &self,
         patterns: &rustc_hash::FxHashSet<String>,
