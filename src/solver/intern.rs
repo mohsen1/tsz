@@ -616,6 +616,11 @@ impl TypeInterner {
         self.intern(TypeKey::Literal(LiteralValue::String(atom)))
     }
 
+    /// Intern a literal string type from an already-interned Atom
+    pub fn literal_string_atom(&self, atom: Atom) -> TypeId {
+        self.intern(TypeKey::Literal(LiteralValue::String(atom)))
+    }
+
     /// Intern a literal number type
     pub fn literal_number(&self, value: f64) -> TypeId {
         self.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(value))))
@@ -1440,6 +1445,12 @@ impl TypeInterner {
     pub fn readonly_tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         let tuple_type = self.tuple(elements);
         self.intern(TypeKey::ReadonlyType(tuple_type))
+    }
+
+    /// Wrap any type in a ReadonlyType marker
+    /// This is used for the `readonly` type operator
+    pub fn readonly_type(&self, inner: TypeId) -> TypeId {
+        self.intern(TypeKey::ReadonlyType(inner))
     }
 
     /// Intern an object type with properties

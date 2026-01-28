@@ -13,6 +13,7 @@
 
 use crate::checker::state::CheckerState;
 use crate::solver::TypeId;
+use crate::solver::type_queries::get_callable_shape;
 
 // =============================================================================
 // Constructor Type Checking Utilities
@@ -59,14 +60,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Construct signatures allow a type to be called with `new`.
     pub fn has_construct_sig(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                !shape.construct_signatures.is_empty()
-            }
-            _ => false,
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            !shape.construct_signatures.is_empty()
+        } else {
+            false
         }
     }
 
@@ -74,14 +71,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Multiple construct signatures indicate constructor overloading.
     pub fn construct_signature_count(&self, type_id: TypeId) -> usize {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                shape.construct_signatures.len()
-            }
-            _ => 0,
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            shape.construct_signatures.len()
+        } else {
+            0
         }
     }
 

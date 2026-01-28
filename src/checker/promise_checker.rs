@@ -14,7 +14,8 @@ use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver as solver_narrowing;
-use crate::solver::{SymbolRef, TypeId, TypeKey};
+use crate::solver::type_queries::{PromiseTypeKind, classify_promise_type, get_union_members};
+use crate::solver::{SymbolRef, TypeId};
 
 // =============================================================================
 // Promise and Async Type Checking Methods
@@ -40,27 +41,26 @@ impl<'a> CheckerState<'a> {
     /// - Promise<T> type applications
     /// - Object types from lib files (conservatively assumed to be Promise-like)
     pub fn type_ref_is_promise_like(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Ref(SymbolRef(sym_id))) => {
+        match classify_promise_type(self.ctx.types, type_id) {
+            PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
                     return self.is_promise_like_name(symbol.escaped_name.as_str());
                 }
+                false
             }
-            Some(TypeKey::Application(app_id)) => {
+            PromiseTypeKind::Application { base, .. } => {
                 // Check if the base type of the application is a Promise-like type
-                let app = self.ctx.types.type_application(app_id);
-                return self.type_ref_is_promise_like(app.base);
+                self.type_ref_is_promise_like(base)
             }
-            Some(TypeKey::Object(_)) => {
+            PromiseTypeKind::Object(_) => {
                 // For Object types (interfaces from lib files), we conservatively assume
                 // they might be Promise-like. This avoids false positives for Promise<void>
                 // return types from lib files where we can't easily determine the interface name.
                 // A more precise check would require tracking the original type reference.
-                return true;
+                true
             }
-            _ => {}
+            PromiseTypeKind::Union(_) | PromiseTypeKind::NotPromise => false,
         }
-        false
     }
 
     /// Check if a type is a Promise or Promise-like type.
@@ -68,20 +68,19 @@ impl<'a> CheckerState<'a> {
     /// This is used to validate async function return types.
     /// Handles both Promise<T> applications and direct Promise references.
     pub fn is_promise_type(&self, type_id: TypeId) -> bool {
-        // Check for Promise<T> or PromiseLike<T> type application
-        if let Some(TypeKey::Application(app_id)) = self.ctx.types.lookup(type_id) {
-            let app = self.ctx.types.type_application(app_id);
-            return self.type_ref_is_promise_like(app.base);
+        match classify_promise_type(self.ctx.types, type_id) {
+            PromiseTypeKind::Application { base, .. } => self.type_ref_is_promise_like(base),
+            PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
+                // Check for direct Promise or PromiseLike reference (this also handles type aliases)
+                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+                    return self.is_promise_like_name(symbol.escaped_name.as_str());
+                }
+                false
+            }
+            PromiseTypeKind::Object(_)
+            | PromiseTypeKind::Union(_)
+            | PromiseTypeKind::NotPromise => false,
         }
-
-        // Check for direct Promise or PromiseLike reference (this also handles type aliases)
-        if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id)
-            && let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
-        {
-            return self.is_promise_like_name(symbol.escaped_name.as_str());
-        }
-
-        false
     }
 
     /// Check if the global Promise type is available in lib contexts.
@@ -110,20 +109,20 @@ impl<'a> CheckerState<'a> {
     /// - Type aliases that expand to Promise<T>
     /// - Classes that extend Promise<T>
     pub fn promise_like_return_type_argument(&mut self, return_type: TypeId) -> Option<TypeId> {
-        if let Some(TypeKey::Application(app_id)) = self.ctx.types.lookup(return_type) {
-            let app = self.ctx.types.type_application(app_id);
-
+        if let PromiseTypeKind::Application { base, args, .. } =
+            classify_promise_type(self.ctx.types, return_type)
+        {
             // Check for synthetic PROMISE_BASE type (created when Promise symbol wasn't resolved)
             // This allows us to extract T from Promise<T> even without full lib files
-            if app.base == TypeId::PROMISE_BASE
-                && let Some(&first_arg) = app.args.first()
-            {
-                return Some(first_arg);
+            if base == TypeId::PROMISE_BASE {
+                if let Some(&first_arg) = args.first() {
+                    return Some(first_arg);
+                }
             }
 
             // Try to get the type argument from the base symbol
             if let Some(result) =
-                self.promise_like_type_argument_from_base(app.base, &app.args, &mut Vec::new())
+                self.promise_like_type_argument_from_base(base, &args, &mut Vec::new())
             {
                 return Some(result);
             }
@@ -132,12 +131,16 @@ impl<'a> CheckerState<'a> {
             // and we have type arguments, return the first one
             // This handles cases where Promise doesn't have expected flags or where
             // promise_like_type_argument_from_base fails for other reasons
-            if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base)
-                && let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
-                && self.is_promise_like_name(symbol.escaped_name.as_str())
-                && let Some(&first_arg) = app.args.first()
+            if let PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) =
+                classify_promise_type(self.ctx.types, base)
             {
-                return Some(first_arg);
+                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+                    if self.is_promise_like_name(symbol.escaped_name.as_str()) {
+                        if let Some(&first_arg) = args.first() {
+                            return Some(first_arg);
+                        }
+                    }
+                }
             }
         }
 
@@ -159,7 +162,9 @@ impl<'a> CheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
-        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(base) else {
+        let PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) =
+            classify_promise_type(self.ctx.types, base)
+        else {
             return None;
         };
         let sym_id = SymbolId(sym_id);
@@ -274,9 +279,17 @@ impl<'a> CheckerState<'a> {
         }
 
         let lowered = self.lower_type_with_bindings(type_alias.type_node, bindings);
-        if let Some(TypeKey::Application(app_id)) = self.ctx.types.lookup(lowered) {
-            let app = self.ctx.types.type_application(app_id);
-            return self.promise_like_type_argument_from_base(app.base, &app.args, visited_aliases);
+        if let PromiseTypeKind::Application {
+            base: lowered_base,
+            args: lowered_args,
+            ..
+        } = classify_promise_type(self.ctx.types, lowered)
+        {
+            return self.promise_like_type_argument_from_base(
+                lowered_base,
+                &lowered_args,
+                visited_aliases,
+            );
         }
 
         // Fallback: if the alias expands to a promise-like type reference (e.g., Promise from lib),
@@ -424,11 +437,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check for union types that include void/undefined
-        if let Some(TypeKey::Union(members)) = self.ctx.types.lookup(return_type) {
-            let members = self.ctx.types.type_list(members);
-            for &member in members.iter() {
-                if member == TypeId::VOID || member == TypeId::UNDEFINED {
+        // Check for union types that include void/undefined using the solver helper
+        if let Some(members) = get_union_members(self.ctx.types, return_type) {
+            for member in members.iter() {
+                if *member == TypeId::VOID || *member == TypeId::UNDEFINED {
                     return false;
                 }
             }
@@ -497,7 +509,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true for the null type, undefined type, or unions that only
     /// contain null and/or undefined.
     pub fn is_null_or_undefined_only(&self, return_type: TypeId) -> bool {
-        solver_narrowing::is_definitely_nullish(&self.ctx.types, return_type)
+        solver_narrowing::is_definitely_nullish(self.ctx.types, return_type)
     }
 
     // Note: The `lower_type_with_bindings` helper method remains in state.rs

@@ -16,6 +16,10 @@ use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
 use crate::solver as solver_narrowing;
 use crate::solver::TypeId;
+use crate::solver::type_queries::{
+    LiteralTypeKind, UnionMembersKind, classify_for_union_members, classify_literal_type,
+    get_object_shape,
+};
 
 // =============================================================================
 // Flow Narrowing Utilities
@@ -41,60 +45,38 @@ impl<'a> CheckerState<'a> {
     /// - It's a union where all members have a common property name
     /// - The common property has literal types in all members
     pub fn has_discriminant_properties(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
         // Only union types can have discriminant properties
-        let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) else {
+        let UnionMembersKind::Union(members) = classify_for_union_members(self.ctx.types, type_id)
+        else {
             return false;
         };
 
-        let members = self.ctx.types.type_list(list_id);
         if members.is_empty() {
             return false;
         }
 
         // Get properties from the first member
-        let first_member_props = match self.ctx.types.lookup(members[0]) {
-            Some(TypeKey::Object(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.properties.clone()
-            }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.properties.clone()
-            }
-            _ => return false,
+        let Some(first_shape) = get_object_shape(self.ctx.types, members[0]) else {
+            return false;
         };
+        let first_member_props = first_shape.properties.clone();
 
         // Check each property to see if it's a discriminant
         for prop in &first_member_props {
             // Check if all members have this property with a literal type
-            let is_discriminant =
-                members
-                    .iter()
-                    .all(|&member_id| match self.ctx.types.lookup(member_id) {
-                        Some(TypeKey::Object(shape_id)) => {
-                            let shape = self.ctx.types.object_shape(shape_id);
-                            shape.properties.iter().any(|p| {
-                                p.name == prop.name
-                                    && matches!(
-                                        self.ctx.types.lookup(p.type_id),
-                                        Some(TypeKey::Literal(_))
-                                    )
-                            })
-                        }
-                        Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                            let shape = self.ctx.types.object_shape(shape_id);
-                            shape.properties.iter().any(|p| {
-                                p.name == prop.name
-                                    && matches!(
-                                        self.ctx.types.lookup(p.type_id),
-                                        Some(TypeKey::Literal(_))
-                                    )
-                            })
-                        }
-                        _ => false,
-                    });
+            let is_discriminant = members.iter().all(|&member_id| {
+                if let Some(shape) = get_object_shape(self.ctx.types, member_id) {
+                    shape.properties.iter().any(|p| {
+                        p.name == prop.name
+                            && !matches!(
+                                classify_literal_type(self.ctx.types, p.type_id),
+                                LiteralTypeKind::NotLiteral
+                            )
+                    })
+                } else {
+                    false
+                }
+            });
 
             if is_discriminant {
                 return true;
@@ -115,14 +97,14 @@ impl<'a> CheckerState<'a> {
     /// - Type is exactly `undefined`
     /// - Type is a union containing `null` or `undefined`
     pub fn is_nullish_type(&self, type_id: TypeId) -> bool {
-        solver_narrowing::is_nullish_type(&self.ctx.types, type_id)
+        solver_narrowing::is_nullish_type(self.ctx.types, type_id)
     }
 
     /// Check if a type (possibly a union) contains null or undefined.
     ///
     /// Recursively checks union members for null or undefined types.
     pub fn type_contains_nullish(&self, type_id: TypeId) -> bool {
-        solver_narrowing::type_contains_nullish(&self.ctx.types, type_id)
+        solver_narrowing::type_contains_nullish(self.ctx.types, type_id)
     }
 
     /// Remove null and undefined from a type (non-null assertion).
@@ -130,7 +112,7 @@ impl<'a> CheckerState<'a> {
     /// For `T | null | undefined`, returns `T`.
     /// For `T` where T is not nullish, returns `T` unchanged.
     pub fn non_null_type(&self, type_id: TypeId) -> TypeId {
-        solver_narrowing::remove_nullish(&self.ctx.types, type_id)
+        solver_narrowing::remove_nullish(self.ctx.types, type_id)
     }
 
     // =========================================================================

@@ -29,17 +29,19 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the type represents a TypeScript enum.
     pub fn is_enum_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::{SymbolRef, TypeKey};
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Ref(SymbolRef(sym_id))) => {
-                if let Some(symbol) = self.ctx.binder.get_symbol(crate::binder::SymbolId(sym_id)) {
-                    (symbol.flags & symbol_flags::ENUM) != 0
-                } else {
-                    false
-                }
+        if let Some(sym_ref) = crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id)
+        {
+            if let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol(crate::binder::SymbolId(sym_ref.0))
+            {
+                (symbol.flags & symbol_flags::ENUM) != 0
+            } else {
+                false
             }
-            _ => false,
+        } else {
+            false
         }
     }
 
@@ -47,18 +49,20 @@ impl<'a> CheckerState<'a> {
     ///
     /// Const enums are fully inlined and cannot be accessed at runtime.
     pub fn is_const_enum_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::{SymbolRef, TypeKey};
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Ref(SymbolRef(sym_id))) => {
-                if let Some(symbol) = self.ctx.binder.get_symbol(crate::binder::SymbolId(sym_id)) {
-                    (symbol.flags & symbol_flags::ENUM) != 0
-                        && (symbol.flags & symbol_flags::CONST_ENUM) != 0
-                } else {
-                    false
-                }
+        if let Some(sym_ref) = crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id)
+        {
+            if let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol(crate::binder::SymbolId(sym_ref.0))
+            {
+                (symbol.flags & symbol_flags::ENUM) != 0
+                    && (symbol.flags & symbol_flags::CONST_ENUM) != 0
+            } else {
+                false
             }
-            _ => false,
+        } else {
+            false
         }
     }
 
@@ -78,17 +82,21 @@ impl<'a> CheckerState<'a> {
     /// - Numeric literals (for numeric enums)
     /// - Computed values (for heterogeneous enums)
     pub fn is_enum_member_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries::LiteralTypeKind;
 
-        match self.ctx.types.lookup(type_id) {
-            // String literals are valid enum members
-            Some(TypeKey::Literal(crate::solver::LiteralValue::String(_))) => true,
-            // Number literals are valid enum members
-            Some(TypeKey::Literal(crate::solver::LiteralValue::Number(_))) => true,
-            // Union types in enums (from computed members)
-            Some(TypeKey::Union(_)) => true,
-            _ => type_id == TypeId::STRING || type_id == TypeId::NUMBER,
+        // Check for string or number literals
+        match crate::solver::type_queries::classify_literal_type(self.ctx.types, type_id) {
+            LiteralTypeKind::String(_) | LiteralTypeKind::Number(_) => return true,
+            _ => {}
         }
+
+        // Check for union type
+        if crate::solver::type_queries::is_union_type(self.ctx.types, type_id) {
+            return true;
+        }
+
+        // Check for primitive types
+        type_id == TypeId::STRING || type_id == TypeId::NUMBER
     }
 
     /// Get the base member type for an enum (string or number).
@@ -99,23 +107,24 @@ impl<'a> CheckerState<'a> {
     /// - UNION for heterogeneous enums
     /// - UNKNOWN if the enum kind cannot be determined
     pub fn get_enum_member_base_type(&self, type_id: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
-
         // If this is already a primitive type, return it
         if type_id == TypeId::STRING || type_id == TypeId::NUMBER {
             return type_id;
         }
 
         // Check if it's a union - indicates heterogeneous enum
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(_)) => type_id, // Return the union as-is
-            Some(TypeKey::Ref(_)) => {
-                // For enum types, we need to check the member types
-                // Default to STRING for string enums, NUMBER for numeric enums
-                TypeId::UNKNOWN
-            }
-            _ => TypeId::UNKNOWN,
+        if crate::solver::type_queries::is_union_type(self.ctx.types, type_id) {
+            return type_id; // Return the union as-is
         }
+
+        // Check if it's a Ref type
+        if crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id).is_some() {
+            // For enum types, we need to check the member types
+            // Default to STRING for string enums, NUMBER for numeric enums
+            return TypeId::UNKNOWN;
+        }
+
+        TypeId::UNKNOWN
     }
 
     // =========================================================================

@@ -356,12 +356,9 @@ impl<'a> CheckerState<'a> {
                             // Guard against recursion when interface extends class
                             if !self.ctx.class_instance_resolution_set.insert(base_sym_id) {
                                 // Recursion detected; use a type reference fallback
-                                use crate::solver::{SymbolRef, TypeKey};
-                                base_type = Some(
-                                    self.ctx
-                                        .types
-                                        .intern(TypeKey::Ref(SymbolRef(base_sym_id.0))),
-                                );
+                                use crate::solver::SymbolRef;
+                                base_type =
+                                    Some(self.ctx.types.reference(SymbolRef(base_sym_id.0)));
                             } else {
                                 base_type =
                                     Some(self.get_class_instance_type(base_decl_idx, base_class));
@@ -397,12 +394,9 @@ impl<'a> CheckerState<'a> {
                                 // Guard against recursion when interface extends class
                                 if !self.ctx.class_instance_resolution_set.insert(base_sym_id) {
                                     // Recursion detected; use a type reference fallback
-                                    use crate::solver::{SymbolRef, TypeKey};
-                                    base_type = Some(
-                                        self.ctx
-                                            .types
-                                            .intern(TypeKey::Ref(SymbolRef(base_sym_id.0))),
-                                    );
+                                    use crate::solver::SymbolRef;
+                                    base_type =
+                                        Some(self.ctx.types.reference(SymbolRef(base_sym_id.0)));
                                 } else {
                                     base_type = Some(
                                         self.get_class_instance_type(base_decl_idx, base_class),
@@ -461,17 +455,21 @@ impl<'a> CheckerState<'a> {
     /// # Returns
     /// The merged TypeId
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
-        use crate::solver::{CallableShape, ObjectShape, TypeKey};
+        use crate::solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
+        use crate::solver::{CallableShape, ObjectShape};
 
         if derived == base {
             return derived;
         }
 
-        let derived_key = self.ctx.types.lookup(derived);
-        let base_key = self.ctx.types.lookup(base);
+        let derived_kind = classify_for_interface_merge(self.ctx.types, derived);
+        let base_kind = classify_for_interface_merge(self.ctx.types, base);
 
-        match (derived_key, base_key) {
-            (Some(TypeKey::Callable(derived_shape_id)), Some(TypeKey::Callable(base_shape_id))) => {
+        match (derived_kind, base_kind) {
+            (
+                InterfaceMergeKind::Callable(derived_shape_id),
+                InterfaceMergeKind::Callable(base_shape_id),
+            ) => {
                 let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
                 let mut call_signatures = derived_shape.call_signatures.clone();
@@ -494,7 +492,10 @@ impl<'a> CheckerState<'a> {
                         .or(base_shape.number_index.clone()),
                 })
             }
-            (Some(TypeKey::Callable(derived_shape_id)), Some(TypeKey::Object(base_shape_id))) => {
+            (
+                InterfaceMergeKind::Callable(derived_shape_id),
+                InterfaceMergeKind::Object(base_shape_id),
+            ) => {
                 let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
@@ -508,8 +509,8 @@ impl<'a> CheckerState<'a> {
                 })
             }
             (
-                Some(TypeKey::Callable(derived_shape_id)),
-                Some(TypeKey::ObjectWithIndex(base_shape_id)),
+                InterfaceMergeKind::Callable(derived_shape_id),
+                InterfaceMergeKind::ObjectWithIndex(base_shape_id),
             ) => {
                 let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
@@ -529,7 +530,10 @@ impl<'a> CheckerState<'a> {
                         .or(base_shape.number_index.clone()),
                 })
             }
-            (Some(TypeKey::Object(derived_shape_id)), Some(TypeKey::Callable(base_shape_id))) => {
+            (
+                InterfaceMergeKind::Object(derived_shape_id),
+                InterfaceMergeKind::Callable(base_shape_id),
+            ) => {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
                 let properties =
@@ -543,8 +547,8 @@ impl<'a> CheckerState<'a> {
                 })
             }
             (
-                Some(TypeKey::ObjectWithIndex(derived_shape_id)),
-                Some(TypeKey::Callable(base_shape_id)),
+                InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
+                InterfaceMergeKind::Callable(base_shape_id),
             ) => {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
@@ -564,7 +568,10 @@ impl<'a> CheckerState<'a> {
                         .or(base_shape.number_index.clone()),
                 })
             }
-            (Some(TypeKey::Object(derived_shape_id)), Some(TypeKey::Object(base_shape_id))) => {
+            (
+                InterfaceMergeKind::Object(derived_shape_id),
+                InterfaceMergeKind::Object(base_shape_id),
+            ) => {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
@@ -572,8 +579,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types.object(properties)
             }
             (
-                Some(TypeKey::Object(derived_shape_id)),
-                Some(TypeKey::ObjectWithIndex(base_shape_id)),
+                InterfaceMergeKind::Object(derived_shape_id),
+                InterfaceMergeKind::ObjectWithIndex(base_shape_id),
             ) => {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
@@ -586,8 +593,8 @@ impl<'a> CheckerState<'a> {
                 })
             }
             (
-                Some(TypeKey::ObjectWithIndex(derived_shape_id)),
-                Some(TypeKey::Object(base_shape_id)),
+                InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
+                InterfaceMergeKind::Object(base_shape_id),
             ) => {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
@@ -600,8 +607,8 @@ impl<'a> CheckerState<'a> {
                 })
             }
             (
-                Some(TypeKey::ObjectWithIndex(derived_shape_id)),
-                Some(TypeKey::ObjectWithIndex(base_shape_id)),
+                InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
+                InterfaceMergeKind::ObjectWithIndex(base_shape_id),
             ) => {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
@@ -619,7 +626,7 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| base_shape.number_index.clone()),
                 })
             }
-            (_, Some(TypeKey::Intersection(_))) | (Some(TypeKey::Intersection(_)), _) => {
+            (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => {
                 self.ctx.types.intersection2(derived, base)
             }
             _ => derived,
@@ -795,7 +802,8 @@ impl<'a> CheckerState<'a> {
         interface_name: &str,
         base_type: crate::solver::TypeId,
     ) -> crate::solver::TypeId {
-        use crate::solver::{ObjectShape, TypeKey};
+        use crate::solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
+        use crate::solver::{CallableShape, ObjectShape};
 
         let augmentation_members =
             self.get_module_augmentation_members(module_spec, interface_name);
@@ -805,16 +813,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the base type's properties and merge with augmentation members
-        let base_key = self.ctx.types.lookup(base_type);
-
-        match base_key {
-            Some(TypeKey::Object(shape_id)) => {
+        match classify_for_augmentation(self.ctx.types, base_type) {
+            AugmentationTargetKind::Object(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);
                 let merged_properties =
                     Self::merge_properties(&augmentation_members, &base_shape.properties);
                 self.ctx.types.object(merged_properties)
             }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            AugmentationTargetKind::ObjectWithIndex(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);
                 let merged_properties =
                     Self::merge_properties(&augmentation_members, &base_shape.properties);
@@ -824,8 +830,7 @@ impl<'a> CheckerState<'a> {
                     number_index: base_shape.number_index.clone(),
                 })
             }
-            Some(TypeKey::Callable(shape_id)) => {
-                use crate::solver::CallableShape;
+            AugmentationTargetKind::Callable(shape_id) => {
                 let base_shape = self.ctx.types.callable_shape(shape_id);
                 let merged_properties =
                     Self::merge_properties(&augmentation_members, &base_shape.properties);
@@ -837,7 +842,7 @@ impl<'a> CheckerState<'a> {
                     number_index: base_shape.number_index.clone(),
                 })
             }
-            _ => {
+            AugmentationTargetKind::Other => {
                 // For other types (like ANY), create a new object type with the augmentation members
                 if !augmentation_members.is_empty() {
                     self.ctx.types.object(augmentation_members)

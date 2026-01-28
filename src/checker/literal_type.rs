@@ -13,7 +13,14 @@
 //! operations, providing cleaner APIs for literal type checking.
 
 use crate::checker::state::CheckerState;
-use crate::solver::{LiteralValue, OrderedFloat, TypeId, TypeKey};
+use crate::solver::TypeId;
+use crate::solver::type_queries::{
+    LiteralTypeKind, classify_literal_type, create_boolean_literal_type,
+    create_number_literal_type, create_string_literal_type,
+    get_boolean_literal_value as solver_get_boolean_literal_value,
+    get_number_literal_value as solver_get_number_literal_value, get_string_literal_atom,
+    is_boolean_literal, is_number_literal, is_string_literal,
+};
 
 // =============================================================================
 // Literal Type Utilities
@@ -28,30 +35,21 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for types like `"hello"`, `"world"`, etc.
     pub fn is_string_literal_type(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(TypeKey::Literal(LiteralValue::String(_)))
-        )
+        is_string_literal(self.ctx.types, type_id)
     }
 
     /// Check if a type is a number literal type.
     ///
     /// Returns true for types like `0`, `1`, `42`, `3.14`, etc.
     pub fn is_number_literal_type(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(TypeKey::Literal(LiteralValue::Number(_)))
-        )
+        is_number_literal(self.ctx.types, type_id)
     }
 
     /// Check if a type is a boolean literal type.
     ///
     /// Returns true for types `true` or `false`.
     pub fn is_boolean_literal_type(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(TypeKey::Literal(LiteralValue::Boolean(_)))
-        )
+        is_boolean_literal(self.ctx.types, type_id)
     }
 
     // Note: `is_literal_type` is defined in type_computation.rs
@@ -64,28 +62,21 @@ impl<'a> CheckerState<'a> {
     ///
     /// Creates a type representing a specific string literal.
     pub fn create_string_literal(&self, value: &str) -> TypeId {
-        let atom = self.ctx.types.intern_string(value);
-        self.ctx
-            .types
-            .intern(TypeKey::Literal(LiteralValue::String(atom)))
+        create_string_literal_type(self.ctx.types, value)
     }
 
     /// Create a number literal type from a numeric value.
     ///
     /// Creates a type representing a specific number literal.
     pub fn create_number_literal(&self, value: f64) -> TypeId {
-        self.ctx
-            .types
-            .intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(value))))
+        create_number_literal_type(self.ctx.types, value)
     }
 
     /// Create a boolean literal type.
     ///
     /// Creates the type for `true` or `false`.
     pub fn create_boolean_literal(&self, value: bool) -> TypeId {
-        self.ctx
-            .types
-            .intern(TypeKey::Literal(LiteralValue::Boolean(value)))
+        create_boolean_literal_type(self.ctx.types, value)
     }
 
     // =========================================================================
@@ -97,12 +88,8 @@ impl<'a> CheckerState<'a> {
     /// Returns the string value if the type is a string literal,
     /// or None otherwise.
     pub fn get_string_literal_value(&self, type_id: TypeId) -> Option<String> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::String(atom))) => {
-                Some(self.ctx.types.resolve_atom_ref(atom).to_string())
-            }
-            _ => None,
-        }
+        get_string_literal_atom(self.ctx.types, type_id)
+            .map(|atom| self.ctx.types.resolve_atom_ref(atom).to_string())
     }
 
     /// Get the numeric value from a number literal type.
@@ -110,10 +97,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the number value if the type is a number literal,
     /// or None otherwise.
     pub fn get_number_literal_value(&self, type_id: TypeId) -> Option<f64> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::Number(value))) => Some(value.0),
-            _ => None,
-        }
+        solver_get_number_literal_value(self.ctx.types, type_id)
     }
 
     /// Get the boolean value from a boolean literal type.
@@ -121,10 +105,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the boolean value if the type is a boolean literal,
     /// or None otherwise.
     pub fn get_boolean_literal_value(&self, type_id: TypeId) -> Option<bool> {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::Boolean(value))) => Some(value),
-            _ => None,
-        }
+        solver_get_boolean_literal_value(self.ctx.types, type_id)
     }
 
     // Note: `widen_literal_type` is defined in state.rs
@@ -148,20 +129,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check if they're the same kind of literal
-        match (self.ctx.types.lookup(type1), self.ctx.types.lookup(type2)) {
-            (
-                Some(TypeKey::Literal(LiteralValue::String(a1))),
-                Some(TypeKey::Literal(LiteralValue::String(a2))),
-            ) => a1 == a2,
-            (
-                Some(TypeKey::Literal(LiteralValue::Number(n1))),
-                Some(TypeKey::Literal(LiteralValue::Number(n2))),
-            ) => n1 == n2,
-            (
-                Some(TypeKey::Literal(LiteralValue::Boolean(b1))),
-                Some(TypeKey::Literal(LiteralValue::Boolean(b2))),
-            ) => b1 == b2,
+        // Check if they're the same kind of literal using the classification helper
+        match (
+            classify_literal_type(self.ctx.types, type1),
+            classify_literal_type(self.ctx.types, type2),
+        ) {
+            (LiteralTypeKind::String(a1), LiteralTypeKind::String(a2)) => a1 == a2,
+            (LiteralTypeKind::Number(n1), LiteralTypeKind::Number(n2)) => {
+                // Compare using bits for proper f64 equality (handles NaN, -0.0, etc.)
+                n1.to_bits() == n2.to_bits()
+            }
+            (LiteralTypeKind::Boolean(b1), LiteralTypeKind::Boolean(b2)) => b1 == b2,
+            (LiteralTypeKind::BigInt(a1), LiteralTypeKind::BigInt(a2)) => a1 == a2,
             _ => false,
         }
     }

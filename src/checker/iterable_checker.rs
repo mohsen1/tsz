@@ -16,6 +16,10 @@ use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::parser::NodeIndex;
 use crate::solver::TypeId;
+use crate::solver::type_queries::{
+    AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, classify_async_iterable_type,
+    classify_for_of_element_type, classify_full_iterable_type,
+};
 
 // =============================================================================
 // Iterable Type Checking Methods
@@ -36,8 +40,6 @@ impl<'a> CheckerState<'a> {
     /// - A union where all members are iterable
     /// - An intersection where at least one member is iterable
     pub fn is_iterable_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
         // Intrinsic types that are always iterable or not iterable
         if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
             return true; // Don't report errors on any/unknown/error
@@ -57,59 +59,50 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Unwrap readonly wrappers
-        let mut ty = type_id;
-        while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(ty) {
-            ty = inner;
-        }
+        self.is_iterable_type_classified(type_id)
+    }
 
-        match self.ctx.types.lookup(ty) {
-            Some(TypeKey::Array(_)) => true,
-            Some(TypeKey::Tuple(_)) => true,
-            Some(TypeKey::Literal(crate::solver::LiteralValue::String(_))) => true,
-            Some(TypeKey::Union(members_id)) => {
-                let members = self.ctx.types.type_list(members_id);
+    /// Internal helper that uses the solver's classification enum to determine iterability.
+    fn is_iterable_type_classified(&self, type_id: TypeId) -> bool {
+        match classify_full_iterable_type(self.ctx.types, type_id) {
+            FullIterableTypeKind::Array(_) => true,
+            FullIterableTypeKind::Tuple(_) => true,
+            FullIterableTypeKind::StringLiteral(_) => true,
+            FullIterableTypeKind::Union(members) => {
                 members.iter().all(|&m| self.is_iterable_type(m))
             }
-            Some(TypeKey::Intersection(members_id)) => {
+            FullIterableTypeKind::Intersection(members) => {
                 // Intersection is iterable if at least one member is iterable
-                let members = self.ctx.types.type_list(members_id);
                 members.iter().any(|&m| self.is_iterable_type(m))
             }
-            Some(TypeKey::Object(shape_id)) => {
+            FullIterableTypeKind::Object(shape_id) => {
                 // Check if object has a [Symbol.iterator] method or 'next' method
                 self.object_has_iterator_method(shape_id)
             }
-            // Application types (Set<T>, Map<K, V>, etc.) - check if base type has iterator
-            Some(TypeKey::Application(app_id)) => {
-                // Get the application to check its base type
-                let app = self.ctx.types.type_application(app_id);
+            FullIterableTypeKind::Application { base } => {
                 // Check if the base type is iterable
                 // This handles Set<T>, Map<K, V>, ReadonlyArray<T>, etc.
-                self.is_iterable_type(app.base)
+                self.is_iterable_type(base)
             }
-            // Type parameters - check if the constraint is iterable
-            Some(TypeKey::TypeParameter(tp)) => {
-                if let Some(constraint) = tp.constraint {
-                    self.is_iterable_type(constraint)
+            FullIterableTypeKind::TypeParameter { constraint } => {
+                if let Some(c) = constraint {
+                    self.is_iterable_type(c)
                 } else {
                     // Unconstrained type parameters (extends unknown/any) should not error
                     // TypeScript does NOT emit TS2488 for unconstrained type parameters
                     false
                 }
             }
-            // Indexed access types (T[K]) - these should be resolved by the type system
-            // For now, treat as non-iterable (will emit TS2488)
-            Some(TypeKey::IndexAccess(_, _)) => false,
-            // Conditional types (T extends U ? X : Y) - these should be resolved
-            // For now, treat as non-iterable (will emit TS2488)
-            Some(TypeKey::Conditional(_)) => false,
-            // Mapped types ({ [K in Keys]: ValueType }) - generally not iterable
-            // unless they resolve to an array-like structure
-            Some(TypeKey::Mapped(_)) => false,
+            FullIterableTypeKind::Readonly(inner) => {
+                // Unwrap readonly wrapper and check inner type
+                self.is_iterable_type(inner)
+            }
+            // Index access, Conditional, Mapped - not directly iterable
+            FullIterableTypeKind::ComplexType => false,
             // Functions, classes without Symbol.iterator are not iterable
-            Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_)) => false,
-            _ => false,
+            FullIterableTypeKind::FunctionOrCallable => false,
+            // Unknown type - not iterable
+            FullIterableTypeKind::NotIterable => false,
         }
     }
 
@@ -135,25 +128,21 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type is async iterable (has Symbol.asyncIterator protocol).
     pub fn is_async_iterable_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
         // Intrinsic types that are always iterable or not iterable
         if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
             return true; // Don't report errors on any/unknown/error
         }
 
-        // Unwrap readonly wrappers
-        let mut ty = type_id;
-        while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(ty) {
-            ty = inner;
-        }
+        self.is_async_iterable_type_classified(type_id)
+    }
 
-        match self.ctx.types.lookup(ty) {
-            Some(TypeKey::Union(members_id)) => {
-                let members = self.ctx.types.type_list(members_id);
+    /// Internal helper that uses the solver's classification enum to determine async iterability.
+    fn is_async_iterable_type_classified(&self, type_id: TypeId) -> bool {
+        match classify_async_iterable_type(self.ctx.types, type_id) {
+            AsyncIterableTypeKind::Union(members) => {
                 members.iter().all(|&m| self.is_async_iterable_type(m))
             }
-            Some(TypeKey::Object(shape_id)) => {
+            AsyncIterableTypeKind::Object(shape_id) => {
                 // Check if object has a [Symbol.asyncIterator] method
                 let shape = self.ctx.types.object_shape(shape_id);
                 for prop in &shape.properties {
@@ -164,7 +153,11 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
-            _ => false,
+            AsyncIterableTypeKind::Readonly(inner) => {
+                // Unwrap readonly wrapper and check inner type
+                self.is_async_iterable_type(inner)
+            }
+            AsyncIterableTypeKind::NotAsyncIterable => false,
         }
     }
 
@@ -176,8 +169,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// This is a best-effort implementation for common cases (arrays/tuples/unions).
     pub fn for_of_element_type(&mut self, iterable_type: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
-
         if iterable_type == TypeId::ANY
             || iterable_type == TypeId::UNKNOWN
             || iterable_type == TypeId::ERROR
@@ -185,22 +176,20 @@ impl<'a> CheckerState<'a> {
             return iterable_type;
         }
 
-        // Unwrap readonly wrappers with depth guard to prevent infinite loops
-        let mut ty = iterable_type;
-        let mut readonly_depth = 0;
-        while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(ty) {
-            readonly_depth += 1;
-            if readonly_depth > 100 {
-                break;
-            }
-            ty = inner;
+        self.for_of_element_type_classified(iterable_type, 0)
+    }
+
+    /// Internal helper that uses the solver's classification enum to compute element type.
+    /// The depth parameter prevents infinite loops from circular readonly types.
+    fn for_of_element_type_classified(&mut self, type_id: TypeId, depth: usize) -> TypeId {
+        if depth > 100 {
+            return TypeId::ANY;
         }
 
-        match self.ctx.types.lookup(ty) {
-            Some(TypeKey::Array(elem)) => elem,
-            Some(TypeKey::Tuple(tuple_id)) => {
-                let elems = self.ctx.types.tuple_list(tuple_id);
-                let mut member_types: Vec<TypeId> = elems.iter().map(|e| e.type_id).collect();
+        match classify_for_of_element_type(self.ctx.types, type_id) {
+            ForOfElementKind::Array(elem) => elem,
+            ForOfElementKind::Tuple(elements) => {
+                let mut member_types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
                 if member_types.is_empty() {
                     TypeId::NEVER
                 } else if member_types.len() == 1 {
@@ -209,15 +198,18 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types.union(member_types)
                 }
             }
-            Some(TypeKey::Union(members_id)) => {
-                let members = self.ctx.types.type_list(members_id);
+            ForOfElementKind::Union(members) => {
                 let mut element_types = Vec::with_capacity(members.len());
-                for &member in members.iter() {
-                    element_types.push(self.for_of_element_type(member));
+                for member in members {
+                    element_types.push(self.for_of_element_type_classified(member, depth + 1));
                 }
                 self.ctx.types.union(element_types)
             }
-            _ => TypeId::ANY,
+            ForOfElementKind::Readonly(inner) => {
+                // Unwrap readonly wrapper and compute element type for inner
+                self.for_of_element_type_classified(inner, depth + 1)
+            }
+            ForOfElementKind::Other => TypeId::ANY,
         }
     }
 

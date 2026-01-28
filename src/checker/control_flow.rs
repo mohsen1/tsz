@@ -25,8 +25,16 @@ use crate::parser::node::{BinaryExprData, CallExprData, NodeArena};
 use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{
-    LiteralValue, NarrowingContext, ParamInfo, TypeId, TypeInterner, TypeKey, TypePredicate,
+    LiteralValue, NarrowingContext, ParamInfo, TypeId, TypeInterner, TypePredicate,
     TypePredicateTarget,
+    type_queries::{
+        ConstructorInstanceKind, FalsyComponentKind, LiteralValueKind, NonObjectKind,
+        PredicateSignatureKind, PropertyPresenceKind, TypeParameterConstraintKind,
+        UnionMembersKind, classify_for_constructor_instance, classify_for_falsy_component,
+        classify_for_literal_value, classify_for_non_object, classify_for_predicate_signature,
+        classify_for_property_presence, classify_for_type_parameter_constraint,
+        classify_for_union_members,
+    },
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -2016,10 +2024,8 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn predicate_signature_for_type(&self, callee_type: TypeId) -> Option<PredicateSignature> {
-        let key = self.interner.lookup(callee_type)?;
-
-        match key {
-            TypeKey::Function(shape_id) => {
+        match classify_for_predicate_signature(self.interner, callee_type) {
+            PredicateSignatureKind::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 let predicate = shape.type_predicate.clone()?;
                 Some(PredicateSignature {
@@ -2027,7 +2033,7 @@ impl<'a> FlowAnalyzer<'a> {
                     params: shape.params.clone(),
                 })
             }
-            TypeKey::Callable(shape_id) => {
+            PredicateSignatureKind::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 if shape.call_signatures.len() != 1 {
                     return None;
@@ -2039,16 +2045,15 @@ impl<'a> FlowAnalyzer<'a> {
                     params: sig.params.clone(),
                 })
             }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                for &member in members.iter() {
+            PredicateSignatureKind::Union(members) => {
+                for member in members {
                     if let Some(sig) = self.predicate_signature_for_type(member) {
                         return Some(sig);
                     }
                 }
                 None
             }
-            _ => None,
+            PredicateSignatureKind::None => None,
         }
     }
 
@@ -2150,8 +2155,8 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn instance_type_from_constructor_type(&self, type_id: TypeId) -> Option<TypeId> {
-        match self.interner.lookup(type_id)? {
-            TypeKey::Callable(shape_id) => {
+        match classify_for_constructor_instance(self.interner, type_id) {
+            ConstructorInstanceKind::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 if shape.construct_signatures.is_empty() {
                     return None;
@@ -2166,10 +2171,9 @@ impl<'a> FlowAnalyzer<'a> {
                     self.interner.union(returns)
                 })
             }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
+            ConstructorInstanceKind::Union(members) => {
                 let mut instance_types = Vec::new();
-                for &member in members.iter() {
+                for member in members {
                     if let Some(instance_type) = self.instance_type_from_constructor_type(member) {
                         instance_types.push(instance_type);
                     }
@@ -2182,7 +2186,7 @@ impl<'a> FlowAnalyzer<'a> {
                     Some(self.interner.union(instance_types))
                 }
             }
-            _ => None,
+            ConstructorInstanceKind::None => None,
         }
     }
 
@@ -2213,26 +2217,29 @@ impl<'a> FlowAnalyzer<'a> {
             return TypeId::OBJECT;
         }
 
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(type_id) {
-            if let Some(constraint) = info.constraint
-                && constraint != type_id
-            {
-                let narrowed_constraint =
-                    self.narrow_by_in_operator(constraint, bin, target, is_true_branch);
-                if narrowed_constraint != constraint {
-                    return self.interner.intersection2(type_id, narrowed_constraint);
+        if let TypeParameterConstraintKind::TypeParameter { constraint } =
+            classify_for_type_parameter_constraint(self.interner, type_id)
+        {
+            if let Some(constraint) = constraint {
+                if constraint != type_id {
+                    let narrowed_constraint =
+                        self.narrow_by_in_operator(constraint, bin, target, is_true_branch);
+                    if narrowed_constraint != constraint {
+                        return self.interner.intersection2(type_id, narrowed_constraint);
+                    }
                 }
             }
             return type_id;
         }
 
-        let Some(TypeKey::Union(members)) = self.interner.lookup(type_id) else {
+        let UnionMembersKind::Union(members) = classify_for_union_members(self.interner, type_id)
+        else {
             return type_id;
         };
 
-        let members = self.interner.type_list(members);
+        let members_len = members.len();
         let mut filtered = Vec::new();
-        for &member in members.iter() {
+        for member in members {
             let presence = self.property_presence(member, prop_name, prop_is_number);
             if self.keep_in_operator_member(presence, is_true_branch) {
                 filtered.push(member);
@@ -2243,7 +2250,7 @@ impl<'a> FlowAnalyzer<'a> {
             0 => TypeId::NEVER,
             1 => filtered[0],
             _ => {
-                if filtered.len() == members.len() {
+                if filtered.len() == members_len {
                     type_id
                 } else {
                     self.interner.union(filtered)
@@ -2264,10 +2271,11 @@ impl<'a> FlowAnalyzer<'a> {
             return TypeId::OBJECT;
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(type_id) {
-            let members = self.interner.type_list(members);
+        if let UnionMembersKind::Union(members) = classify_for_union_members(self.interner, type_id)
+        {
+            let members_len = members.len();
             let mut kept = Vec::new();
-            for &member in members.iter() {
+            for member in members {
                 if !self.is_definitely_non_object(member) {
                     kept.push(member);
                 }
@@ -2277,7 +2285,7 @@ impl<'a> FlowAnalyzer<'a> {
                 0 => TypeId::NEVER,
                 1 => kept[0],
                 _ => {
-                    if kept.len() == members.len() {
+                    if kept.len() == members_len {
                         type_id
                     } else {
                         self.interner.union(kept)
@@ -2309,21 +2317,9 @@ impl<'a> FlowAnalyzer<'a> {
             return true;
         }
 
-        match self.interner.lookup(type_id) {
-            Some(TypeKey::Literal(_)) => true,
-            Some(TypeKey::Intrinsic(kind)) => matches!(
-                kind,
-                crate::solver::IntrinsicKind::Void
-                    | crate::solver::IntrinsicKind::Undefined
-                    | crate::solver::IntrinsicKind::Null
-                    | crate::solver::IntrinsicKind::Boolean
-                    | crate::solver::IntrinsicKind::Number
-                    | crate::solver::IntrinsicKind::String
-                    | crate::solver::IntrinsicKind::Bigint
-                    | crate::solver::IntrinsicKind::Symbol
-                    | crate::solver::IntrinsicKind::Never
-            ),
-            _ => false,
+        match classify_for_non_object(self.interner, type_id) {
+            NonObjectKind::Literal | NonObjectKind::IntrinsicPrimitive => true,
+            NonObjectKind::MaybeObject => false,
         }
     }
 
@@ -2355,26 +2351,22 @@ impl<'a> FlowAnalyzer<'a> {
         prop_name: Atom,
         prop_is_number: bool,
     ) -> PropertyPresence {
-        let Some(key) = self.interner.lookup(type_id) else {
-            return PropertyPresence::Unknown;
-        };
-
-        match key {
-            TypeKey::Intrinsic(crate::solver::IntrinsicKind::Object) => PropertyPresence::Unknown,
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        match classify_for_property_presence(self.interner, type_id) {
+            PropertyPresenceKind::IntrinsicObject => PropertyPresence::Unknown,
+            PropertyPresenceKind::Object(shape_id) => {
                 self.property_presence_in_object(shape_id, prop_name, prop_is_number)
             }
-            TypeKey::Callable(callable_id) => {
+            PropertyPresenceKind::Callable(callable_id) => {
                 self.property_presence_in_callable(callable_id, prop_name)
             }
-            TypeKey::Array(_) | TypeKey::Tuple(_) => {
+            PropertyPresenceKind::ArrayLike => {
                 if prop_is_number {
                     PropertyPresence::Optional
                 } else {
                     PropertyPresence::Unknown
                 }
             }
-            _ => PropertyPresence::Unknown,
+            PropertyPresenceKind::Unknown => PropertyPresence::Unknown,
         }
     }
 
@@ -2608,8 +2600,8 @@ impl<'a> FlowAnalyzer<'a> {
             return true;
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(target) {
-            let members = self.interner.type_list(members);
+        if let UnionMembersKind::Union(members) = classify_for_union_members(self.interner, target)
+        {
             return members
                 .iter()
                 .any(|&member| self.literal_assignable_to(literal, member, narrowing));
@@ -2712,17 +2704,19 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
         narrowing: &NarrowingContext,
     ) -> TypeId {
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(type_id)
-            && let Some(constraint) = info.constraint
-            && constraint != type_id
+        if let TypeParameterConstraintKind::TypeParameter {
+            constraint: Some(constraint),
+        } = classify_for_type_parameter_constraint(self.interner, type_id)
         {
-            let narrowed_constraint = if is_true_branch {
-                narrowing.narrow_by_discriminant(constraint, prop_name, literal_type)
-            } else {
-                narrowing.narrow_by_excluding_discriminant(constraint, prop_name, literal_type)
-            };
-            if narrowed_constraint != constraint {
-                return self.interner.intersection2(type_id, narrowed_constraint);
+            if constraint != type_id {
+                let narrowed_constraint = if is_true_branch {
+                    narrowing.narrow_by_discriminant(constraint, prop_name, literal_type)
+                } else {
+                    narrowing.narrow_by_excluding_discriminant(constraint, prop_name, literal_type)
+                };
+                if narrowed_constraint != constraint {
+                    return self.interner.intersection2(type_id, narrowed_constraint);
+                }
             }
         }
 
@@ -2807,19 +2801,17 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(self.interner.literal_bigint("0"));
         }
 
-        let key = self.interner.lookup(type_id)?;
-        match key {
-            TypeKey::Literal(literal) => {
+        match classify_for_falsy_component(self.interner, type_id) {
+            FalsyComponentKind::Literal(literal) => {
                 if self.literal_is_falsy(&literal) {
                     Some(type_id)
                 } else {
                     None
                 }
             }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
+            FalsyComponentKind::Union(members) => {
                 let mut falsy_members = Vec::new();
-                for &member in members.iter() {
+                for member in members {
                     if let Some(falsy) = self.falsy_component(member) {
                         falsy_members.push(falsy);
                     }
@@ -2830,8 +2822,8 @@ impl<'a> FlowAnalyzer<'a> {
                     _ => Some(self.interner.union(falsy_members)),
                 }
             }
-            TypeKey::TypeParameter(_) | TypeKey::Infer(_) => Some(type_id),
-            _ => None,
+            FalsyComponentKind::TypeParameter => Some(type_id),
+            FalsyComponentKind::None => None,
         }
     }
 
@@ -3120,12 +3112,10 @@ impl<'a> FlowAnalyzer<'a> {
 
         let node_types = self.node_types?;
         let type_id = *node_types.get(&idx.0)?;
-        match self.interner.lookup(type_id)? {
-            TypeKey::Literal(LiteralValue::String(atom)) => Some((atom, false)),
-            TypeKey::Literal(LiteralValue::Number(num)) => {
-                Some((self.atom_from_numeric_value(num.0), true))
-            }
-            _ => None,
+        match classify_for_literal_value(self.interner, type_id) {
+            LiteralValueKind::String(atom) => Some((atom, false)),
+            LiteralValueKind::Number(value) => Some((self.atom_from_numeric_value(value), true)),
+            LiteralValueKind::None => None,
         }
     }
 
@@ -3135,8 +3125,8 @@ impl<'a> FlowAnalyzer<'a> {
         }
         let node_types = self.node_types?;
         let type_id = *node_types.get(&idx.0)?;
-        match self.interner.lookup(type_id)? {
-            TypeKey::Literal(LiteralValue::Number(num)) => Some(num.0),
+        match classify_for_literal_value(self.interner, type_id) {
+            LiteralValueKind::Number(value) => Some(value),
             _ => None,
         }
     }
@@ -3144,12 +3134,10 @@ impl<'a> FlowAnalyzer<'a> {
     fn literal_atom_from_type(&self, idx: NodeIndex) -> Option<Atom> {
         let node_types = self.node_types?;
         let type_id = *node_types.get(&idx.0)?;
-        match self.interner.lookup(type_id)? {
-            TypeKey::Literal(LiteralValue::String(atom)) => Some(atom),
-            TypeKey::Literal(LiteralValue::Number(num)) => {
-                Some(self.atom_from_numeric_value(num.0))
-            }
-            _ => None,
+        match classify_for_literal_value(self.interner, type_id) {
+            LiteralValueKind::String(atom) => Some(atom),
+            LiteralValueKind::Number(value) => Some(self.atom_from_numeric_value(value)),
+            LiteralValueKind::None => None,
         }
     }
 
@@ -3486,17 +3474,15 @@ if (x) {}
         let falsy_number = types.literal_number(0.0);
         let falsy_boolean = types.literal_boolean(false);
 
-        let key = types.lookup(narrowed).expect("narrowed type");
-        match key {
-            TypeKey::Union(members) => {
-                let members = types.type_list(members);
+        match classify_for_union_members(&types, narrowed) {
+            UnionMembersKind::Union(members) => {
                 assert!(members.contains(&falsy_string));
                 assert!(members.contains(&falsy_number));
                 assert!(members.contains(&falsy_boolean));
                 assert!(members.contains(&TypeId::NULL));
                 assert!(members.contains(&TypeId::UNDEFINED));
             }
-            _ => panic!("Expected falsy union, got {:?}", key),
+            UnionMembersKind::NotUnion => panic!("Expected falsy union"),
         }
     }
 

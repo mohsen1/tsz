@@ -533,25 +533,17 @@ if (guard(x)) {
     let callee_type = *callee_type_opt.unwrap();
 
     // Check that callee type is a function with a type predicate
-    let callee_key = types.lookup(callee_type);
+    let function_shape = crate::solver::type_queries::get_function_shape(&types, callee_type);
     assert!(
-        callee_key.is_some(),
-        "Callee type {} should have a key",
+        function_shape.is_some(),
+        "Callee type {} should be a function type",
         callee_type.0
     );
-    match callee_key.unwrap() {
-        crate::solver::TypeKey::Function(shape_id) => {
-            let shape = types.function_shape(shape_id);
-            assert!(
-                shape.type_predicate.is_some(),
-                "Function should have a type predicate"
-            );
-        }
-        other => panic!(
-            "Expected TypeKey::Function, got {:?}. callee_type = {}",
-            other, callee_type.0
-        ),
-    }
+    let shape = function_shape.unwrap();
+    assert!(
+        shape.type_predicate.is_some(),
+        "Function should have a type predicate"
+    );
 
     assert_eq!(narrowed_then, TypeId::STRING);
 
