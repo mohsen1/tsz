@@ -43,19 +43,22 @@ The Checker module has accumulated responsibilities that properly belong to the 
 
 ### 2.1 Extract Type Logic to Solver
 
-**Current State**: `src/checker/state.rs` contains 12,947 lines with type computation logic mixed with AST traversal.
+**Current State** (Jan 2026 Progress):
+
+- `ApplicationEvaluator` created in `src/solver/application.rs`
+- `widen_literal_type` already delegates to `type_queries::get_widened_literal_type`
+- `CallEvaluator` and `PropertyAccessResult` already in solver
 
 **Target State**: CheckerState becomes a thin orchestration layer; all type logic lives in Solver.
 
-#### Methods to Migrate
+#### Methods Status
 
-| Current Location | Method | Target Location |
-|-----------------|--------|-----------------|
-| `state.rs:6793` | `evaluate_application_type` | `Solver.evaluate_type()` |
-| `state.rs:6826` | `evaluate_application_type_inner` | `Solver.evaluate_type_inner()` |
-| `type_checking.rs:9267` | `widen_literal_type` | `Solver.widen()` |
-| `type_computation.rs` | `get_type_of_call_expression` | Delegate to `Solver.resolve_call()` |
-| `type_computation.rs` | `get_type_of_property_access` | Delegate to `Solver.resolve_property()` |
+| Current Location | Method | Status |
+|-----------------|--------|--------|
+| `state.rs:6669` | `evaluate_application_type` | ✅ Solver has `ApplicationEvaluator` |
+| `type_checking.rs:9173` | `widen_literal_type` | ✅ Delegates to `type_queries` |
+| `type_computation.rs` | `get_type_of_call_expression` | ✅ Uses `CallEvaluator` |
+| `type_computation.rs` | `get_type_of_property_access` | ✅ Uses `QueryDatabase` |
 
 #### Migration Pattern
 
@@ -206,14 +209,14 @@ rg "impl.*TypeVisitor" src/ --type rust
 
 ### 2.3 Split CheckerState
 
-**Current State**: Large files exceed maintainability thresholds.
+**Current State** (Jan 2026 Progress):
 
 | File | Lines | Status |
 |------|-------|--------|
-| `state.rs` | 12,947 | Needs splitting |
-| `type_checking.rs` | 11,606 | Needs splitting |
-| `type_computation.rs` | 3,865 | At threshold |
-| `control_flow.rs` | 3,892 | At threshold |
+| `state.rs` | 11,524 | Needs splitting (was 12,947) |
+| `type_checking.rs` | 10,551 | Needs splitting (was 11,606) |
+| `type_computation.rs` | 3,587 | At threshold |
+| `control_flow.rs` | 3,878 | At threshold |
 
 **Target State**: No file exceeds 3,000 lines.
 
@@ -227,15 +230,20 @@ rg "impl.*TypeVisitor" src/ --type rust
 - `flow_analysis.rs` (1,733 lines) - Flow analysis
 - `flow_graph_builder.rs` (2,239 lines) - Flow graph construction
 
-#### Proposed New Modules
+#### Recently Created Modules (Jan 2026)
+
+| New Module | Lines | Status |
+|------------|-------|--------|
+| `call_checker.rs` | 238 | ✅ Created - call argument collection, overload resolution |
+| `class_checker.rs` | 913 | ✅ Created - inheritance/interface/abstract member checking |
+| `jsx.rs` | 541 | ✅ Exists - JSX element type checking |
+
+#### Proposed Additional Modules
 
 Extract from `state.rs` and `type_checking.rs`:
 
 | New Module | Responsibility | Est. Lines |
 |------------|----------------|------------|
-| `call_checker.rs` | Function/method call validation | ~1,500 |
-| `class_checker.rs` | Class/interface member checking | ~2,000 |
-| `jsx_checker.rs` | JSX element type checking | ~1,000 |
 | `assignment_checker.rs` | Assignment compatibility | ~1,500 |
 | `generic_checker.rs` | Generic type argument checking | ~1,500 |
 | `property_checker.rs` | Property access validation | ~1,500 |
