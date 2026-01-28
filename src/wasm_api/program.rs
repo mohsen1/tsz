@@ -43,6 +43,8 @@ pub struct TsCompilerOptions {
     #[serde(default)]
     pub module: Option<u8>,
     #[serde(default)]
+    pub lib: Option<String>,
+    #[serde(default)]
     pub no_lib: Option<bool>,
     #[serde(default)]
     pub declaration: Option<bool>,
