@@ -14,6 +14,7 @@
 
 use crate::checker::state::CheckerState;
 use crate::solver::TypeId;
+use crate::solver::type_queries;
 
 // =============================================================================
 // Union Type Utilities
@@ -29,30 +30,16 @@ impl<'a> CheckerState<'a> {
     /// Returns a vector of TypeIds representing all members of the union.
     /// Returns an empty vec if the type is not a union.
     pub fn get_union_members(&self, type_id: TypeId) -> Vec<TypeId> {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members.to_vec()
-            }
-            _ => Vec::new(),
-        }
+        type_queries::get_union_members(self.ctx.types, type_id).unwrap_or_default()
     }
 
     /// Get the number of members in a union type.
     ///
     /// Returns 0 if the type is not a union.
     pub fn union_member_count(&self, type_id: TypeId) -> usize {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members.len()
-            }
-            _ => 0,
-        }
+        type_queries::get_union_members(self.ctx.types, type_id)
+            .map(|members| members.len())
+            .unwrap_or(0)
     }
 
     // =========================================================================
@@ -64,30 +51,18 @@ impl<'a> CheckerState<'a> {
     /// Returns true if all union members are primitive types
     /// (string, number, boolean, null, undefined, etc.).
     pub fn is_primitive_union(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                members.iter().all(|&m| self.is_primitive_type(m))
-            }
-            _ => false,
-        }
+        type_queries::get_union_members(self.ctx.types, type_id)
+            .map(|members| members.iter().all(|&m| self.is_primitive_type(m)))
+            .unwrap_or(false)
     }
 
     /// Check if a union type contains a specific type.
     ///
     /// Calls the primary union_contains implementation in type_checking.rs.
     pub fn union_has_type(&self, union_type: TypeId, target: TypeId) -> bool {
-        // Use the primary implementation defined in type_checking.rs
-        use crate::solver::TypeKey;
-
-        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(union_type) {
-            let members = self.ctx.types.type_list(list_id);
-            members.contains(&target)
-        } else {
-            false
-        }
+        type_queries::get_union_members(self.ctx.types, union_type)
+            .map(|members| members.contains(&target))
+            .unwrap_or(false)
     }
 
     // =========================================================================
@@ -99,26 +74,22 @@ impl<'a> CheckerState<'a> {
     /// Returns a new union type without the specified member.
     /// If the result would be a single type, returns that type.
     pub fn union_remove_member(&self, union_type: TypeId, member_to_remove: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+            let filtered: Vec<TypeId> = members
+                .iter()
+                .filter(|&&m| m != member_to_remove)
+                .copied()
+                .collect();
 
-        match self.ctx.types.lookup(union_type) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                let filtered: Vec<TypeId> = members
-                    .iter()
-                    .filter(|&&m| m != member_to_remove)
-                    .copied()
-                    .collect();
-
-                if filtered.is_empty() {
-                    TypeId::NEVER
-                } else if filtered.len() == 1 {
-                    filtered[0]
-                } else {
-                    self.ctx.types.union(filtered)
-                }
+            if filtered.is_empty() {
+                TypeId::NEVER
+            } else if filtered.len() == 1 {
+                filtered[0]
+            } else {
+                self.ctx.types.union(filtered)
             }
-            _ => union_type,
+        } else {
+            union_type
         }
     }
 
@@ -129,23 +100,19 @@ impl<'a> CheckerState<'a> {
     where
         F: Fn(TypeId) -> bool,
     {
-        use crate::solver::TypeKey;
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+            let filtered: Vec<TypeId> =
+                members.iter().filter(|&&m| predicate(m)).copied().collect();
 
-        match self.ctx.types.lookup(union_type) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                let filtered: Vec<TypeId> =
-                    members.iter().filter(|&&m| predicate(m)).copied().collect();
-
-                if filtered.is_empty() {
-                    TypeId::NEVER
-                } else if filtered.len() == 1 {
-                    filtered[0]
-                } else {
-                    self.ctx.types.union(filtered)
-                }
+            if filtered.is_empty() {
+                TypeId::NEVER
+            } else if filtered.len() == 1 {
+                filtered[0]
+            } else {
+                self.ctx.types.union(filtered)
             }
-            _ => union_type,
+        } else {
+            union_type
         }
     }
 
@@ -157,10 +124,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if every member of the union can be assigned to the target.
     pub fn union_all_assignable_to(&mut self, union_type: TypeId, target: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(union_type) {
-            let members = self.ctx.types.type_list(list_id);
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
             members
                 .iter()
                 .all(|&member| self.is_assignable_to(member, target))
@@ -174,10 +138,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if at least one member of the union can be assigned to the target.
     pub fn union_any_assignable_to(&mut self, union_type: TypeId, target: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(union_type) {
-            let members = self.ctx.types.type_list(list_id);
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
             members
                 .iter()
                 .any(|&member| self.is_assignable_to(member, target))
@@ -192,41 +153,37 @@ impl<'a> CheckerState<'a> {
     /// This returns a type that all members can be assigned to,
     /// preferring more specific types over generic ones.
     pub fn union_common_type(&mut self, union_type: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(union_type) {
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                if members.is_empty() {
-                    return TypeId::NEVER;
-                }
-                if members.len() == 1 {
-                    return members[0];
-                }
-
-                // Try to find a common type
-                // Start with the first member and see if all others are assignable to it
-                let first = members[0];
-                if members
-                    .iter()
-                    .skip(1)
-                    .all(|&m| self.is_assignable_to(m, first))
-                {
-                    return first;
-                }
-
-                // Try string as a common type for heterogeneous unions
-                if members
-                    .iter()
-                    .all(|&m| self.is_assignable_to(m, TypeId::STRING))
-                {
-                    return TypeId::STRING;
-                }
-
-                // Fall back to ANY for unions with no common type
-                TypeId::ANY
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+            if members.is_empty() {
+                return TypeId::NEVER;
             }
-            _ => union_type,
+            if members.len() == 1 {
+                return members[0];
+            }
+
+            // Try to find a common type
+            // Start with the first member and see if all others are assignable to it
+            let first = members[0];
+            if members
+                .iter()
+                .skip(1)
+                .all(|&m| self.is_assignable_to(m, first))
+            {
+                return first;
+            }
+
+            // Try string as a common type for heterogeneous unions
+            if members
+                .iter()
+                .all(|&m| self.is_assignable_to(m, TypeId::STRING))
+            {
+                return TypeId::STRING;
+            }
+
+            // Fall back to ANY for unions with no common type
+            TypeId::ANY
+        } else {
+            union_type
         }
     }
 
@@ -235,10 +192,7 @@ impl<'a> CheckerState<'a> {
     /// Removes members that are assignable to other members in the union.
     /// For example, `string | "hello"` simplifies to just `string`.
     pub fn simplify_union(&mut self, union_type: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
-
-        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(union_type) {
-            let members = self.ctx.types.type_list(list_id);
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
             let mut simplified = Vec::new();
 
             for &member in members.iter() {

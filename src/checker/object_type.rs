@@ -13,7 +13,8 @@
 //! operations, providing cleaner APIs for object type checking.
 
 use crate::checker::state::CheckerState;
-use crate::solver::{TypeId, TypeKey};
+use crate::solver::TypeId;
+use crate::solver::type_queries;
 
 // =============================================================================
 // Object Type Utilities
@@ -28,19 +29,18 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for regular object types.
     pub fn is_object_with_properties(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Object(_)) => true,
-            _ => false,
-        }
+        type_queries::is_object_type(self.ctx.types, type_id)
     }
 
     /// Check if a type is an object type with index signatures.
     ///
     /// Returns true for objects with string or number index signatures.
     pub fn is_object_with_index(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::ObjectWithIndex(_)) => true,
-            _ => false,
+        // Check if it's an object type with index signatures by looking at the shape
+        if let Some(shape) = type_queries::get_object_shape(self.ctx.types, type_id) {
+            shape.string_index.is_some() || shape.number_index.is_some()
+        } else {
+            false
         }
     }
 
@@ -48,13 +48,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns 0 if the type is not an object.
     pub fn object_property_count(&self, type_id: TypeId) -> usize {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.properties.len()
-            }
-            _ => 0,
-        }
+        type_queries::get_object_shape(self.ctx.types, type_id)
+            .map(|shape| shape.properties.len())
+            .unwrap_or(0)
     }
 
     // =========================================================================
@@ -69,18 +65,13 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                let name_atom = self.ctx.types.intern_string(property_name);
-                shape
-                    .properties
-                    .iter()
-                    .find(|prop| prop.name == name_atom)
-                    .map(|prop| prop.type_id)
-            }
-            _ => None,
-        }
+        let shape = type_queries::get_object_shape(self.ctx.types, object_type)?;
+        let name_atom = self.ctx.types.intern_string(property_name);
+        shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == name_atom)
+            .map(|prop| prop.type_id)
     }
 
     /// Get the type of a property by name, with a fallback.
@@ -119,18 +110,16 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the property is marked as optional.
     pub fn is_property_optional(&self, object_type: TypeId, property_name: &str) -> bool {
-        match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                let name_atom = self.ctx.types.intern_string(property_name);
-                shape
-                    .properties
-                    .iter()
-                    .find(|prop| prop.name == name_atom)
-                    .map(|prop| prop.optional)
-                    .unwrap_or(false)
-            }
-            _ => false,
+        if let Some(shape) = type_queries::get_object_shape(self.ctx.types, object_type) {
+            let name_atom = self.ctx.types.intern_string(property_name);
+            shape
+                .properties
+                .iter()
+                .find(|prop| prop.name == name_atom)
+                .map(|prop| prop.optional)
+                .unwrap_or(false)
+        } else {
+            false
         }
     }
 
@@ -138,18 +127,16 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the property is marked as readonly.
     pub fn is_object_property_readonly(&self, object_type: TypeId, property_name: &str) -> bool {
-        match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                let name_atom = self.ctx.types.intern_string(property_name);
-                shape
-                    .properties
-                    .iter()
-                    .find(|prop| prop.name == name_atom)
-                    .map(|prop| prop.readonly)
-                    .unwrap_or(false)
-            }
-            _ => false,
+        if let Some(shape) = type_queries::get_object_shape(self.ctx.types, object_type) {
+            let name_atom = self.ctx.types.intern_string(property_name);
+            shape
+                .properties
+                .iter()
+                .find(|prop| prop.name == name_atom)
+                .map(|prop| prop.readonly)
+                .unwrap_or(false)
+        } else {
+            false
         }
     }
 
@@ -157,18 +144,16 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the property is marked as a method.
     pub fn is_property_method(&self, object_type: TypeId, property_name: &str) -> bool {
-        match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                let name_atom = self.ctx.types.intern_string(property_name);
-                shape
-                    .properties
-                    .iter()
-                    .find(|prop| prop.name == name_atom)
-                    .map(|prop| prop.is_method)
-                    .unwrap_or(false)
-            }
-            _ => false,
+        if let Some(shape) = type_queries::get_object_shape(self.ctx.types, object_type) {
+            let name_atom = self.ctx.types.intern_string(property_name);
+            shape
+                .properties
+                .iter()
+                .find(|prop| prop.name == name_atom)
+                .map(|prop| prop.is_method)
+                .unwrap_or(false)
+        } else {
+            false
         }
     }
 
@@ -176,26 +161,18 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if any property on the object is optional.
     pub fn object_has_optional_properties(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.properties.iter().any(|prop| prop.optional)
-            }
-            _ => false,
-        }
+        type_queries::get_object_shape(self.ctx.types, type_id)
+            .map(|shape| shape.properties.iter().any(|prop| prop.optional))
+            .unwrap_or(false)
     }
 
     /// Check if an object has any readonly properties.
     ///
     /// Returns true if any property on the object is readonly.
     pub fn object_has_readonly_properties(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.properties.iter().any(|prop| prop.readonly)
-            }
-            _ => false,
-        }
+        type_queries::get_object_shape(self.ctx.types, type_id)
+            .map(|shape| shape.properties.iter().any(|prop| prop.readonly))
+            .unwrap_or(false)
     }
 
     // =========================================================================
@@ -206,26 +183,18 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for objects like `{ [key: string]: T }`.
     pub fn object_has_string_index(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.string_index.is_some()
-            }
-            _ => false,
-        }
+        type_queries::get_object_shape(self.ctx.types, type_id)
+            .map(|shape| shape.string_index.is_some())
+            .unwrap_or(false)
     }
 
     /// Check if an object has a number index signature.
     ///
     /// Returns true for objects like `{ [key: number]: T }`.
     pub fn object_has_number_index(&self, type_id: TypeId) -> bool {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.number_index.is_some()
-            }
-            _ => false,
-        }
+        type_queries::get_object_shape(self.ctx.types, type_id)
+            .map(|shape| shape.number_index.is_some())
+            .unwrap_or(false)
     }
 
     /// Check if an object has any index signature.
@@ -239,26 +208,16 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the string index type if present, or None otherwise.
     pub fn get_string_index_type(&self, object_type: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.string_index.as_ref().map(|sig| sig.value_type)
-            }
-            _ => None,
-        }
+        type_queries::get_object_shape(self.ctx.types, object_type)
+            .and_then(|shape| shape.string_index.as_ref().map(|sig| sig.value_type))
     }
 
     /// Get the number index signature type from an object.
     ///
     /// Returns the number index type if present, or None otherwise.
     pub fn get_number_index_type(&self, object_type: TypeId) -> Option<TypeId> {
-        match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.number_index.as_ref().map(|sig| sig.value_type)
-            }
-            _ => None,
-        }
+        type_queries::get_object_shape(self.ctx.types, object_type)
+            .and_then(|shape| shape.number_index.as_ref().map(|sig| sig.value_type))
     }
 
     // =========================================================================
@@ -317,16 +276,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns a vector of property names in order.
     pub fn get_object_property_names(&self, object_type: TypeId) -> Vec<String> {
-        match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
+        type_queries::get_object_shape(self.ctx.types, object_type)
+            .map(|shape| {
                 shape
                     .properties
                     .iter()
                     .map(|prop| self.ctx.types.resolve_atom_ref(prop.name).to_string())
                     .collect()
-            }
-            _ => Vec::new(),
-        }
+            })
+            .unwrap_or_default()
     }
 }
