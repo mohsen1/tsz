@@ -43,28 +43,15 @@ To manually install: `./scripts/install-hooks.sh`
 
 ## Running Conformance Tests
 
-**Use server mode (`--server`) for fast iteration.** Server mode uses a persistent `tsz-server` process that caches TypeScript libs in memory, providing ~15x faster test execution than WASM mode.
+**Use `--server` for fast iteration.** Server mode is significantly faster than WASM mode.
 
 ```bash
-# RECOMMENDED: Server mode for quick feedback (~2,700 tests/sec)
+# Fast: Server mode (recommended for development)
 ./conformance/run.sh --server --max=1000
 
-# Full conformance run with server mode
-./conformance/run.sh --server --max=12000
-
-# WASM mode - slower but tests the WASM build (~180 tests/sec)
+# Slower: WASM mode (for verifying WASM build)
 ./conformance/run.sh --wasm --max=1000
 ```
-
-**Performance comparison:**
-| Mode | Speed | Use Case |
-|------|-------|----------|
-| `--server` | ~2,700 tests/sec | Quick iteration, development |
-| `--wasm` | ~180 tests/sec | Testing WASM build, CI |
-
-**When to use each mode:**
-- **Server mode**: During development for quick feedback on changes
-- **WASM mode**: Before commits to verify WASM build works correctly
 
 ---
 
