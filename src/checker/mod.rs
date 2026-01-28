@@ -52,6 +52,7 @@ pub mod nullish;
 pub mod object_type;
 pub mod optional_chain;
 pub mod promise_checker;
+pub mod property_checker;
 pub mod reachability_analyzer;
 pub mod state;
 pub mod statements;
