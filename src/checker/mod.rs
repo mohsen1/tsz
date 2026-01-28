@@ -18,6 +18,7 @@
 //! is an alias to the thin checker. The types module is shared with the solver.
 
 pub mod accessibility;
+pub mod accessor_checker;
 pub mod arena;
 pub mod array_type;
 pub mod assignment_checker;
