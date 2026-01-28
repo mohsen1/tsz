@@ -1151,11 +1151,24 @@ rg "impl.*TypeVisitor" src/ --type rust | wc -l
 
 | File | Lines | Role |
 |------|-------|------|
-| `/Users/mohsenazimi/code/tsz/src/checker/state.rs` | 12,947 | Main checker state - needs splitting |
-| `/Users/mohsenazimi/code/tsz/src/checker/type_checking.rs` | 11,606 | Type checking logic - needs splitting |
-| `/Users/mohsenazimi/code/tsz/src/checker/type_computation.rs` | 3,865 | Type computation - at threshold |
+| `/Users/mohsenazimi/code/tsz/src/checker/state.rs` | 11,365 | Main checker state - needs splitting (reduced from 12,947) |
+| `/Users/mohsenazimi/code/tsz/src/checker/type_checking.rs` | 9,611 | Type checking logic - needs splitting (reduced from 11,606) |
+| `/Users/mohsenazimi/code/tsz/src/checker/type_computation.rs` | 3,587 | Type computation - at threshold |
+| `/Users/mohsenazimi/code/tsz/src/checker/control_flow.rs` | 3,878 | Control flow analysis - at threshold |
 | `/Users/mohsenazimi/code/tsz/src/solver/visitor.rs` | ~500 | TypeVisitor trait - expand usage |
 | `/Users/mohsenazimi/code/tsz/src/solver/operations.rs` | ~2,000 | Type operations - add query methods |
+
+### New Modules Created (Phase 2 - 2.3 Split CheckerState)
+
+| Module | Lines | Extracted From |
+|--------|-------|---------------|
+| `assignment_checker.rs` | 362 | type_checking.rs |
+| `generic_checker.rs` | 183 | state.rs |
+| `property_checker.rs` | 163 | type_checking.rs |
+| `parameter_checker.rs` | 289 | type_checking.rs |
+| `module_checker.rs` | 230 | type_checking.rs |
+| `call_checker.rs` | ~200 | state.rs |
+| `class_checker.rs` | ~250 | type_checking.rs |
 
 ### Critical Files for Phase 2
 
