@@ -40,8 +40,8 @@ const DEFAULT_CONFIG: RunnerConfig = {
   workers: 8, // Optimized for better CPU utilization
   testTimeout: 10000,
   useWasm: true,
-  // Note: TSZ_BINARY env var can override this (useful when .cargo/config.toml sets target-dir = ".target")
-  nativeBinaryPath: process.env.TSZ_BINARY || path.resolve(__dirname, '../../target/release/tsz'),
+  // Note: .cargo/config.toml sets target-dir = ".target" (not "target")
+  nativeBinaryPath: process.env.TSZ_BINARY || path.resolve(__dirname, '../../.target/release/tsz'),
 };
 
 // Recycle workers after this many tests to prevent memory leaks

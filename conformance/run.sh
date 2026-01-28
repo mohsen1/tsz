@@ -23,6 +23,27 @@
 set -euo pipefail
 
 # ==============================================================================
+# Signal Handling (Ctrl+C)
+# ==============================================================================
+
+# Track child PIDs for cleanup
+CHILD_PIDS=()
+
+cleanup() {
+    local exit_code=$?
+    # Kill any child processes
+    for pid in "${CHILD_PIDS[@]:-}"; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    # Kill any node processes we spawned
+    pkill -P $$ 2>/dev/null || true
+    exit $exit_code
+}
+
+# Trap signals
+trap cleanup INT TERM EXIT
+
+# ==============================================================================
 # Configuration
 # ==============================================================================
 
@@ -212,7 +233,8 @@ get_target_dir() {
     local config_file="$ROOT_DIR/.cargo/config.toml"
     if [[ -f "$config_file" ]]; then
         local dir
-        dir=$(grep -E '^target-dir\s*=' "$config_file" 2>/dev/null | sed 's/.*=\s*"\?\([^"]*\)"\?.*/\1/' | tr -d '[:space:]')
+        # Parse: target-dir = ".target"
+        dir=$(grep -E '^target-dir' "$config_file" 2>/dev/null | awk -F'"' '{print $2}')
         if [[ -n "$dir" ]]; then
             echo "$ROOT_DIR/$dir"
             return
