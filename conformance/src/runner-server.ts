@@ -1,0 +1,971 @@
+/**
+ * Server-mode runner for conformance tests.
+ *
+ * Uses tsz-server (persistent process) instead of spawning a new process per test.
+ * This provides 5-10x speedup by:
+ * - Keeping TypeScript libs cached in memory
+ * - Avoiding process spawn overhead
+ * - Reusing type interner across tests
+ *
+ * Protocol: JSON lines over stdin/stdout (similar to tsserver)
+ */
+
+import { spawn, ChildProcess, execSync } from 'child_process';
+import { createInterface, Interface } from 'readline';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import { loadTscCache, type CacheEntry } from './tsc-cache.js';
+
+// Memory configuration
+const MEMORY_USAGE_PERCENT = 0.80; // Use 80% of available memory
+const MEMORY_CHECK_INTERVAL_MS = 500;
+const MIN_MEMORY_PER_WORKER_MB = 256; // Minimum 256MB per worker
+const MAX_MEMORY_PER_WORKER_MB = 4096; // Maximum 4GB per worker
+
+/**
+ * Calculate memory limit per worker based on available system memory.
+ * Uses 80% of total memory divided by number of workers.
+ */
+function calculateMemoryLimitMB(workerCount: number): number {
+  const totalMemoryMB = Math.round(os.totalmem() / 1024 / 1024);
+  const availableMemoryMB = Math.round(totalMemoryMB * MEMORY_USAGE_PERCENT);
+  const perWorkerMB = Math.round(availableMemoryMB / workerCount);
+
+  // Clamp between min and max
+  return Math.max(MIN_MEMORY_PER_WORKER_MB, Math.min(MAX_MEMORY_PER_WORKER_MB, perWorkerMB));
+}
+
+/**
+ * Run a promise with a timeout. Returns { result, timedOut }.
+ */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number
+): Promise<{ result?: T; timedOut: boolean }> {
+  let timeoutId: NodeJS.Timeout;
+  const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
+    timeoutId = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([
+      promise.then(r => ({ result: r, timedOut: false as const })),
+      timeoutPromise,
+    ]);
+    clearTimeout(timeoutId!);
+    return result;
+  } catch (err) {
+    clearTimeout(timeoutId!);
+    throw err;
+  }
+}
+
+// Default test timeout (3 seconds)
+const DEFAULT_TEST_TIMEOUT_MS = 3000;
+
+export interface CheckOptions {
+  strict?: boolean;
+  strictNullChecks?: boolean;
+  strictFunctionTypes?: boolean;
+  noImplicitAny?: boolean;
+  noImplicitThis?: boolean;
+  noImplicitReturns?: boolean;
+  noLib?: boolean;
+  lib?: string[];
+  target?: string;
+}
+
+export interface CheckResult {
+  codes: number[];
+  elapsed_ms: number;
+  oom?: boolean;
+}
+
+export interface ServerStatus {
+  memory_mb: number;
+  checks_completed: number;
+  cached_libs: number;
+}
+
+type ResponseCallback = (response: any) => void;
+
+/**
+ * Get memory usage of a process in MB (cross-platform).
+ */
+function getProcessMemoryMB(pid: number): number {
+  try {
+    if (process.platform === 'darwin') {
+      // macOS: use ps command
+      const output = execSync(`ps -o rss= -p ${pid}`, { encoding: 'utf-8' });
+      const rssKB = parseInt(output.trim(), 10);
+      return Math.round(rssKB / 1024);
+    } else if (process.platform === 'linux') {
+      // Linux: read from /proc
+      const statm = fs.readFileSync(`/proc/${pid}/statm`, 'utf-8');
+      const pages = parseInt(statm.split(' ')[1], 10);
+      return Math.round((pages * 4096) / 1024 / 1024);
+    }
+  } catch {
+    // Process may have exited
+  }
+  return 0;
+}
+
+/**
+ * Client for tsz-server.
+ *
+ * Manages a persistent tsz-server process and sends check requests.
+ * Monitors memory usage and kills the process if it exceeds the limit.
+ */
+export class TszServerClient {
+  private proc: ChildProcess | null = null;
+  private readline: Interface | null = null;
+  private requestId = 0;
+  private pending = new Map<number, ResponseCallback>();
+  private ready = false;
+  private readyPromise: Promise<void> | null = null;
+  private serverPath: string;
+  private libDir: string;
+  private memoryLimitMB: number;
+  private memoryCheckTimer: NodeJS.Timeout | null = null;
+  private oomKilled = false;
+  private checksCompleted = 0;
+
+  constructor(options: { serverPath?: string; libDir?: string; memoryLimitMB: number }) {
+    // Default to release binary in target directory
+    this.serverPath = options.serverPath || path.join(__dirname, '../../target/release/tsz-server');
+    this.libDir = options.libDir || path.join(__dirname, '../../node_modules/typescript/lib');
+    this.memoryLimitMB = options.memoryLimitMB;
+  }
+
+  get isOomKilled(): boolean {
+    return this.oomKilled;
+  }
+
+  get isAlive(): boolean {
+    return this.ready && this.proc !== null && !this.oomKilled;
+  }
+
+  get pid(): number | undefined {
+    return this.proc?.pid;
+  }
+
+  /**
+   * Start the server process.
+   */
+  async start(): Promise<void> {
+    if (this.proc) {
+      throw new Error('Server already started');
+    }
+
+    this.oomKilled = false;
+    this.checksCompleted = 0;
+
+    this.readyPromise = new Promise((resolve, reject) => {
+      const env = {
+        ...process.env,
+        TSZ_LIB_DIR: this.libDir,
+      };
+
+      this.proc = spawn(this.serverPath, [], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env,
+      });
+
+      // Handle EPIPE errors on stdin (when process is killed)
+      this.proc.stdin?.on('error', (err: any) => {
+        if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
+          // Process was killed - this is expected, mark as OOM
+          this.oomKilled = true;
+        }
+      });
+
+      // Handle stderr for ready signal and logging
+      this.proc.stderr?.on('data', (data: Buffer) => {
+        const text = data.toString();
+        if (text.includes('tsz-server ready')) {
+          this.ready = true;
+          resolve();
+        }
+        // Suppress stack overflow and debug output - these are handled via process exit
+        // Only log genuine panics that aren't stack overflows
+        if (text.includes('panic') && !text.includes('stack overflow')) {
+          process.stderr.write(`[tsz-server] ${text}`);
+        }
+      });
+
+      // Set up readline for stdout (responses)
+      this.readline = createInterface({
+        input: this.proc.stdout!,
+        crlfDelay: Infinity,
+      });
+
+      this.readline.on('line', (line: string) => {
+        this.handleResponse(line);
+      });
+
+      // Handle process exit
+      this.proc.on('exit', (code, signal) => {
+        if (!this.ready) {
+          reject(new Error(`Server exited before ready (code: ${code}, signal: ${signal})`));
+        }
+
+        // Check if killed by OOM killer (SIGKILL on Linux, or our memory monitor)
+        if (signal === 'SIGKILL' || code === 137) {
+          this.oomKilled = true;
+        }
+
+        this.cleanup();
+      });
+
+      this.proc.on('error', (err) => {
+        reject(err);
+      });
+
+      // Timeout for startup
+      setTimeout(() => {
+        if (!this.ready) {
+          reject(new Error('Server startup timeout'));
+        }
+      }, 10000);
+    });
+
+    await this.readyPromise;
+
+    // Start memory monitoring
+    this.startMemoryMonitor();
+  }
+
+  /**
+   * Start monitoring memory usage.
+   */
+  private startMemoryMonitor(): void {
+    this.memoryCheckTimer = setInterval(() => {
+      if (!this.proc?.pid) return;
+
+      const memoryMB = getProcessMemoryMB(this.proc.pid);
+      if (memoryMB > this.memoryLimitMB) {
+        this.oomKilled = true;
+        this.killProcess();
+      }
+    }, MEMORY_CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * Kill the server process (internal).
+   */
+  private killProcess(): void {
+    if (this.proc) {
+      // Reject all pending requests
+      for (const [id, callback] of this.pending) {
+        callback({ id, error: 'Process killed due to memory limit', oom: true });
+      }
+      this.pending.clear();
+
+      try {
+        this.proc.kill('SIGKILL');
+      } catch {}
+    }
+  }
+
+  /**
+   * Force kill this worker (public, for timeout handling).
+   */
+  forceKill(): void {
+    this.oomKilled = true; // Mark as needing restart
+    this.killProcess();
+  }
+
+  /**
+   * Clean up resources.
+   */
+  private cleanup(): void {
+    if (this.memoryCheckTimer) {
+      clearInterval(this.memoryCheckTimer);
+      this.memoryCheckTimer = null;
+    }
+    this.proc = null;
+    this.readline = null;
+    this.ready = false;
+  }
+
+  /**
+   * Stop the server process.
+   */
+  async stop(): Promise<void> {
+    if (!this.proc || !this.ready) {
+      this.cleanup();
+      return;
+    }
+
+    try {
+      await this.sendRequest({ type: 'shutdown', id: ++this.requestId });
+    } catch {
+      // Ignore errors during shutdown
+    }
+
+    // Force kill if still running
+    if (this.proc) {
+      try {
+        this.proc.kill();
+      } catch {}
+    }
+
+    this.cleanup();
+  }
+
+  /**
+   * Check files and return error codes.
+   */
+  async check(files: Record<string, string>, options: CheckOptions = {}): Promise<CheckResult> {
+    if (!this.ready) {
+      throw new Error('Server not ready');
+    }
+
+    if (this.oomKilled) {
+      return { codes: [], elapsed_ms: 0, oom: true };
+    }
+
+    const id = ++this.requestId;
+    const request = {
+      type: 'check',
+      id,
+      files,
+      options,
+    };
+
+    const response = await this.sendRequest(request);
+
+    if (response.oom) {
+      return { codes: [], elapsed_ms: 0, oom: true };
+    }
+
+    if (response.error) {
+      throw new Error(response.error);
+    }
+
+    this.checksCompleted++;
+
+    return {
+      codes: response.codes || [],
+      elapsed_ms: response.elapsed_ms || 0,
+    };
+  }
+
+  /**
+   * Get server status.
+   */
+  async status(): Promise<ServerStatus> {
+    if (!this.ready) {
+      throw new Error('Server not ready');
+    }
+
+    const id = ++this.requestId;
+    const response = await this.sendRequest({ type: 'status', id });
+
+    return {
+      memory_mb: response.memory_mb || 0,
+      checks_completed: response.checks_completed || 0,
+      cached_libs: response.cached_libs || 0,
+    };
+  }
+
+  /**
+   * Recycle server (clear caches).
+   */
+  async recycle(): Promise<void> {
+    if (!this.ready) {
+      throw new Error('Server not ready');
+    }
+
+    const id = ++this.requestId;
+    await this.sendRequest({ type: 'recycle', id });
+  }
+
+  private sendRequest(request: { type: string; id: number; [key: string]: any }): Promise<any> {
+    return new Promise((resolve, reject) => {
+      // Check if process was OOM killed
+      if (this.oomKilled) {
+        resolve({ id: request.id, oom: true, error: 'Process was OOM killed' });
+        return;
+      }
+
+      if (!this.proc?.stdin || !this.ready) {
+        reject(new Error('Server not running'));
+        return;
+      }
+
+      this.pending.set(request.id, resolve);
+
+      const line = JSON.stringify(request) + '\n';
+      try {
+        this.proc.stdin.write(line, (err) => {
+          if (err) {
+            this.pending.delete(request.id);
+            // Handle EPIPE gracefully - process was killed
+            if ((err as any).code === 'EPIPE' || (err as any).code === 'ERR_STREAM_DESTROYED') {
+              this.oomKilled = true;
+              resolve({ id: request.id, oom: true, error: 'Process was killed' });
+            } else {
+              reject(err);
+            }
+          }
+        });
+      } catch (err: any) {
+        this.pending.delete(request.id);
+        if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
+          this.oomKilled = true;
+          resolve({ id: request.id, oom: true, error: 'Process was killed' });
+        } else {
+          reject(err);
+        }
+      }
+
+      // Timeout for individual requests (30s)
+      setTimeout(() => {
+        if (this.pending.has(request.id)) {
+          this.pending.delete(request.id);
+          reject(new Error(`Request ${request.id} timeout`));
+        }
+      }, 30000);
+    });
+  }
+
+  private handleResponse(line: string): void {
+    try {
+      const response = JSON.parse(line);
+      const id = response.id;
+
+      if (id !== undefined && this.pending.has(id)) {
+        const callback = this.pending.get(id)!;
+        this.pending.delete(id);
+        callback(response);
+      }
+    } catch (err) {
+      console.error('Failed to parse server response:', line);
+    }
+  }
+}
+
+/**
+ * Pool of server clients for parallel test execution.
+ * Automatically restarts workers that get OOM killed.
+ */
+export class TszServerPool {
+  private clients: TszServerClient[] = [];
+  private available: TszServerClient[] = [];
+  private waiting: Array<(client: TszServerClient) => void> = [];
+  private options: { serverPath?: string; libDir?: string; memoryLimitMB: number };
+  private poolSize: number;
+
+  // Stats
+  public oomKills = 0;
+  public totalRestarts = 0;
+
+  constructor(size: number, options: { serverPath?: string; libDir?: string; memoryLimitMB: number }) {
+    this.poolSize = size;
+    this.options = options;
+  }
+
+  /**
+   * Start all servers in the pool.
+   */
+  async start(): Promise<void> {
+    const startPromises: Promise<void>[] = [];
+
+    for (let i = 0; i < this.poolSize; i++) {
+      const client = new TszServerClient(this.options);
+      this.clients.push(client);
+      startPromises.push(client.start());
+    }
+
+    await Promise.all(startPromises);
+    this.available = [...this.clients];
+  }
+
+  /**
+   * Stop all servers in the pool.
+   */
+  async stop(): Promise<void> {
+    await Promise.all(this.clients.map(c => c.stop()));
+    this.clients = [];
+    this.available = [];
+  }
+
+  /**
+   * Acquire a client from the pool.
+   * If a client is dead (crashed or OOM), restart it first.
+   */
+  async acquire(): Promise<TszServerClient> {
+    if (this.available.length > 0) {
+      const client = this.available.pop()!;
+
+      // Check if client is dead and needs restart
+      if (!client.isAlive) {
+        if (client.isOomKilled) {
+          this.oomKills++;
+        }
+        this.totalRestarts++;
+
+        // Stop and remove the dead client
+        await client.stop();
+        const idx = this.clients.indexOf(client);
+        if (idx >= 0) {
+          this.clients.splice(idx, 1);
+        }
+
+        // Create and start a new client
+        const newClient = new TszServerClient(this.options);
+        await newClient.start();
+        this.clients.push(newClient);
+        return newClient;
+      }
+
+      return client;
+    }
+
+    // Wait for a client to become available
+    return new Promise((resolve) => {
+      this.waiting.push(resolve);
+    });
+  }
+
+  /**
+   * Release a client back to the pool.
+   * If client is dead, restart it before handing to waiters.
+   */
+  release(client: TszServerClient): void {
+    // If client is dead (crashed or OOM), restart it asynchronously
+    if (!client.isAlive) {
+      this.restartAndRelease(client, client.isOomKilled);
+      return;
+    }
+
+    if (this.waiting.length > 0) {
+      const resolve = this.waiting.shift()!;
+      resolve(client);
+    } else {
+      this.available.push(client);
+    }
+  }
+
+  /**
+   * Restart a dead client and release the new one.
+   */
+  private async restartAndRelease(deadClient: TszServerClient, wasOom: boolean): Promise<void> {
+    if (wasOom) {
+      this.oomKills++;
+    }
+    this.totalRestarts++;
+
+    // Stop and remove the dead client
+    await deadClient.stop();
+    const idx = this.clients.indexOf(deadClient);
+    if (idx >= 0) {
+      this.clients.splice(idx, 1);
+    }
+
+    // Create and start a new client
+    const newClient = new TszServerClient(this.options);
+    try {
+      await newClient.start();
+      this.clients.push(newClient);
+
+      // Now release the healthy client
+      if (this.waiting.length > 0) {
+        const resolve = this.waiting.shift()!;
+        resolve(newClient);
+      } else {
+        this.available.push(newClient);
+      }
+    } catch (err) {
+      // Failed to start new client, try again later
+      console.error('Failed to restart worker:', err);
+    }
+  }
+
+  /**
+   * Run a function with an acquired client.
+   */
+  async withClient<T>(fn: (client: TszServerClient) => Promise<T>): Promise<T> {
+    const client = await this.acquire();
+    try {
+      return await fn(client);
+    } finally {
+      this.release(client);
+    }
+  }
+
+  /**
+   * Run a function with timeout. If timeout fires, kill the worker.
+   * Returns { result, timedOut }.
+   */
+  async withClientTimeout<T>(
+    fn: (client: TszServerClient) => Promise<T>,
+    timeoutMs: number
+  ): Promise<{ result?: T; timedOut: boolean }> {
+    const client = await this.acquire();
+
+    let timeoutId: NodeJS.Timeout;
+    let timedOut = false;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        client.forceKill(); // Kill worker on timeout
+        reject(new Error('timeout'));
+      }, timeoutMs);
+    });
+
+    try {
+      const result = await Promise.race([fn(client), timeoutPromise]);
+      clearTimeout(timeoutId!);
+      return { result, timedOut: false };
+    } catch (err: any) {
+      clearTimeout(timeoutId!);
+      if (timedOut) {
+        return { timedOut: true };
+      }
+      throw err;
+    } finally {
+      this.release(client);
+    }
+  }
+
+  /**
+   * Get pool statistics.
+   */
+  get stats() {
+    return {
+      total: this.clients.length,
+      available: this.available.length,
+      waiting: this.waiting.length,
+      oomKills: this.oomKills,
+      totalRestarts: this.totalRestarts,
+    };
+  }
+}
+
+// Export for use in conformance runner
+export default TszServerClient;
+
+// =============================================================================
+// Server-mode Conformance Test Runner
+// =============================================================================
+
+interface ServerRunnerConfig {
+  maxTests?: number;
+  workers?: number;
+  testTimeout?: number;
+  verbose?: boolean;
+  categories?: string[];
+  memoryLimitMB?: number;
+}
+
+interface TestStats {
+  total: number;
+  passed: number;
+  failed: number;
+  crashed: number;
+  skipped: number;
+  timedOut: number;
+  oom: number;
+  byCategory: Record<string, { total: number; passed: number }>;
+  missingCodes: Map<number, number>;
+  extraCodes: Map<number, number>;
+  crashedTests: { path: string; error: string }[];
+  oomTests: string[];
+  timedOutTests: string[];
+  workerStats: {
+    spawned: number;
+    crashed: number;
+    respawned: number;
+  };
+}
+
+const colors = {
+  reset: '\x1b[0m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  cyan: '\x1b[36m',
+  dim: '\x1b[2m',
+  bold: '\x1b[1m',
+};
+
+function log(msg: string, color: string = '') {
+  console.log(`${color}${msg}${colors.reset}`);
+}
+
+function formatNumber(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+function formatMemory(mb: number): string {
+  if (mb >= 1024) {
+    return `${(mb / 1024).toFixed(1).replace(/\.0$/, '')}GB`;
+  }
+  return `${formatNumber(mb)}MB`;
+}
+
+/**
+ * Run conformance tests using tsz-server (persistent process).
+ *
+ * This is 5-10x faster than spawn-per-test mode because:
+ * - TypeScript libs are cached in memory
+ * - No process spawn overhead per test
+ * - Type interner is reused
+ */
+export async function runServerConformanceTests(config: ServerRunnerConfig = {}): Promise<TestStats> {
+  const __dirname = path.dirname(new URL(import.meta.url).pathname);
+  const ROOT_DIR = path.resolve(__dirname, '../..');
+
+  const maxTests = config.maxTests ?? 500;
+  const workerCount = config.workers ?? 8;
+  const verbose = config.verbose ?? false;
+  const categories = config.categories ?? ['conformance', 'compiler'];
+  const testTimeout = config.testTimeout ?? 10000;
+  // Calculate memory limit: 80% of total memory / number of workers
+  const memoryLimitMB = config.memoryLimitMB ?? calculateMemoryLimitMB(workerCount);
+  const totalMemoryMB = Math.round(os.totalmem() / 1024 / 1024);
+
+  const testsBasePath = path.resolve(ROOT_DIR, 'TypeScript/tests/cases');
+  const serverPath = process.env.TSZ_SERVER_BINARY || path.resolve(ROOT_DIR, '.target/release/tsz-server');
+  const libDir = process.env.TSZ_LIB_DIR || path.resolve(ROOT_DIR, 'node_modules/typescript/lib');
+
+  // Load TSC cache
+  const tscCache = loadTscCache(ROOT_DIR);
+  const cacheEntries = tscCache?.entries || {};
+
+  log(`\n${'═'.repeat(60)}`, colors.cyan);
+  log(`  TSZ Server Mode Conformance Runner`, colors.bold);
+  log(`${'═'.repeat(60)}`, colors.cyan);
+  log(`  Server: ${serverPath}`, colors.dim);
+  log(`  Workers: ${workerCount}`, colors.dim);
+  log(`  Max tests: ${formatNumber(maxTests)}`, colors.dim);
+  log(`  Timeout: ${DEFAULT_TEST_TIMEOUT_MS / 1000}s per test`, colors.dim);
+  log(`  Memory: ${formatMemory(memoryLimitMB)}/worker (${formatMemory(Math.round(memoryLimitMB * workerCount))} total, system: ${formatMemory(totalMemoryMB)})`, colors.dim);
+  log(`${'═'.repeat(60)}\n`, colors.cyan);
+
+  // Initialize stats
+  const stats: TestStats = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    crashed: 0,
+    skipped: 0,
+    timedOut: 0,
+    oom: 0,
+    byCategory: {},
+    missingCodes: new Map(),
+    extraCodes: new Map(),
+    crashedTests: [],
+    oomTests: [],
+    timedOutTests: [],
+    workerStats: { spawned: workerCount, crashed: 0, respawned: 0 },
+  };
+
+  // Discover test files
+  const testFiles: string[] = [];
+  for (const category of categories) {
+    const categoryPath = path.join(testsBasePath, category);
+    if (fs.existsSync(categoryPath)) {
+      discoverTests(categoryPath, testFiles, maxTests - testFiles.length);
+    }
+  }
+
+  if (testFiles.length === 0) {
+    log('No test files found!', colors.red);
+    return stats;
+  }
+
+  log(`Found ${formatNumber(testFiles.length)} test files\n`, colors.dim);
+
+  // Create server pool with memory limits
+  const pool = new TszServerPool(workerCount, { serverPath, libDir, memoryLimitMB });
+
+  try {
+    await pool.start();
+    log(`Server pool started (${workerCount} workers, ${formatMemory(memoryLimitMB)} limit each)\n`, colors.green);
+
+    // Process tests in parallel
+    const startTime = Date.now();
+    let completed = 0;
+
+    const runTest = async (testFile: string): Promise<void> => {
+      const category = path.basename(path.dirname(testFile));
+      const relativePath = path.relative(testsBasePath, testFile);
+
+      if (!stats.byCategory[category]) {
+        stats.byCategory[category] = { total: 0, passed: 0 };
+      }
+      stats.byCategory[category].total++;
+      stats.total++;
+
+      try {
+        const content = fs.readFileSync(testFile, 'utf-8');
+        const files = { [path.basename(testFile)]: content };
+
+        // Get TSC baseline from cache or skip
+        const cacheEntry = cacheEntries[relativePath];
+        const tscCodes = cacheEntry?.codes || [];
+
+        // Run check via server with timeout (kills worker on timeout)
+        const { result, timedOut } = await pool.withClientTimeout(
+          (client) => client.check(files, { target: 'es5' }),
+          DEFAULT_TEST_TIMEOUT_MS
+        );
+
+        // Check for timeout
+        if (timedOut) {
+          stats.timedOut++;
+          stats.failed++;
+          stats.timedOutTests.push(relativePath);
+          if (verbose) log(`⏱ ${relativePath}: timeout`, colors.yellow);
+          return;
+        }
+
+        // Check for OOM
+        if (result!.oom) {
+          stats.oom++;
+          stats.failed++;
+          stats.oomTests.push(relativePath);
+          if (verbose) log(`💾 ${relativePath}: OOM`, colors.yellow);
+          return;
+        }
+
+        const wasmCodes = result!.codes;
+
+        // Compare results
+        const tscSet = new Set(tscCodes);
+        const wasmSet = new Set(wasmCodes);
+
+        const missing = tscCodes.filter(c => !wasmSet.has(c));
+        const extra = wasmCodes.filter(c => !tscSet.has(c));
+
+        if (missing.length === 0 && extra.length === 0) {
+          stats.passed++;
+          stats.byCategory[category].passed++;
+          if (verbose) log(`✓ ${relativePath}`, colors.green);
+        } else {
+          stats.failed++;
+          if (verbose) {
+            log(`✗ ${relativePath}`, colors.red);
+            if (missing.length > 0) log(`  Missing: ${missing.join(', ')}`, colors.yellow);
+            if (extra.length > 0) log(`  Extra: ${extra.join(', ')}`, colors.yellow);
+          }
+          for (const code of missing) {
+            stats.missingCodes.set(code, (stats.missingCodes.get(code) || 0) + 1);
+          }
+          for (const code of extra) {
+            stats.extraCodes.set(code, (stats.extraCodes.get(code) || 0) + 1);
+          }
+        }
+      } catch (err: any) {
+        stats.crashed++;
+        stats.crashedTests.push({ path: relativePath, error: err.message });
+        if (verbose) log(`💥 ${relativePath}: ${err.message}`, colors.red);
+      }
+
+      completed++;
+      if (!verbose && completed % 10 === 0) {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const rate = completed / elapsed;
+        const poolStats = pool.stats;
+        const oomInfo = poolStats.oomKills > 0 ? ` | OOM: ${poolStats.oomKills}` : '';
+        const timeoutInfo = stats.timedOut > 0 ? ` | TO: ${stats.timedOut}` : '';
+        const crashInfo = stats.crashed > 0 ? ` | Crash: ${stats.crashed}` : '';
+        process.stdout.write(`\r  Progress: ${formatNumber(completed)}/${formatNumber(testFiles.length)} (${rate.toFixed(0)}/s)${crashInfo}${oomInfo}${timeoutInfo}    `);
+      }
+    };
+
+    // Run tests with concurrency limit
+    const concurrency = workerCount;
+    const queue = [...testFiles];
+    const running: Promise<void>[] = [];
+
+    while (queue.length > 0 || running.length > 0) {
+      while (running.length < concurrency && queue.length > 0) {
+        const testFile = queue.shift()!;
+        const promise = runTest(testFile).then(() => {
+          running.splice(running.indexOf(promise), 1);
+        });
+        running.push(promise);
+      }
+
+      if (running.length > 0) {
+        await Promise.race(running);
+      }
+    }
+
+    const elapsed = (Date.now() - startTime) / 1000;
+    process.stdout.write('\r' + ' '.repeat(80) + '\r');
+
+    // Update worker stats from pool
+    const poolStats = pool.stats;
+    stats.workerStats.crashed = poolStats.oomKills;
+    stats.workerStats.respawned = poolStats.totalRestarts;
+
+    // Print summary
+    log(`\n${'═'.repeat(60)}`, colors.cyan);
+    log(`  Results`, colors.bold);
+    log(`${'═'.repeat(60)}`, colors.cyan);
+    // Calculate actual failed (failed includes oom and timedOut, but NOT crashed)
+    const actualFailed = stats.failed - stats.oom - stats.timedOut;
+
+    log(`  Total:   ${formatNumber(stats.total)}`, colors.dim);
+    log(`  Passed:  ${formatNumber(stats.passed)}`, colors.green);
+    log(`  Failed:  ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
+    log(`  Timeout: ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
+    log(`  OOM:     ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.yellow : colors.dim);
+    log(`  Crashed: ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
+    log(`  Time:    ${elapsed.toFixed(1)}s (${(stats.total / elapsed).toFixed(1)} tests/s)`, colors.dim);
+
+    if (poolStats.oomKills > 0) {
+      log(`\n  Worker OOM kills: ${poolStats.oomKills}`, colors.yellow);
+      log(`  Worker restarts:  ${poolStats.totalRestarts}`, colors.yellow);
+    }
+
+    // Show crash breakdown if there are crashes
+    if (stats.crashedTests.length > 0) {
+      log(`\n  Crash breakdown:`, colors.red);
+      // Group by error message
+      const errorGroups = new Map<string, number>();
+      for (const { error } of stats.crashedTests) {
+        // Normalize error message (take first line, truncate)
+        const normalized = error.split('\n')[0].substring(0, 80);
+        errorGroups.set(normalized, (errorGroups.get(normalized) || 0) + 1);
+      }
+      // Sort by count and show top 5
+      const sorted = [...errorGroups.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+      for (const [error, count] of sorted) {
+        log(`    ${formatNumber(count)}x: ${error}`, colors.dim);
+      }
+    }
+
+    log(`${'═'.repeat(60)}\n`, colors.cyan);
+
+  } finally {
+    await pool.stop();
+  }
+
+  return stats;
+}
+
+function discoverTests(dir: string, results: string[], limit: number): void {
+  if (results.length >= limit) return;
+
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (results.length >= limit) break;
+
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      discoverTests(fullPath, results, limit);
+    } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+      results.push(fullPath);
+    }
+  }
+}

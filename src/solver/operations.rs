@@ -2087,6 +2087,165 @@ impl<'a> PropertyAccessEvaluator<'a> {
         })
     }
 
+    /// Lazily resolve a single property from a mapped type without fully expanding it.
+    /// This avoids OOM by only computing the property type that was requested.
+    ///
+    /// Returns `Some(result)` if we could resolve the property lazily,
+    /// `None` if we need to fall back to eager expansion.
+    fn resolve_mapped_property_lazy(
+        &self,
+        mapped_id: MappedTypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> Option<PropertyAccessResult> {
+        use crate::solver::types::{LiteralValue, MappedModifier, TypeKey};
+
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        // Step 1: Check if this property name is valid in the constraint
+        // We need to check if the literal string prop_name is in the constraint
+        let constraint = mapped.constraint;
+
+        // Try to determine if prop_name is a valid key
+        let is_valid_key = self.is_key_in_mapped_constraint(constraint, prop_name);
+
+        if !is_valid_key {
+            // Property not in constraint - check if there's a string index signature
+            if self.mapped_has_string_index(&mapped) {
+                // Has string index - property access is valid
+            } else {
+                return Some(PropertyAccessResult::PropertyNotFound {
+                    type_id: self.interner.mapped(mapped.as_ref().clone()),
+                    property_name: prop_atom,
+                });
+            }
+        }
+
+        // Step 2: Create a substitution for just this property
+        let key_literal = self
+            .interner
+            .intern(TypeKey::Literal(LiteralValue::String(prop_atom)));
+
+        // Handle name remapping if present (e.g., `as` clause in mapped types)
+        if let Some(name_type) = mapped.name_type {
+            let mut subst = TypeSubstitution::new();
+            subst.insert(mapped.type_param.name, key_literal);
+            let remapped = instantiate_type(self.interner, name_type, &subst);
+            let remapped = evaluate_type(self.interner, remapped);
+            if remapped == TypeId::NEVER {
+                // Key is filtered out by `as never`
+                return Some(PropertyAccessResult::PropertyNotFound {
+                    type_id: self.interner.mapped(mapped.as_ref().clone()),
+                    property_name: prop_atom,
+                });
+            }
+        }
+
+        // Step 3: Instantiate the template with this single key
+        let mut subst = TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, key_literal);
+        let property_type = instantiate_type(self.interner, mapped.template, &subst);
+        let property_type = evaluate_type(self.interner, property_type);
+
+        // Step 4: Apply optional modifier
+        let final_type = match mapped.optional_modifier {
+            Some(MappedModifier::Add) => self.interner.union2(property_type, TypeId::UNDEFINED),
+            Some(MappedModifier::Remove) => property_type,
+            None => property_type,
+        };
+
+        Some(PropertyAccessResult::Success {
+            type_id: final_type,
+            from_index_signature: false,
+        })
+    }
+
+    /// Check if a property name is valid in a mapped type's constraint.
+    fn is_key_in_mapped_constraint(&self, constraint: TypeId, prop_name: &str) -> bool {
+        use crate::solver::types::{LiteralValue, TypeKey};
+
+        // Evaluate keyof if needed
+        let evaluated = if let Some(TypeKey::KeyOf(operand)) = self.interner.lookup(constraint) {
+            // Create a keyof type and evaluate it
+            let keyof_type = self.interner.intern(TypeKey::KeyOf(operand));
+            evaluate_type(self.interner, keyof_type)
+        } else {
+            constraint
+        };
+
+        let Some(key) = self.interner.lookup(evaluated) else {
+            return false;
+        };
+
+        match key {
+            // Single string literal - exact match
+            TypeKey::Literal(LiteralValue::String(s)) => {
+                self.interner.resolve_atom(s) == prop_name
+            }
+            // Union of literals - check if prop_name is in the union
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(members);
+                for &member in members.iter() {
+                    if member == TypeId::STRING {
+                        // string index covers all string properties
+                        return true;
+                    }
+                    if let Some(TypeKey::Literal(LiteralValue::String(s))) =
+                        self.interner.lookup(member)
+                    {
+                        if self.interner.resolve_atom(s) == prop_name {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            // string type covers all string properties
+            TypeKey::Intrinsic(crate::solver::types::IntrinsicKind::String) => true,
+            // Other types - can't determine statically
+            _ => false,
+        }
+    }
+
+    /// Check if a mapped type has a string index signature (constraint includes `string`).
+    fn mapped_has_string_index(&self, mapped: &MappedType) -> bool {
+        use crate::solver::types::{IntrinsicKind, TypeKey};
+
+        let constraint = mapped.constraint;
+
+        // Evaluate keyof if needed
+        let evaluated = if let Some(TypeKey::KeyOf(operand)) = self.interner.lookup(constraint) {
+            let keyof_type = self.interner.intern(TypeKey::KeyOf(operand));
+            evaluate_type(self.interner, keyof_type)
+        } else {
+            constraint
+        };
+
+        if evaluated == TypeId::STRING {
+            return true;
+        }
+
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(evaluated) {
+            let members = self.interner.type_list(members);
+            for &member in members.iter() {
+                if member == TypeId::STRING {
+                    return true;
+                }
+                if let Some(TypeKey::Intrinsic(IntrinsicKind::String)) =
+                    self.interner.lookup(member)
+                {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(TypeKey::Intrinsic(IntrinsicKind::String)) = self.interner.lookup(evaluated) {
+            return true;
+        }
+
+        false
+    }
+
     /// Check if a property name is a private field (starts with #)
     #[allow(dead_code)] // Infrastructure for private field checking
     fn is_private_field(&self, prop_name: &str) -> bool {
@@ -2617,13 +2776,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            // Mapped: evaluate the mapped type to get concrete properties
-            TypeKey::Mapped(_) => {
+            // Mapped: try lazy property resolution first to avoid OOM on large mapped types
+            TypeKey::Mapped(mapped_id) => {
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+
+                // Try lazy resolution first - only computes the requested property
+                if let Some(result) = self.resolve_mapped_property_lazy(mapped_id, prop_name, prop_atom) {
+                    return result;
+                }
+
+                // Lazy resolution failed (complex constraint) - fall back to eager expansion
                 let _guard = match self.enter_mapped_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        let prop_atom =
-                            prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                         return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
                             PropertyAccessResult::PropertyNotFound {
                                 type_id: obj_type,
@@ -2636,11 +2802,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let evaluated = evaluate_type(self.interner, obj_type);
                 if evaluated != obj_type {
                     // Successfully evaluated - resolve property on the concrete type
-                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                    self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
                 } else {
                     // Evaluation didn't change the type - try apparent members first
-                    let prop_atom =
-                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                         result
                     } else {
