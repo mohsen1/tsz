@@ -8029,17 +8029,46 @@ impl<'a> CheckerState<'a> {
     /// // lib Window type is merged with augmentation
     /// ```
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
+        use crate::parser::node::NodeAccess;
         use crate::solver::TypeLowering;
 
         let mut lib_type_id: Option<TypeId> = None;
 
-        for lib_ctx in &self.ctx.lib_contexts {
+        // Clone lib_contexts to allow access within the resolver closure
+        let lib_contexts = self.ctx.lib_contexts.clone();
+
+        for lib_ctx in &lib_contexts {
             // Look up the symbol in this lib file's file_locals
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
                 // Get the symbol's declaration(s)
                 if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
-                    // Lower the type from the lib file's arena
-                    let lowering = TypeLowering::new(lib_ctx.arena.as_ref(), self.ctx.types);
+                    // Create a resolver that looks up symbols in all lib binders
+                    // Skip built-in types that have special handling in TypeLowering
+                    let arena_ref = lib_ctx.arena.as_ref();
+                    let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                        // Get the identifier name from the node
+                        let ident_name = arena_ref.get_identifier_text(node_idx)?;
+
+                        // Skip built-in types that have special handling in TypeLowering
+                        // These types use built-in TypeKey representations instead of Refs
+                        match ident_name {
+                            "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase"
+                            | "Capitalize" | "Uncapitalize" => return None,
+                            _ => {}
+                        }
+
+                        // Look up the symbol in all lib contexts' file_locals
+                        for ctx in &lib_contexts {
+                            if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                                return Some(found_sym.0);
+                            }
+                        }
+                        None
+                    };
+
+                    // Lower the type from the lib file's arena with the resolver
+                    let lowering =
+                        TypeLowering::with_resolver(lib_ctx.arena.as_ref(), self.ctx.types, &resolver);
                     // For interfaces, use all declarations (handles declaration merging)
                     if !symbol.declarations.is_empty() {
                         lib_type_id =
@@ -8060,8 +8089,37 @@ impl<'a> CheckerState<'a> {
         if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
             && !augmentation_decls.is_empty()
         {
-            // Lower the augmentation declarations from the current file's arena
-            let lowering = TypeLowering::new(self.ctx.arena, self.ctx.types);
+            // Create a resolver for the current file's binder
+            // Skip built-in types that have special handling in TypeLowering
+            let arena_ref = self.ctx.arena;
+            let binder_ref = self.ctx.binder;
+            let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                // Get the identifier name from the node
+                let ident_name = arena_ref.get_identifier_text(node_idx)?;
+
+                // Skip built-in types that have special handling in TypeLowering
+                match ident_name {
+                    "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase"
+                    | "Capitalize" | "Uncapitalize" => return None,
+                    _ => {}
+                }
+
+                // First check the current file's locals
+                if let Some(found_sym) = binder_ref.file_locals.get(ident_name) {
+                    return Some(found_sym.0);
+                }
+
+                // Then check all lib contexts
+                for ctx in &lib_contexts {
+                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                        return Some(found_sym.0);
+                    }
+                }
+                None
+            };
+
+            // Lower the augmentation declarations from the current file's arena with the resolver
+            let lowering = TypeLowering::with_resolver(self.ctx.arena, self.ctx.types, &resolver);
             let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
 
             // Merge lib type with augmentation using intersection

@@ -1341,7 +1341,21 @@ impl<'a> CheckerState<'a> {
     /// Resolve a type symbol for type lowering.
     ///
     /// Returns the symbol ID if the resolved symbol has the TYPE flag set.
+    /// Returns None for built-in types (Array, ReadonlyArray, etc.) that have
+    /// special handling in TypeLowering to use built-in TypeKey representations.
     pub(crate) fn resolve_type_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
+        // Skip built-in types that have special handling in TypeLowering
+        // These types use built-in TypeKey representations instead of Refs
+        if let Some(node) = self.ctx.arena.get(idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(node)
+        {
+            match ident.escaped_text.as_str() {
+                "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase"
+                | "Capitalize" | "Uncapitalize" => return None,
+                _ => {}
+            }
+        }
+
         let sym_id = match self.resolve_qualified_symbol_in_type_position(idx) {
             TypeSymbolResolution::Type(sym_id) => sym_id,
             _ => return None,
