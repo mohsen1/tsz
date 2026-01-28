@@ -158,6 +158,34 @@ Available visitor functions (from `src/solver/visitor.rs`):
 
 ---
 
+## AI-Assisted Development
+
+### Ask Gemini Skill
+
+For complex questions about the codebase, use the **ask-gemini** skill (`.claudeskills/ask-gemini.md`). This leverages `scripts/ask-gemini.mjs` to consult Gemini AI with full repository context.
+
+**When to use:**
+- Deep architecture questions spanning multiple files
+- Understanding complex interactions between components
+- Historical context and design rationale
+- "How does this work?" questions that benefit from full codebase awareness
+
+**Example usage:**
+```bash
+# Ask about type inference with full solver context
+./scripts/ask-gemini.mjs --solver "How does generic instantiation handle conditional types?"
+
+# Ask about diagnostics with checker context
+./scripts/ask-gemini.mjs --checker "How are control flow errors reported?"
+
+# See available presets
+./scripts/ask-gemini.mjs --list
+```
+
+The script provides focused presets (`--solver`, `--checker`, `--binder`, `--parser`, `--emitter`, `--lsp`, `--types`, `--modules`) that include the most relevant files and specialized system prompts for each area.
+
+**See `.claudeskills/ask-gemini.md` for complete documentation.**
+
 ## Key Documentation
 
 **Required reading for all contributors:**
@@ -179,6 +207,8 @@ Available visitor functions (from `src/solver/visitor.rs`):
 | [docs/WASM_ARCHITECTURE.md](docs/WASM_ARCHITECTURE.md) | WASM build and architecture |
 | [docs/COMPILER_OPTIONS.md](docs/COMPILER_OPTIONS.md) | Supported compiler options |
 | [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) | Diagnostic message guidelines |
+| `scripts/ask-gemini.mjs` | AI assistant with full codebase context |
+| `.claudeskills/ask-gemini.md` | Documentation for ask-gemini skill |
 
 **External references:**
 

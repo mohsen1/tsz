@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_non_application_passthrough() {
-        let mut interner = TypeInterner::new();
+        let interner = TypeInterner::new();
         let string_type = interner.intern(TypeKey::Intrinsic(IntrinsicKind::String));
 
         let evaluator = ApplicationEvaluator::new(&interner, &NoopResolver);
