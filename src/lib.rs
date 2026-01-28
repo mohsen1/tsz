@@ -29,6 +29,10 @@ fn lib_name_from_file_name(file_name: &str) -> Option<String> {
     let trimmed = file_name.trim().to_ascii_lowercase();
     if let Some(rest) = trimmed.strip_prefix("lib.") {
         if let Some(name) = rest.strip_suffix(".d.ts") {
+            // Empty name (from "lib.d.ts") should not map to any embedded lib
+            if name.is_empty() {
+                return None;
+            }
             if name == "es6" {
                 return Some("es2015".to_string());
             }
