@@ -117,28 +117,38 @@ Currently, `module_exports` only tracks symbol IDs, not computed types.
 - [ ] Add `resolved_module_types: HashMap<String, TypeId>` to `CheckerContext`
 - [ ] After binding, populate module type environments in the checker
 - [ ] Update `get_type_of_symbol` to use resolved module types for imports
+- [ ] Establish a strategy for **cross-file type sharing** (e.g., shared Module Type Cache or ModuleRegistry)
 
 **Files to modify:**
-- `src/checker/context.rs` - Add resolved_module_types
+- `src/checker/context.rs` - Add resolved_module_types and shared cache references
 - `src/checker/state.rs` - Populate during initialization
-- `src/cli/driver.rs` - Pass resolution results to checker
+- `src/cli/driver.rs` - Pass resolution results and shared cache to checker
 
 ### 1.2 Fix Dynamic Import Return Types
 
 **Goal:** Return `Promise<typeof module>` instead of `Promise<any>`.
 
 **Tasks:**
-- [ ] Create `get_module_type(specifier: &str)` helper in checker
+- [ ] Create `get_module_type(specifier: &str)` helper in checker using **Visitor Pattern**
 - [ ] Wrap result in `Promise<T>` using `create_promise_type` from solver
 - [ ] Handle unresolved modules gracefully (fall back to `any`)
+- [ ] Add recursion guards for circular imports in dynamic import chains
 
 **Example implementation:**
 ```rust
 fn get_dynamic_import_type(&mut self, specifier: &str) -> TypeId {
+    // Add recursion guard for circular imports
+    if self.ctx.import_resolution_stack.contains(&specifier.to_string()) {
+        return TypeId::ANY; 
+    }
+    
     let module_type = match self.get_module_type(specifier) {
         Some(ty) => ty,
         None => TypeId::ANY,  // Unresolved module
     };
+    
+    // Use visitor pattern from src/solver/visitor.rs for type inspection if needed
+    
     self.solver.create_promise_type(module_type)
 }
 ```
@@ -148,7 +158,7 @@ fn get_dynamic_import_type(&mut self, specifier: &str) -> TypeId {
 **Goal:** Support `declare module "foo*"` and `declare module "*bar"` patterns.
 
 **Tasks:**
-- [ ] Implement glob-style pattern matching for `declared_modules`
+- [ ] Implement glob-style pattern matching for `declared_modules` supporting "longest match" rule
 - [ ] Add `ambient_module_patterns: Vec<(String, SymbolId)>` to binder
 - [ ] Update `is_declared_module` to check patterns after exact match fails
 - [ ] Add TS5061 error for multiple wildcards (`foo*bar*baz`)
@@ -242,8 +252,8 @@ utils.helper();  // Currently may not have proper typing
 ## Implementation Priority
 
 ### Week 1: Critical Fixes
-1. **1.2 Dynamic Import Return Types** - High conformance impact (TS2711)
-2. **1.3 Wildcard Ambient Patterns** - Unblocks conformance tests
+1. **1.3 Wildcard Ambient Patterns** - Unblocks conformance tests (High Priority)
+2. **1.2 Dynamic Import Return Types** - High conformance impact (TS2711)
 
 ### Week 2: Integration
 3. **1.1 ModuleResolver ↔ Checker Integration** - Foundation for all other fixes
