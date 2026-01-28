@@ -17,7 +17,7 @@
 //! # Auto-Generated
 //!
 //! Generated from TypeScript npm version: 5.9.3
-//! Generated at: 2026-01-28T17:59:28.089Z
+//! Generated at: 2026-01-28T23:23:04.916Z
 //!
 //! DO NOT EDIT - regenerate with: node scripts/generate-lib-assets.mjs
 
@@ -81,18 +81,7 @@ pub const LIB_ES2015: EmbeddedLib = EmbeddedLib {
     name: "es2015",
     file_name: "lib.es2015.d.ts",
     content: include_str!("lib-assets/es2015.d.ts"),
-    references: &[
-        "es5",
-        "es2015.core",
-        "es2015.collection",
-        "es2015.iterable",
-        "es2015.generator",
-        "es2015.promise",
-        "es2015.proxy",
-        "es2015.reflect",
-        "es2015.symbol",
-        "es2015.symbol.wellknown",
-    ],
+    references: &["es5", "es2015.core", "es2015.collection", "es2015.iterable", "es2015.generator", "es2015.promise", "es2015.proxy", "es2015.reflect", "es2015.symbol", "es2015.symbol.wellknown"],
 };
 
 /// es2015.collection library
@@ -188,13 +177,7 @@ pub const LIB_ES2016_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2016.full",
     file_name: "lib.es2016.full.d.ts",
     content: include_str!("lib-assets/es2016.full.d.ts"),
-    references: &[
-        "es2016",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-    ],
+    references: &["es2016", "dom", "webworker.importscripts", "scripthost", "dom.iterable"],
 };
 
 /// es2016.intl library
@@ -210,16 +193,7 @@ pub const LIB_ES2017: EmbeddedLib = EmbeddedLib {
     name: "es2017",
     file_name: "lib.es2017.d.ts",
     content: include_str!("lib-assets/es2017.d.ts"),
-    references: &[
-        "es2016",
-        "es2017.arraybuffer",
-        "es2017.date",
-        "es2017.intl",
-        "es2017.object",
-        "es2017.sharedmemory",
-        "es2017.string",
-        "es2017.typedarrays",
-    ],
+    references: &["es2016", "es2017.arraybuffer", "es2017.date", "es2017.intl", "es2017.object", "es2017.sharedmemory", "es2017.string", "es2017.typedarrays"],
 };
 
 /// es2017.arraybuffer library
@@ -243,13 +217,7 @@ pub const LIB_ES2017_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2017.full",
     file_name: "lib.es2017.full.d.ts",
     content: include_str!("lib-assets/es2017.full.d.ts"),
-    references: &[
-        "es2017",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-    ],
+    references: &["es2017", "dom", "webworker.importscripts", "scripthost", "dom.iterable"],
 };
 
 /// es2017.intl library
@@ -297,14 +265,7 @@ pub const LIB_ES2018: EmbeddedLib = EmbeddedLib {
     name: "es2018",
     file_name: "lib.es2018.d.ts",
     content: include_str!("lib-assets/es2018.d.ts"),
-    references: &[
-        "es2017",
-        "es2018.asynciterable",
-        "es2018.asyncgenerator",
-        "es2018.promise",
-        "es2018.regexp",
-        "es2018.intl",
-    ],
+    references: &["es2017", "es2018.asynciterable", "es2018.asyncgenerator", "es2018.promise", "es2018.regexp", "es2018.intl"],
 };
 
 /// es2018.asyncgenerator library
@@ -328,14 +289,7 @@ pub const LIB_ES2018_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2018.full",
     file_name: "lib.es2018.full.d.ts",
     content: include_str!("lib-assets/es2018.full.d.ts"),
-    references: &[
-        "es2018",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-        "dom.asynciterable",
-    ],
+    references: &["es2018", "dom", "webworker.importscripts", "scripthost", "dom.iterable", "dom.asynciterable"],
 };
 
 /// es2018.intl library
@@ -367,14 +321,7 @@ pub const LIB_ES2019: EmbeddedLib = EmbeddedLib {
     name: "es2019",
     file_name: "lib.es2019.d.ts",
     content: include_str!("lib-assets/es2019.d.ts"),
-    references: &[
-        "es2018",
-        "es2019.array",
-        "es2019.object",
-        "es2019.string",
-        "es2019.symbol",
-        "es2019.intl",
-    ],
+    references: &["es2018", "es2019.array", "es2019.object", "es2019.string", "es2019.symbol", "es2019.intl"],
 };
 
 /// es2019.array library
@@ -390,14 +337,7 @@ pub const LIB_ES2019_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2019.full",
     file_name: "lib.es2019.full.d.ts",
     content: include_str!("lib-assets/es2019.full.d.ts"),
-    references: &[
-        "es2019",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-        "dom.asynciterable",
-    ],
+    references: &["es2019", "dom", "webworker.importscripts", "scripthost", "dom.iterable", "dom.asynciterable"],
 };
 
 /// es2019.intl library
@@ -437,17 +377,7 @@ pub const LIB_ES2020: EmbeddedLib = EmbeddedLib {
     name: "es2020",
     file_name: "lib.es2020.d.ts",
     content: include_str!("lib-assets/es2020.d.ts"),
-    references: &[
-        "es2019",
-        "es2020.bigint",
-        "es2020.date",
-        "es2020.number",
-        "es2020.promise",
-        "es2020.sharedmemory",
-        "es2020.string",
-        "es2020.symbol.wellknown",
-        "es2020.intl",
-    ],
+    references: &["es2019", "es2020.bigint", "es2020.date", "es2020.number", "es2020.promise", "es2020.sharedmemory", "es2020.string", "es2020.symbol.wellknown", "es2020.intl"],
 };
 
 /// es2020.bigint library
@@ -471,14 +401,7 @@ pub const LIB_ES2020_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2020.full",
     file_name: "lib.es2020.full.d.ts",
     content: include_str!("lib-assets/es2020.full.d.ts"),
-    references: &[
-        "es2020",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-        "dom.asynciterable",
-    ],
+    references: &["es2020", "dom", "webworker.importscripts", "scripthost", "dom.iterable", "dom.asynciterable"],
 };
 
 /// es2020.intl library
@@ -534,13 +457,7 @@ pub const LIB_ES2021: EmbeddedLib = EmbeddedLib {
     name: "es2021",
     file_name: "lib.es2021.d.ts",
     content: include_str!("lib-assets/es2021.d.ts"),
-    references: &[
-        "es2020",
-        "es2021.promise",
-        "es2021.string",
-        "es2021.weakref",
-        "es2021.intl",
-    ],
+    references: &["es2020", "es2021.promise", "es2021.string", "es2021.weakref", "es2021.intl"],
 };
 
 /// es2021.full library
@@ -548,14 +465,7 @@ pub const LIB_ES2021_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2021.full",
     file_name: "lib.es2021.full.d.ts",
     content: include_str!("lib-assets/es2021.full.d.ts"),
-    references: &[
-        "es2021",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-        "dom.asynciterable",
-    ],
+    references: &["es2021", "dom", "webworker.importscripts", "scripthost", "dom.iterable", "dom.asynciterable"],
 };
 
 /// es2021.intl library
@@ -595,15 +505,7 @@ pub const LIB_ES2022: EmbeddedLib = EmbeddedLib {
     name: "es2022",
     file_name: "lib.es2022.d.ts",
     content: include_str!("lib-assets/es2022.d.ts"),
-    references: &[
-        "es2021",
-        "es2022.array",
-        "es2022.error",
-        "es2022.intl",
-        "es2022.object",
-        "es2022.regexp",
-        "es2022.string",
-    ],
+    references: &["es2021", "es2022.array", "es2022.error", "es2022.intl", "es2022.object", "es2022.regexp", "es2022.string"],
 };
 
 /// es2022.array library
@@ -627,14 +529,7 @@ pub const LIB_ES2022_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2022.full",
     file_name: "lib.es2022.full.d.ts",
     content: include_str!("lib-assets/es2022.full.d.ts"),
-    references: &[
-        "es2022",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-        "dom.asynciterable",
-    ],
+    references: &["es2022", "dom", "webworker.importscripts", "scripthost", "dom.iterable", "dom.asynciterable"],
 };
 
 /// es2022.intl library
@@ -698,14 +593,7 @@ pub const LIB_ES2023_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2023.full",
     file_name: "lib.es2023.full.d.ts",
     content: include_str!("lib-assets/es2023.full.d.ts"),
-    references: &[
-        "es2023",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-        "dom.asynciterable",
-    ],
+    references: &["es2023", "dom", "webworker.importscripts", "scripthost", "dom.iterable", "dom.asynciterable"],
 };
 
 /// es2023.intl library
@@ -721,16 +609,7 @@ pub const LIB_ES2024: EmbeddedLib = EmbeddedLib {
     name: "es2024",
     file_name: "lib.es2024.d.ts",
     content: include_str!("lib-assets/es2024.d.ts"),
-    references: &[
-        "es2023",
-        "es2024.arraybuffer",
-        "es2024.collection",
-        "es2024.object",
-        "es2024.promise",
-        "es2024.regexp",
-        "es2024.sharedmemory",
-        "es2024.string",
-    ],
+    references: &["es2023", "es2024.arraybuffer", "es2024.collection", "es2024.object", "es2024.promise", "es2024.regexp", "es2024.sharedmemory", "es2024.string"],
 };
 
 /// es2024.arraybuffer library
@@ -754,14 +633,7 @@ pub const LIB_ES2024_FULL: EmbeddedLib = EmbeddedLib {
     name: "es2024.full",
     file_name: "lib.es2024.full.d.ts",
     content: include_str!("lib-assets/es2024.full.d.ts"),
-    references: &[
-        "es2024",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-        "dom.asynciterable",
-    ],
+    references: &["es2024", "dom", "webworker.importscripts", "scripthost", "dom.iterable", "dom.asynciterable"],
 };
 
 /// es2024.object library
@@ -825,13 +697,7 @@ pub const LIB_ES6: EmbeddedLib = EmbeddedLib {
     name: "es6",
     file_name: "lib.es6.d.ts",
     content: include_str!("lib-assets/es6.d.ts"),
-    references: &[
-        "es2015",
-        "dom",
-        "dom.iterable",
-        "webworker.importscripts",
-        "scripthost",
-    ],
+    references: &["es2015", "dom", "dom.iterable", "webworker.importscripts", "scripthost"],
 };
 
 /// esnext library
@@ -839,19 +705,7 @@ pub const LIB_ESNEXT: EmbeddedLib = EmbeddedLib {
     name: "esnext",
     file_name: "lib.esnext.d.ts",
     content: include_str!("lib-assets/esnext.d.ts"),
-    references: &[
-        "es2024",
-        "esnext.intl",
-        "esnext.decorators",
-        "esnext.disposable",
-        "esnext.collection",
-        "esnext.array",
-        "esnext.iterator",
-        "esnext.promise",
-        "esnext.float16",
-        "esnext.error",
-        "esnext.sharedmemory",
-    ],
+    references: &["es2024", "esnext.intl", "esnext.decorators", "esnext.disposable", "esnext.collection", "esnext.array", "esnext.iterator", "esnext.promise", "esnext.float16", "esnext.error", "esnext.sharedmemory"],
 };
 
 /// esnext.array library
@@ -907,14 +761,7 @@ pub const LIB_ESNEXT_FULL: EmbeddedLib = EmbeddedLib {
     name: "esnext.full",
     file_name: "lib.esnext.full.d.ts",
     content: include_str!("lib-assets/esnext.full.d.ts"),
-    references: &[
-        "esnext",
-        "dom",
-        "webworker.importscripts",
-        "scripthost",
-        "dom.iterable",
-        "dom.asynciterable",
-    ],
+    references: &["esnext", "dom", "webworker.importscripts", "scripthost", "dom.iterable", "dom.asynciterable"],
 };
 
 /// esnext.intl library
