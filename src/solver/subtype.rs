@@ -10,6 +10,7 @@
 //! - TypeResolver trait for lazy symbol resolution
 //! - Tracer pattern for zero-cost diagnostic abstraction
 
+use crate::limits;
 use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
 use crate::solver::diagnostics::SubtypeFailureReason;
@@ -23,7 +24,7 @@ use crate::solver::TypeInterner;
 /// Maximum recursion depth for subtype checking.
 /// This prevents OOM/stack overflow from infinitely expanding recursive types.
 /// Examples: `interface AA<T extends AA<T>>`, `interface List<T> { next: List<T> }`
-pub(crate) const MAX_SUBTYPE_DEPTH: u32 = 100;
+pub(crate) const MAX_SUBTYPE_DEPTH: u32 = limits::MAX_SUBTYPE_DEPTH;
 
 /// Result of a subtype check
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -172,7 +173,7 @@ impl TypeResolver for TypeEnvironment {
 
 /// Maximum number of unique type pairs to track in cycle detection.
 /// Prevents unbounded memory growth in pathological cases.
-pub const MAX_IN_PROGRESS_PAIRS: usize = 10_000;
+pub const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
 
 /// Subtype checking context.
 /// Maintains the "seen" set for cycle detection.

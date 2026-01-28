@@ -73,6 +73,9 @@ mod interner_tests;
 pub mod common;
 pub use common::{ModuleKind, NewLineKind, ScriptTarget};
 
+// Centralized limits and thresholds
+pub mod limits;
+
 // Character code constants
 pub mod char_codes;
 
