@@ -1317,6 +1317,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This is used to disambiguate symbol IDs that may collide across binders
     /// by matching the actual identifier text referenced in source.
+    #[allow(dead_code)]
     pub(crate) fn entity_name_symbol_text(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {

@@ -84,19 +84,48 @@ function getSubmoduleSha() {
 
 /**
  * Parse /// <reference lib="..." /> directives from content
+ *
+ * TypeScript lib files have this structure:
+ * 1. Copyright block comment
+ * 2. /// <reference no-default-lib="true"/>
+ * 3. /// <reference lib="..." /> directives
+ * 4. Actual declarations
+ *
+ * We need to skip the block comment and parse all reference directives.
  */
 function parseLibReferences(content) {
   const refs = [];
   const lines = content.split('\n');
+  let inBlockComment = false;
+
   for (const line of lines) {
     const trimmed = line.trim();
+
+    // Handle block comments
+    if (trimmed.startsWith('/*')) {
+      inBlockComment = true;
+    }
+    if (inBlockComment) {
+      if (trimmed.includes('*/')) {
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    // Parse reference directives
     if (trimmed.startsWith('/// <reference lib=')) {
       const match = trimmed.match(/lib=["']([^"']+)["']/);
       if (match) {
         refs.push(match[1].toLowerCase());
       }
-    } else if (!trimmed.startsWith('///') && trimmed.length > 0) {
-      // Stop at first non-reference, non-empty line
+    } else if (trimmed.startsWith('/// <reference')) {
+      // Skip other reference types (no-default-lib, path, types)
+      continue;
+    } else if (trimmed.startsWith('///')) {
+      // Skip other triple-slash comments
+      continue;
+    } else if (trimmed.length > 0) {
+      // Stop at first non-comment, non-empty line (actual declarations)
       break;
     }
   }

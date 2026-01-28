@@ -96,6 +96,7 @@ impl TsTypeChecker {
             return self.format_basic_type(type_id);
         }
 
+        #[allow(unsafe_code)]
         let interner = unsafe { &*self.interner_ptr };
         let mut formatter = TypeFormatter::new(interner);
         formatter.format(type_id)

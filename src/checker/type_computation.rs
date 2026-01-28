@@ -3101,6 +3101,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `true` if elaboration was performed, `false` if the argument is not
     /// an array literal and normal TS2345 error should be emitted.
+    #[allow(dead_code)]
     fn elaborate_array_literal_argument_error(
         &mut self,
         arg_idx: NodeIndex,
