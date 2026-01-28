@@ -2439,30 +2439,56 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 ///
 /// If disk files are not available or fail to load, this function falls back to embedded libs
 /// for the specified target to ensure global types are always available.
+///
+/// IMPORTANT: This function now recursively resolves lib dependencies (/// <reference lib="..." />)
+/// to prevent duplicate declarations. Previously, it would load only the explicitly specified libs
+/// from disk, then load embedded libs as a "fallback" for missing dependencies, which caused
+/// duplicate symbol declarations.
 fn load_lib_files_for_contexts(
     lib_files: &[PathBuf],
     target: crate::emitter::ScriptTarget,
 ) -> Vec<LibContext> {
     use crate::binder::BinderState;
+    use crate::cli::config::{extract_lib_references, resolve_lib_files};
     use crate::lib_loader;
     use crate::parser::ParserState;
+    use std::collections::{HashSet, VecDeque};
     use std::sync::Arc;
 
     let mut lib_contexts = Vec::new();
+    let mut loaded_lib_names = HashSet::new();
+    let mut pending_libs = VecDeque::new();
 
-    // First, try to load from disk files
-    let mut has_core_types = false; // Track if we loaded essential types like Object, Array
+    // Initially add the specified lib files to the queue
     for lib_path in lib_files {
-        // Skip if the file doesn't exist
-        if !lib_path.exists() {
+        if lib_path.exists() {
+            pending_libs.push_back(lib_path.clone());
+        }
+    }
+
+    // Process libs recursively, resolving /// <reference lib="..." /> directives
+    while let Some(lib_path) = pending_libs.pop_front() {
+        // Get lib name from path for deduplication
+        let lib_name = lib_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_prefix("lib."))
+            .and_then(|s| s.strip_suffix(".generated"))
+            .unwrap_or_else(|| lib_path.file_stem().and_then(|s| s.to_str()).unwrap_or(""));
+
+        // Skip if already loaded
+        if !loaded_lib_names.insert(lib_name.to_string()) {
             continue;
         }
 
         // Read the lib file content
-        let source_text = match std::fs::read_to_string(lib_path) {
+        let source_text = match std::fs::read_to_string(&lib_path) {
             Ok(content) => content,
             Err(_) => continue,
         };
+
+        // Extract and queue referenced libs BEFORE moving source_text to parser
+        let referenced_libs = extract_lib_references(&source_text);
 
         // Parse the lib file
         let file_name = lib_path.to_string_lossy().to_string();
@@ -2478,31 +2504,33 @@ fn load_lib_files_for_contexts(
         let mut lib_binder = BinderState::new();
         lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
-        // Check if this lib has core types
-        if lib_binder.file_locals.has("Object") && lib_binder.file_locals.has("Array") {
-            has_core_types = true;
-        }
-
         // Create the LibContext
         let arena = Arc::new(lib_parser.into_arena());
         let binder = Arc::new(lib_binder);
 
         lib_contexts.push(LibContext { arena, binder });
+
+        // Queue referenced libs for loading
+        for ref_lib in referenced_libs {
+            // Resolve referenced lib to file path
+            if let Ok(ref_paths) = resolve_lib_files(&[ref_lib.clone()]) {
+                for ref_path in ref_paths {
+                    if ref_path.exists() && !loaded_lib_names.contains(ref_lib.as_str()) {
+                        pending_libs.push_back(ref_path);
+                    }
+                }
+            }
+        }
     }
 
-    // If no disk files were loaded OR core types are missing, fall back to embedded libs
-    // This ensures global types are always available even when disk files fail to parse
-    // IMPORTANT: Only load embedded libs if lib_files was not intentionally empty (i.e., noLib is false)
-    // When lib_files is empty and we tried to load disk files, it means either:
-    // 1. noLib is true (don't load ANY libs)
-    // 2. Disk files don't exist (load embedded libs as fallback)
-    let should_fallback_to_embedded = !lib_files.is_empty() || !lib_contexts.is_empty();
-    if (lib_contexts.is_empty() || !has_core_types) && should_fallback_to_embedded {
+    // Only load embedded libs if NO disk files were loaded at all
+    // This prevents duplicate declarations when disk libs are available
+    if lib_contexts.is_empty() && !lib_files.is_empty() {
         // Load embedded libs using the actual target from compiler options
         let config = lib_loader::LibResolverConfig::new(target).with_include_dom(true);
         let embedded_libs = lib_loader::resolve_libs(&config);
 
-        // Add embedded libs to provide missing types
+        // Add embedded libs as fallback
         for lib_file in embedded_libs {
             lib_contexts.push(LibContext {
                 arena: lib_file.arena.clone(),
