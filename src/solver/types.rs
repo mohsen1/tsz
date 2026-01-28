@@ -139,6 +139,11 @@ impl TypeId {
     /// Used to allow promise_like_return_type_argument to extract T from await expressions.
     pub const PROMISE_BASE: TypeId = TypeId(17);
 
+    /// Internal sentinel indicating that expression checking should be delegated
+    /// to CheckerState for complex cases that need full checker context.
+    /// This is NOT a real type and should never escape ExpressionChecker/CheckerState.
+    pub const DELEGATE: TypeId = TypeId(18);
+
     /// First user-defined type ID (after built-in intrinsics)
     pub const FIRST_USER: u32 = 100;
 

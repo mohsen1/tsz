@@ -2512,7 +2512,7 @@ fn load_lib_files_for_contexts(
         // Queue referenced libs for loading
         for ref_lib in referenced_libs {
             // Resolve referenced lib to file path
-            if let Ok(ref_paths) = resolve_lib_files(&[ref_lib.clone()]) {
+            if let Ok(ref_paths) = resolve_lib_files(std::slice::from_ref(&ref_lib)) {
                 for ref_path in ref_paths {
                     if ref_path.exists() && !loaded_lib_names.contains(ref_lib.as_str()) {
                         pending_libs.push_back(ref_path);

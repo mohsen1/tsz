@@ -56,6 +56,7 @@ pub mod tuple_type;
 pub mod type_checking;
 pub mod type_computation;
 // pub mod type_computing_visitor; // TODO: module not found
+pub mod type_node;
 pub mod type_parameter;
 pub mod type_query;
 pub mod types;
@@ -95,7 +96,8 @@ pub use flow_analyzer::{
 pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
 pub use reachability_analyzer::ReachabilityAnalyzer;
 pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
-pub use statements::StatementChecker;
+pub use statements::{StatementCheckCallbacks, StatementChecker};
+pub use type_node::TypeNodeChecker;
 pub use types::{
     ArrayTypeInfo, ConditionalType, EnumTypeInfo, FunctionType, IndexInfo, IndexType,
     IndexedAccessType, IntersectionType, IntrinsicType, LiteralType, LiteralValue, MappedType,

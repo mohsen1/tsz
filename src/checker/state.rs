@@ -93,6 +93,7 @@
 use crate::binder::BinderState;
 use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::context::CheckerOptions;
+use crate::checker::statements::{StatementCheckCallbacks, StatementChecker};
 use crate::checker::symbol_resolver::TypeSymbolResolution;
 use crate::checker::{CheckerContext, EnclosingClassInfo};
 use crate::interner::Atom;
@@ -681,7 +682,36 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Compute the type of a node (internal, not cached).
+    ///
+    /// This method first delegates to `ExpressionChecker` for expression type checking.
+    /// If `ExpressionChecker` returns `TypeId::DELEGATE`, we fall back to the full
+    /// `CheckerState` implementation that has access to symbol resolution, contextual
+    /// typing, and other complex type checking features.
     fn compute_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::checker::ExpressionChecker;
+
+        // First, try ExpressionChecker for simple expression types
+        // ExpressionChecker handles expressions that don't need full CheckerState context
+        let expr_result = {
+            let mut expr_checker = ExpressionChecker::new(&mut self.ctx);
+            expr_checker.compute_type_uncached(idx)
+        };
+
+        // If ExpressionChecker handled it, return the result
+        if expr_result != TypeId::DELEGATE {
+            return expr_result;
+        }
+
+        // ExpressionChecker returned DELEGATE - use full CheckerState implementation
+        self.compute_type_of_node_complex(idx)
+    }
+
+    /// Complex type computation that needs full CheckerState context.
+    ///
+    /// This is called when `ExpressionChecker` returns `TypeId::DELEGATE`,
+    /// indicating the expression needs symbol resolution, contextual typing,
+    /// or other features only available in `CheckerState`.
+    fn compute_type_of_node_complex(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -967,13 +997,27 @@ impl<'a> CheckerState<'a> {
             }
 
             // =========================================================================
-            // Type Nodes
+            // Type Nodes - Delegate to TypeNodeChecker
             // =========================================================================
 
-            // Type reference (e.g., "number", "string", "MyType")
-            k if k == syntax_kind_ext::TYPE_REFERENCE => self.get_type_from_type_reference(idx),
+            // Type nodes that need binder resolution - delegate to get_type_from_type_node
+            // which handles special cases with proper symbol resolution
+            k if k == syntax_kind_ext::TYPE_REFERENCE => self.get_type_from_type_node(idx),
 
-            // Keyword types
+            // Type nodes handled by TypeNodeChecker
+            k if k == syntax_kind_ext::UNION_TYPE
+                || k == syntax_kind_ext::INTERSECTION_TYPE
+                || k == syntax_kind_ext::ARRAY_TYPE
+                || k == syntax_kind_ext::FUNCTION_TYPE
+                || k == syntax_kind_ext::TYPE_LITERAL
+                || k == syntax_kind_ext::TYPE_QUERY
+                || k == syntax_kind_ext::TYPE_OPERATOR =>
+            {
+                let mut checker = crate::checker::TypeNodeChecker::new(&mut self.ctx);
+                checker.check(idx)
+            }
+
+            // Keyword types - handled inline for performance (these are simple constants)
             k if k == SyntaxKind::NumberKeyword as u16 => TypeId::NUMBER,
             k if k == SyntaxKind::StringKeyword as u16 => TypeId::STRING,
             k if k == SyntaxKind::BooleanKeyword as u16 => TypeId::BOOLEAN,
@@ -986,29 +1030,6 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::ObjectKeyword as u16 => TypeId::OBJECT,
             k if k == SyntaxKind::BigIntKeyword as u16 => TypeId::BIGINT,
             k if k == SyntaxKind::SymbolKeyword as u16 => TypeId::SYMBOL,
-
-            // Union type (A | B)
-            k if k == syntax_kind_ext::UNION_TYPE => self.get_type_from_union_type(idx),
-
-            // Intersection type (A & B)
-            k if k == syntax_kind_ext::INTERSECTION_TYPE => {
-                self.get_type_from_intersection_type(idx)
-            }
-
-            // Array type (T[])
-            k if k == syntax_kind_ext::ARRAY_TYPE => self.get_type_from_array_type(idx),
-
-            // Type operator (readonly, unique, etc.)
-            k if k == syntax_kind_ext::TYPE_OPERATOR => self.get_type_from_type_operator(idx),
-
-            // Function type (e.g., () => number, (x: string) => void)
-            k if k == syntax_kind_ext::FUNCTION_TYPE => self.get_type_from_function_type(idx),
-
-            // Type literal ({ a: number; b(): string; })
-            k if k == syntax_kind_ext::TYPE_LITERAL => self.get_type_from_type_literal(idx),
-
-            // Type query (typeof X) - returns the type of X
-            k if k == syntax_kind_ext::TYPE_QUERY => self.get_type_from_type_query(idx),
 
             // Qualified name (A.B.C) - resolve namespace member access
             k if k == syntax_kind_ext::QUALIFIED_NAME => self.resolve_qualified_name(idx),
@@ -2315,7 +2336,7 @@ impl<'a> CheckerState<'a> {
         ctor_types: &mut Vec<TypeId>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries::{ConstructorTypeKind, classify_constructor_type};
 
         if matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
             return;
@@ -2326,57 +2347,49 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let Some(key) = self.ctx.types.lookup(evaluated) else {
-            return;
-        };
-
-        match key {
-            TypeKey::Callable(_) => {
+        match classify_constructor_type(self.ctx.types, evaluated) {
+            ConstructorTypeKind::Callable => {
                 ctor_types.push(evaluated);
             }
-            TypeKey::Function(shape_id) => {
+            ConstructorTypeKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
                 if shape.is_constructor {
                     ctor_types.push(evaluated);
                 }
             }
-            TypeKey::Intersection(members_id) | TypeKey::Union(members_id) => {
-                let members = self.ctx.types.type_list(members_id);
-                for &member in members.iter() {
+            ConstructorTypeKind::Members(members) => {
+                for member in members {
                     self.collect_constructor_types_from_type_inner(member, ctor_types, visited);
                 }
             }
-            TypeKey::ReadonlyType(inner) => {
+            ConstructorTypeKind::Inner(inner) => {
                 self.collect_constructor_types_from_type_inner(inner, ctor_types, visited);
             }
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                if let Some(constraint) = info.constraint {
+            ConstructorTypeKind::Constraint(constraint) => {
+                if let Some(constraint) = constraint {
                     self.collect_constructor_types_from_type_inner(constraint, ctor_types, visited);
                 }
             }
-            TypeKey::Conditional(_)
-            | TypeKey::Mapped(_)
-            | TypeKey::IndexAccess(_, _)
-            | TypeKey::KeyOf(_) => {
+            ConstructorTypeKind::NeedsTypeEvaluation => {
                 let expanded = self.evaluate_type_with_env(evaluated);
                 if expanded != evaluated {
                     self.collect_constructor_types_from_type_inner(expanded, ctor_types, visited);
                 }
             }
-            TypeKey::Application(_) => {
+            ConstructorTypeKind::NeedsApplicationEvaluation => {
                 let expanded = self.evaluate_application_type(evaluated);
                 if expanded != evaluated {
                     self.collect_constructor_types_from_type_inner(expanded, ctor_types, visited);
                 }
             }
-            TypeKey::TypeQuery(sym_ref) => {
+            ConstructorTypeKind::TypeQuery(sym_ref) => {
                 // typeof X - get the type of the symbol X and collect constructors from it
                 use crate::binder::SymbolId;
                 let sym_id = SymbolId(sym_ref.0);
                 let sym_type = self.get_type_of_symbol(sym_id);
                 self.collect_constructor_types_from_type_inner(sym_type, ctor_types, visited);
             }
-            _ => {}
+            ConstructorTypeKind::NotConstructor => {}
         }
     }
 
@@ -2399,7 +2412,7 @@ impl<'a> CheckerState<'a> {
         props: &mut rustc_hash::FxHashMap<Atom, crate::solver::PropertyInfo>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries::{StaticPropertySource, get_static_property_source};
 
         if matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
             return;
@@ -2410,53 +2423,33 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let Some(key) = self.ctx.types.lookup(evaluated) else {
-            return;
-        };
-
-        match key {
-            TypeKey::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                for prop in shape.properties.iter() {
-                    props.entry(prop.name).or_insert_with(|| prop.clone());
+        match get_static_property_source(self.ctx.types, evaluated) {
+            StaticPropertySource::Properties(properties) => {
+                for prop in properties {
+                    props.entry(prop.name).or_insert(prop);
                 }
             }
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                for prop in shape.properties.iter() {
-                    props.entry(prop.name).or_insert_with(|| prop.clone());
-                }
-            }
-            TypeKey::Intersection(members_id) | TypeKey::Union(members_id) => {
-                let members = self.ctx.types.type_list(members_id);
-                for &member in members.iter() {
+            StaticPropertySource::RecurseMembers(members) => {
+                for member in members {
                     self.collect_static_properties_from_type_inner(member, props, visited);
                 }
             }
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                if let Some(constraint) = info.constraint {
-                    self.collect_static_properties_from_type_inner(constraint, props, visited);
-                }
-            }
-            TypeKey::ReadonlyType(inner) => {
+            StaticPropertySource::RecurseSingle(inner) => {
                 self.collect_static_properties_from_type_inner(inner, props, visited);
             }
-            TypeKey::Conditional(_)
-            | TypeKey::Mapped(_)
-            | TypeKey::IndexAccess(_, _)
-            | TypeKey::KeyOf(_) => {
+            StaticPropertySource::NeedsEvaluation => {
                 let expanded = self.evaluate_type_with_env(evaluated);
                 if expanded != evaluated {
                     self.collect_static_properties_from_type_inner(expanded, props, visited);
                 }
             }
-            TypeKey::Application(_) => {
+            StaticPropertySource::NeedsApplicationEvaluation => {
                 let expanded = self.evaluate_application_type(evaluated);
                 if expanded != evaluated {
                     self.collect_static_properties_from_type_inner(expanded, props, visited);
                 }
             }
-            _ => {}
+            StaticPropertySource::None => {}
         }
     }
 
@@ -3223,24 +3216,6 @@ impl<'a> CheckerState<'a> {
         TypeId::ANY
     }
 
-    /// Get type from a function type node (e.g., () => number, (x: string) => void).
-    fn get_type_from_function_type(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::solver::TypeLowering;
-
-        let type_param_bindings = self.get_type_param_bindings();
-        let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-        let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-        let lowering = TypeLowering::with_resolvers(
-            self.ctx.arena,
-            self.ctx.types,
-            &type_resolver,
-            &value_resolver,
-        )
-        .with_type_param_bindings(type_param_bindings);
-
-        lowering.lower_type(idx)
-    }
-
     fn get_type_from_type_node_in_type_literal(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -3773,45 +3748,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.types.object(properties)
-    }
-
-    #[allow(dead_code)] // Infrastructure for type parameter lowering
-    fn lower_type_parameter_info(
-        &mut self,
-        idx: NodeIndex,
-    ) -> Option<(crate::solver::TypeParamInfo, String)> {
-        let node = self.ctx.arena.get(idx)?;
-        let data = self.ctx.arena.get_type_parameter(node)?;
-
-        let name = self
-            .ctx
-            .arena
-            .get(data.name)
-            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-            .map(|id_data| id_data.escaped_text.clone())
-            .unwrap_or_else(|| "T".to_string());
-        let atom = self.ctx.types.intern_string(&name);
-
-        let constraint = if data.constraint != NodeIndex::NONE {
-            Some(self.get_type_from_type_node(data.constraint))
-        } else {
-            None
-        };
-
-        let default = if data.default != NodeIndex::NONE {
-            Some(self.get_type_from_type_node(data.default))
-        } else {
-            None
-        };
-
-        Some((
-            crate::solver::TypeParamInfo {
-                name: atom,
-                constraint,
-                default,
-            },
-            name,
-        ))
     }
 
     /// Push type parameters into scope for generic type resolution.
@@ -5316,6 +5252,8 @@ impl<'a> CheckerState<'a> {
                     self.check_spread_iterability(spread_type, spread_data.expression);
 
                     // If it's a tuple type, expand its elements
+                    // NOTE: Uses manual lookup - type_queries::get_tuple_elements exists but
+                    // we need to iterate TupleElement types here for elem.type_id
                     if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
                         let elems = self.ctx.types.tuple_list(elems_id);
                         for elem in elems.iter() {
@@ -5326,6 +5264,8 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // If it's an array type, push the element type (variadic handling)
+                    // NOTE: type_queries::get_array_element_type exists but we need
+                    // to check both tuple and array, so this pattern is appropriate
                     if let Some(TypeKey::Array(elem_type)) = self.ctx.types.lookup(spread_type) {
                         arg_types.push(elem_type);
                         effective_index += 1;
@@ -5747,8 +5687,6 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
-        use crate::solver::TypeKey;
-
         let source_enum = self.enum_symbol_from_type(source);
         let target_enum = self.enum_symbol_from_type(target);
 
@@ -5801,7 +5739,7 @@ impl<'a> CheckerState<'a> {
         {
             // Only enum members (via Ref) are assignable to string enum types
             // Direct string literals are not assignable
-            if let Some(TypeKey::Literal(_)) = self.ctx.types.lookup(source) {
+            if crate::solver::type_queries::is_literal_type(self.ctx.types, source) {
                 return Some(false);
             }
             // STRING is not assignable to string enum
@@ -5988,40 +5926,6 @@ impl<'a> CheckerState<'a> {
     // Note: class_symbol_from_expression, class_symbol_from_type_annotation,
     // assignment_target_class_symbol, and class_constructor_access_level are in type_checking.rs
 
-    #[allow(dead_code)]
-    fn class_constructor_access_level_impl(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS == 0 {
-            return None;
-        }
-        let decl_idx = if !symbol.value_declaration.is_none() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
-        let node = self.ctx.arena.get(decl_idx)?;
-        let class = self.ctx.arena.get_class(node)?;
-        let mut access: Option<MemberAccessLevel> = None;
-        for &member_idx in &class.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
-                continue;
-            };
-            if self.has_private_modifier(&ctor.modifiers) {
-                return Some(MemberAccessLevel::Private);
-            }
-            if self.has_protected_modifier(&ctor.modifiers) {
-                access = Some(MemberAccessLevel::Protected);
-            }
-        }
-        access
-    }
-
     pub(crate) fn constructor_accessibility_mismatch_for_assignment(
         &self,
         left_idx: NodeIndex,
@@ -6156,84 +6060,6 @@ impl<'a> CheckerState<'a> {
                 let app = self.ctx.types.type_application(app_id);
                 self.is_abstract_constructor_type(app.base, env)
             }
-            _ => false,
-        }
-    }
-
-    #[allow(dead_code)] // Infrastructure for constructor type checking
-    fn is_concrete_constructor_target(
-        &self,
-        type_id: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> bool {
-        let mut visited = FxHashSet::default();
-        self.is_concrete_constructor_target_inner(type_id, env, &mut visited)
-    }
-
-    #[allow(dead_code)] // Infrastructure for constructor type checking
-    fn is_concrete_constructor_target_inner(
-        &self,
-        type_id: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-        visited: &mut FxHashSet<TypeId>,
-    ) -> bool {
-        use crate::solver::TypeKey;
-
-        if !visited.insert(type_id) {
-            return false;
-        }
-
-        let Some(key) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        match key {
-            TypeKey::Function(func_id) => self.ctx.types.function_shape(func_id).is_constructor,
-            TypeKey::Callable(_) => {
-                // A Callable is a concrete constructor target if it has construct signatures
-                // AND it's not an abstract constructor
-                self.has_construct_sig(type_id) && !self.is_abstract_ctor(type_id)
-            }
-            TypeKey::TypeQuery(symbol) | TypeKey::Ref(symbol) => {
-                // First try to resolve via TypeEnvironment
-                if let Some(resolved) = self.resolve_type_env_symbol(symbol, env)
-                    && resolved != type_id
-                {
-                    return self.is_concrete_constructor_target_inner(resolved, env, visited);
-                }
-                // Fallback: Check if the symbol is a non-abstract class or interface with construct signatures
-                // This handles `typeof ConcreteClass` and `typeof InterfaceWithConstructSig` when TypeEnvironment lookup fails
-                if let Some(sym) = self.ctx.binder.get_symbol(SymbolId(symbol.0)) {
-                    // A non-abstract class is a concrete constructor target
-                    if sym.flags & symbol_flags::CLASS != 0
-                        && sym.flags & symbol_flags::ABSTRACT == 0
-                    {
-                        return true;
-                    }
-                    // An interface with construct signatures is also a concrete constructor target
-                    // (interfaces are never abstract)
-                    if sym.flags & symbol_flags::INTERFACE != 0 {
-                        // Check if the interface has a construct signature by examining its type
-                        let decl_idx = sym.value_declaration;
-                        if !decl_idx.is_none()
-                            && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                            && let Some(interface_data) = self.ctx.arena.get_interface(decl_node)
-                        {
-                            // Check members for construct signatures
-                            for &member_idx in &interface_data.members.nodes {
-                                if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                                    // CONSTRUCT_SIGNATURE = 194
-                                    if member_node.kind == 194 {
-                                        return true; // Interface has construct signature
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                false
-            }
-            TypeKey::Union(_) | TypeKey::Intersection(_) => false,
             _ => false,
         }
     }
@@ -6887,11 +6713,11 @@ impl<'a> CheckerState<'a> {
     /// 3. Instantiating the body with the provided type arguments
     /// 4. Recursively evaluating the result
     pub(crate) fn evaluate_application_type(&mut self, type_id: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries;
 
-        let Some(TypeKey::Application(_)) = self.ctx.types.lookup(type_id) else {
+        if !type_queries::is_generic_type(self.ctx.types, type_id) {
             return type_id;
-        };
+        }
 
         // Clear cache to ensure fresh evaluation with current contextual type
         self.ctx.application_eval_cache.clear();
@@ -6974,6 +6800,9 @@ impl<'a> CheckerState<'a> {
     fn evaluate_mapped_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
         use crate::solver::TypeKey;
 
+        // NOTE: Manual lookup preferred here - we need the mapped_id directly
+        // to call mapped_type(mapped_id) below. Using get_mapped_type would
+        // return the full Arc<MappedType>, which is more than needed.
         let Some(TypeKey::Mapped(mapped_id)) = self.ctx.types.lookup(type_id) else {
             return type_id;
         };
@@ -7300,571 +7129,6 @@ impl<'a> CheckerState<'a> {
             }
             _ => type_id,
         }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn substitute_this_type(&mut self, type_id: TypeId, this_type: TypeId) -> TypeId {
-        use rustc_hash::FxHashMap;
-
-        let mut cache = FxHashMap::default();
-        self.substitute_this_type_inner(type_id, this_type, &mut cache)
-    }
-
-    #[allow(dead_code)]
-    fn substitute_this_type_inner(
-        &mut self,
-        type_id: TypeId,
-        this_type: TypeId,
-        cache: &mut rustc_hash::FxHashMap<TypeId, TypeId>,
-    ) -> TypeId {
-        use crate::solver::{
-            CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature,
-            MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeKey,
-            TypeParamInfo, TypePredicate,
-        };
-
-        if type_id == this_type {
-            return type_id;
-        }
-
-        if let Some(&cached) = cache.get(&type_id) {
-            return cached;
-        }
-
-        let Some(key) = self.ctx.types.lookup(type_id) else {
-            return type_id;
-        };
-
-        cache.insert(type_id, type_id);
-
-        let result = match key {
-            TypeKey::ThisType => this_type,
-            TypeKey::Union(members_id) => {
-                let members = self.ctx.types.type_list(members_id);
-                let mut changed = false;
-                let new_members: Vec<TypeId> = members
-                    .iter()
-                    .map(|&member| {
-                        let new_member = self.substitute_this_type_inner(member, this_type, cache);
-                        if new_member != member {
-                            changed = true;
-                        }
-                        new_member
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.union(new_members)
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::Intersection(members_id) => {
-                let members = self.ctx.types.type_list(members_id);
-                let mut changed = false;
-                let new_members: Vec<TypeId> = members
-                    .iter()
-                    .map(|&member| {
-                        let new_member = self.substitute_this_type_inner(member, this_type, cache);
-                        if new_member != member {
-                            changed = true;
-                        }
-                        new_member
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.intersection(new_members)
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::Array(elem) => {
-                let new_elem = self.substitute_this_type_inner(elem, this_type, cache);
-                if new_elem == elem {
-                    type_id
-                } else {
-                    self.ctx.types.array(new_elem)
-                }
-            }
-            TypeKey::Tuple(elems_id) => {
-                let elems = self.ctx.types.tuple_list(elems_id);
-                let mut changed = false;
-                let new_elems: Vec<TupleElement> = elems
-                    .iter()
-                    .map(|elem| {
-                        let new_type =
-                            self.substitute_this_type_inner(elem.type_id, this_type, cache);
-                        if new_type != elem.type_id {
-                            changed = true;
-                        }
-                        TupleElement {
-                            type_id: new_type,
-                            name: elem.name,
-                            optional: elem.optional,
-                            rest: elem.rest,
-                        }
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.tuple(new_elems)
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::Object(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                let mut changed = false;
-                let props: Vec<PropertyInfo> = shape
-                    .properties
-                    .iter()
-                    .map(|prop| {
-                        let new_type =
-                            self.substitute_this_type_inner(prop.type_id, this_type, cache);
-                        let new_write =
-                            self.substitute_this_type_inner(prop.write_type, this_type, cache);
-                        if new_type != prop.type_id || new_write != prop.write_type {
-                            changed = true;
-                        }
-                        PropertyInfo {
-                            name: prop.name,
-                            type_id: new_type,
-                            write_type: new_write,
-                            optional: prop.optional,
-                            readonly: prop.readonly,
-                            is_method: prop.is_method,
-                        }
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.object(props)
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                let mut changed = false;
-                let props: Vec<PropertyInfo> = shape
-                    .properties
-                    .iter()
-                    .map(|prop| {
-                        let new_type =
-                            self.substitute_this_type_inner(prop.type_id, this_type, cache);
-                        let new_write =
-                            self.substitute_this_type_inner(prop.write_type, this_type, cache);
-                        if new_type != prop.type_id || new_write != prop.write_type {
-                            changed = true;
-                        }
-                        PropertyInfo {
-                            name: prop.name,
-                            type_id: new_type,
-                            write_type: new_write,
-                            optional: prop.optional,
-                            readonly: prop.readonly,
-                            is_method: prop.is_method,
-                        }
-                    })
-                    .collect();
-                let string_index = shape.string_index.as_ref().map(|idx| {
-                    let new_key = self.substitute_this_type_inner(idx.key_type, this_type, cache);
-                    let new_value =
-                        self.substitute_this_type_inner(idx.value_type, this_type, cache);
-                    if new_key != idx.key_type || new_value != idx.value_type {
-                        changed = true;
-                    }
-                    IndexSignature {
-                        key_type: new_key,
-                        value_type: new_value,
-                        readonly: idx.readonly,
-                    }
-                });
-                let number_index = shape.number_index.as_ref().map(|idx| {
-                    let new_key = self.substitute_this_type_inner(idx.key_type, this_type, cache);
-                    let new_value =
-                        self.substitute_this_type_inner(idx.value_type, this_type, cache);
-                    if new_key != idx.key_type || new_value != idx.value_type {
-                        changed = true;
-                    }
-                    IndexSignature {
-                        key_type: new_key,
-                        value_type: new_value,
-                        readonly: idx.readonly,
-                    }
-                });
-                if changed {
-                    self.ctx.types.object_with_index(ObjectShape {
-                        properties: props,
-                        string_index,
-                        number_index,
-                    })
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::Function(shape_id) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                let mut changed = false;
-                let params: Vec<ParamInfo> = shape
-                    .params
-                    .iter()
-                    .map(|param| {
-                        let new_type =
-                            self.substitute_this_type_inner(param.type_id, this_type, cache);
-                        if new_type != param.type_id {
-                            changed = true;
-                        }
-                        ParamInfo {
-                            name: param.name,
-                            type_id: new_type,
-                            optional: param.optional,
-                            rest: param.rest,
-                        }
-                    })
-                    .collect();
-                let this_param = shape.this_type.map(|this_param| {
-                    let new_type = self.substitute_this_type_inner(this_param, this_type, cache);
-                    if new_type != this_param {
-                        changed = true;
-                    }
-                    new_type
-                });
-                let return_type =
-                    self.substitute_this_type_inner(shape.return_type, this_type, cache);
-                if return_type != shape.return_type {
-                    changed = true;
-                }
-                let type_predicate = shape.type_predicate.as_ref().map(|pred| {
-                    let new_pred_type = pred.type_id.map(|pred_type| {
-                        let new_type = self.substitute_this_type_inner(pred_type, this_type, cache);
-                        if new_type != pred_type {
-                            changed = true;
-                        }
-                        new_type
-                    });
-                    if new_pred_type != pred.type_id {
-                        changed = true;
-                    }
-                    TypePredicate {
-                        asserts: pred.asserts,
-                        target: pred.target.clone(),
-                        type_id: new_pred_type,
-                    }
-                });
-                if changed {
-                    self.ctx.types.function(FunctionShape {
-                        type_params: shape.type_params.clone(),
-                        params,
-                        this_type: this_param,
-                        return_type,
-                        type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    })
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                let mut changed = false;
-                let mut map_signature = |sig: &CallSignature,
-                                         this_type: TypeId,
-                                         cache: &mut rustc_hash::FxHashMap<TypeId, TypeId>,
-                                         ctx: &mut CheckerState|
-                 -> CallSignature {
-                    let mut local_changed = false;
-                    let params: Vec<ParamInfo> = sig
-                        .params
-                        .iter()
-                        .map(|param| {
-                            let new_type =
-                                ctx.substitute_this_type_inner(param.type_id, this_type, cache);
-                            if new_type != param.type_id {
-                                local_changed = true;
-                            }
-                            ParamInfo {
-                                name: param.name,
-                                type_id: new_type,
-                                optional: param.optional,
-                                rest: param.rest,
-                            }
-                        })
-                        .collect();
-                    let this_param = sig.this_type.map(|this_param| {
-                        let new_type = ctx.substitute_this_type_inner(this_param, this_type, cache);
-                        if new_type != this_param {
-                            local_changed = true;
-                        }
-                        new_type
-                    });
-                    let return_type =
-                        ctx.substitute_this_type_inner(sig.return_type, this_type, cache);
-                    if return_type != sig.return_type {
-                        local_changed = true;
-                    }
-                    let type_predicate = sig.type_predicate.as_ref().map(|pred| {
-                        let new_pred_type = pred.type_id.map(|pred_type| {
-                            let new_type =
-                                ctx.substitute_this_type_inner(pred_type, this_type, cache);
-                            if new_type != pred_type {
-                                local_changed = true;
-                            }
-                            new_type
-                        });
-                        if new_pred_type != pred.type_id {
-                            local_changed = true;
-                        }
-                        TypePredicate {
-                            asserts: pred.asserts,
-                            target: pred.target.clone(),
-                            type_id: new_pred_type,
-                        }
-                    });
-                    if local_changed {
-                        changed = true;
-                    }
-                    CallSignature {
-                        type_params: sig.type_params.clone(),
-                        params,
-                        this_type: this_param,
-                        return_type,
-                        type_predicate,
-                        is_method: sig.is_method,
-                    }
-                };
-                let call_signatures: Vec<CallSignature> = shape
-                    .call_signatures
-                    .iter()
-                    .map(|sig| map_signature(sig, this_type, cache, self))
-                    .collect();
-                let construct_signatures: Vec<CallSignature> = shape
-                    .construct_signatures
-                    .iter()
-                    .map(|sig| map_signature(sig, this_type, cache, self))
-                    .collect();
-                let properties: Vec<PropertyInfo> = shape
-                    .properties
-                    .iter()
-                    .map(|prop| {
-                        let new_type =
-                            self.substitute_this_type_inner(prop.type_id, this_type, cache);
-                        let new_write =
-                            self.substitute_this_type_inner(prop.write_type, this_type, cache);
-                        if new_type != prop.type_id || new_write != prop.write_type {
-                            changed = true;
-                        }
-                        PropertyInfo {
-                            name: prop.name,
-                            type_id: new_type,
-                            write_type: new_write,
-                            optional: prop.optional,
-                            readonly: prop.readonly,
-                            is_method: prop.is_method,
-                        }
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.callable(CallableShape {
-                        call_signatures,
-                        construct_signatures,
-                        properties,
-                        string_index: shape.string_index.clone(),
-                        number_index: shape.number_index.clone(),
-                    })
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::Conditional(cond_id) => {
-                let cond = self.ctx.types.conditional_type(cond_id);
-                let mut changed = false;
-                let check_type = self.substitute_this_type_inner(cond.check_type, this_type, cache);
-                if check_type != cond.check_type {
-                    changed = true;
-                }
-                let extends_type =
-                    self.substitute_this_type_inner(cond.extends_type, this_type, cache);
-                if extends_type != cond.extends_type {
-                    changed = true;
-                }
-                let true_type = self.substitute_this_type_inner(cond.true_type, this_type, cache);
-                if true_type != cond.true_type {
-                    changed = true;
-                }
-                let false_type = self.substitute_this_type_inner(cond.false_type, this_type, cache);
-                if false_type != cond.false_type {
-                    changed = true;
-                }
-                if changed {
-                    self.ctx.types.conditional(ConditionalType {
-                        check_type,
-                        extends_type,
-                        true_type,
-                        false_type,
-                        is_distributive: cond.is_distributive,
-                    })
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::Mapped(mapped_id) => {
-                let mapped = self.ctx.types.mapped_type(mapped_id);
-                let mut changed = false;
-                let type_param = TypeParamInfo {
-                    name: mapped.type_param.name,
-                    constraint: mapped.type_param.constraint.map(|constraint| {
-                        self.substitute_this_type_inner(constraint, this_type, cache)
-                    }),
-                    default: mapped
-                        .type_param
-                        .default
-                        .map(|default| self.substitute_this_type_inner(default, this_type, cache)),
-                };
-                if type_param.constraint != mapped.type_param.constraint
-                    || type_param.default != mapped.type_param.default
-                {
-                    changed = true;
-                }
-                let constraint =
-                    self.substitute_this_type_inner(mapped.constraint, this_type, cache);
-                if constraint != mapped.constraint {
-                    changed = true;
-                }
-                let name_type = mapped
-                    .name_type
-                    .map(|name_type| self.substitute_this_type_inner(name_type, this_type, cache));
-                if name_type != mapped.name_type {
-                    changed = true;
-                }
-                let template = self.substitute_this_type_inner(mapped.template, this_type, cache);
-                if template != mapped.template {
-                    changed = true;
-                }
-                if changed {
-                    self.ctx.types.mapped(MappedType {
-                        type_param,
-                        constraint,
-                        name_type,
-                        template,
-                        readonly_modifier: mapped.readonly_modifier,
-                        optional_modifier: mapped.optional_modifier,
-                    })
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::IndexAccess(obj, idx) => {
-                let new_obj = self.substitute_this_type_inner(obj, this_type, cache);
-                let new_idx = self.substitute_this_type_inner(idx, this_type, cache);
-                if new_obj == obj && new_idx == idx {
-                    type_id
-                } else {
-                    self.ctx
-                        .types
-                        .intern(TypeKey::IndexAccess(new_obj, new_idx))
-                }
-            }
-            TypeKey::KeyOf(inner) => {
-                let new_inner = self.substitute_this_type_inner(inner, this_type, cache);
-                if new_inner == inner {
-                    type_id
-                } else {
-                    self.ctx.types.intern(TypeKey::KeyOf(new_inner))
-                }
-            }
-            TypeKey::ReadonlyType(inner) => {
-                let new_inner = self.substitute_this_type_inner(inner, this_type, cache);
-                if new_inner == inner {
-                    type_id
-                } else {
-                    self.ctx.types.intern(TypeKey::ReadonlyType(new_inner))
-                }
-            }
-            TypeKey::TemplateLiteral(template_id) => {
-                let spans = self.ctx.types.template_list(template_id);
-                let mut changed = false;
-                let new_spans: Vec<TemplateSpan> = spans
-                    .iter()
-                    .map(|span| match span {
-                        TemplateSpan::Text(text) => TemplateSpan::Text(*text),
-                        TemplateSpan::Type(span_type) => {
-                            let new_type =
-                                self.substitute_this_type_inner(*span_type, this_type, cache);
-                            if new_type != *span_type {
-                                changed = true;
-                            }
-                            TemplateSpan::Type(new_type)
-                        }
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.template_literal(new_spans)
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::Application(app_id) => {
-                let app = self.ctx.types.type_application(app_id);
-                let mut changed = false;
-                let base = self.substitute_this_type_inner(app.base, this_type, cache);
-                if base != app.base {
-                    changed = true;
-                }
-                let args: Vec<TypeId> = app
-                    .args
-                    .iter()
-                    .map(|&arg| {
-                        let new_arg = self.substitute_this_type_inner(arg, this_type, cache);
-                        if new_arg != arg {
-                            changed = true;
-                        }
-                        new_arg
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.application(base, args)
-                } else {
-                    type_id
-                }
-            }
-            TypeKey::TypeParameter(info) => {
-                let constraint = info.constraint.map(|constraint| {
-                    self.substitute_this_type_inner(constraint, this_type, cache)
-                });
-                let default = info
-                    .default
-                    .map(|default| self.substitute_this_type_inner(default, this_type, cache));
-                if constraint == info.constraint && default == info.default {
-                    type_id
-                } else {
-                    self.ctx.types.intern(TypeKey::TypeParameter(TypeParamInfo {
-                        name: info.name,
-                        constraint,
-                        default,
-                    }))
-                }
-            }
-            TypeKey::Infer(info) => {
-                let constraint = info.constraint.map(|constraint| {
-                    self.substitute_this_type_inner(constraint, this_type, cache)
-                });
-                let default = info
-                    .default
-                    .map(|default| self.substitute_this_type_inner(default, this_type, cache));
-                if constraint == info.constraint && default == info.default {
-                    type_id
-                } else {
-                    self.ctx.types.intern(TypeKey::Infer(TypeParamInfo {
-                        name: info.name,
-                        constraint,
-                        default,
-                    }))
-                }
-            }
-            _ => type_id,
-        };
-
-        cache.insert(type_id, result);
-        result
     }
 
     /// Get keyof a type - extract the keys of an object type.
@@ -8337,95 +7601,71 @@ impl<'a> CheckerState<'a> {
     /// let c: { x: number };    // → Object type with property x: number
     /// ```
     pub fn get_type_from_type_node(&mut self, idx: NodeIndex) -> TypeId {
-        // Smart caching strategy: Cache results but track type parameter context
-        // to prevent incorrect cache hits in generic contexts.
+        // Delegate to TypeNodeChecker for type node handling.
+        // TypeNodeChecker handles caching, type parameter scope, and recursion protection.
         //
-        // Key insight: Most types can be safely cached. Only types that reference
-        // type parameters need context-sensitive handling.
-        //
-        // Strategy:
-        // 1. Always return cached ERROR results (prevents duplicate TS2304)
-        // 2. For non-ERROR results, check if type param context has changed
-        // 3. If context is stable, use cached result (performance)
-        // 4. If context changed, recompute (correctness)
+        // Note: For types that need binder symbol resolution (TYPE_REFERENCE, TYPE_QUERY,
+        // UNION_TYPE containing typeof, TYPE_LITERAL), we still use CheckerState's
+        // specialized methods to ensure proper symbol resolution.
         //
         // See: docs/TS2304_SMART_CACHING_FIX.md
-        if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-            if cached == TypeId::ERROR {
-                // Always use cached ERROR to prevent duplicate emissions
-                return cached;
-            }
-
-            // For non-ERROR cached results, check if we're in a generic context
-            // If we're not in a generic context (type params are empty), the cache is valid
-            let current_type_params = self.get_type_param_bindings();
-            if current_type_params.is_empty() {
-                // No type parameters in scope - cache is valid
-                return cached;
-            }
-            // If we have type parameters in scope, we need to be more careful
-            // For now, recompute to ensure correctness
-            // TODO: Add cache key based on type param hash for smarter caching
-        }
-
-        use crate::solver::TypeLowering;
 
         // First check if this is a type that needs special handling with binder resolution
         if let Some(node) = self.ctx.arena.get(idx) {
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
                 // Validate the type reference exists before lowering
+                // Check cache first
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
                 let result = self.get_type_from_type_reference(idx);
-                // Cache all results to prevent duplicate computations
                 self.ctx.node_types.insert(idx.0, result);
                 return result;
             }
             if node.kind == syntax_kind_ext::TYPE_QUERY {
                 // Handle typeof X - need to resolve symbol properly via binder
+                // Check cache first
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
                 let result = self.get_type_from_type_query(idx);
-                // Cache all results to prevent duplicate computations
                 self.ctx.node_types.insert(idx.0, result);
                 return result;
             }
             if node.kind == syntax_kind_ext::UNION_TYPE {
                 // Handle union types specially to ensure nested typeof expressions
                 // are resolved via binder (for abstract class detection)
+                // Check cache first
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
                 let result = self.get_type_from_union_type(idx);
-                // Cache all results to prevent duplicate computations
                 self.ctx.node_types.insert(idx.0, result);
                 return result;
             }
             if node.kind == syntax_kind_ext::TYPE_LITERAL {
                 // Type literals should use checker resolution so type parameters resolve correctly.
+                // Check cache first
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
                 let result = self.get_type_from_type_literal(idx);
-                // Cache all results to prevent duplicate computations
                 self.ctx.node_types.insert(idx.0, result);
                 return result;
             }
         }
 
-        // Skip pre-check for missing names - let type lowering handle it to avoid duplicates.
-        // The check_type_for_missing_names call was causing duplicate TS2304 errors
-        // because both the pre-check and type lowering emit errors for the same nodes.
-        // See: docs/TS2304_DUPLICATE_ERRORS.md
-        //
-        // COMMENTED OUT TO FIX DUPLICATE TS2304 ERRORS:
-        // self.check_type_for_missing_names(idx);
-
-        // Use TypeLowering which handles all type nodes
-        let type_param_bindings = self.get_type_param_bindings();
-        let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-        let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-        let lowering = TypeLowering::with_resolvers(
-            self.ctx.arena,
-            self.ctx.types,
-            &type_resolver,
-            &value_resolver,
-        )
-        .with_type_param_bindings(type_param_bindings);
-        let result = lowering.lower_type(idx);
-        // Cache all results to prevent duplicate computations
-        self.ctx.node_types.insert(idx.0, result);
-        result
+        // For other type nodes, delegate to TypeNodeChecker
+        let mut checker = crate::checker::TypeNodeChecker::new(&mut self.ctx);
+        checker.check(idx)
     }
 
     // =========================================================================
@@ -8907,620 +8147,11 @@ impl<'a> CheckerState<'a> {
 
     /// Check for duplicate parameter names in a parameter list (TS2300).
     /// Check a statement and produce type errors.
+    ///
+    /// This method delegates to StatementChecker for dispatching logic,
+    /// while providing actual implementations via the StatementCheckCallbacks trait.
     pub(crate) fn check_statement(&mut self, stmt_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
-        };
-
-        match node.kind {
-            syntax_kind_ext::VARIABLE_STATEMENT => {
-                self.check_variable_statement(stmt_idx);
-            }
-            syntax_kind_ext::EXPRESSION_STATEMENT => {
-                // ExpressionStatement stores expression index in data_index
-                if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
-                    // TS1359: Check for await expressions outside async function
-                    self.check_await_expression(expr_stmt.expression);
-                    // Then get the type for normal type checking
-                    self.get_type_of_node(expr_stmt.expression);
-                }
-            }
-            syntax_kind_ext::IF_STATEMENT => {
-                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
-                    // Check condition
-                    self.check_await_expression(if_data.expression);
-                    self.get_type_of_node(if_data.expression);
-                    // Check then branch
-                    self.check_statement(if_data.then_statement);
-                    // Check else branch if present
-                    if !if_data.else_statement.is_none() {
-                        self.check_statement(if_data.else_statement);
-                    }
-                }
-            }
-            syntax_kind_ext::RETURN_STATEMENT => {
-                self.check_return_statement(stmt_idx);
-            }
-            syntax_kind_ext::BLOCK => {
-                if let Some(block) = self.ctx.arena.get_block(node) {
-                    // Check for unreachable code before checking individual statements
-                    self.check_unreachable_code_in_block(&block.statements.nodes);
-                    for &inner_stmt in &block.statements.nodes {
-                        self.check_statement(inner_stmt);
-                    }
-                    // Check for function overload implementations in blocks
-                    self.check_function_implementations(&block.statements.nodes);
-                }
-            }
-            syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = self.ctx.arena.get_function(node) {
-                    let (_type_params, type_param_updates) =
-                        self.push_type_parameters(&func.type_parameters);
-
-                    // Check for parameter properties (error 2369)
-                    // Parameter properties are only allowed in constructors
-                    self.check_parameter_properties(&func.parameters.nodes);
-
-                    // Check for duplicate parameter names (TS2300)
-                    self.check_duplicate_parameters(&func.parameters);
-
-                    // Check for required parameters following optional parameters (TS1016)
-                    self.check_parameter_ordering(&func.parameters);
-
-                    // Check return type annotation for parameter properties in function types
-                    if !func.type_annotation.is_none() {
-                        self.check_type_for_parameter_properties(func.type_annotation);
-                    }
-
-                    // Check parameter type annotations for parameter properties
-                    for &param_idx in &func.parameters.nodes {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            && !param.type_annotation.is_none()
-                        {
-                            self.check_type_for_parameter_properties(param.type_annotation);
-                        }
-                    }
-
-                    for &param_idx in &func.parameters.nodes {
-                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                            continue;
-                        };
-                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                            continue;
-                        };
-                        self.maybe_report_implicit_any_parameter(param, false);
-                    }
-
-                    // Check function body if present
-                    let has_type_annotation = !func.type_annotation.is_none();
-                    if !func.body.is_none() {
-                        let mut return_type = if has_type_annotation {
-                            self.get_type_of_node(func.type_annotation)
-                        } else {
-                            // Use UNKNOWN to enforce strict checking
-                            TypeId::UNKNOWN
-                        };
-
-                        // Cache parameter types from annotations (so for-of binding uses correct types)
-                        // and then infer for any remaining unknown parameters using contextual information.
-                        self.cache_parameter_types(&func.parameters.nodes, None);
-                        self.infer_parameter_types_from_context(&func.parameters.nodes);
-
-                        // Check that parameter default values are assignable to declared types (TS2322)
-                        self.check_parameter_initializers(&func.parameters.nodes);
-
-                        if !has_type_annotation {
-                            return_type = self.infer_return_type_from_body(func.body, None);
-                        }
-
-                        // TS7010 (implicit any return) is emitted for functions without
-                        // return type annotations when noImplicitAny is enabled and the return
-                        // type cannot be inferred (e.g., is 'any' or only returns undefined)
-                        // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
-                        // maybe_report_implicit_any_return handles the noImplicitAny check internally
-                        if !func.is_async {
-                            let func_name = self.get_function_name_from_node(stmt_idx);
-                            let name_node = if !func.name.is_none() {
-                                Some(func.name)
-                            } else {
-                                None
-                            };
-                            self.maybe_report_implicit_any_return(
-                                func_name,
-                                name_node,
-                                return_type,
-                                has_type_annotation,
-                                false,
-                                stmt_idx,
-                            );
-                        }
-
-                        // TS2705: Async function must return Promise
-                        // Only check if there's an explicit return type annotation that is NOT Promise
-                        // Skip this check if the return type is ERROR or the annotation looks like Promise
-                        // Note: Async generators (async function*) return AsyncGenerator, not Promise
-                        if func.is_async && !func.asterisk_token && has_type_annotation {
-                            let should_emit_ts2705 = !self.is_promise_type(return_type)
-                                && return_type != TypeId::ERROR
-                                && !self.return_type_annotation_looks_like_promise(
-                                    func.type_annotation,
-                                );
-
-                            if should_emit_ts2705 {
-                                use crate::checker::types::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages,
-                                };
-                                self.error_at_node(
-                                    func.type_annotation,
-                                    diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                                    diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                                );
-                            }
-                        }
-
-                        // Note: Removed extra TS2705 checks for:
-                        // - async functions without type annotations (TSC doesn't emit TS2705 for these)
-                        // - async functions when Promise is not in lib (this was causing false positives)
-
-                        // TS2697: Check if async function has access to Promise type
-                        // DISABLED: Causes too many false positives
-                        // TODO: Investigate lib loading for Promise detection
-                        // if func.is_async
-                        //     && !func.asterisk_token
-                        //     && !self.is_promise_global_available()
-                        // {
-                        //     use crate::checker::types::diagnostics::{
-                        //         diagnostic_codes, diagnostic_messages,
-                        //     };
-                        //     self.error_at_node(
-                        //         func.name,
-                        //         diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-                        //         diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-                        //     );
-                        // }
-
-                        // Enter async context for await expression checking
-                        if func.is_async {
-                            self.ctx.enter_async_context();
-                        }
-
-                        self.push_return_type(return_type);
-                        self.check_statement(func.body);
-
-                        // Check for error 2355: function with return type must return a value
-                        // Only check if there's an explicit return type annotation
-                        let is_async = func.is_async;
-                        let is_generator = func.asterisk_token;
-                        let check_return_type = self.return_type_for_implicit_return_check(
-                            return_type,
-                            is_async,
-                            is_generator,
-                        );
-                        let requires_return = self.requires_return_value(check_return_type);
-                        let has_return = self.body_has_return_with_value(func.body);
-                        let falls_through = self.function_body_falls_through(func.body);
-
-                        // TS2355: Skip for async functions - they implicitly return Promise<void>
-                        if has_type_annotation && requires_return && falls_through && !is_async {
-                            if !has_return {
-                                use crate::checker::types::diagnostics::diagnostic_codes;
-                                self.error_at_node(
-                                    func.type_annotation,
-                                    "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                                    diagnostic_codes::FUNCTION_LACKS_RETURN_TYPE,
-                                );
-                            } else {
-                                use crate::checker::types::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages,
-                                };
-                                self.error_at_node(
-                                    func.type_annotation,
-                                    diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
-                                    diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
-                                );
-                            }
-                        } else if self.ctx.no_implicit_returns() && has_return && falls_through {
-                            // TS7030: noImplicitReturns - not all code paths return a value
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
-                            let error_node = if !func.name.is_none() {
-                                func.name
-                            } else {
-                                func.body
-                            };
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN,
-                                diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN,
-                            );
-                        }
-
-                        self.pop_return_type();
-
-                        // Exit async context
-                        if func.is_async {
-                            self.ctx.exit_async_context();
-                        }
-                    } else if self.ctx.no_implicit_any() && !has_type_annotation {
-                        let is_ambient = self.has_declare_modifier(&func.modifiers)
-                            || self.ctx.file_name.ends_with(".d.ts");
-                        if is_ambient
-                            && let Some(func_name) = self.get_function_name_from_node(stmt_idx)
-                        {
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages, format_message,
-                            };
-                            let message = format_message(
-                                diagnostic_messages::IMPLICIT_ANY_RETURN,
-                                &[&func_name, "any"],
-                            );
-                            let name_node = if !func.name.is_none() {
-                                Some(func.name)
-                            } else {
-                                None
-                            };
-                            self.error_at_node(
-                                name_node.unwrap_or(stmt_idx),
-                                &message,
-                                diagnostic_codes::IMPLICIT_ANY_RETURN,
-                            );
-                        }
-                    }
-
-                    self.pop_type_parameters(type_param_updates);
-                }
-            }
-            syntax_kind_ext::WHILE_STATEMENT | syntax_kind_ext::DO_STATEMENT => {
-                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
-                    self.get_type_of_node(loop_data.condition);
-                    self.check_statement(loop_data.statement);
-                }
-            }
-            syntax_kind_ext::FOR_STATEMENT => {
-                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
-                    if !loop_data.initializer.is_none() {
-                        // Check if initializer is a variable declaration list
-                        if let Some(init_node) = self.ctx.arena.get(loop_data.initializer) {
-                            if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                                self.check_variable_declaration_list(loop_data.initializer);
-                            } else {
-                                self.get_type_of_node(loop_data.initializer);
-                            }
-                        }
-                    }
-                    if !loop_data.condition.is_none() {
-                        self.get_type_of_node(loop_data.condition);
-                    }
-                    if !loop_data.incrementor.is_none() {
-                        self.get_type_of_node(loop_data.incrementor);
-                    }
-                    self.check_statement(loop_data.statement);
-                }
-            }
-            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
-                if let Some(for_data) = self.ctx.arena.get_for_in_of(node) {
-                    // Determine the element type for the loop variable (for-of) or key type (for-in).
-                    // This must happen before checking the body so the loop variable has the correct type.
-                    let expr_type = self.get_type_of_node(for_data.expression);
-                    let loop_var_type = if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
-                        // Check if the expression is iterable and emit TS2488/TS2504 if not
-                        self.check_for_of_iterability(
-                            expr_type,
-                            for_data.expression,
-                            for_data.await_modifier,
-                        );
-                        self.for_of_element_type(expr_type)
-                    } else {
-                        // `for (x in obj)` iterates keys (string in TS).
-                        TypeId::STRING
-                    };
-
-                    // Check if initializer is a variable declaration
-                    if let Some(init_node) = self.ctx.arena.get(for_data.initializer) {
-                        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                            self.assign_for_in_of_initializer_types(
-                                for_data.initializer,
-                                loop_var_type,
-                            );
-                            self.check_variable_declaration_list(for_data.initializer);
-                        } else {
-                            self.get_type_of_node(for_data.initializer);
-                        }
-                    }
-                    self.check_statement(for_data.statement);
-                }
-            }
-            syntax_kind_ext::SWITCH_STATEMENT => {
-                // Type-check the switch expression to catch TS2304 errors
-                if let Some(switch_data) = self.ctx.arena.get_switch(node) {
-                    self.get_type_of_node(switch_data.expression);
-                    // Check the case block for clauses
-                    if let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
-                        && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
-                    {
-                        for &clause_idx in &case_block.statements.nodes {
-                            if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                                && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
-                            {
-                                // Check case expression (skip for default clause which has NONE expression)
-                                if !clause.expression.is_none() {
-                                    self.get_type_of_node(clause.expression);
-                                }
-                                // Check statements in the case
-                                for &stmt_idx in &clause.statements.nodes {
-                                    self.check_statement(stmt_idx);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            syntax_kind_ext::TRY_STATEMENT => {
-                if let Some(try_data) = self.ctx.arena.get_try(node) {
-                    self.check_statement(try_data.try_block);
-                    if !try_data.catch_clause.is_none()
-                        && let Some(catch_node) = self.ctx.arena.get(try_data.catch_clause)
-                        && let Some(catch) = self.ctx.arena.get_catch_clause(catch_node)
-                    {
-                        if !catch.variable_declaration.is_none() {
-                            self.check_variable_declaration(catch.variable_declaration);
-                        }
-                        self.check_statement(catch.block);
-                    }
-                    if !try_data.finally_block.is_none() {
-                        self.check_statement(try_data.finally_block);
-                    }
-                }
-            }
-            // Interface declarations need parameter property checks
-            syntax_kind_ext::INTERFACE_DECLARATION => {
-                self.check_interface_declaration(stmt_idx);
-            }
-            // Export declarations - descend into the wrapped declaration
-            syntax_kind_ext::EXPORT_DECLARATION => {
-                if let Some(export_decl) = self.ctx.arena.get_export_decl(node) {
-                    // Check module specifier for unresolved modules (TS2792)
-                    // This handles cases like: export * as ns from './nonexistent';
-                    if !export_decl.module_specifier.is_none() {
-                        self.check_export_module_specifier(stmt_idx);
-                    }
-                    // Check the wrapped declaration (function, class, variable, etc.)
-                    if !export_decl.export_clause.is_none() {
-                        self.check_statement(export_decl.export_clause);
-                    }
-                }
-            }
-            // Type alias declarations - check the type for accessor body and parameter property errors
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
-                    let (_params, updates) = self.push_type_parameters(&type_alias.type_parameters);
-                    // Check the type for accessor bodies in ambient context and parameter properties
-                    self.check_type_for_missing_names(type_alias.type_node);
-                    self.check_type_for_parameter_properties(type_alias.type_node);
-                    self.pop_type_parameters(updates);
-                }
-            }
-            // Enum declarations - check for duplicate enum members (TS2300)
-            syntax_kind_ext::ENUM_DECLARATION => {
-                self.check_enum_duplicate_members(stmt_idx);
-            }
-            // Other type declarations that don't need action here
-            syntax_kind_ext::EMPTY_STATEMENT
-            | syntax_kind_ext::DEBUGGER_STATEMENT
-            | syntax_kind_ext::BREAK_STATEMENT
-            | syntax_kind_ext::CONTINUE_STATEMENT => {
-                // No action needed
-            }
-            syntax_kind_ext::IMPORT_DECLARATION => {
-                self.check_import_declaration(stmt_idx);
-            }
-            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                self.check_import_equals_declaration(stmt_idx);
-            }
-            syntax_kind_ext::MODULE_DECLARATION => {
-                // Check module declaration (errors 5061, 2819, etc.)
-                let mut checker =
-                    crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
-                checker.check_module_declaration(stmt_idx);
-
-                // Check module body for function overload implementations
-                // Skip for ambient modules (declare module 'xxx') - they don't need implementations
-                if let Some(module) = self.ctx.arena.get_module(node) {
-                    let is_ambient = self.has_declare_modifier(&module.modifiers);
-                    if !module.body.is_none() && !is_ambient {
-                        self.check_module_body(module.body);
-                    }
-                }
-            }
-            syntax_kind_ext::CLASS_DECLARATION => {
-                self.check_class_declaration(stmt_idx);
-            }
-            // Function expression and arrow function - check return types
-            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
-                if let Some(func) = self.ctx.arena.get_function(node) {
-                    let (_type_params, type_param_updates) =
-                        self.push_type_parameters(&func.type_parameters);
-
-                    // Check for parameter properties (error 2369)
-                    self.check_parameter_properties(&func.parameters.nodes);
-
-                    // Check for duplicate parameter names (TS2300)
-                    self.check_duplicate_parameters(&func.parameters);
-
-                    // Check for required parameters following optional parameters (TS1016)
-                    self.check_parameter_ordering(&func.parameters);
-
-                    // Check return type annotation for parameter properties
-                    if !func.type_annotation.is_none() {
-                        self.check_type_for_parameter_properties(func.type_annotation);
-                    }
-
-                    for &param_idx in &func.parameters.nodes {
-                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                            continue;
-                        };
-                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                            continue;
-                        };
-                        self.maybe_report_implicit_any_parameter(param, false);
-                    }
-
-                    // Check function body if present
-                    let has_type_annotation = !func.type_annotation.is_none();
-                    if !func.body.is_none() {
-                        let mut return_type = if has_type_annotation {
-                            self.get_type_of_node(func.type_annotation)
-                        } else {
-                            TypeId::UNKNOWN
-                        };
-
-                        // Cache parameter types
-                        self.cache_parameter_types(&func.parameters.nodes, None);
-                        self.infer_parameter_types_from_context(&func.parameters.nodes);
-
-                        // Check parameter default values
-                        self.check_parameter_initializers(&func.parameters.nodes);
-
-                        if !has_type_annotation {
-                            return_type = self.infer_return_type_from_body(func.body, None);
-                        }
-
-                        // Report implicit any return
-                        // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
-                        if !func.is_async {
-                            let func_name = self.get_function_name_from_node(stmt_idx);
-                            let name_node = if !func.name.is_none() {
-                                Some(func.name)
-                            } else {
-                                None
-                            };
-                            self.maybe_report_implicit_any_return(
-                                func_name,
-                                name_node,
-                                return_type,
-                                has_type_annotation,
-                                false,
-                                stmt_idx,
-                            );
-                        }
-
-                        // TS2705: Async function must return Promise
-                        if func.is_async && !func.asterisk_token && has_type_annotation {
-                            let should_emit_ts2705 = !self.is_promise_type(return_type)
-                                && return_type != TypeId::ERROR
-                                && !self.return_type_annotation_looks_like_promise(
-                                    func.type_annotation,
-                                );
-
-                            if should_emit_ts2705 {
-                                use crate::checker::types::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages,
-                                };
-                                self.error_at_node(
-                                    func.type_annotation,
-                                    diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                                    diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                                );
-                            }
-                        }
-
-                        // Enter async context for await expression checking
-                        if func.is_async {
-                            self.ctx.enter_async_context();
-                        }
-
-                        // KEY FIX: Push return type before checking body
-                        self.push_return_type(return_type);
-                        self.check_statement(func.body);
-
-                        // Check for error 2355: function with return type must return a value
-                        let is_async = func.is_async;
-                        let is_generator = func.asterisk_token;
-                        let check_return_type = self.return_type_for_implicit_return_check(
-                            return_type,
-                            is_async,
-                            is_generator,
-                        );
-                        let requires_return = self.requires_return_value(check_return_type);
-                        let has_return = self.body_has_return_with_value(func.body);
-                        let falls_through = self.function_body_falls_through(func.body);
-
-                        if has_type_annotation && requires_return && falls_through && !is_async {
-                            if !has_return {
-                                use crate::checker::types::diagnostics::diagnostic_codes;
-                                self.error_at_node(
-                                    func.type_annotation,
-                                    "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                                    diagnostic_codes::FUNCTION_LACKS_RETURN_TYPE,
-                                );
-                            } else {
-                                use crate::checker::types::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages,
-                                };
-                                self.error_at_node(
-                                    func.type_annotation,
-                                    diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
-                                    diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
-                                );
-                            }
-                        } else if self.ctx.no_implicit_returns() && has_return && falls_through {
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
-                            let error_node = if !func.name.is_none() {
-                                func.name
-                            } else {
-                                func.body
-                            };
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN,
-                                diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN,
-                            );
-                        }
-
-                        self.pop_return_type();
-
-                        // Exit async context
-                        if func.is_async {
-                            self.ctx.exit_async_context();
-                        }
-                    } else if self.ctx.no_implicit_any() && !has_type_annotation {
-                        let is_ambient = self.has_declare_modifier(&func.modifiers)
-                            || self.ctx.file_name.ends_with(".d.ts");
-                        if is_ambient
-                            && let Some(func_name) = self.get_function_name_from_node(stmt_idx)
-                        {
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages, format_message,
-                            };
-                            let message = format_message(
-                                diagnostic_messages::IMPLICIT_ANY_RETURN,
-                                &[&func_name, "any"],
-                            );
-                            let name_node = if !func.name.is_none() {
-                                Some(func.name)
-                            } else {
-                                None
-                            };
-                            self.error_at_node(
-                                name_node.unwrap_or(stmt_idx),
-                                &message,
-                                diagnostic_codes::IMPLICIT_ANY_RETURN,
-                            );
-                        }
-                    }
-
-                    self.pop_type_parameters(type_param_updates);
-                }
-            }
-            _ => {
-                // Catch-all for other statement types
-                self.get_type_of_node(stmt_idx);
-            }
-        }
+        StatementChecker::check(stmt_idx, self);
     }
 
     /// Check a variable statement (var/let/const declarations).
@@ -9945,80 +8576,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if the target type is valid for array destructuring.
-    /// Emits TS2461 if the type is not array-like, iterable, or a string.
-    /// Look up a property type in a type for destructuring purposes.
-    /// Returns (type_id, property_exists) where property_exists indicates if the property was found.
-    #[allow(dead_code)]
-    fn lookup_destructuring_property_type(
-        &self,
-        parent_type: TypeId,
-        property_name: &str,
-    ) -> (TypeId, bool) {
-        use crate::solver::TypeKey;
-
-        if parent_type == TypeId::ANY || parent_type == TypeId::UNKNOWN {
-            return (parent_type, true);
-        }
-
-        let Some(type_key) = self.ctx.types.lookup(parent_type) else {
-            return (TypeId::ANY, false);
-        };
-
-        match type_key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                // Find the property by comparing names
-                for prop in shape.properties.as_slice() {
-                    if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == property_name {
-                        return (prop.type_id, true);
-                    }
-                }
-                // Check for string index signature (for dynamic property access)
-                if let Some(ref string_index) = shape.string_index {
-                    return (string_index.value_type, true);
-                }
-                (TypeId::ANY, false)
-            }
-            TypeKey::Union(list_id) => {
-                // For unions, property must exist on all members
-                let types = self.ctx.types.type_list(list_id);
-                let mut all_exist = true;
-                let mut result_types = Vec::new();
-                for &member_type in types.iter() {
-                    let (member_prop_type, exists) =
-                        self.lookup_destructuring_property_type(member_type, property_name);
-                    if !exists {
-                        all_exist = false;
-                    }
-                    result_types.push(member_prop_type);
-                }
-                if all_exist && !result_types.is_empty() {
-                    (self.ctx.types.union(result_types), true)
-                } else {
-                    (TypeId::ANY, all_exist)
-                }
-            }
-            TypeKey::Intersection(list_id) => {
-                // For intersections, property can come from any member
-                let types = self.ctx.types.type_list(list_id);
-                for &member_type in types.iter() {
-                    let (member_prop_type, exists) =
-                        self.lookup_destructuring_property_type(member_type, property_name);
-                    if exists {
-                        return (member_prop_type, true);
-                    }
-                }
-                (TypeId::ANY, false)
-            }
-            _ => (TypeId::ANY, false),
-        }
-    }
-
-    /// Check if we should emit a "property does not exist" error for the given type in destructuring.
-    /// Returns false for any, unknown, or types that don't have concrete shapes.
-    // Note: should_emit_property_not_exist_for_destructuring is in type_checking.rs
-
     /// Get the expected type for a binding element from its parent type.
     pub(crate) fn get_binding_element_type(
         &mut self,
@@ -10035,16 +8592,9 @@ impl<'a> CheckerState<'a> {
                 return parent_type;
             }
 
-            // Unwrap readonly wrappers for destructuring element access with depth guard
-            let mut array_like = parent_type;
-            let mut readonly_depth = 0;
-            while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(array_like) {
-                readonly_depth += 1;
-                if readonly_depth > 100 {
-                    break;
-                }
-                array_like = inner;
-            }
+            // Unwrap readonly wrappers for destructuring element access
+            use crate::solver::type_queries;
+            let array_like = type_queries::unwrap_readonly_deep(self.ctx.types, parent_type);
 
             // Rest element: ...rest
             if element_data.dot_dot_dot_token {
@@ -10153,7 +8703,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use crate::solver::TypeKey;
+        use crate::solver::type_queries;
 
         // Only check excess properties for FRESH object literals
         // This is the key TypeScript behavior:
@@ -10167,127 +8717,117 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Get the properties of both types
-        let source_shape = match self.ctx.types.lookup(source) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                self.ctx.types.object_shape(shape_id)
-            }
-            _ => return,
+        // Get the properties of source type using type_queries
+        let Some(source_shape) = type_queries::get_object_shape(self.ctx.types, source) else {
+            return;
         };
 
         let source_props = source_shape.properties.as_slice();
         let resolved_target = self.resolve_type_for_property_access(target);
 
-        match self.ctx.types.lookup(resolved_target) {
-            Some(TypeKey::Object(shape_id)) => {
-                let target_shape = self.ctx.types.object_shape(shape_id);
-                let target_props = target_shape.properties.as_slice();
+        // Handle union targets first using type_queries
+        if let Some(members) = type_queries::get_union_members(self.ctx.types, resolved_target) {
+            let mut target_shapes = Vec::new();
 
-                // Empty object {} accepts any properties - no excess property check needed.
-                // This is a key TypeScript behavior: {} means "any non-nullish value".
-                // See https://github.com/microsoft/TypeScript/issues/60582
-                if target_props.is_empty() {
+            for &member in members.iter() {
+                let resolved_member = self.resolve_type_for_property_access(member);
+                let Some(shape) = type_queries::get_object_shape(self.ctx.types, resolved_member)
+                else {
+                    continue;
+                };
+
+                if shape.properties.is_empty()
+                    || shape.string_index.is_some()
+                    || shape.number_index.is_some()
+                {
                     return;
                 }
 
-                // If target has an index signature, it accepts any properties
-                if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
-                    return;
-                }
-
-                // Check for excess properties in source that don't exist in target
-                // This is the "freshness" or "strict object literal" check
-                for source_prop in source_props {
-                    let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
-                    if let Some(target_prop) = target_prop {
-                        // Property exists in target - check nested object literals (Rule #4)
-                        // If the source property is a fresh object literal, recursively check
-                        if self
-                            .ctx
-                            .freshness_tracker
-                            .should_check_excess_properties(source_prop.type_id)
-                        {
-                            self.check_object_literal_excess_properties(
-                                source_prop.type_id,
-                                target_prop.type_id,
-                                idx,
-                            );
-                        }
-                    } else {
-                        let prop_name = self.ctx.types.resolve_atom(source_prop.name);
-                        self.error_excess_property_at(&prop_name, target, idx);
-                    }
-                }
+                target_shapes.push(shape);
             }
-            Some(TypeKey::ObjectWithIndex(_shape_id)) => {
-                // ObjectWithIndex always has an index signature, accepts any properties
+
+            if target_shapes.is_empty() {
                 return;
             }
-            Some(TypeKey::Union(members_id)) => {
-                let members = self.ctx.types.type_list(members_id);
-                let mut target_shapes = Vec::new();
 
-                for &member in members.iter() {
-                    let resolved_member = self.resolve_type_for_property_access(member);
-                    let shape = match self.ctx.types.lookup(resolved_member) {
-                        Some(TypeKey::Object(shape_id))
-                        | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                            self.ctx.types.object_shape(shape_id)
-                        }
-                        _ => continue,
+            for source_prop in source_props {
+                // For unions, check if property exists in ANY member
+                let target_prop_types: Vec<TypeId> = target_shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        shape
+                            .properties
+                            .iter()
+                            .find(|prop| prop.name == source_prop.name)
+                            .map(|prop| prop.type_id)
+                    })
+                    .collect();
+
+                if target_prop_types.is_empty() {
+                    let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                    self.error_excess_property_at(&prop_name, target, idx);
+                } else if self
+                    .ctx
+                    .freshness_tracker
+                    .should_check_excess_properties(source_prop.type_id)
+                {
+                    // Property exists in target - check nested object literals (Rule #4)
+                    // For unions, create a union of the matching property types
+                    let target_prop_type = if target_prop_types.len() == 1 {
+                        target_prop_types[0]
+                    } else {
+                        self.ctx.types.union(target_prop_types)
                     };
-
-                    if shape.properties.is_empty()
-                        || shape.string_index.is_some()
-                        || shape.number_index.is_some()
-                    {
-                        return;
-                    }
-
-                    target_shapes.push(shape);
+                    self.check_object_literal_excess_properties(
+                        source_prop.type_id,
+                        target_prop_type,
+                        idx,
+                    );
                 }
+            }
+            return;
+        }
 
-                if target_shapes.is_empty() {
-                    return;
-                }
+        // Handle object targets using type_queries
+        if let Some(target_shape) = type_queries::get_object_shape(self.ctx.types, resolved_target)
+        {
+            let target_props = target_shape.properties.as_slice();
 
-                for source_prop in source_props {
-                    // For unions, check if property exists in ANY member
-                    let target_prop_types: Vec<TypeId> = target_shapes
-                        .iter()
-                        .filter_map(|shape| {
-                            shape
-                                .properties
-                                .iter()
-                                .find(|prop| prop.name == source_prop.name)
-                                .map(|prop| prop.type_id)
-                        })
-                        .collect();
+            // Empty object {} accepts any properties - no excess property check needed.
+            // This is a key TypeScript behavior: {} means "any non-nullish value".
+            // See https://github.com/microsoft/TypeScript/issues/60582
+            if target_props.is_empty() {
+                return;
+            }
 
-                    if target_prop_types.is_empty() {
-                        let prop_name = self.ctx.types.resolve_atom(source_prop.name);
-                        self.error_excess_property_at(&prop_name, target, idx);
-                    } else if self
+            // If target has an index signature, it accepts any properties
+            if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+                return;
+            }
+
+            // Check for excess properties in source that don't exist in target
+            // This is the "freshness" or "strict object literal" check
+            for source_prop in source_props {
+                let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
+                if let Some(target_prop) = target_prop {
+                    // Property exists in target - check nested object literals (Rule #4)
+                    // If the source property is a fresh object literal, recursively check
+                    if self
                         .ctx
                         .freshness_tracker
                         .should_check_excess_properties(source_prop.type_id)
                     {
-                        // Property exists in target - check nested object literals (Rule #4)
-                        // For unions, create a union of the matching property types
-                        let target_prop_type = if target_prop_types.len() == 1 {
-                            target_prop_types[0]
-                        } else {
-                            self.ctx.types.union(target_prop_types)
-                        };
                         self.check_object_literal_excess_properties(
                             source_prop.type_id,
-                            target_prop_type,
+                            target_prop.type_id,
                             idx,
                         );
                     }
+                } else {
+                    let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                    self.error_excess_property_at(&prop_name, target, idx);
                 }
             }
-            _ => (),
         }
         // Note: Missing property checks are handled by solver's explain_failure
     }
@@ -10553,95 +9093,6 @@ impl<'a> CheckerState<'a> {
         }
 
         None
-    }
-
-    /// Get the class name from a variable declaration that initializes to `new ClassName()`.
-    // get_class_name_from_var_decl is in type_checking.rs - this is an older impl to be removed
-    #[allow(dead_code)]
-    fn get_class_name_from_var_decl_old(&self, decl_idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(decl_idx) else {
-            return None;
-        };
-
-        let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) else {
-            return None;
-        };
-
-        if var_decl.initializer.is_none() {
-            return None;
-        }
-
-        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
-            return None;
-        };
-
-        // Check if initializer is `new ClassName()`
-        if init_node.kind != syntax_kind_ext::NEW_EXPRESSION {
-            return None;
-        }
-
-        // Call and new expressions share CallExprData
-        let Some(new_expr) = self.ctx.arena.get_call_expr(init_node) else {
-            return None;
-        };
-
-        // Get the class name from the new expression
-        let Some(expr_node) = self.ctx.arena.get(new_expr.expression) else {
-            return None;
-        };
-
-        if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-            return Some(ident.escaped_text.clone());
-        }
-
-        None
-    }
-
-    /// Check if a property is readonly in a class declaration (by looking at AST).
-    // is_class_property_readonly is in type_checking.rs - this is an older impl to be removed
-    #[allow(dead_code)]
-    fn is_class_property_readonly_old(&self, class_name: &str, prop_name: &str) -> bool {
-        // Find the class declaration by name
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(class_name)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-        {
-            let decl_idx = if !symbol.value_declaration.is_none() {
-                symbol.value_declaration
-            } else if let Some(&idx) = symbol.declarations.first() {
-                idx
-            } else {
-                return false;
-            };
-
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                return false;
-            };
-
-            let Some(class) = self.ctx.arena.get_class(node) else {
-                return false;
-            };
-
-            // Find the property in the class members
-            for &member_idx in &class.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-
-                if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                    && let Some(prop) = self.ctx.arena.get_property_decl(member_node)
-                {
-                    // Get the property name
-                    if let Some(pname) = self.get_property_name(prop.name)
-                        && pname == prop_name
-                    {
-                        // Check if this property has readonly modifier
-                        return self.has_readonly_modifier(&prop.modifiers);
-                    }
-                }
-            }
-        }
-
-        false
     }
 
     fn is_readonly_index_signature(
@@ -12960,4 +11411,363 @@ impl<'a> CheckerState<'a> {
     }
 
     // Note: is_derived_property_redeclaration, find_containing_class are in type_checking.rs
+}
+
+/// Implementation of StatementCheckCallbacks for CheckerState.
+///
+/// This provides the actual implementation of statement checking operations
+/// that StatementChecker delegates to. Each callback method calls the
+/// corresponding method on CheckerState.
+impl<'a> StatementCheckCallbacks for CheckerState<'a> {
+    fn arena(&self) -> &crate::parser::node::NodeArena {
+        self.ctx.arena
+    }
+
+    fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
+        CheckerState::get_type_of_node(self, idx)
+    }
+
+    fn check_variable_statement(&mut self, stmt_idx: NodeIndex) {
+        CheckerState::check_variable_statement(self, stmt_idx)
+    }
+
+    fn check_variable_declaration_list(&mut self, list_idx: NodeIndex) {
+        CheckerState::check_variable_declaration_list(self, list_idx)
+    }
+
+    fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
+        CheckerState::check_variable_declaration(self, decl_idx)
+    }
+
+    fn check_return_statement(&mut self, stmt_idx: NodeIndex) {
+        CheckerState::check_return_statement(self, stmt_idx)
+    }
+
+    fn check_unreachable_code_in_block(&mut self, stmts: &[NodeIndex]) {
+        CheckerState::check_unreachable_code_in_block(self, stmts)
+    }
+
+    fn check_function_implementations(&mut self, stmts: &[NodeIndex]) {
+        CheckerState::check_function_implementations(self, stmts)
+    }
+
+    fn check_function_declaration(&mut self, func_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return;
+        };
+
+        // Delegate to DeclarationChecker for function declaration-specific checks
+        // (only for actual function declarations, not expressions/arrows)
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
+            checker.check_function_declaration(func_idx);
+        }
+
+        // Re-get node after DeclarationChecker borrows ctx
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return;
+        };
+
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return;
+        };
+
+        let (_type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
+
+        // Check for parameter properties (error 2369)
+        // Parameter properties are only allowed in constructors
+        self.check_parameter_properties(&func.parameters.nodes);
+
+        // Check for duplicate parameter names (TS2300)
+        self.check_duplicate_parameters(&func.parameters);
+
+        // Check for required parameters following optional parameters (TS1016)
+        self.check_parameter_ordering(&func.parameters);
+
+        // Check return type annotation for parameter properties in function types
+        if !func.type_annotation.is_none() {
+            self.check_type_for_parameter_properties(func.type_annotation);
+        }
+
+        // Check parameter type annotations for parameter properties
+        for &param_idx in &func.parameters.nodes {
+            if let Some(param_node) = self.ctx.arena.get(param_idx)
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                && !param.type_annotation.is_none()
+            {
+                self.check_type_for_parameter_properties(param.type_annotation);
+            }
+        }
+
+        for &param_idx in &func.parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            self.maybe_report_implicit_any_parameter(param, false);
+        }
+
+        // Check function body if present
+        let has_type_annotation = !func.type_annotation.is_none();
+        if !func.body.is_none() {
+            let mut return_type = if has_type_annotation {
+                self.get_type_of_node(func.type_annotation)
+            } else {
+                // Use UNKNOWN to enforce strict checking
+                TypeId::UNKNOWN
+            };
+
+            // Cache parameter types from annotations (so for-of binding uses correct types)
+            // and then infer for any remaining unknown parameters using contextual information.
+            self.cache_parameter_types(&func.parameters.nodes, None);
+            self.infer_parameter_types_from_context(&func.parameters.nodes);
+
+            // Check that parameter default values are assignable to declared types (TS2322)
+            self.check_parameter_initializers(&func.parameters.nodes);
+
+            if !has_type_annotation {
+                return_type = self.infer_return_type_from_body(func.body, None);
+            }
+
+            // TS7010 (implicit any return) is emitted for functions without
+            // return type annotations when noImplicitAny is enabled and the return
+            // type cannot be inferred (e.g., is 'any' or only returns undefined)
+            // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
+            // maybe_report_implicit_any_return handles the noImplicitAny check internally
+            if !func.is_async {
+                let func_name = self.get_function_name_from_node(func_idx);
+                let name_node = if !func.name.is_none() {
+                    Some(func.name)
+                } else {
+                    None
+                };
+                self.maybe_report_implicit_any_return(
+                    func_name,
+                    name_node,
+                    return_type,
+                    has_type_annotation,
+                    false,
+                    func_idx,
+                );
+            }
+
+            // TS2705: Async function must return Promise
+            // Only check if there's an explicit return type annotation that is NOT Promise
+            // Skip this check if the return type is ERROR or the annotation looks like Promise
+            // Note: Async generators (async function*) return AsyncGenerator, not Promise
+            if func.is_async && !func.asterisk_token && has_type_annotation {
+                let should_emit_ts2705 = !self.is_promise_type(return_type)
+                    && return_type != TypeId::ERROR
+                    && !self.return_type_annotation_looks_like_promise(func.type_annotation);
+
+                if should_emit_ts2705 {
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages,
+                    };
+                    self.error_at_node(
+                        func.type_annotation,
+                        diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
+                        diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                    );
+                }
+            }
+
+            // Enter async context for await expression checking
+            if func.is_async {
+                self.ctx.enter_async_context();
+            }
+
+            self.push_return_type(return_type);
+            self.check_statement(func.body);
+
+            // Check for error 2355: function with return type must return a value
+            // Only check if there's an explicit return type annotation
+            let is_async = func.is_async;
+            let is_generator = func.asterisk_token;
+            let check_return_type =
+                self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
+            let requires_return = self.requires_return_value(check_return_type);
+            let has_return = self.body_has_return_with_value(func.body);
+            let falls_through = self.function_body_falls_through(func.body);
+
+            // TS2355: Skip for async functions - they implicitly return Promise<void>
+            if has_type_annotation && requires_return && falls_through && !is_async {
+                if !has_return {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        func.type_annotation,
+                        "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                        diagnostic_codes::FUNCTION_LACKS_RETURN_TYPE,
+                    );
+                } else {
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages,
+                    };
+                    self.error_at_node(
+                        func.type_annotation,
+                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
+                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
+                    );
+                }
+            } else if self.ctx.no_implicit_returns() && has_return && falls_through {
+                // TS7030: noImplicitReturns - not all code paths return a value
+                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                let error_node = if !func.name.is_none() {
+                    func.name
+                } else {
+                    func.body
+                };
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN,
+                    diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN,
+                );
+            }
+
+            self.pop_return_type();
+
+            // Exit async context
+            if func.is_async {
+                self.ctx.exit_async_context();
+            }
+        } else if self.ctx.no_implicit_any() && !has_type_annotation {
+            let is_ambient =
+                self.has_declare_modifier(&func.modifiers) || self.ctx.file_name.ends_with(".d.ts");
+            if is_ambient && let Some(func_name) = self.get_function_name_from_node(func_idx) {
+                use crate::checker::types::diagnostics::{
+                    diagnostic_codes, diagnostic_messages, format_message,
+                };
+                let message = format_message(
+                    diagnostic_messages::IMPLICIT_ANY_RETURN,
+                    &[&func_name, "any"],
+                );
+                let name_node = if !func.name.is_none() {
+                    Some(func.name)
+                } else {
+                    None
+                };
+                self.error_at_node(
+                    name_node.unwrap_or(func_idx),
+                    &message,
+                    diagnostic_codes::IMPLICIT_ANY_RETURN,
+                );
+            }
+        }
+
+        self.pop_type_parameters(type_param_updates);
+    }
+
+    fn check_class_declaration(&mut self, class_idx: NodeIndex) {
+        // Delegate to DeclarationChecker first
+        let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
+        checker.check_class_declaration(class_idx);
+
+        // Continue with comprehensive class checking in CheckerState
+        CheckerState::check_class_declaration(self, class_idx)
+    }
+
+    fn check_interface_declaration(&mut self, iface_idx: NodeIndex) {
+        // Delegate to DeclarationChecker first
+        let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
+        checker.check_interface_declaration(iface_idx);
+
+        // Continue with comprehensive interface checking in CheckerState
+        CheckerState::check_interface_declaration(self, iface_idx)
+    }
+
+    fn check_import_declaration(&mut self, import_idx: NodeIndex) {
+        CheckerState::check_import_declaration(self, import_idx)
+    }
+
+    fn check_import_equals_declaration(&mut self, import_idx: NodeIndex) {
+        CheckerState::check_import_equals_declaration(self, import_idx)
+    }
+
+    fn check_export_declaration(&mut self, export_idx: NodeIndex) {
+        if let Some(node) = self.ctx.arena.get(export_idx) {
+            if let Some(export_decl) = self.ctx.arena.get_export_decl(node) {
+                // Check module specifier for unresolved modules (TS2792)
+                if !export_decl.module_specifier.is_none() {
+                    self.check_export_module_specifier(export_idx);
+                }
+                // Check the wrapped declaration
+                if !export_decl.export_clause.is_none() {
+                    self.check_statement(export_decl.export_clause);
+                }
+            }
+        }
+    }
+
+    fn check_type_alias_declaration(&mut self, type_alias_idx: NodeIndex) {
+        if let Some(node) = self.ctx.arena.get(type_alias_idx) {
+            // Delegate to DeclarationChecker first
+            let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
+            checker.check_type_alias_declaration(type_alias_idx);
+
+            // Continue with comprehensive type alias checking
+            if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                let (_params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                self.check_type_for_missing_names(type_alias.type_node);
+                self.check_type_for_parameter_properties(type_alias.type_node);
+                self.pop_type_parameters(updates);
+            }
+        }
+    }
+
+    fn check_enum_duplicate_members(&mut self, enum_idx: NodeIndex) {
+        // Delegate to DeclarationChecker first
+        let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
+        checker.check_enum_declaration(enum_idx);
+
+        // Continue with enum duplicate members checking
+        CheckerState::check_enum_duplicate_members(self, enum_idx)
+    }
+
+    fn check_module_declaration(&mut self, module_idx: NodeIndex) {
+        if let Some(node) = self.ctx.arena.get(module_idx) {
+            // Delegate to DeclarationChecker first
+            let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
+            checker.check_module_declaration(module_idx);
+
+            // Check module body for function overload implementations
+            if let Some(module) = self.ctx.arena.get_module(node) {
+                let is_ambient = self.has_declare_modifier(&module.modifiers);
+                if !module.body.is_none() && !is_ambient {
+                    self.check_module_body(module.body);
+                }
+            }
+        }
+    }
+
+    fn check_await_expression(&mut self, expr_idx: NodeIndex) {
+        CheckerState::check_await_expression(self, expr_idx)
+    }
+
+    fn assign_for_in_of_initializer_types(
+        &mut self,
+        decl_list_idx: NodeIndex,
+        loop_var_type: TypeId,
+    ) {
+        CheckerState::assign_for_in_of_initializer_types(self, decl_list_idx, loop_var_type)
+    }
+
+    fn for_of_element_type(&mut self, expr_type: TypeId) -> TypeId {
+        CheckerState::for_of_element_type(self, expr_type)
+    }
+
+    fn check_for_of_iterability(
+        &mut self,
+        expr_type: TypeId,
+        expr_idx: NodeIndex,
+        await_modifier: bool,
+    ) {
+        CheckerState::check_for_of_iterability(self, expr_type, expr_idx, await_modifier);
+    }
+
+    fn check_statement(&mut self, stmt_idx: NodeIndex) {
+        // This calls back to the main check_statement which will delegate to StatementChecker
+        CheckerState::check_statement(self, stmt_idx)
+    }
 }

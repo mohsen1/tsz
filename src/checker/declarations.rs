@@ -19,7 +19,10 @@ pub struct DeclarationChecker<'a, 'ctx> {
 }
 
 /// Property key for tracking property assignments in control flow analysis.
+/// Note: Currently unused as property initialization is handled by CheckerState.
+/// These types will be used when property initialization is migrated to DeclarationChecker.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[allow(dead_code)]
 enum PropertyKey {
     Ident(String),
     Private(String),
@@ -39,7 +42,9 @@ enum ComputedKey {
 }
 
 /// Result of control flow analysis for property assignments.
+/// Note: Currently unused as property initialization is handled by CheckerState.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct FlowResult {
     normal: Option<HashSet<PropertyKey>>,
     exits: Option<HashSet<PropertyKey>>,
@@ -134,30 +139,18 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check a class declaration.
-    pub fn check_class_declaration(&mut self, class_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(class_idx) else {
-            return;
-        };
-
-        // Get the class data
-        let Some(class_decl) = self.ctx.arena.get_class(node) else {
-            return;
-        };
-
-        // Skip ambient classes (declare keyword)
-        if self
-            .ctx
-            .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword as u16)
-        {
-            return;
-        }
-
-        // Check property initialization if strictPropertyInitialization is enabled
-        if self.ctx.strict_property_initialization() {
-            self.check_property_initialization(class_idx, class_decl);
-        }
-
-        // Additional class checks will be added here:
+    ///
+    /// Note: Property initialization (TS2564) is handled by CheckerState::check_class_declaration
+    /// which has more comprehensive control flow analysis. This method handles other
+    /// declaration-specific checks.
+    pub fn check_class_declaration(&mut self, _class_idx: NodeIndex) {
+        // Property initialization (TS2564) is handled by CheckerState::check_class_declaration
+        // which has more comprehensive control flow analysis including:
+        // - Parameter property tracking
+        // - Derived class handling
+        // - Complex control flow paths
+        //
+        // Additional class declaration checks will be added here as they are migrated:
         // - Heritage clauses (extends/implements)
         // - Member types and modifiers
         // - Abstract implementation requirements
@@ -170,6 +163,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// - Don't have initializers
     /// - Don't have definite assignment assertions (!)
     /// - Are not assigned in all constructor code paths
+    ///
+    /// Note: Currently unused - property initialization is handled by CheckerState
+    /// which has more comprehensive control flow analysis.
+    #[allow(dead_code)]
     fn check_property_initialization(
         &mut self,
         class_idx: NodeIndex,
@@ -265,6 +262,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Get the name of a property as a string.
+    #[allow(dead_code)]
     fn get_property_name(&self, name_idx: NodeIndex) -> String {
         if let Some(name_node) = self.ctx.arena.get(name_idx) {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
@@ -278,6 +276,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Convert a property name node to a PropertyKey for tracking.
+    #[allow(dead_code)]
     fn property_to_key(&self, name_idx: NodeIndex, name_str: &str) -> Option<PropertyKey> {
         if let Some(name_node) = self.ctx.arena.get(name_idx) {
             match name_node.kind {
@@ -309,6 +308,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check if properties are initialized in constructor using control flow analysis.
     ///
     /// Returns the set of properties that are definitely assigned in all code paths.
+    #[allow(dead_code)]
     fn is_property_initialized_in_constructor(
         &self,
         class_idx: NodeIndex,
@@ -333,6 +333,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Find the constructor body in class members.
+    #[allow(dead_code)]
     fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
         for &member_idx in &members.nodes {
             let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -352,6 +353,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze constructor to find which properties are assigned.
+    #[allow(dead_code)]
     fn analyze_constructor_assignments(
         &self,
         body_idx: NodeIndex,
@@ -362,6 +364,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Convert flow result to a set of definitely assigned properties.
+    #[allow(dead_code)]
     fn flow_result_to_assigned(&self, result: FlowResult) -> HashSet<PropertyKey> {
         let mut assigned = None;
         if let Some(normal) = result.normal {
@@ -378,6 +381,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Intersect two sets of property keys.
+    #[allow(dead_code)]
     fn intersect_sets(
         &self,
         set1: &HashSet<PropertyKey>,
@@ -387,6 +391,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze a statement for property assignments.
+    #[allow(dead_code)]
     fn analyze_statement(
         &self,
         stmt_idx: NodeIndex,
@@ -438,6 +443,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze a block of statements.
+    #[allow(dead_code)]
     fn analyze_block(
         &self,
         block_idx: NodeIndex,
@@ -498,6 +504,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze an expression statement for property assignments.
+    #[allow(dead_code)]
     fn analyze_expression_statement(
         &self,
         stmt_idx: NodeIndex,
@@ -528,6 +535,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze an expression for property assignments.
+    #[allow(dead_code)]
     fn analyze_expression_for_assignment(
         &self,
         expr_idx: NodeIndex,
@@ -560,6 +568,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check if an expression is a `this.property` access.
+    #[allow(dead_code)]
     fn is_this_property_access(&self, expr_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return false;
@@ -582,6 +591,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Extract the property key from a property access expression.
+    #[allow(dead_code)]
     fn extract_property_key(&self, expr_idx: NodeIndex) -> Option<PropertyKey> {
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return None;
@@ -606,6 +616,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze an if statement.
+    #[allow(dead_code)]
     fn analyze_if_statement(
         &self,
         stmt_idx: NodeIndex,
@@ -668,6 +679,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze a try statement.
+    #[allow(dead_code)]
     fn analyze_try_statement(
         &self,
         stmt_idx: NodeIndex,
@@ -728,6 +740,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze a return statement.
+    #[allow(dead_code)]
     fn analyze_return_statement(&self, assigned_in: &HashSet<PropertyKey>) -> FlowResult {
         FlowResult {
             normal: None,
@@ -736,6 +749,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Analyze a throw statement.
+    #[allow(dead_code)]
     fn analyze_throw_statement(&self, assigned_in: &HashSet<PropertyKey>) -> FlowResult {
         FlowResult {
             normal: None,

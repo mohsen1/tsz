@@ -3,190 +3,424 @@
 //! Handles control flow statements and dispatches declarations.
 //! This module separates statement checking logic from the monolithic CheckerState.
 
-use super::context::CheckerContext;
 use crate::parser::NodeIndex;
+use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
+use crate::solver::TypeId;
 
-/// Statement type checker that operates on the shared context.
+/// Trait for statement checking callbacks.
 ///
-/// This is a stateless checker that borrows the context mutably.
-/// All statement type checking goes through this checker.
-pub struct StatementChecker<'a, 'ctx> {
-    pub ctx: &'a mut CheckerContext<'ctx>,
+/// This trait defines the interface that CheckerState must implement
+/// to allow StatementChecker to delegate type checking and other operations.
+pub trait StatementCheckCallbacks {
+    /// Get access to the node arena for AST traversal.
+    fn arena(&self) -> &NodeArena;
+
+    /// Get the type of a node (expression or type annotation).
+    fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId;
+
+    /// Check a variable statement.
+    fn check_variable_statement(&mut self, stmt_idx: NodeIndex);
+
+    /// Check a variable declaration list.
+    fn check_variable_declaration_list(&mut self, list_idx: NodeIndex);
+
+    /// Check a variable declaration.
+    fn check_variable_declaration(&mut self, decl_idx: NodeIndex);
+
+    /// Check a return statement.
+    fn check_return_statement(&mut self, stmt_idx: NodeIndex);
+
+    /// Check unreachable code in a block.
+    fn check_unreachable_code_in_block(&mut self, stmts: &[NodeIndex]);
+
+    /// Check function implementations in a block.
+    fn check_function_implementations(&mut self, stmts: &[NodeIndex]);
+
+    /// Check a function declaration.
+    fn check_function_declaration(&mut self, func_idx: NodeIndex);
+
+    /// Check a class declaration.
+    fn check_class_declaration(&mut self, class_idx: NodeIndex);
+
+    /// Check an interface declaration.
+    fn check_interface_declaration(&mut self, iface_idx: NodeIndex);
+
+    /// Check an import declaration.
+    fn check_import_declaration(&mut self, import_idx: NodeIndex);
+
+    /// Check an import equals declaration.
+    fn check_import_equals_declaration(&mut self, import_idx: NodeIndex);
+
+    /// Check an export declaration.
+    fn check_export_declaration(&mut self, export_idx: NodeIndex);
+
+    /// Check a type alias declaration.
+    fn check_type_alias_declaration(&mut self, type_alias_idx: NodeIndex);
+
+    /// Check enum duplicate members.
+    fn check_enum_duplicate_members(&mut self, enum_idx: NodeIndex);
+
+    /// Check a module declaration.
+    fn check_module_declaration(&mut self, module_idx: NodeIndex);
+
+    /// Check an await expression (TS1359: await outside async).
+    fn check_await_expression(&mut self, expr_idx: NodeIndex);
+
+    /// Assign types for for-in/for-of initializers.
+    fn assign_for_in_of_initializer_types(
+        &mut self,
+        decl_list_idx: NodeIndex,
+        loop_var_type: TypeId,
+    );
+
+    /// Get element type for for-of loop.
+    fn for_of_element_type(&mut self, expr_type: TypeId) -> TypeId;
+
+    /// Check for-of iterability.
+    fn check_for_of_iterability(
+        &mut self,
+        expr_type: TypeId,
+        expr_idx: NodeIndex,
+        await_modifier: bool,
+    );
+
+    /// Recursively check a nested statement (callback to check_statement).
+    fn check_statement(&mut self, stmt_idx: NodeIndex);
 }
 
-impl<'a, 'ctx> StatementChecker<'a, 'ctx> {
-    /// Create a new statement checker with a mutable context reference.
-    pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
-        Self { ctx }
+/// Statement type checker that dispatches to specialized handlers.
+///
+/// This is a zero-sized struct that only provides the dispatching logic.
+/// All state and type checking operations are delegated back to the
+/// implementation of StatementCheckCallbacks (typically CheckerState).
+pub struct StatementChecker;
+
+impl StatementChecker {
+    /// Create a new statement checker.
+    pub fn new() -> Self {
+        Self
     }
 
     /// Check a statement node.
     ///
     /// This dispatches to specialized handlers based on statement kind.
-    /// Currently a skeleton - logic will be migrated incrementally from CheckerState.
-    pub fn check(&mut self, stmt_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
+    /// The `state` parameter provides both the arena for AST access and
+    /// callbacks for type checking operations.
+    pub fn check<S: StatementCheckCallbacks>(stmt_idx: NodeIndex, state: &mut S) {
+        // Get node kind and extract needed data before any mutable operations
+        let node_data = {
+            let arena = state.arena();
+            let Some(node) = arena.get(stmt_idx) else {
+                return;
+            };
+            (node.kind, node)
         };
+        let kind = node_data.0;
 
-        match node.kind {
-            k if k == syntax_kind_ext::BLOCK => {
-                self.check_block(stmt_idx);
+        match kind {
+            syntax_kind_ext::VARIABLE_STATEMENT => {
+                state.check_variable_statement(stmt_idx);
             }
-            k if k == syntax_kind_ext::IF_STATEMENT => {
-                self.check_if_statement(stmt_idx);
+            syntax_kind_ext::EXPRESSION_STATEMENT => {
+                // Extract expression index before mutable operations
+                let expr_idx = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena.get_expression_statement(node).map(|e| e.expression)
+                };
+                if let Some(expression) = expr_idx {
+                    // TS1359: Check for await expressions outside async function
+                    state.check_await_expression(expression);
+                    // Then get the type for normal type checking
+                    state.get_type_of_node(expression);
+                }
             }
-            k if k == syntax_kind_ext::WHILE_STATEMENT || k == syntax_kind_ext::DO_STATEMENT => {
-                self.check_loop_statement(stmt_idx);
+            syntax_kind_ext::IF_STATEMENT => {
+                // Extract all needed data before mutable operations
+                let if_data = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena.get_if_statement(node).map(|if_stmt| {
+                        (
+                            if_stmt.expression,
+                            if_stmt.then_statement,
+                            if_stmt.else_statement,
+                        )
+                    })
+                };
+                if let Some((expression, then_stmt, else_stmt)) = if_data {
+                    // Check condition
+                    state.check_await_expression(expression);
+                    state.get_type_of_node(expression);
+                    // Check then branch
+                    state.check_statement(then_stmt);
+                    // Check else branch if present
+                    if !else_stmt.is_none() {
+                        state.check_statement(else_stmt);
+                    }
+                }
             }
-            k if k == syntax_kind_ext::FOR_STATEMENT => {
-                self.check_for_statement(stmt_idx);
+            syntax_kind_ext::RETURN_STATEMENT => {
+                state.check_return_statement(stmt_idx);
             }
-            k if k == syntax_kind_ext::RETURN_STATEMENT => {
-                self.check_return_statement(stmt_idx);
+            syntax_kind_ext::BLOCK => {
+                // Extract statements before mutable operations
+                let stmts = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena.get_block(node).map(|b| b.statements.nodes.clone())
+                };
+                if let Some(stmts) = stmts {
+                    // Check for unreachable code before checking individual statements
+                    state.check_unreachable_code_in_block(&stmts);
+                    for inner_stmt in &stmts {
+                        state.check_statement(*inner_stmt);
+                    }
+                    // Check for function overload implementations in blocks
+                    state.check_function_implementations(&stmts);
+                }
             }
-            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
-                self.check_switch_statement(stmt_idx);
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                state.check_function_declaration(stmt_idx);
             }
-            k if k == syntax_kind_ext::TRY_STATEMENT => {
-                self.check_try_statement(stmt_idx);
+            syntax_kind_ext::WHILE_STATEMENT | syntax_kind_ext::DO_STATEMENT => {
+                // Extract loop data before mutable operations
+                let loop_data = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena.get_loop(node).map(|l| (l.condition, l.statement))
+                };
+                if let Some((condition, statement)) = loop_data {
+                    state.get_type_of_node(condition);
+                    state.check_statement(statement);
+                }
             }
-            k if k == syntax_kind_ext::THROW_STATEMENT => {
-                self.check_throw_statement(stmt_idx);
+            syntax_kind_ext::FOR_STATEMENT => {
+                // Extract loop data before mutable operations
+                let loop_data = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena
+                        .get_loop(node)
+                        .map(|l| (l.initializer, l.condition, l.incrementor, l.statement))
+                };
+                if let Some((initializer, condition, incrementor, statement)) = loop_data {
+                    if !initializer.is_none() {
+                        // Check if initializer is a variable declaration list
+                        let is_var_decl_list = {
+                            let arena = state.arena();
+                            arena
+                                .get(initializer)
+                                .map(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
+                                .unwrap_or(false)
+                        };
+                        if is_var_decl_list {
+                            state.check_variable_declaration_list(initializer);
+                        } else {
+                            state.get_type_of_node(initializer);
+                        }
+                    }
+                    if !condition.is_none() {
+                        state.get_type_of_node(condition);
+                    }
+                    if !incrementor.is_none() {
+                        state.get_type_of_node(incrementor);
+                    }
+                    state.check_statement(statement);
+                }
             }
-            // Declarations are handled by DeclarationChecker
-            // Expression statements are handled by ExpressionChecker
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                // Extract for-in/of data before mutable operations
+                let for_data = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena
+                        .get_for_in_of(node)
+                        .map(|f| (f.expression, f.initializer, f.await_modifier, f.statement))
+                };
+                let is_for_of = kind == syntax_kind_ext::FOR_OF_STATEMENT;
+
+                if let Some((expression, initializer, await_modifier, statement)) = for_data {
+                    // Determine the element type for the loop variable (for-of) or key type (for-in).
+                    let expr_type = state.get_type_of_node(expression);
+                    let loop_var_type = if is_for_of {
+                        // Check if the expression is iterable and emit TS2488/TS2504 if not
+                        state.check_for_of_iterability(expr_type, expression, await_modifier);
+                        state.for_of_element_type(expr_type)
+                    } else {
+                        // `for (x in obj)` iterates keys (string in TS).
+                        TypeId::STRING
+                    };
+
+                    // Check if initializer is a variable declaration
+                    let is_var_decl_list = {
+                        let arena = state.arena();
+                        arena
+                            .get(initializer)
+                            .map(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
+                            .unwrap_or(false)
+                    };
+                    if is_var_decl_list {
+                        state.assign_for_in_of_initializer_types(initializer, loop_var_type);
+                        state.check_variable_declaration_list(initializer);
+                    } else {
+                        state.get_type_of_node(initializer);
+                    }
+                    state.check_statement(statement);
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                // Extract switch data before mutable operations
+                let switch_data = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena.get_switch(node).map(|s| (s.expression, s.case_block))
+                };
+
+                if let Some((expression, case_block)) = switch_data {
+                    state.get_type_of_node(expression);
+
+                    // Extract case clauses
+                    let clauses = {
+                        let arena = state.arena();
+                        if let Some(cb_node) = arena.get(case_block) {
+                            if let Some(cb) = arena.get_block(cb_node) {
+                                Some(cb.statements.nodes.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(clauses) = clauses {
+                        for clause_idx in clauses {
+                            // Extract clause data
+                            let clause_data = {
+                                let arena = state.arena();
+                                if let Some(clause_node) = arena.get(clause_idx) {
+                                    arena
+                                        .get_case_clause(clause_node)
+                                        .map(|c| (c.expression, c.statements.nodes.clone()))
+                                } else {
+                                    None
+                                }
+                            };
+
+                            if let Some((clause_expr, clause_stmts)) = clause_data {
+                                // Check case expression (skip for default clause which has NONE expression)
+                                if !clause_expr.is_none() {
+                                    state.get_type_of_node(clause_expr);
+                                }
+                                // Check statements in the case
+                                for inner_stmt_idx in clause_stmts {
+                                    state.check_statement(inner_stmt_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                // Extract try data before mutable operations
+                let try_data = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena
+                        .get_try(node)
+                        .map(|t| (t.try_block, t.catch_clause, t.finally_block))
+                };
+
+                if let Some((try_block, catch_clause, finally_block)) = try_data {
+                    state.check_statement(try_block);
+
+                    if !catch_clause.is_none() {
+                        // Extract catch clause data
+                        let catch_data = {
+                            let arena = state.arena();
+                            if let Some(catch_node) = arena.get(catch_clause) {
+                                arena
+                                    .get_catch_clause(catch_node)
+                                    .map(|c| (c.variable_declaration, c.block))
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some((var_decl, block)) = catch_data {
+                            if !var_decl.is_none() {
+                                state.check_variable_declaration(var_decl);
+                            }
+                            state.check_statement(block);
+                        }
+                    }
+                    if !finally_block.is_none() {
+                        state.check_statement(finally_block);
+                    }
+                }
+            }
+            syntax_kind_ext::THROW_STATEMENT => {
+                // Extract operand before mutable operations
+                let operand = {
+                    let arena = state.arena();
+                    let node = arena.get(stmt_idx).unwrap();
+                    arena.get_unary_expr(node).map(|u| u.operand)
+                };
+                if let Some(operand) = operand {
+                    state.get_type_of_node(operand);
+                }
+            }
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                state.check_interface_declaration(stmt_idx);
+            }
+            syntax_kind_ext::EXPORT_DECLARATION => {
+                state.check_export_declaration(stmt_idx);
+            }
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                state.check_type_alias_declaration(stmt_idx);
+            }
+            syntax_kind_ext::ENUM_DECLARATION => {
+                state.check_enum_duplicate_members(stmt_idx);
+            }
+            syntax_kind_ext::EMPTY_STATEMENT
+            | syntax_kind_ext::DEBUGGER_STATEMENT
+            | syntax_kind_ext::BREAK_STATEMENT
+            | syntax_kind_ext::CONTINUE_STATEMENT => {
+                // No action needed
+            }
+            syntax_kind_ext::IMPORT_DECLARATION => {
+                state.check_import_declaration(stmt_idx);
+            }
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                state.check_import_equals_declaration(stmt_idx);
+            }
+            syntax_kind_ext::MODULE_DECLARATION => {
+                state.check_module_declaration(stmt_idx);
+            }
+            syntax_kind_ext::CLASS_DECLARATION => {
+                state.check_class_declaration(stmt_idx);
+            }
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
+                state.check_function_declaration(stmt_idx);
+            }
             _ => {
-                // Unhandled statement types - will be expanded incrementally
+                // Catch-all for other statement types
+                state.get_type_of_node(stmt_idx);
             }
         }
     }
+}
 
-    // Note: fallthrough analysis has been moved to CheckerState in checker/state.rs
-    // These methods were delegating to control_flow module but that module has been refactored.
-
-    /// Check a block statement.
-    fn check_block(&mut self, block_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(block_idx) else {
-            return;
-        };
-
-        if let Some(block) = self.ctx.arena.get_block(node) {
-            for &stmt_idx in &block.statements.nodes {
-                self.check(stmt_idx);
-            }
-        }
-    }
-
-    /// Check an if statement.
-    fn check_if_statement(&mut self, stmt_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
-        };
-
-        if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
-            // Check condition expression
-            // (Would call ExpressionChecker here)
-
-            // Check then branch
-            self.check(if_stmt.then_statement);
-
-            // Check else branch if present
-            if !if_stmt.else_statement.is_none() {
-                self.check(if_stmt.else_statement);
-            }
-        }
-    }
-
-    /// Check a while/do-while loop statement.
-    fn check_loop_statement(&mut self, stmt_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
-        };
-
-        if let Some(loop_stmt) = self.ctx.arena.get_loop(node) {
-            // Check condition expression
-            // (Would call ExpressionChecker here)
-
-            // Check body
-            self.check(loop_stmt.statement);
-        }
-    }
-
-    /// Check a for statement.
-    fn check_for_statement(&mut self, stmt_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
-        };
-
-        if let Some(loop_stmt) = self.ctx.arena.get_loop(node) {
-            // Check initializer (variable declaration or expression)
-            // Check condition
-            // Check incrementor
-            // Check body
-            self.check(loop_stmt.statement);
-        }
-    }
-
-    /// Check a return statement.
-    fn check_return_statement(&mut self, _stmt_idx: NodeIndex) {
-        // Return type checking is handled by CheckerState for now
-        // Will be migrated incrementally
-    }
-
-    /// Check a switch statement.
-    fn check_switch_statement(&mut self, _stmt_idx: NodeIndex) {
-        // Switch statement checking is handled by CheckerState for now
-        // Will be migrated when the arena provides get_switch_statement
-    }
-
-    /// Check a try statement.
-    fn check_try_statement(&mut self, _stmt_idx: NodeIndex) {
-        // Try statement checking is handled by CheckerState for now
-        // Will be migrated when the arena provides get_try_statement
-    }
-
-    /// Check a throw statement.
-    fn check_throw_statement(&mut self, _stmt_idx: NodeIndex) {
-        // Check the thrown expression
-        // (Would call ExpressionChecker here)
+impl Default for StatementChecker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::binder::BinderState;
-    use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
-
-    #[test]
-    fn test_statement_checker_block() {
-        let source = "{ let x = 1; }";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let types = TypeInterner::new();
-        let mut ctx = CheckerContext::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            crate::checker::context::CheckerOptions::default(),
-        );
-
-        // Get the block statement
-        if let Some(root_node) = parser.get_arena().get(root)
-            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
-        {
-            let mut checker = StatementChecker::new(&mut ctx);
-            checker.check(stmt_idx);
-            // Test passes if no panic
-        }
-    }
+    // Tests require the full CheckerState implementation of StatementCheckCallbacks
+    // which is defined in state.rs
 }

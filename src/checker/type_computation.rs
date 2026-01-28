@@ -16,9 +16,7 @@ use crate::checker::state::CheckerState;
 use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::solver::{
-    CallableShape, ContextualTypeContext, SymbolRef, TupleElement, TypeId, TypeKey,
-};
+use crate::solver::{ContextualTypeContext, TupleElement, TypeId, TypeKey};
 
 // =============================================================================
 // Type Computation Methods
@@ -2098,138 +2096,96 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_construct_type_from_type(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::solver::TypeKey;
-
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return None;
+        use crate::solver::type_queries::{
+            ConstructableTypeKind, classify_for_constructability, construct_to_call_callable,
         };
 
-        match type_key {
-            TypeKey::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.construct_signatures.is_empty() {
-                    // Functions with a prototype property are constructable
-                    if self.type_has_prototype_property(type_id) {
-                        Some(type_id)
-                    } else {
-                        None
-                    }
-                } else {
-                    // Return a callable with construct signatures as call signatures
-                    Some(self.ctx.types.callable(CallableShape {
-                        call_signatures: shape.construct_signatures.clone(),
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                    }))
-                }
+        match classify_for_constructability(self.ctx.types, type_id) {
+            ConstructableTypeKind::CallableWithConstruct => {
+                // Return a callable with construct signatures as call signatures
+                construct_to_call_callable(self.ctx.types, type_id)
             }
-            TypeKey::Function(_) => Some(type_id),
-            // Ref to a symbol - check if it's a class (class constructor type)
-            // or an interface/variable with construct signatures
-            TypeKey::Ref(SymbolRef(sym_id)) => {
-                let symbol_id = SymbolId(sym_id);
-                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
-                    // Class symbols are constructable - return the type as-is
-                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                        return Some(type_id);
-                    }
-                    // Interface symbols might have construct signatures
-                    // Check if they actually have construct signatures before returning Some
-                    if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
-                        // For interfaces, check if they have construct signatures
-                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                            // Check if the cached type has construct signatures
-                            if self.has_construct_sig(cached_type) {
-                                return Some(type_id);
-                            }
-                            // Also check if it's an object type with construct signatures
-                            if let Some(TypeKey::Object(_) | TypeKey::ObjectWithIndex(_)) =
-                                self.ctx.types.lookup(cached_type)
-                            {
-                                return Some(type_id);
-                            }
-                        }
-                        // Return the type for further checking by the caller
-                        return Some(type_id);
-                    }
-                    // For other symbols (variables, parameters, type aliases), check their cached type
-                    // This handles cases like:
-                    //   function f<T extends typeof A>(ctor: T) {
-                    //     class B extends ctor {}  // ctor should be recognized as constructible
-                    //   }
-                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                        // Check if the cached type is constructable
-                        if self.get_construct_type_from_type(cached_type).is_some() {
-                            return Some(type_id);
-                        }
-                    }
-                }
-                None
-            }
-            // TypeQuery (typeof X) - check if X is a class or has a constructor type
-            TypeKey::TypeQuery(SymbolRef(sym_id)) => {
-                let symbol_id = SymbolId(sym_id);
-                if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
-                    // typeof ClassName is the constructor type
-                    if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
-                        return Some(type_id);
-                    }
-                    // Check interfaces with construct signatures
-                    if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
-                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                            if self.has_construct_sig(cached_type) {
-                                return Some(type_id);
-                            }
-                        }
-                        return Some(type_id);
-                    }
-                    // For other symbols (variables, parameters, type aliases), check their cached type
-                    // This handles cases like:
-                    //   const x: typeof A = A;
-                    //   class B extends x {}
-                    if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
-                        // Check if the cached type is constructable
-                        if self.get_construct_type_from_type(cached_type).is_some() {
-                            return Some(type_id);
-                        }
-                    }
-                }
-                None
-            }
-            // Type parameters - check the constraint
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                if let Some(constraint) = info.constraint {
-                    self.get_construct_type_from_type(constraint)
-                } else {
-                    None
-                }
-            }
-            // Intersection - all members must be constructable, return intersection
-            TypeKey::Intersection(members_id) => {
-                let members = self.ctx.types.type_list(members_id);
-                let mut all_constructable = true;
-                for &member in members.iter() {
-                    if self.get_construct_type_from_type(member).is_none() {
-                        all_constructable = false;
-                        break;
-                    }
-                }
-                if all_constructable {
+            ConstructableTypeKind::CallableMaybePrototype => {
+                // Functions with a prototype property are constructable
+                if self.type_has_prototype_property(type_id) {
                     Some(type_id)
                 } else {
                     None
                 }
             }
-            // Application (generic instantiation like Newable<T>) - return as-is
-            // The caller will check for construct signatures
-            TypeKey::Application(_) => Some(type_id),
-            // Object types might have construct signatures (for interface object types)
-            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => Some(type_id),
-            // All other types are not constructable
-            _ => None,
+            ConstructableTypeKind::Function => Some(type_id),
+            ConstructableTypeKind::SymbolRef(sym_ref) => {
+                self.check_symbol_constructability(type_id, SymbolId(sym_ref.0), false)
+            }
+            ConstructableTypeKind::TypeQueryRef(sym_ref) => {
+                self.check_symbol_constructability(type_id, SymbolId(sym_ref.0), true)
+            }
+            ConstructableTypeKind::TypeParameterWithConstraint(constraint) => {
+                self.get_construct_type_from_type(constraint)
+            }
+            ConstructableTypeKind::TypeParameterNoConstraint => None,
+            ConstructableTypeKind::Intersection(members) => {
+                // All members must be constructable
+                if members
+                    .iter()
+                    .all(|&member| self.get_construct_type_from_type(member).is_some())
+                {
+                    Some(type_id)
+                } else {
+                    None
+                }
+            }
+            ConstructableTypeKind::Application => Some(type_id),
+            ConstructableTypeKind::Object => Some(type_id),
+            ConstructableTypeKind::NotConstructable => None,
         }
+    }
+
+    /// Check if a symbol reference is constructable.
+    ///
+    /// This handles both Ref and TypeQuery cases which have similar logic
+    /// for checking symbol flags (class, interface) and cached types.
+    fn check_symbol_constructability(
+        &self,
+        type_id: TypeId,
+        symbol_id: SymbolId,
+        is_type_query: bool,
+    ) -> Option<TypeId> {
+        use crate::solver::type_queries;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) else {
+            return None;
+        };
+
+        // Class symbols are constructable - return the type as-is
+        if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+            return Some(type_id);
+        }
+
+        // Interface symbols might have construct signatures
+        if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
+            if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                // Check if the cached type has construct signatures
+                if self.has_construct_sig(cached_type) {
+                    return Some(type_id);
+                }
+                // For Ref (not TypeQuery), also check if it's an object type
+                if !is_type_query && type_queries::is_object_type(self.ctx.types, cached_type) {
+                    return Some(type_id);
+                }
+            }
+            // Return the type for further checking by the caller
+            return Some(type_id);
+        }
+
+        // For other symbols (variables, parameters, type aliases), check their cached type
+        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+            if self.get_construct_type_from_type(cached_type).is_some() {
+                return Some(type_id);
+            }
+        }
+
+        None
     }
 
     /// Get the return type of a construct signature from a type.
@@ -2427,86 +2383,6 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeId::ERROR // Missing composite type data - propagate error
-    }
-
-    /// Get type from an intersection type node (A & B).
-    ///
-    /// Parses an intersection type expression and creates an Intersection type with all members.
-    ///
-    /// ## Type Normalization:
-    /// - Empty intersection → UNKNOWN (the top type for intersections)
-    /// - Single member → the member itself (no intersection wrapper)
-    /// - Multiple members → Intersection type with all members
-    ///
-    /// ## Member Resolution:
-    /// - Each member is resolved via `get_type_from_type_node`
-    /// - Handles nested typeof expressions and type references
-    ///
-    /// ## TypeScript Semantics:
-    /// Intersection types combine multiple types into one:
-    /// - Objects: Merges properties from all members
-    /// - Primitives: Usually results in NEVER (except for any/unknown)
-    /// - Functions: Combines function signatures (overload resolution)
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// type NameAndAge = { name: string } & { age: number };
-    /// // Creates Intersection with properties { name: string; age: number }
-    ///
-    /// type Extended = BaseModel & { id: number } & Serializable;
-    /// // Combines all three types into one
-    ///
-    /// type Neverish = string & number;  // NEVER (primitives don't intersect)
-    /// ```
-    pub(crate) fn get_type_from_intersection_type(&mut self, idx: NodeIndex) -> TypeId {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        // IntersectionType uses CompositeTypeData which has a types list
-        if let Some(composite) = self.ctx.arena.get_composite_type(node) {
-            let mut member_types = Vec::new();
-            for &type_idx in &composite.types.nodes {
-                // Use get_type_from_type_node to properly resolve typeof expressions via binder
-                member_types.push(self.get_type_from_type_node(type_idx));
-            }
-
-            if member_types.is_empty() {
-                return TypeId::UNKNOWN; // Empty intersection is unknown
-            }
-            if member_types.len() == 1 {
-                return member_types[0];
-            }
-
-            return self.ctx.types.intersection(member_types);
-        }
-
-        TypeId::ERROR // Missing composite type data - propagate error
-    }
-
-    /// Get type from an array type node (string[]).
-    ///
-    /// Parses an array type expression and creates an Array type.
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// type Strings = string[];
-    /// // Creates Array<string> type
-    ///
-    /// type Nested = number[][];
-    /// // Creates Array<Array<number>> type
-    /// ```
-    pub(crate) fn get_type_from_array_type(&mut self, idx: NodeIndex) -> TypeId {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        if let Some(array_type) = self.ctx.arena.get_array_type(node) {
-            let elem_type = self.get_type_from_type_node(array_type.element_type);
-            return self.ctx.types.array(elem_type);
-        }
-
-        TypeId::ERROR // Missing array type data - propagate error
     }
 
     /// Get type from a type operator node (readonly T[], readonly [T, U], unique symbol).
@@ -2711,20 +2587,6 @@ impl<'a> CheckerState<'a> {
             string_index: None,
             number_index: None,
         })
-    }
-
-    /// Get the type of the receiver object in a method call.
-    ///
-    /// For a call like `obj.method()`, returns the type of `obj` after
-    /// evaluating applications and resolving for property access.
-    #[allow(dead_code)]
-    pub(crate) fn get_call_receiver_type(&mut self, callee_idx: NodeIndex) -> Option<TypeId> {
-        let node = self.ctx.arena.get(callee_idx)?;
-        let access = self.ctx.arena.get_access_expr(node)?;
-        let receiver_type = self.get_type_of_node(access.expression);
-        let receiver_type = self.evaluate_application_type(receiver_type);
-        let receiver_type = self.resolve_type_for_property_access(receiver_type);
-        Some(receiver_type)
     }
 
     /// Get the class declaration node from a TypeId.
@@ -3092,84 +2954,6 @@ impl<'a> CheckerState<'a> {
                 TypeId::ERROR
             }
         }
-    }
-
-    /// Elaborate array literal argument errors by checking each element.
-    ///
-    /// When an array literal is passed as an argument but doesn't match the parameter type,
-    /// TypeScript emits TS2322 errors for each incompatible element instead of a single
-    /// TS2345 error for the whole argument. This function implements that behavior.
-    ///
-    /// Returns `true` if elaboration was performed, `false` if the argument is not
-    /// an array literal and normal TS2345 error should be emitted.
-    #[allow(dead_code)]
-    fn elaborate_array_literal_argument_error(
-        &mut self,
-        arg_idx: NodeIndex,
-        arg_type: TypeId,
-        param_type: TypeId,
-    ) -> bool {
-        use crate::solver::TypeKey;
-
-        // Check if the argument is an array literal
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-            return false;
-        };
-
-        if arg_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return false;
-        }
-
-        let Some(array_expr) = self.ctx.arena.get_literal_expr(arg_node) else {
-            return false;
-        };
-
-        // Check if both types are arrays
-        let arg_elem_type = match self.ctx.types.lookup(arg_type) {
-            Some(TypeKey::Array(elem)) => elem,
-            _ => return false,
-        };
-
-        let param_elem_type = match self.ctx.types.lookup(param_type) {
-            Some(TypeKey::Array(elem)) => elem,
-            _ => return false,
-        };
-
-        // If the element types are already assignable, no error needed
-        if self.is_assignable_to(arg_elem_type, param_elem_type) {
-            return false;
-        }
-
-        // Elaborate: Check each array element against the expected element type
-        let mut found_error = false;
-        for &elem_idx in array_expr.elements.nodes.iter() {
-            if elem_idx.is_none() {
-                continue;
-            }
-
-            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                continue;
-            };
-
-            // Skip spread elements for now (they have their own checking)
-            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                continue;
-            }
-
-            // Get the element's type (it should already be computed)
-            let elem_type = self.get_type_of_node(elem_idx);
-
-            // Check if this element is assignable to the expected element type
-            if !self.is_assignable_to(elem_type, param_elem_type) {
-                // Emit TS2322 for this specific element
-                self.error_type_not_assignable_at(elem_type, param_elem_type, elem_idx);
-                found_error = true;
-            }
-        }
-
-        // Return true to indicate we elaborated the error
-        // (even if no elements were incompatible, we don't want the TS2345 error)
-        found_error
     }
 
     // =========================================================================

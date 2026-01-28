@@ -21,6 +21,7 @@ fn test_callable_same_signature() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        is_method: false,
     };
 
     let source = interner.callable(CallableShape {
@@ -56,6 +57,7 @@ fn test_callable_more_overloads() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        is_method: false,
     };
 
     let sig2 = CallSignature {
@@ -69,6 +71,7 @@ fn test_callable_more_overloads() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        is_method: false,
     };
 
     let source = interner.callable(CallableShape {
@@ -104,6 +107,7 @@ fn test_callable_missing_overload() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        is_method: false,
     };
 
     let sig2 = CallSignature {
@@ -117,6 +121,7 @@ fn test_callable_missing_overload() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        is_method: false,
     };
 
     let source = interner.callable(CallableShape {
@@ -156,6 +161,7 @@ fn test_callable_with_construct() {
         this_type: None,
         return_type: obj_type,
         type_predicate: None,
+        is_method: false,
     };
 
     let source = interner.callable(CallableShape {
@@ -188,6 +194,7 @@ fn test_callable_covariant_return() {
         this_type: None,
         return_type: hello,
         type_predicate: None,
+        is_method: false,
     };
 
     let target_sig = CallSignature {
@@ -196,6 +203,7 @@ fn test_callable_covariant_return() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        is_method: false,
     };
 
     let source = interner.callable(CallableShape {
@@ -247,6 +255,7 @@ fn test_function_to_callable() {
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -274,6 +283,7 @@ fn test_callable_to_function() {
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -310,6 +320,7 @@ fn test_callable_with_properties() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo {
@@ -330,6 +341,7 @@ fn test_callable_with_properties() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo {
@@ -358,6 +370,7 @@ fn test_callable_missing_property() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: vec![],
         properties: vec![],
@@ -371,6 +384,7 @@ fn test_callable_missing_property() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            is_method: false,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo {
@@ -407,6 +421,7 @@ fn test_overload_signature_exact_match() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        is_method: false,
     };
 
     let sig_number_to_string = CallSignature {
@@ -420,6 +435,7 @@ fn test_overload_signature_exact_match() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        is_method: false,
     };
 
     let overloaded = interner.callable(CallableShape {
@@ -457,6 +473,7 @@ fn test_overload_signature_order_priority() {
         this_type: None,
         return_type: special_return,
         type_predicate: None,
+        is_method: false,
     };
 
     let general_return = interner.literal_string("matched-general");
@@ -471,6 +488,7 @@ fn test_overload_signature_order_priority() {
         this_type: None,
         return_type: general_return,
         type_predicate: None,
+        is_method: false,
     };
 
     let overloaded = interner.callable(CallableShape {
@@ -501,6 +519,7 @@ fn test_overload_multiple_arities() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        is_method: false,
     };
 
     let sig_1 = CallSignature {
@@ -514,6 +533,7 @@ fn test_overload_multiple_arities() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        is_method: false,
     };
 
     let sig_2 = CallSignature {
@@ -535,6 +555,7 @@ fn test_overload_multiple_arities() {
         this_type: None,
         return_type: TypeId::BOOLEAN,
         type_predicate: None,
+        is_method: false,
     };
 
     let overloaded = interner.callable(CallableShape {
@@ -600,6 +621,7 @@ fn test_generic_overload_simple() {
         this_type: None,
         return_type: t_param,
         type_predicate: None,
+        is_method: false,
     };
 
     let generic_fn = interner.callable(CallableShape {
@@ -653,6 +675,7 @@ fn test_generic_overload_with_constraint() {
         this_type: None,
         return_type: keyof_t,
         type_predicate: None,
+        is_method: false,
     };
 
     let generic_fn = interner.callable(CallableShape {
@@ -737,6 +760,7 @@ fn test_generic_overload_multiple_type_params() {
         this_type: None,
         return_type: tuple_return,
         type_predicate: None,
+        is_method: false,
     };
 
     let generic_fn = interner.callable(CallableShape {
@@ -777,6 +801,7 @@ fn test_optional_param_overload_matching() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        is_method: false,
     };
 
     let sig_optional = CallSignature {
@@ -798,6 +823,7 @@ fn test_optional_param_overload_matching() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        is_method: false,
     };
 
     let overloaded = interner.callable(CallableShape {
@@ -848,6 +874,7 @@ fn test_all_optional_params_overload() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        is_method: false,
     };
 
     let fn_with_optional = interner.callable(CallableShape {
@@ -863,6 +890,7 @@ fn test_all_optional_params_overload() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        is_method: false,
     };
 
     let no_params = interner.callable(CallableShape {
@@ -902,6 +930,7 @@ fn test_optional_and_rest_param_overload() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        is_method: false,
     };
 
     let fn_with_rest = interner.callable(CallableShape {
@@ -922,6 +951,7 @@ fn test_optional_and_rest_param_overload() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        is_method: false,
     };
 
     let single_param = interner.callable(CallableShape {
