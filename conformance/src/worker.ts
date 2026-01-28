@@ -472,13 +472,14 @@ function toWasmOptions(opts: Record<string, unknown>): Record<string, unknown> {
     target: 'target',
     module: 'module',
     nolib: 'noLib',
+    lib: 'lib',
   };
 
   for (const [key, value] of Object.entries(opts)) {
     const mapped = mapping[key] ?? key;
     result[mapped] = value;
   }
-  
+
   return result;
 }
 
@@ -594,7 +595,10 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
             for (const [name, content] of wasmLibFiles.entries()) {
               program.addLibFile(name, content);
             }
-          } else if (libSource) {
+          } else if (libSource && !wasmLibNames.length) {
+            // Only add default lib.d.ts if no explicit libs were requested
+            // When explicit libs are specified via // @lib:, the WASM compiler
+            // will use its embedded libs based on the 'lib' compiler option
             program.addLibFile('lib.d.ts', libSource);
           }
         }
@@ -616,7 +620,8 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
             for (const [name, content] of wasmLibFiles.entries()) {
               parser.addLibFile(name, content);
             }
-          } else if (libSource) {
+          } else if (libSource && !wasmLibNames.length) {
+            // Only add default lib.d.ts if no explicit libs were requested
             parser.addLibFile('lib.d.ts', libSource);
           }
         }
