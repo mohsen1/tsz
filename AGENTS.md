@@ -25,7 +25,7 @@ Before merging changes:
 - [ ] Rust and WASM builds succeed (`cargo build`, `wasm-pack build`)
 - [ ] Unit tests pass (`scripts/test.sh`)
 - [ ] No clippy warnings (`cargo clippy -- -D warnings`)
-- [ ] Conformance tests pass (`./conformance/run-conformance.sh --all`) -- does not have to be 100% but should not drop significantly
+- [ ] Conformance tests pass (see **Running Conformance Tests** below) -- does not have to be 100% but should not drop significantly
 - [ ] No shortcuts taken - all fixes address root causes
 - [ ] No test-aware code in source
 - [ ] **Type logic is in solver, not checker** (see Solver-First Architecture below)
@@ -40,6 +40,31 @@ Git hooks are installed automatically on first `cargo build`. They enforce code 
 4. Unit tests
 
 To manually install: `./scripts/install-hooks.sh`
+
+## Running Conformance Tests
+
+**Use server mode (`--server`) for fast iteration.** Server mode uses a persistent `tsz-server` process that caches TypeScript libs in memory, providing ~15x faster test execution than WASM mode.
+
+```bash
+# RECOMMENDED: Server mode for quick feedback (~2,700 tests/sec)
+./conformance/run.sh --server --max=1000
+
+# Full conformance run with server mode
+./conformance/run.sh --server --max=12000
+
+# WASM mode - slower but tests the WASM build (~180 tests/sec)
+./conformance/run.sh --wasm --max=1000
+```
+
+**Performance comparison:**
+| Mode | Speed | Use Case |
+|------|-------|----------|
+| `--server` | ~2,700 tests/sec | Quick iteration, development |
+| `--wasm` | ~180 tests/sec | Testing WASM build, CI |
+
+**When to use each mode:**
+- **Server mode**: During development for quick feedback on changes
+- **WASM mode**: Before commits to verify WASM build works correctly
 
 ---
 
