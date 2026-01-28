@@ -257,6 +257,12 @@ pub mod cli;
 pub mod wasm;
 pub use wasm::{WasmParallelChecker, WasmParallelParser, WasmTypeInterner};
 
+// TypeScript API compatibility layer - exposes TS-compatible APIs via WASM
+pub mod wasm_api;
+pub use wasm_api::{
+    TsDiagnostic, TsProgram, TsSignature, TsSourceFile, TsSymbol, TsType, TsTypeChecker,
+};
+
 // Module Resolution Infrastructure (non-wasm targets only - requires file system access)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod module_resolver;
