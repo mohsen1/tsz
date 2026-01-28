@@ -8067,8 +8067,11 @@ impl<'a> CheckerState<'a> {
                     };
 
                     // Lower the type from the lib file's arena with the resolver
-                    let lowering =
-                        TypeLowering::with_resolver(lib_ctx.arena.as_ref(), self.ctx.types, &resolver);
+                    let lowering = TypeLowering::with_resolver(
+                        lib_ctx.arena.as_ref(),
+                        self.ctx.types,
+                        &resolver,
+                    );
                     // For interfaces, use all declarations (handles declaration merging)
                     if !symbol.declarations.is_empty() {
                         lib_type_id =
@@ -8099,8 +8102,8 @@ impl<'a> CheckerState<'a> {
 
                 // Skip built-in types that have special handling in TypeLowering
                 match ident_name {
-                    "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase"
-                    | "Capitalize" | "Uncapitalize" => return None,
+                    "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase" | "Capitalize"
+                    | "Uncapitalize" => return None,
                     _ => {}
                 }
 

@@ -1350,8 +1350,8 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(node)
         {
             match ident.escaped_text.as_str() {
-                "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase"
-                | "Capitalize" | "Uncapitalize" => return None,
+                "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase" | "Capitalize"
+                | "Uncapitalize" => return None,
                 _ => {}
             }
         }
