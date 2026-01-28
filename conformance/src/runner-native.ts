@@ -28,7 +28,6 @@ interface ParsedTestCase {
 
 const CONFIG = {
   testsBasePath: path.resolve(__dirname, '../../TypeScript/tests/cases'),
-  libPath: path.resolve(__dirname, '../../TypeScript/tests/lib/lib.d.ts'),
   maxTests: parseInt(process.env.MAX_TESTS || '500'),
   categories: (process.env.CATEGORIES || 'conformance,compiler').split(','),
   verbose: process.env.VERBOSE === 'true',
@@ -170,11 +169,22 @@ function runNative(testCase: ParsedTestCase): Promise<{ codes: number[]; crashed
       // Write test files to temp directory
       const filesToCheck: string[] = [];
 
-      // Add lib.d.ts unless noLib
+      // Build tsz arguments
+      const args: string[] = [];
+
+      // Add lib option if specified and not noLib
       if (!testCase.options.nolib) {
-        const libContent = fs.readFileSync(CONFIG.libPath, 'utf8');
-        fs.writeFileSync(path.join(tmpDir, 'lib.d.ts'), libContent);
-        filesToCheck.push('lib.d.ts');
+        const libOption = testCase.options.lib as string;
+        if (libOption) {
+          // Parse comma-separated lib names
+          const libNames = libOption.split(',').map(s => s.trim());
+          for (const libName of libNames) {
+            args.push('--lib', libName);
+          }
+        }
+        // If no lib option, tsz will use default lib
+      } else {
+        args.push('--noLib');
       }
 
       // Write test files
@@ -183,9 +193,11 @@ function runNative(testCase: ParsedTestCase): Promise<{ codes: number[]; crashed
         filesToCheck.push(file.name);
       }
 
+      // Add test files to args
+      args.push(...filesToCheck.map(f => path.join(tmpDir, f)));
+
       // Run tsz binary
       const codes: number[] = [];
-      const args = filesToCheck.map(f => path.join(tmpDir, f));
 
       const child = spawn(CONFIG.tszBinary, args, {
         cwd: tmpDir,

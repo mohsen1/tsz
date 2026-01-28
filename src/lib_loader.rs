@@ -96,7 +96,8 @@ fn load_embedded_lib(lib: &EmbeddedLib) -> Option<Arc<LibFile>> {
 pub fn load_embedded_libs(target: ScriptTarget, include_dom: bool) -> Vec<Arc<LibFile>> {
     // Try pre-parsed libs first (much faster ~10x)
     if let Some(libs) = crate::preparsed_libs::load_preparsed_libs_for_target(target, include_dom) {
-        return libs;
+        // Merge pre-parsed libs into a single binder
+        return merge_lib_files(libs);
     }
 
     // Fall back to parsing embedded lib text
@@ -106,10 +107,49 @@ pub fn load_embedded_libs(target: ScriptTarget, include_dom: bool) -> Vec<Arc<Li
         embedded_libs::get_libs_for_target(target)
     };
 
-    lib_refs
+    let loaded: Vec<_> = lib_refs
         .into_iter()
         .filter_map(|lib| load_embedded_lib(lib))
-        .collect()
+        .collect();
+
+    // Merge all lib binders into a single binder to avoid duplicate SymbolIds
+    merge_lib_files(loaded)
+}
+
+/// Merge multiple lib files into a single lib file with a unified binder.
+///
+/// This function takes multiple LibFile instances (each with its own BinderState)
+/// and merges them into a single LibFile where all symbols are in one binder
+/// with remapped SymbolIds to avoid collisions.
+fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
+    use crate::binder::state::LibContext as BinderLibContext;
+
+    if lib_files.is_empty() {
+        return lib_files;
+    }
+
+    // Create a single merged binder from all lib files
+    let mut merged_binder = BinderState::new();
+    let lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| BinderLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+
+    merged_binder.merge_lib_contexts_into_binder(&lib_contexts);
+
+    // Create a single merged LibFile
+    let merged_arena = lib_files.first().map(|lib| Arc::clone(&lib.arena)).unwrap();
+    let merged_binder = Arc::new(merged_binder);
+    let merged_file = Arc::new(LibFile::new(
+        "merged-libs".to_string(),
+        merged_arena,
+        merged_binder,
+    ));
+
+    vec![merged_file]
 }
 
 /// Load a specific embedded lib by name.
@@ -263,7 +303,9 @@ pub fn resolve_libs(config: &LibResolverConfig) -> Vec<Arc<LibFile>> {
 /// - Lib name aliases (e.g., "es6" -> "es2015", "lib" -> "es5")
 /// - Dependency resolution via references
 /// - Deduplication
+/// - Merging all lib symbols into a single binder to avoid duplicate SymbolIds
 fn resolve_explicit_libs(lib_names: &[String]) -> Vec<Arc<LibFile>> {
+    use crate::binder::state::LibContext as BinderLibContext;
     use rustc_hash::FxHashSet;
 
     let mut loaded = Vec::new();
@@ -285,7 +327,33 @@ fn resolve_explicit_libs(lib_names: &[String]) -> Vec<Arc<LibFile>> {
         }
     }
 
-    loaded
+    // Merge all lib binders into a single binder to avoid duplicate SymbolIds
+    if loaded.is_empty() {
+        return loaded;
+    }
+
+    // Create a single merged binder from all lib files
+    let mut merged_binder = BinderState::new();
+    let lib_contexts: Vec<_> = loaded
+        .iter()
+        .map(|lib| BinderLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+
+    merged_binder.merge_lib_contexts_into_binder(&lib_contexts);
+
+    // Create a single merged LibFile
+    let merged_arena = loaded.first().map(|lib| Arc::clone(&lib.arena)).unwrap();
+    let merged_binder = Arc::new(merged_binder);
+    let merged_file = Arc::new(LibFile::new(
+        "merged-libs".to_string(),
+        merged_arena,
+        merged_binder,
+    ));
+
+    vec![merged_file]
 }
 
 /// Normalize a lib name (handle aliases).
@@ -1691,9 +1759,7 @@ const typed = new BigInt64Array(10);
         let libs = resolve_libs(&config);
 
         // Should have ES5 core types
-        let has_object = libs
-            .iter()
-            .any(|lib| lib.file_locals().has("Object"));
+        let has_object = libs.iter().any(|lib| lib.file_locals().has("Object"));
         let has_array = libs.iter().any(|lib| lib.file_locals().has("Array"));
 
         assert!(has_object, "ES5 libs should have Object");
@@ -1706,12 +1772,8 @@ const typed = new BigInt64Array(10);
         let libs = resolve_libs(&config);
 
         // Should have ES5 and ES2015 types
-        let has_object = libs
-            .iter()
-            .any(|lib| lib.file_locals().has("Object"));
-        let has_promise = libs
-            .iter()
-            .any(|lib| lib.file_locals().has("Promise"));
+        let has_object = libs.iter().any(|lib| lib.file_locals().has("Object"));
+        let has_promise = libs.iter().any(|lib| lib.file_locals().has("Promise"));
         let has_map = libs.iter().any(|lib| lib.file_locals().has("Map"));
 
         assert!(has_object, "ES2015 libs should have Object");
@@ -1725,9 +1787,7 @@ const typed = new BigInt64Array(10);
         let libs = resolve_libs(&config);
 
         // Should have ES2020 types including BigInt
-        let has_bigint = libs
-            .iter()
-            .any(|lib| lib.file_locals().has("BigInt"));
+        let has_bigint = libs.iter().any(|lib| lib.file_locals().has("BigInt"));
 
         assert!(has_bigint, "ES2020 libs should have BigInt");
     }
@@ -1738,12 +1798,8 @@ const typed = new BigInt64Array(10);
         let libs = resolve_libs(&config);
 
         // Should have DOM globals
-        let has_console = libs
-            .iter()
-            .any(|lib| lib.file_locals().has("console"));
-        let has_window = libs
-            .iter()
-            .any(|lib| lib.file_locals().has("window"));
+        let has_console = libs.iter().any(|lib| lib.file_locals().has("console"));
+        let has_window = libs.iter().any(|lib| lib.file_locals().has("window"));
 
         assert!(has_console, "With DOM, should have console");
         assert!(has_window, "With DOM, should have window");
@@ -1751,16 +1807,17 @@ const typed = new BigInt64Array(10);
 
     #[test]
     fn test_lib_resolver_explicit_libs() {
-        let config = LibResolverConfig::new(ScriptTarget::ES5)
-            .with_libs(vec!["es2015.promise".to_string()]);
+        let config =
+            LibResolverConfig::new(ScriptTarget::ES5).with_libs(vec!["es2015.promise".to_string()]);
         let libs = resolve_libs(&config);
 
         // Should resolve es2015.promise and its dependencies (including es5)
-        let has_promise = libs
-            .iter()
-            .any(|lib| lib.file_locals().has("Promise"));
+        let has_promise = libs.iter().any(|lib| lib.file_locals().has("Promise"));
 
-        assert!(has_promise, "Explicit es2015.promise should provide Promise");
+        assert!(
+            has_promise,
+            "Explicit es2015.promise should provide Promise"
+        );
     }
 
     #[test]
@@ -1780,9 +1837,7 @@ const typed = new BigInt64Array(10);
         let libs = resolve_libs(&config);
 
         // Should have ESNext features
-        let has_object = libs
-            .iter()
-            .any(|lib| lib.file_locals().has("Object"));
+        let has_object = libs.iter().any(|lib| lib.file_locals().has("Object"));
 
         assert!(has_object, "ESNext libs should include core types");
         assert!(!libs.is_empty(), "ESNext should load some libs");

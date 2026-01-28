@@ -5503,6 +5503,13 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes, diagnostic_messages, format_message,
         };
 
+        // Skip duplicate checking entirely if lib contexts are loaded
+        // Lib symbols can have multiple declarations (interface merging, etc.)
+        // which are not duplicates
+        if self.ctx.has_lib_loaded() {
+            return;
+        }
+
         let mut symbol_ids = FxHashSet::default();
         if !self.ctx.binder.scopes.is_empty() {
             for scope in &self.ctx.binder.scopes {
