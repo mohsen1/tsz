@@ -24,6 +24,7 @@
 //! }
 //! ```
 
+use crate::limits;
 use crate::solver::TypeDatabase;
 use crate::solver::diagnostics::{SubtypeFailureReason, SubtypeTracer};
 use crate::solver::subtype::{MAX_SUBTYPE_DEPTH, TypeResolver};
@@ -38,10 +39,10 @@ use crate::solver::diagnostics::{DiagnosticTracer, FastTracer};
 use crate::solver::subtype::NoopResolver;
 
 /// Maximum total subtype checks allowed per tracer-based check.
-const MAX_TOTAL_TRACER_CHECKS: u32 = 100_000;
+const MAX_TOTAL_TRACER_CHECKS: u32 = limits::MAX_TOTAL_TRACER_CHECKS;
 
 /// Maximum number of in-progress pairs to track.
-const MAX_IN_PROGRESS_PAIRS: usize = 10_000;
+const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
 
 /// Tracer-based subtype checker.
 ///

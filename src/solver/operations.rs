@@ -2179,9 +2179,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         match key {
             // Single string literal - exact match
-            TypeKey::Literal(LiteralValue::String(s)) => {
-                self.interner.resolve_atom(s) == prop_name
-            }
+            TypeKey::Literal(LiteralValue::String(s)) => self.interner.resolve_atom(s) == prop_name,
             // Union of literals - check if prop_name is in the union
             TypeKey::Union(members) => {
                 let members = self.interner.type_list(members);
@@ -2778,11 +2776,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Mapped: try lazy property resolution first to avoid OOM on large mapped types
             TypeKey::Mapped(mapped_id) => {
-                let prop_atom =
-                    prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
 
                 // Try lazy resolution first - only computes the requested property
-                if let Some(result) = self.resolve_mapped_property_lazy(mapped_id, prop_name, prop_atom) {
+                if let Some(result) =
+                    self.resolve_mapped_property_lazy(mapped_id, prop_name, prop_atom)
+                {
                     return result;
                 }
 
