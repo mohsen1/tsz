@@ -195,9 +195,8 @@ General Options:
   -h, --help          Show this help message
 
 Environment:
-  GOOGLE_CLOUD_PROJECT  Required for Vertex AI. Your GCP project ID.
-  GOOGLE_CLOUD_REGION   Vertex AI region (default: us-central1).
-  GEMINI_API_KEY        Required for direct Gemini API (--no-use-vertex).
+  GCP_VERTEX_EXPRESS_API_KEY  Required for Vertex AI Express (default).
+  GEMINI_API_KEY              Required for direct Gemini API (--no-use-vertex).
 
 Examples:
   ./scripts/ask-gemini.mjs --solver "How does type inference work?"
@@ -240,14 +239,13 @@ if (values.include) {
 
 const useVertex = values['use-vertex'];
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GOOGLE_CLOUD_PROJECT = process.env.GOOGLE_CLOUD_PROJECT;
-const GOOGLE_CLOUD_REGION = process.env.GOOGLE_CLOUD_REGION || 'us-central1';
+const GCP_VERTEX_EXPRESS_API_KEY = process.env.GCP_VERTEX_EXPRESS_API_KEY;
 
 if (!values.dry) {
   if (useVertex) {
-    if (!GOOGLE_CLOUD_PROJECT) {
-      console.error('Error: GOOGLE_CLOUD_PROJECT environment variable is not set.');
-      console.error('Set it to your GCP project ID, or use --no-use-vertex to use direct Gemini API.');
+    if (!GCP_VERTEX_EXPRESS_API_KEY) {
+      console.error('Error: GCP_VERTEX_EXPRESS_API_KEY environment variable is not set.');
+      console.error('Get an API key from Vertex AI Express Mode, or use --no-use-vertex for direct Gemini API.');
       console.error('(Use --dry to see files without calling API)');
       process.exit(1);
     }
@@ -275,7 +273,7 @@ try {
     console.log(`Using preset: --${presetName} (${activePreset.description})`);
   }
   console.log(`Using model: ${values.model}`);
-  console.log(`Using API: ${useVertex ? `Vertex AI (${GOOGLE_CLOUD_REGION})` : 'Direct Gemini API'}`);
+  console.log(`Using API: ${useVertex ? 'Vertex AI Express' : 'Direct Gemini API'}`);
   console.log(`Token limit: ${tokenLimit}`);
   console.log('Gathering context with yek...');
 
@@ -368,26 +366,14 @@ ${fileTree}
     process.exit(0);
   }
 
-  console.log(`Sending to Gemini via ${useVertex ? 'Vertex AI' : 'direct API'}...`);
+  console.log(`Sending to Gemini via ${useVertex ? 'Vertex AI Express' : 'direct API'}...`);
 
   let url;
-  let headers = { 'Content-Type': 'application/json' };
+  const headers = { 'Content-Type': 'application/json' };
 
   if (useVertex) {
-    // Vertex AI endpoint - requires gcloud auth
-    url = `https://${GOOGLE_CLOUD_REGION}-aiplatform.googleapis.com/v1/projects/${GOOGLE_CLOUD_PROJECT}/locations/${GOOGLE_CLOUD_REGION}/publishers/google/models/${values.model}:generateContent`;
-
-    // Get access token from gcloud
-    let accessToken;
-    try {
-      accessToken = execSync('gcloud auth print-access-token', { encoding: 'utf-8' }).trim();
-    } catch (error) {
-      console.error('Error: Failed to get access token from gcloud.');
-      console.error('Make sure you are authenticated: gcloud auth login');
-      console.error('Or use --no-use-vertex to use direct Gemini API instead.');
-      process.exit(1);
-    }
-    headers['Authorization'] = `Bearer ${accessToken}`;
+    // Vertex AI Express Mode endpoint - uses API key
+    url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${values.model}:generateContent?key=${GCP_VERTEX_EXPRESS_API_KEY}`;
   } else {
     // Direct Gemini API endpoint
     url = `https://generativelanguage.googleapis.com/v1beta/models/${values.model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -467,11 +453,15 @@ Answer questions accurately based on the provided context. Reference specific fi
   const payload = {
     contents: [
       {
+        role: 'user',
         parts: [
-          { text: `${systemPrompt}\n\nCodebase context:\n${context}\n\nQuestion: ${prompt}` }
+          { text: `Codebase context:\n${context}\n\nQuestion: ${prompt}` }
         ]
       }
     ],
+    systemInstruction: {
+      parts: [{ text: systemPrompt }]
+    },
     generationConfig: {
       temperature: 0.2,
       maxOutputTokens: 8192,
