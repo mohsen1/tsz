@@ -14,6 +14,12 @@ import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
 import { hashContent, type CacheEntry } from './tsc-cache.js';
+import {
+  loadLibManifest,
+  normalizeLibName,
+  resolveLibWithDependencies,
+  type LibManifest,
+} from './lib-manifest.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,6 +67,7 @@ let useWasm = true;
 let nativeBinaryPath = '';
 let nativeBinary: any = null;
 let tscCacheEntries: Record<string, CacheEntry> | undefined = undefined;
+let libManifest: LibManifest | null = null;
 
 // Memory monitoring
 const getWasmMemoryUsage = () => {
@@ -202,9 +209,26 @@ function getLibNamesForTestCase(
 function collectLibFiles(libNames: string[]): Map<string, string> {
   const out = new Map<string, string>();
   const seen = new Set<string>();
-  for (const libName of libNames) {
-    loadLibRecursive(libName, out, seen);
+
+  // If manifest is available, use it for more accurate dependency resolution
+  if (libManifest) {
+    const resolvedNames = new Set<string>();
+    for (const libName of libNames) {
+      const deps = resolveLibWithDependencies(libName, libManifest);
+      for (const dep of deps) {
+        resolvedNames.add(dep);
+      }
+    }
+    for (const libName of resolvedNames) {
+      loadLibRecursive(libName, out, seen);
+    }
+  } else {
+    // Fall back to file-based resolution
+    for (const libName of libNames) {
+      loadLibRecursive(libName, out, seen);
+    }
   }
+
   return out;
 }
 
@@ -903,6 +927,13 @@ process.on('unhandledRejection', (reason) => {
       hasLibDir = fs.existsSync(path.join(libDir, 'es5.d.ts'));
     }
   } catch {}
+
+  // Load lib manifest for consistent resolution (optional - falls back to file-based)
+  try {
+    libManifest = loadLibManifest();
+  } catch {
+    // Manifest not available, use file-based resolution
+  }
 
   // Signal ready with memory info
   parentPort!.postMessage({
