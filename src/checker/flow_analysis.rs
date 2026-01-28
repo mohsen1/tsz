@@ -1727,6 +1727,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This provides a bridge between the checker's flow analysis and the
     /// solver's type narrowing capabilities.
+    #[allow(dead_code)]
     pub(crate) fn create_flow_evaluator(&self) -> FlowTypeEvaluator<'_> {
         FlowTypeEvaluator::new(self.ctx.types)
     }
@@ -1737,6 +1738,7 @@ impl<'a> CheckerState<'a> {
     /// and packages it into a FlowFacts structure that can be used by the solver.
     ///
     /// TODO: Implement full flow fact extraction from the flow graph
+    #[allow(dead_code)]
     pub(crate) fn extract_flow_facts(&self, _sym_id: SymbolId, _usage_idx: NodeIndex) -> FlowFacts {
         // For now, return empty flow facts
         // A full implementation would:
@@ -1753,6 +1755,7 @@ impl<'a> CheckerState<'a> {
     /// types based on flow facts.
     ///
     /// TODO: Integrate with extract_flow_facts to provide real flow information
+    #[allow(dead_code)]
     pub(crate) fn apply_solver_flow_narrowing(
         &self,
         declared_type: TypeId,

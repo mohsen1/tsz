@@ -108,6 +108,7 @@ impl FlowFacts {
 /// This evaluator uses the solver's type operations to compute narrowed types
 /// based on flow facts gathered during control flow analysis.
 pub struct FlowTypeEvaluator<'a> {
+    #[allow(dead_code)]
     db: &'a dyn TypeDatabase,
     narrowing_context: NarrowingContext<'a>,
 }
