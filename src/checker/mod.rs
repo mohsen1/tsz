@@ -48,9 +48,11 @@ pub mod interface_type;
 pub mod intersection_type;
 pub mod iterable_checker;
 pub mod jsx;
+pub mod jsx_checker;
 pub mod literal_type;
 pub mod module_checker;
 // pub mod module_validation; // TODO: Fix API mismatches
+pub mod namespace_checker;
 pub mod nullish;
 pub mod object_type;
 pub mod optional_chain;
@@ -71,6 +73,7 @@ pub mod type_api;
 pub mod type_checking;
 pub mod type_computation;
 // pub mod type_computing_visitor; // TODO: module not found
+pub mod type_literal_checker;
 pub mod type_node;
 pub mod type_parameter;
 pub mod type_query;

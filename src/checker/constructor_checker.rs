@@ -1,15 +1,18 @@
-//! Constructor Type Checking Module
+//! Constructor Type Checking Utilities Module
 //!
-//! This module contains methods for validating constructor types and their properties.
-//! It handles:
-//! - Mixin pattern type refinement
+//! This module contains constructor type checking utility methods for CheckerState
+//! as part of Phase 2 architecture refactoring.
+//!
+//! The methods in this module handle:
+//! - Constructor accessibility checking (private, protected, public)
+//! - Constructor signature utilities
+//! - Constructor instantiation validation
+//! - Mixin call return type refinement
 //! - Instance type extraction from constructors
-//! - Constructor property merging
 //! - Abstract constructor assignability
-//! - Constructor accessibility (public/private/protected)
 //!
-//! This module extends CheckerState with constructor-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! This module extends CheckerState with utilities for constructor-related
+//! type checking operations.
 
 use crate::binder::symbol_flags;
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
@@ -17,21 +20,141 @@ use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
+use crate::solver::type_queries::get_callable_shape;
 use rustc_hash::FxHashSet;
 
 // =============================================================================
-// Constructor Type Checking Methods
+// Constructor Type Checking Utilities
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
-    // Mixin Pattern Support
+    // Constructor Accessibility
     // =========================================================================
 
-    /// Refine the return type of a mixin call expression.
+    /// Check if a type is an abstract constructor type.
     ///
-    /// For mixin patterns like `function Mixin<T>(Base: T)`, this refines
-    /// the return type to include base class instance properties.
+    /// Abstract constructors cannot be instantiated directly with `new`.
+    pub fn is_abstract_ctor(&self, type_id: TypeId) -> bool {
+        self.ctx.abstract_constructor_types.contains(&type_id)
+    }
+
+    /// Check if a type is a private constructor.
+    ///
+    /// Private constructors can only be called from within the class.
+    pub fn is_private_ctor(&self, type_id: TypeId) -> bool {
+        self.ctx.private_constructor_types.contains(&type_id)
+    }
+
+    /// Check if a type is a protected constructor.
+    ///
+    /// Protected constructors can be called from the class and its subclasses.
+    pub fn is_protected_ctor(&self, type_id: TypeId) -> bool {
+        self.ctx.protected_constructor_types.contains(&type_id)
+    }
+
+    /// Check if a type is a public constructor.
+    ///
+    /// Public constructors have no access restrictions.
+    pub fn is_public_ctor(&self, type_id: TypeId) -> bool {
+        !self.is_private_ctor(type_id) && !self.is_protected_ctor(type_id)
+    }
+
+    // =========================================================================
+    // Constructor Signature Utilities
+    // =========================================================================
+
+    /// Check if a type has any construct signature.
+    ///
+    /// Construct signatures allow a type to be called with `new`.
+    pub fn has_construct_sig(&self, type_id: TypeId) -> bool {
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            !shape.construct_signatures.is_empty()
+        } else {
+            false
+        }
+    }
+
+    /// Get the number of construct signatures for a type.
+    ///
+    /// Multiple construct signatures indicate constructor overloading.
+    pub fn construct_signature_count(&self, type_id: TypeId) -> usize {
+        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+            shape.construct_signatures.len()
+        } else {
+            0
+        }
+    }
+
+    // =========================================================================
+    // Constructor Instantiation
+    // =========================================================================
+
+    /// Check if a constructor can be instantiated.
+    ///
+    /// Returns false for abstract constructors which cannot be instantiated.
+    pub fn can_instantiate(&self, constructor_type: TypeId) -> bool {
+        !self.is_abstract_ctor(constructor_type)
+    }
+
+    /// Check if `new` can be applied to a type.
+    ///
+    /// This is a convenience check combining constructor type detection
+    /// with abstract constructor checking.
+    pub fn can_use_new(&self, type_id: TypeId) -> bool {
+        self.has_construct_sig(type_id) && self.can_instantiate(type_id)
+    }
+
+    /// Check if a type is a class constructor (typeof Class).
+    ///
+    /// Returns true for Callable types with only construct signatures (no call signatures).
+    /// This is used to detect when a class constructor is being called without `new`.
+    pub fn is_class_constructor_type(&self, type_id: TypeId) -> bool {
+        // A class constructor is a Callable with construct signatures but no call signatures
+        self.has_construct_sig(type_id) && !self.has_call_signature(type_id)
+    }
+
+    /// Check if two constructor types have compatible accessibility.
+    ///
+    /// Returns true if source can be assigned to target based on their constructor accessibility.
+    /// - Public constructors are compatible with everything
+    /// - Private constructors are only compatible with the same private constructor
+    /// - Protected constructors are compatible with protected or public targets
+    pub fn ctor_access_compatible(&self, source: TypeId, target: TypeId) -> bool {
+        // Public constructors are compatible with everything
+        if !self.is_private_ctor(source) && !self.is_protected_ctor(source) {
+            return true;
+        }
+
+        // Private constructors are only compatible with the same private constructor
+        if self.is_private_ctor(source) {
+            if self.is_private_ctor(target) {
+                source == target
+            } else {
+                false
+            }
+        } else {
+            // Protected constructors are compatible with protected or public targets
+            !self.is_private_ctor(target)
+        }
+    }
+
+    /// Check if a type should be treated as a constructor in `new` expressions.
+    ///
+    /// This determines if a type can be used with the `new` operator.
+    pub fn is_newable(&self, type_id: TypeId) -> bool {
+        self.has_construct_sig(type_id)
+    }
+
+    // =========================================================================
+    // Mixin Call Return Type Refinement
+    // =========================================================================
+
+    /// Refine the return type of a mixin call by merging base constructor properties.
+    ///
+    /// When a mixin function returns a class that extends a base parameter,
+    /// this function merges the base type's instance type and static properties
+    /// into the return type.
     pub(crate) fn refine_mixin_call_return_type(
         &mut self,
         callee_idx: NodeIndex,
@@ -82,8 +205,7 @@ impl<'a> CheckerState<'a> {
         refined_return
     }
 
-    /// Find the parameter index that represents the base class in a mixin.
-    pub(crate) fn mixin_base_param_index(
+    fn mixin_base_param_index(
         &self,
         class_expr_idx: NodeIndex,
         func: &crate::parser::node::FunctionData,
@@ -139,9 +261,6 @@ impl<'a> CheckerState<'a> {
     // Instance Type Extraction
     // =========================================================================
 
-    /// Get the instance type from a constructor type.
-    ///
-    /// For constructor types like `typeof MyClass`, returns the instance type.
     pub(crate) fn instance_type_from_constructor_type(
         &mut self,
         ctor_type: TypeId,
@@ -150,7 +269,7 @@ impl<'a> CheckerState<'a> {
         self.instance_type_from_constructor_type_inner(ctor_type, &mut visited)
     }
 
-    pub(crate) fn instance_type_from_constructor_type_inner(
+    fn instance_type_from_constructor_type_inner(
         &mut self,
         ctor_type: TypeId,
         visited: &mut FxHashSet<TypeId>,
@@ -262,8 +381,7 @@ impl<'a> CheckerState<'a> {
     // Constructor Return Type Merging
     // =========================================================================
 
-    /// Merge base instance properties into a constructor's return type.
-    pub(crate) fn merge_base_instance_into_constructor_return(
+    fn merge_base_instance_into_constructor_return(
         &mut self,
         ctor_type: TypeId,
         base_instance_type: TypeId,
@@ -326,8 +444,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Merge base constructor static properties into a constructor's return type.
-    pub(crate) fn merge_base_constructor_properties_into_constructor_return(
+    fn merge_base_constructor_properties_into_constructor_return(
         &mut self,
         ctor_type: TypeId,
         base_props: &rustc_hash::FxHashMap<Atom, crate::solver::PropertyInfo>,
@@ -383,17 +500,16 @@ impl<'a> CheckerState<'a> {
     // Abstract Constructor Assignability
     // =========================================================================
 
-    /// Check if abstract constructor assignability should override the default.
-    ///
-    /// Abstract constructors cannot be assigned to concrete constructor types.
     pub(crate) fn abstract_constructor_assignability_override(
         &self,
         source: TypeId,
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
+        // Check if source is an abstract constructor
         let source_is_abstract = self.is_abstract_constructor_type(source, env);
 
+        // Additional check: if source_is_abstract is false, check symbol_types directly
         let source_is_abstract_from_symbols = if !source_is_abstract {
             let mut found_abstract = false;
             for (&sym_id, &cached_type) in self.ctx.symbol_types.iter() {
@@ -417,8 +533,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Source is abstract - check if target is a non-abstract constructor type
         let target_is_abstract = self.is_abstract_constructor_type(target, env);
 
+        // Also check target via symbol_types
         let target_is_abstract_from_symbols = {
             let mut found_abstract = false;
             for (&sym_id, &cached_type) in self.ctx.symbol_types.iter() {
@@ -436,13 +554,15 @@ impl<'a> CheckerState<'a> {
 
         let final_target_is_abstract = target_is_abstract || target_is_abstract_from_symbols;
 
+        // If target is also abstract, allow the assignment (abstract to abstract is OK)
         if final_target_is_abstract {
             return None;
         }
 
-        let target_is_constructor =
-            crate::solver::type_queries::has_construct_signatures(self.ctx.types, target);
+        // Check if target is a constructor type (has construct signatures)
+        let target_is_constructor = self.has_construct_sig(target);
 
+        // If target is a constructor type but not abstract, reject the assignment
         if target_is_constructor {
             return Some(false);
         }
@@ -450,8 +570,153 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Check if a type is an abstract constructor type.
-    pub(crate) fn is_abstract_constructor_type(
+    // =========================================================================
+    // Constructor Access Level
+    // =========================================================================
+
+    fn constructor_access_level(
+        &self,
+        type_id: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> Option<MemberAccessLevel> {
+        use crate::solver::type_queries::{ConstructorAccessKind, classify_for_constructor_access};
+
+        if !visited.insert(type_id) {
+            return None;
+        }
+
+        if self.is_private_ctor(type_id) {
+            return Some(MemberAccessLevel::Private);
+        }
+        if self.is_protected_ctor(type_id) {
+            return Some(MemberAccessLevel::Protected);
+        }
+
+        match classify_for_constructor_access(self.ctx.types, type_id) {
+            ConstructorAccessKind::SymbolRef(symbol) => self
+                .resolve_type_env_symbol(symbol, env)
+                .and_then(|resolved| {
+                    if resolved != type_id {
+                        self.constructor_access_level(resolved, env, visited)
+                    } else {
+                        None
+                    }
+                }),
+            ConstructorAccessKind::Application(app_id) => {
+                let app = self.ctx.types.type_application(app_id);
+                if app.base != type_id {
+                    self.constructor_access_level(app.base, env, visited)
+                } else {
+                    None
+                }
+            }
+            ConstructorAccessKind::Other => None,
+        }
+    }
+
+    fn constructor_access_level_for_type(
+        &self,
+        type_id: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<MemberAccessLevel> {
+        let mut visited = FxHashSet::default();
+        self.constructor_access_level(type_id, env, &mut visited)
+    }
+
+    pub(crate) fn constructor_accessibility_mismatch(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_level = self.constructor_access_level_for_type(source, env);
+        let target_level = self.constructor_access_level_for_type(target, env);
+
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+
+        let source_rank = Self::constructor_access_rank(source_level);
+        let target_rank = Self::constructor_access_rank(target_level);
+        if source_rank > target_rank {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    pub(crate) fn constructor_accessibility_override(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<bool> {
+        if self
+            .constructor_accessibility_mismatch(source, target, env)
+            .is_some()
+        {
+            return Some(false);
+        }
+        None
+    }
+
+    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
+        &self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_sym = self.class_symbol_from_expression(right_idx)?;
+        let target_sym = self.assignment_target_class_symbol(left_idx)?;
+        let source_level = self.class_constructor_access_level(source_sym);
+        let target_level = self.class_constructor_access_level(target_sym);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
+        {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    pub(crate) fn constructor_accessibility_mismatch_for_var_decl(
+        &self,
+        var_decl: &crate::parser::node::VariableDeclarationData,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+        let source_sym = self.class_symbol_from_expression(var_decl.initializer)?;
+        let target_sym = self.class_symbol_from_type_annotation(var_decl.type_annotation)?;
+        let source_level = self.class_constructor_access_level(source_sym);
+        let target_level = self.class_constructor_access_level(target_sym);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
+        {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    // =========================================================================
+    // Helper Methods
+    // =========================================================================
+
+    fn resolve_type_env_symbol(
+        &self,
+        symbol: crate::solver::SymbolRef,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<TypeId> {
+        if let Some(env) = env {
+            return env.get(symbol);
+        }
+        let env_ref = self.ctx.type_env.borrow();
+        env_ref.get(symbol)
+    }
+
+    fn is_abstract_constructor_type(
         &self,
         type_id: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
@@ -461,17 +726,22 @@ impl<'a> CheckerState<'a> {
             AbstractConstructorKind, classify_for_abstract_constructor,
         };
 
-        if self.verify_is_abstract_constructor(type_id) {
+        // First check the cached set
+        if self.is_abstract_ctor(type_id) {
             return true;
         }
 
         match classify_for_abstract_constructor(self.ctx.types, type_id) {
             AbstractConstructorKind::TypeQuery(symbol) => {
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(symbol.0)) {
+                    // Check if the symbol is marked as abstract
                     if symbol.flags & symbol_flags::ABSTRACT != 0 {
                         return true;
                     }
+                    // Also check if this is an abstract class by examining its declaration
+                    // The ABSTRACT flag might not be set on the symbol, so check the class modifiers
                     if symbol.flags & symbol_flags::CLASS != 0 {
+                        // Get the class declaration and check if it has the abstract modifier
                         let decl_idx = if !symbol.value_declaration.is_none() {
                             symbol.value_declaration
                         } else {
@@ -500,11 +770,17 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or(false),
             AbstractConstructorKind::Callable(_shape_id) => {
-                if self.verify_is_abstract_constructor(type_id) {
+                // For Callable types (constructor types), check if they're in the abstract set
+                // This handles `typeof AbstractClass` which returns a Callable type
+                if self.is_abstract_ctor(type_id) {
                     return true;
                 }
+                // Additional check: iterate through symbol_types to find matching class symbols
+                // This handles cases where the type wasn't added to abstract_constructor_types
+                // or the type is being compared before being cached
                 for (&sym_id, &cached_type) in self.ctx.symbol_types.iter() {
                     if cached_type == type_id {
+                        // Found a symbol with this type, check if it's an abstract class
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                             && symbol.flags & symbol_flags::CLASS != 0
                             && symbol.flags & symbol_flags::ABSTRACT != 0
@@ -516,163 +792,11 @@ impl<'a> CheckerState<'a> {
                 false
             }
             AbstractConstructorKind::Application(app_id) => {
+                // For generic type applications, check the base type
                 let app = self.ctx.types.type_application(app_id);
                 self.is_abstract_constructor_type(app.base, env)
             }
             AbstractConstructorKind::NotAbstract => false,
         }
-    }
-
-    // =========================================================================
-    // Constructor Accessibility
-    // =========================================================================
-
-    /// Get the access level of a constructor.
-    pub(crate) fn constructor_access_level(
-        &self,
-        type_id: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-        visited: &mut FxHashSet<TypeId>,
-    ) -> Option<MemberAccessLevel> {
-        use crate::solver::type_queries::{ConstructorAccessKind, classify_for_constructor_access};
-
-        if !visited.insert(type_id) {
-            return None;
-        }
-
-        if self.verify_is_private_constructor(type_id) {
-            return Some(MemberAccessLevel::Private);
-        }
-        if self.verify_is_protected_constructor(type_id) {
-            return Some(MemberAccessLevel::Protected);
-        }
-
-        match classify_for_constructor_access(self.ctx.types, type_id) {
-            ConstructorAccessKind::SymbolRef(symbol) => self
-                .resolve_type_env_symbol(symbol, env)
-                .and_then(|resolved| {
-                    if resolved != type_id {
-                        self.constructor_access_level(resolved, env, visited)
-                    } else {
-                        None
-                    }
-                }),
-            ConstructorAccessKind::Application(app_id) => {
-                let app = self.ctx.types.type_application(app_id);
-                if app.base != type_id {
-                    self.constructor_access_level(app.base, env, visited)
-                } else {
-                    None
-                }
-            }
-            ConstructorAccessKind::Other => None,
-        }
-    }
-
-    /// Get the access level of a constructor for a type (wrapper with fresh visited set).
-    pub(crate) fn constructor_access_level_for_type(
-        &self,
-        type_id: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> Option<MemberAccessLevel> {
-        let mut visited = FxHashSet::default();
-        self.constructor_access_level(type_id, env, &mut visited)
-    }
-
-    /// Check for constructor accessibility mismatch between source and target.
-    pub(crate) fn constructor_accessibility_mismatch(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        let source_level = self.constructor_access_level_for_type(source, env);
-        let target_level = self.constructor_access_level_for_type(target, env);
-
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-
-        let source_rank = Self::constructor_access_rank(source_level);
-        let target_rank = Self::constructor_access_rank(target_level);
-        if source_rank > target_rank {
-            return Some((source_level, target_level));
-        }
-        None
-    }
-
-    /// Check if constructor accessibility should override assignability.
-    pub(crate) fn constructor_accessibility_override(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> Option<bool> {
-        if self
-            .constructor_accessibility_mismatch(source, target, env)
-            .is_some()
-        {
-            return Some(false);
-        }
-        None
-    }
-
-    /// Check for constructor accessibility mismatch in an assignment expression.
-    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
-        &self,
-        left_idx: NodeIndex,
-        right_idx: NodeIndex,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        let source_sym = self.class_symbol_from_expression(right_idx)?;
-        let target_sym = self.assignment_target_class_symbol(left_idx)?;
-        let source_level = self.class_constructor_access_level(source_sym);
-        let target_level = self.class_constructor_access_level(target_sym);
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
-        {
-            return Some((source_level, target_level));
-        }
-        None
-    }
-
-    /// Check for constructor accessibility mismatch in a variable declaration.
-    pub(crate) fn constructor_accessibility_mismatch_for_var_decl(
-        &self,
-        var_decl: &crate::parser::node::VariableDeclarationData,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        if var_decl.initializer.is_none() {
-            return None;
-        }
-        let source_sym = self.class_symbol_from_expression(var_decl.initializer)?;
-        let target_sym = self.class_symbol_from_type_annotation(var_decl.type_annotation)?;
-        let source_level = self.class_constructor_access_level(source_sym);
-        let target_level = self.class_constructor_access_level(target_sym);
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
-        {
-            return Some((source_level, target_level));
-        }
-        None
-    }
-
-    // =========================================================================
-    // Type Environment Resolution Helper
-    // =========================================================================
-
-    /// Resolve a symbol reference from the type environment.
-    pub(crate) fn resolve_type_env_symbol(
-        &self,
-        symbol: crate::solver::SymbolRef,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> Option<TypeId> {
-        if let Some(env) = env {
-            return env.get(symbol);
-        }
-        let env_ref = self.ctx.type_env.borrow();
-        env_ref.get(symbol)
     }
 }
