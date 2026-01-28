@@ -37,7 +37,8 @@ pub static DEFAULT_CHECKER_OPTIONS: Lazy<CheckerOptions> = Lazy::new(CheckerOpti
 pub static SHARED_LIB_FILES: Lazy<Vec<Arc<crate::lib_loader::LibFile>>> = Lazy::new(Vec::new);
 
 /// Shared lib contexts for checker - derived from SHARED_LIB_FILES
-pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> = Lazy::new(Vec::new);
+pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> =
+    Lazy::new(Vec::new);
 
 /// Test context builder for common test setup patterns.
 /// Reduces boilerplate while allowing test-specific customization.
