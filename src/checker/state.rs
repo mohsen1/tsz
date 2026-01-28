@@ -134,7 +134,8 @@ pub const MAX_TREE_WALK_ITERATIONS: usize = 10_000;
 
 /// Maximum number of type resolution operations per checker instance.
 /// Prevents timeout on deeply recursive or pathological type definitions.
-pub const MAX_TYPE_RESOLUTION_OPS: u32 = 500_000;
+/// Reduced from 500k to prevent OOM in WASM environment
+pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EnumKind {
