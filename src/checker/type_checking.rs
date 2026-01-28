@@ -358,27 +358,6 @@ impl<'a> CheckerState<'a> {
     // Member and Declaration Validation
     // =========================================================================
 
-    /// Check a computed property name for type errors.
-    ///
-    /// This function validates that the expression used for a computed
-    /// property name is well-formed. It computes the type of the expression
-    /// to ensure any type errors are reported.
-    pub(crate) fn check_computed_property_name(&mut self, name_idx: NodeIndex) {
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return;
-        };
-
-        if name_node.kind != crate::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return;
-        }
-
-        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
-            return;
-        };
-
-        let _ = self.get_type_of_node(computed.expression);
-    }
-
     /// Check a class member name for computed property validation.
     ///
     /// This dispatches to check_computed_property_name for properties,
@@ -703,122 +682,6 @@ impl<'a> CheckerState<'a> {
                 self.error_type_not_assignable_with_reason_at(init_type, declared_type, param_idx);
             }
         }
-    }
-
-    // =========================================================================
-    // Accessibility and Member Checking
-    // =========================================================================
-
-    /// Check property accessibility for a property access expression.
-    ///
-    /// This function validates that a property access is allowed based on
-    /// the access modifiers (private, protected, public) and the class hierarchy.
-    ///
-    /// ## Accessibility Rules:
-    /// - **Private**: Only accessible within the declaring class
-    /// - **Protected**: Accessible within declaring class and its subclasses
-    /// - **Public**: Accessible from anywhere (default)
-    ///
-    /// ## Returns:
-    /// - `true` if access is allowed
-    /// - `false` if access is denied (error emitted)
-    ///
-    /// ## Error Codes:
-    /// - TS2341: "Property '{}' is private and only accessible within class '{}'."
-    /// - TS2445: "Property '{}' is protected and only accessible within class '{}' and its subclasses."
-    pub(crate) fn check_property_accessibility(
-        &mut self,
-        object_expr: NodeIndex,
-        property_name: &str,
-        error_node: NodeIndex,
-        object_type: TypeId,
-    ) -> bool {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-
-        let Some((class_idx, is_static)) = self.resolve_class_for_access(object_expr, object_type)
-        else {
-            return true;
-        };
-        let Some(access_info) = self.find_member_access_info(class_idx, property_name, is_static)
-        else {
-            return true;
-        };
-
-        let current_class_idx = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx);
-        let allowed = match access_info.level {
-            MemberAccessLevel::Private => {
-                current_class_idx == Some(access_info.declaring_class_idx)
-            }
-            MemberAccessLevel::Protected => match current_class_idx {
-                None => false,
-                Some(current_class_idx) => {
-                    if current_class_idx == access_info.declaring_class_idx {
-                        true
-                    } else if !self
-                        .is_class_derived_from(current_class_idx, access_info.declaring_class_idx)
-                    {
-                        false
-                    } else {
-                        let receiver_class_idx =
-                            self.resolve_receiver_class_for_access(object_expr, object_type);
-                        receiver_class_idx
-                            .map(|receiver| {
-                                receiver == current_class_idx
-                                    || self.is_class_derived_from(receiver, current_class_idx)
-                            })
-                            .unwrap_or(false)
-                    }
-                }
-            },
-        };
-
-        if allowed {
-            return true;
-        }
-
-        match access_info.level {
-            MemberAccessLevel::Private => {
-                let message = format!(
-                    "Property '{}' is private and only accessible within class '{}'.",
-                    property_name, access_info.declaring_class_name
-                );
-                self.error_at_node(error_node, &message, diagnostic_codes::PROPERTY_IS_PRIVATE);
-            }
-            MemberAccessLevel::Protected => {
-                let message = format!(
-                    "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
-                    property_name, access_info.declaring_class_name
-                );
-                self.error_at_node(
-                    error_node,
-                    &message,
-                    diagnostic_codes::PROPERTY_IS_PROTECTED,
-                );
-            }
-        }
-
-        false
-    }
-
-    /// Get the const modifier node from a list of modifiers, if present.
-    ///
-    /// Returns the NodeIndex of the const modifier for error reporting.
-    /// Used to validate that readonly properties cannot have initializers.
-    pub(crate) fn get_const_modifier(
-        &self,
-        modifiers: &Option<crate::parser::NodeList>,
-    ) -> Option<NodeIndex> {
-        use crate::scanner::SyntaxKind;
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ConstKeyword as u16
-                {
-                    return Some(mod_idx);
-                }
-            }
-        }
-        None
     }
 
     // =========================================================================
@@ -6803,7 +6666,7 @@ impl<'a> CheckerState<'a> {
     /// ```
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use crate::parser::node::NodeAccess;
-        use crate::solver::TypeLowering;
+        use crate::solver::{TypeLowering, types::is_compiler_managed_type};
 
         let mut lib_type_id: Option<TypeId> = None;
 
@@ -6816,18 +6679,14 @@ impl<'a> CheckerState<'a> {
                 // Get the symbol's declaration(s)
                 if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
                     // Create a resolver that looks up symbols in all lib binders
-                    // Skip built-in types that have special handling in TypeLowering
                     let arena_ref = lib_ctx.arena.as_ref();
                     let resolver = |node_idx: NodeIndex| -> Option<u32> {
                         // Get the identifier name from the node
                         let ident_name = arena_ref.get_identifier_text(node_idx)?;
 
                         // Skip built-in types that have special handling in TypeLowering
-                        // These types use built-in TypeKey representations instead of Refs
-                        match ident_name {
-                            "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase"
-                            | "Capitalize" | "Uncapitalize" => return None,
-                            _ => {}
+                        if is_compiler_managed_type(ident_name) {
+                            return None;
                         }
 
                         // Look up the symbol in all lib contexts' file_locals
@@ -6866,7 +6725,6 @@ impl<'a> CheckerState<'a> {
             && !augmentation_decls.is_empty()
         {
             // Create a resolver for the current file's binder
-            // Skip built-in types that have special handling in TypeLowering
             let arena_ref = self.ctx.arena;
             let binder_ref = self.ctx.binder;
             let resolver = |node_idx: NodeIndex| -> Option<u32> {
@@ -6874,10 +6732,8 @@ impl<'a> CheckerState<'a> {
                 let ident_name = arena_ref.get_identifier_text(node_idx)?;
 
                 // Skip built-in types that have special handling in TypeLowering
-                match ident_name {
-                    "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase" | "Capitalize"
-                    | "Uncapitalize" => return None,
-                    _ => {}
+                if is_compiler_managed_type(ident_name) {
+                    return None;
                 }
 
                 // First check the current file's locals
