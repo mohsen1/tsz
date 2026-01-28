@@ -448,11 +448,11 @@ pub fn get_operator_precedence(operator_kind: u16) -> u8 {
         52 => 7,                        // BarToken
         51 => 8,                        // CaretToken
         50 => 9,                        // AmpersandToken
-        34..=37 => 10,        // equality
+        34..=37 => 10,                  // equality
         30 | 32 | 33 | 103 | 104 => 11, // relational
-        47..=49 => 12,             // shift
+        47..=49 => 12,                  // shift
         39 | 40 => 13,                  // additive
-        41..=43 => 14,             // multiplicative
+        41..=43 => 14,                  // multiplicative
         _ => 0,
     }
 }

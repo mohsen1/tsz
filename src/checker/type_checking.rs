@@ -10537,9 +10537,7 @@ impl<'a> CheckerState<'a> {
         match key {
             TypeKey::TypeQuery(SymbolRef(sym_id)) => {
                 // Check for cycle in typeof resolution (scoped borrow)
-                let is_cycle = {
-                    self.ctx.typeof_resolution_stack.borrow().contains(&sym_id)
-                };
+                let is_cycle = { self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) };
                 if is_cycle {
                     // Cycle detected - return ERROR to prevent infinite loop
                     eprintln!(
@@ -10569,9 +10567,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(TypeKey::TypeQuery(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base)
                 {
                     // Check for cycle in typeof resolution (scoped borrow)
-                    let is_cycle = {
-                        self.ctx.typeof_resolution_stack.borrow().contains(&sym_id)
-                    };
+                    let is_cycle = { self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) };
                     if is_cycle {
                         eprintln!(
                             "Warning: typeof resolution cycle detected for symbol {} in application in {}",
