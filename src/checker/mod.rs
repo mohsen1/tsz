@@ -20,6 +20,7 @@
 pub mod accessibility;
 pub mod arena;
 pub mod array_type;
+pub mod assignment_checker;
 pub mod call_checker;
 pub mod callable_type;
 pub mod class_checker;
