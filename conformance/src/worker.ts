@@ -61,6 +61,7 @@ let wasmModule: any = null;
 let libSource = '';
 let libPath = '';
 let libDir = '';
+let tsLibDir = ''; // TypeScript node_modules lib directory (for es2015, dom, etc.)
 let hasLibDir = false;
 let workerId = -1;
 let useWasm = true;
@@ -98,18 +99,35 @@ function parseLibReferences(source: string): string[] {
 function resolveLibFilePath(libName: string): string | null {
   const normalized = libName.trim().toLowerCase();
   if (libPathCache.has(normalized)) return libPathCache.get(normalized)!;
-  if (!hasLibDir) return null;
 
-  const candidates = [
-    path.join(libDir, `${normalized}.d.ts`),
-    path.join(libDir, `${normalized}.generated.d.ts`),
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      libPathCache.set(normalized, candidate);
-      return candidate;
+  // First check tests/lib directory (for lib.d.ts, react.d.ts, etc.)
+  if (hasLibDir && libDir) {
+    const candidates = [
+      path.join(libDir, `lib.${normalized}.d.ts`),
+      path.join(libDir, `${normalized}.d.ts`),
+      path.join(libDir, `${normalized}.generated.d.ts`),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        libPathCache.set(normalized, candidate);
+        return candidate;
+      }
     }
   }
+
+  // Fallback to TypeScript node_modules lib directory (for es2015, dom, etc.)
+  if (tsLibDir) {
+    const candidates = [
+      path.join(tsLibDir, `lib.${normalized}.d.ts`),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        libPathCache.set(normalized, candidate);
+        return candidate;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -935,6 +953,11 @@ process.on('unhandledRejection', (reason) => {
       libSource = fs.readFileSync(libPath, 'utf8');
       hasLibDir = fs.existsSync(path.join(libDir, 'es5.d.ts'));
     }
+  } catch {}
+
+  // Set TypeScript lib directory (for es2015, dom, etc.)
+  try {
+    tsLibDir = path.resolve(__dirname, '../../TypeScript/node_modules/typescript/lib');
   } catch {}
 
   // Load lib manifest for consistent resolution (optional - falls back to file-based)
