@@ -23,6 +23,6 @@
     "typescript": "^6.0.0-dev.20260116"
   },
   "devDependencies": {
-    "@types/node": "^20.10.0"
+    "@types/node": "^20.19.30"
   }
 }

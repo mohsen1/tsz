@@ -643,81 +643,80 @@ impl<'a> CheckerState<'a> {
         if debug {
             trace!(
                 lib_binders_count = lib_binders.len(),
-                skip_lib_binder_scan,
-                "[BIND_RESOLVE] Checking lib binders' file_locals"
+                skip_lib_binder_scan, "[BIND_RESOLVE] Checking lib binders' file_locals"
             );
         }
         if !skip_lib_binder_scan {
-        for (i, lib_binder) in lib_binders.iter().enumerate() {
-            if debug {
-                trace!(
-                    lib_index = i,
-                    file_locals_size = lib_binder.file_locals.len(),
-                    "[BIND_RESOLVE] Lib binder file_locals"
-                );
-            }
-            if let Some(sym_id) = lib_binder.file_locals.get(name) {
-                if should_skip_lib_symbol(sym_id) {
+            for (i, lib_binder) in lib_binders.iter().enumerate() {
+                if debug {
+                    trace!(
+                        lib_index = i,
+                        file_locals_size = lib_binder.file_locals.len(),
+                        "[BIND_RESOLVE] Lib binder file_locals"
+                    );
+                }
+                if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                    if should_skip_lib_symbol(sym_id) {
+                        if debug {
+                            trace!(
+                                name = %name,
+                                lib_index = i,
+                                sym_id = ?sym_id,
+                                "[BIND_RESOLVE] SKIPPED: lib symbol with noLib"
+                            );
+                        }
+                        continue;
+                    }
                     if debug {
                         trace!(
                             name = %name,
                             lib_index = i,
                             sym_id = ?sym_id,
-                            "[BIND_RESOLVE] SKIPPED: lib symbol with noLib"
+                            "[BIND_RESOLVE] Found in lib binder"
                         );
                     }
-                    continue;
-                }
-                if debug {
-                    trace!(
-                        name = %name,
-                        lib_index = i,
-                        sym_id = ?sym_id,
-                        "[BIND_RESOLVE] Found in lib binder"
-                    );
-                }
 
-                // Try to get symbol data with cross-arena resolution
-                // This handles cases where lib symbols reference other arenas
-                let symbol_opt = lib_binder.get_symbol_with_libs(sym_id, &lib_binders);
+                    // Try to get symbol data with cross-arena resolution
+                    // This handles cases where lib symbols reference other arenas
+                    let symbol_opt = lib_binder.get_symbol_with_libs(sym_id, &lib_binders);
 
-                if let Some(symbol) = symbol_opt {
-                    let is_class_member = Self::is_class_member_symbol(symbol.flags);
-                    if debug {
-                        trace!(
-                            flags = format_args!("0x{:x}", symbol.flags),
-                            is_class_member, "[BIND_RESOLVE] Symbol flags"
-                        );
-                    }
-                    // For lib binders, be more permissive with class members
-                    // Intrinsic types (Object, Array, etc.) may have class member flags
-                    // but should still be accessible as global values
-                    if !is_class_member || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
+                    if let Some(symbol) = symbol_opt {
+                        let is_class_member = Self::is_class_member_symbol(symbol.flags);
                         if debug {
                             trace!(
-                                sym_id = ?sym_id,
+                                flags = format_args!("0x{:x}", symbol.flags),
+                                is_class_member, "[BIND_RESOLVE] Symbol flags"
+                            );
+                        }
+                        // For lib binders, be more permissive with class members
+                        // Intrinsic types (Object, Array, etc.) may have class member flags
+                        // but should still be accessible as global values
+                        if !is_class_member || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
+                            if debug {
+                                trace!(
+                                    sym_id = ?sym_id,
+                                    lib_index = i,
+                                    "[BIND_RESOLVE] SUCCESS: Returning from lib binder"
+                                );
+                            }
+                            return Some(sym_id);
+                        } else if debug {
+                            trace!("[BIND_RESOLVE] SKIPPED: is_class_member without EXPORT_VALUE");
+                        }
+                    } else {
+                        // No symbol data available - return sym_id anyway
+                        // This handles cross-arena references and ambient declarations
+                        if debug {
+                            trace!(
+                                name = %name,
                                 lib_index = i,
-                                "[BIND_RESOLVE] SUCCESS: Returning from lib binder"
+                                "[BIND_RESOLVE] SUCCESS: Found in lib binder (no symbol data)"
                             );
                         }
                         return Some(sym_id);
-                    } else if debug {
-                        trace!("[BIND_RESOLVE] SKIPPED: is_class_member without EXPORT_VALUE");
                     }
-                } else {
-                    // No symbol data available - return sym_id anyway
-                    // This handles cross-arena references and ambient declarations
-                    if debug {
-                        trace!(
-                            name = %name,
-                            lib_index = i,
-                            "[BIND_RESOLVE] SUCCESS: Found in lib binder (no symbol data)"
-                        );
-                    }
-                    return Some(sym_id);
                 }
             }
-        }
         } // end if !skip_lib_binder_scan
 
         // === PHASE 5: Symbol not found - diagnostic dump ===

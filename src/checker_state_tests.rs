@@ -31814,13 +31814,13 @@ fn test_lib_merge_no_ts2318_for_basic_globals() {
 
     let lib_arena = Arc::new(NodeArena::new());
     let lib_binder_arc = Arc::new(lib_binder);
-    
+
     // Create binder LibContext for merging
     let binder_lib_context = BinderLibContext {
         arena: Arc::clone(&lib_arena),
         binder: Arc::clone(&lib_binder_arc),
     };
-    
+
     // Create checker LibContext for the checker
     let checker_lib_context = CheckerLibContext {
         arena: Arc::clone(&lib_arena),
@@ -31842,9 +31842,18 @@ const obj: Object = {};
     binder.bind_source_file(parser.get_arena(), root);
 
     // Verify lib symbols are merged
-    assert!(binder.lib_symbols_are_merged(), "lib_symbols_merged should be true");
-    assert!(binder.file_locals.has("Array"), "Array should be in file_locals");
-    assert!(binder.file_locals.has("Object"), "Object should be in file_locals");
+    assert!(
+        binder.lib_symbols_are_merged(),
+        "lib_symbols_merged should be true"
+    );
+    assert!(
+        binder.file_locals.has("Array"),
+        "Array should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.has("Object"),
+        "Object should be in file_locals"
+    );
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -31854,10 +31863,10 @@ const obj: Object = {};
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    
+
     // Set lib contexts for checker
     checker.ctx.set_lib_contexts(vec![checker_lib_context]);
-    
+
     checker.check_source_file(root);
 
     // Should NOT have TS2318 (global type not found)
@@ -31923,7 +31932,10 @@ fn test_lib_merge_consistent_symbol_resolution() {
     let bar_id = binder.file_locals.get("Bar").expect("Bar should exist");
 
     // IDs must be unique
-    assert_ne!(foo_id, bar_id, "Foo and Bar must have different IDs after merge");
+    assert_ne!(
+        foo_id, bar_id,
+        "Foo and Bar must have different IDs after merge"
+    );
 
     // Symbol resolution must return correct names
     let foo_sym = binder.get_symbol(foo_id).expect("Foo symbol must resolve");
