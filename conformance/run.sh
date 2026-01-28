@@ -257,8 +257,7 @@ build_wasm() {
     
     wasm-pack build --target nodejs --out-dir pkg --release
     log_success "WASM module built"
-    
-    copy_lib_files "$ROOT_DIR/pkg/lib"
+    # Lib files are embedded in the binary (no copy needed).
 }
 
 build_native() {
@@ -268,30 +267,7 @@ build_native() {
     require_cmd cargo
     cargo build --release --bin tsz
     log_success "Native binary built"
-    
-    local target_dir
-    target_dir=$(get_target_dir)
-    copy_lib_files "$target_dir/release/lib"
-}
-
-copy_lib_files() {
-    local dest_dir="$1"
-    local lib_src="$ROOT_DIR/TypeScript/lib"
-    local lib_src_alt="$ROOT_DIR/TypeScript/src/lib"
-    
-    if [[ -d "$lib_src" ]]; then
-        log_step "Copying TypeScript lib files..."
-        rm -rf "$dest_dir"
-        mkdir -p "$dest_dir"
-        cp -R "$lib_src/." "$dest_dir/"
-    elif [[ -d "$lib_src_alt" ]]; then
-        log_step "Copying TypeScript lib files (from source)..."
-        rm -rf "$dest_dir"
-        mkdir -p "$dest_dir"
-        cp -R "$lib_src_alt/." "$dest_dir/"
-    else
-        log_warning "TypeScript lib directory not found; skipping"
-    fi
+    # Lib files are embedded in the binary (no copy needed).
 }
 
 build_runner() {
@@ -449,7 +425,7 @@ run_tests() {
     
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                         ${RESET}${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                          ${RESET}${CYAN}║${RESET}"
     echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
     echo -e "${CYAN}║${RESET}  Mode:       $(printf '%-48s' "$mode_desc")${CYAN}║${RESET}"
     echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$max_tests")${CYAN}║${RESET}"

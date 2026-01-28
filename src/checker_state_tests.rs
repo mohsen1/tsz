@@ -15,7 +15,7 @@ use crate::lib_loader;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::solver::{TypeId, TypeInterner};
-use crate::test_fixtures::TestContext;
+use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts, TestContext};
 
 // =============================================================================
 // Basic Type Checker Tests
@@ -132,6 +132,7 @@ async function foo() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -142,6 +143,7 @@ async function foo() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -204,6 +206,7 @@ const bad: Foo = { x: 1, y: 2 };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -214,6 +217,7 @@ const bad: Foo = { x: 1, y: 2 };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -244,6 +248,7 @@ const ok: Foo = obj;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -254,6 +259,7 @@ const ok: Foo = obj;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -281,6 +287,7 @@ let bad: object = "hi";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -291,6 +298,7 @@ let bad: object = "hi";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -319,6 +327,7 @@ const mk = (e: number) => ({ e });
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -329,6 +338,7 @@ const mk = (e: number) => ({ e });
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -360,6 +370,7 @@ declare module "*!text" {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -370,6 +381,7 @@ declare module "*!text" {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -398,6 +410,7 @@ var v: await;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -408,6 +421,7 @@ var v: await;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -438,6 +452,7 @@ class C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -448,6 +463,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -479,6 +495,7 @@ class C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -489,6 +506,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -518,6 +536,7 @@ const bad: Tup = arr;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -528,6 +547,7 @@ const bad: Tup = arr;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -558,6 +578,7 @@ const y = "hello" satisfies number;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -568,6 +589,7 @@ const y = "hello" satisfies number;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -598,6 +620,7 @@ const log2: Logger = (id: number, extra: string) => {};
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -608,6 +631,7 @@ const log2: Logger = (id: number, extra: string) => {};
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -641,6 +665,7 @@ const badAssign: Weak = bad;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -651,6 +676,7 @@ const badAssign: Weak = bad;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -685,6 +711,7 @@ b.valueOf();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -695,6 +722,7 @@ b.valueOf();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -721,6 +749,7 @@ const ok: VoidFn = () => "value";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -731,6 +760,7 @@ const ok: VoidFn = () => "value";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -757,6 +787,7 @@ const y = true;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -767,6 +798,7 @@ const y = true;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -799,6 +831,7 @@ takesFoo(obj);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -809,6 +842,7 @@ takesFoo(obj);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -875,6 +909,7 @@ mixed;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let numbers_type = checker.get_type_of_node(numbers_expr.expression);
@@ -942,6 +977,7 @@ obj[key];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let access_type = checker.get_type_of_node(expr_stmt.expression);
@@ -1027,6 +1063,7 @@ function makeFoo(): Foo {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1037,6 +1074,7 @@ function makeFoo(): Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -1178,6 +1216,7 @@ fn test_function_overload_missing_implementation_2391() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1188,6 +1227,7 @@ fn test_function_overload_missing_implementation_2391() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -1210,6 +1250,7 @@ function foo() {}
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1220,6 +1261,7 @@ function foo() {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -1242,6 +1284,7 @@ function bar() {}
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1252,6 +1295,7 @@ function bar() {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -1281,6 +1325,7 @@ function foo() {}
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1291,6 +1336,7 @@ function foo() {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let duplicate_count = checker
@@ -1325,6 +1371,7 @@ let foo = 2;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1335,6 +1382,7 @@ let foo = 2;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let duplicate_count = checker
@@ -1373,6 +1421,7 @@ interface Bar { y: number; }
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1383,6 +1432,7 @@ interface Bar { y: number; }
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let duplicate_count = checker
@@ -1423,6 +1473,7 @@ enum Color {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1433,6 +1484,7 @@ enum Color {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -1462,6 +1514,7 @@ function Foo() {}
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1472,6 +1525,7 @@ function Foo() {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let duplicate_count = checker
@@ -1515,6 +1569,7 @@ class Rectangle {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1525,6 +1580,7 @@ class Rectangle {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -1561,6 +1617,7 @@ class Rectangle {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1571,6 +1628,7 @@ class Rectangle {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let duplicate_count = checker
@@ -1602,6 +1660,7 @@ f(true);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1612,6 +1671,7 @@ f(true);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -1638,6 +1698,7 @@ fn(42);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1648,6 +1709,7 @@ fn(42);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -1673,6 +1735,7 @@ opt("x", 1);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1683,6 +1746,7 @@ opt("x", 1);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -1708,6 +1772,7 @@ rest("a", "b");
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1718,6 +1783,7 @@ rest("a", "b");
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -1745,6 +1811,7 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1755,6 +1822,7 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -1780,6 +1848,7 @@ ft4(["hello", 42]);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1790,6 +1859,7 @@ ft4(["hello", 42]);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -1815,6 +1885,7 @@ id(123);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1825,6 +1896,7 @@ id(123);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -1855,6 +1927,7 @@ arr.reduce((a, b) => a + b, 0);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1865,6 +1938,7 @@ arr.reduce((a, b) => a + b, 0);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -1894,6 +1968,7 @@ c.foo("ok");
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1904,6 +1979,7 @@ c.foo("ok");
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -1937,6 +2013,7 @@ const f = new Foo();
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -1947,6 +2024,7 @@ const f = new Foo();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -2020,6 +2098,7 @@ const f = new Foo(1, "x", 2);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2030,6 +2109,7 @@ const f = new Foo(1, "x", 2);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -2096,6 +2176,7 @@ const d = new Derived();
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2106,6 +2187,7 @@ const d = new Derived();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -2158,6 +2240,7 @@ const b = new Box("hi");
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2168,6 +2251,7 @@ const b = new Box("hi");
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -2213,6 +2297,7 @@ d.name;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2223,6 +2308,7 @@ d.name;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2252,6 +2338,7 @@ b.value;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2262,6 +2349,7 @@ b.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2291,6 +2379,7 @@ function f(obj: B) { return obj.x + obj.y; }
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2301,6 +2390,7 @@ function f(obj: B) { return obj.x + obj.y; }
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2331,6 +2421,7 @@ doc.print();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2341,6 +2432,7 @@ doc.print();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2369,6 +2461,7 @@ new Foo(true);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2379,6 +2472,7 @@ new Foo(true);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2407,6 +2501,7 @@ new Foo(42);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2417,6 +2512,7 @@ new Foo(42);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -2444,6 +2540,7 @@ new Foo("a", "b");
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2454,6 +2551,7 @@ new Foo("a", "b");
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -2474,6 +2572,7 @@ fn test_parameter_property_in_function_2369() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2484,6 +2583,7 @@ fn test_parameter_property_in_function_2369() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2503,6 +2603,7 @@ fn test_parameter_property_in_arrow_2369() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2513,6 +2614,7 @@ fn test_parameter_property_in_arrow_2369() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2538,6 +2640,7 @@ class C {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2548,6 +2651,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2574,6 +2678,7 @@ class C {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2584,6 +2689,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2604,6 +2710,7 @@ fn test_class_name_any_error_2414() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2614,6 +2721,7 @@ fn test_class_name_any_error_2414() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2640,6 +2748,7 @@ fn test_local_variable_scope_resolution() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2650,6 +2759,7 @@ fn test_local_variable_scope_resolution() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have no "Cannot find name" errors (2304)
@@ -2677,6 +2787,7 @@ fn test_for_loop_variable_scope() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2687,6 +2798,7 @@ fn test_for_loop_variable_scope() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have no "Cannot find name" errors (2304) for loop variable 'i'
@@ -2714,6 +2826,7 @@ function test() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2724,6 +2837,7 @@ function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2749,6 +2863,7 @@ declare module "foo" {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2759,6 +2874,7 @@ declare module "foo" {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2781,6 +2897,7 @@ let x = MissingName;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2791,6 +2908,7 @@ let x = MissingName;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2813,6 +2931,7 @@ let x: MissingType;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2823,6 +2942,7 @@ let x: MissingType;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2860,6 +2980,7 @@ value;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2870,6 +2991,7 @@ value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2906,6 +3028,7 @@ declare module "dep" {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     assert!(
@@ -2937,6 +3060,7 @@ import { foo } from "./non-existent-module";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2947,6 +3071,7 @@ import { foo } from "./non-existent-module";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -2976,6 +3101,7 @@ import { something } from "nonexistent-npm-package";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -2986,6 +3112,7 @@ import { something } from "nonexistent-npm-package";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3018,6 +3145,7 @@ declare module "my-external-lib" {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     // Verify the module was registered
@@ -3034,6 +3162,7 @@ declare module "my-external-lib" {
         "test.d.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // No TS2307 should be emitted since the module is declared
@@ -3066,6 +3195,7 @@ import data from "./file.json";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     // Verify the shorthand module was registered
@@ -3082,6 +3212,7 @@ import data from "./file.json";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Note: The import "./file.json" will still emit TS2307 because the shorthand module
@@ -3108,6 +3239,7 @@ import { Component } from "@angular/core";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3118,6 +3250,7 @@ import { Component } from "@angular/core";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3149,6 +3282,7 @@ import * as pkg from "nonexistent-pkg";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3159,6 +3293,7 @@ import * as pkg from "nonexistent-pkg";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2307_count = checker
@@ -3189,6 +3324,7 @@ import { foo } from "./specific-missing-module";
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3199,6 +3335,7 @@ import { foo } from "./specific-missing-module";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2307_diag = checker
@@ -3233,6 +3370,7 @@ async function loadModule() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3243,6 +3381,7 @@ async function loadModule() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2307_diag = checker
@@ -3287,6 +3426,7 @@ async function loadModule(modulePath: string) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3297,6 +3437,7 @@ async function loadModule(modulePath: string) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Dynamic specifiers cannot be statically checked, so no TS2307 should be emitted
@@ -3326,6 +3467,7 @@ type Fn = (value: MissingType) => void;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3336,6 +3478,7 @@ type Fn = (value: MissingType) => void;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3359,6 +3502,7 @@ obj.missing;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3369,6 +3513,7 @@ obj.missing;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3404,6 +3549,7 @@ class C {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3414,6 +3560,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3439,6 +3586,7 @@ interface BaseConstructor {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3449,6 +3597,7 @@ interface BaseConstructor {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3471,6 +3620,7 @@ class C extends undefined {}
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3481,6 +3631,7 @@ class C extends undefined {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3504,6 +3655,7 @@ class D extends (null) {}
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3514,6 +3666,7 @@ class D extends (null) {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3551,6 +3704,7 @@ var x: number;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3561,6 +3715,7 @@ var x: number;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3591,6 +3746,7 @@ fn test_abstract_class_in_local_scope_2511() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     // Debug: Check symbols
@@ -3631,6 +3787,7 @@ fn test_abstract_class_in_local_scope_2511() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Debug: Check diagnostics
@@ -3683,6 +3840,7 @@ class C {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3693,6 +3851,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
@@ -3737,6 +3896,7 @@ let ctor: typeof A = B;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3747,6 +3907,7 @@ let ctor: typeof A = B;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3782,6 +3943,7 @@ const a: A = new B();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3792,6 +3954,7 @@ const a: A = new B();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3828,6 +3991,7 @@ f.y;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3838,6 +4002,7 @@ f.y;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3879,6 +4044,7 @@ class Baz {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3889,6 +4055,7 @@ class Baz {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -3929,6 +4096,7 @@ class Derived extends Base {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3939,6 +4107,7 @@ class Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -3979,6 +4148,7 @@ class Derived extends Base {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -3989,6 +4159,7 @@ class Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -4022,6 +4193,7 @@ abstract class AbstractClass {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4032,6 +4204,7 @@ abstract class AbstractClass {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -4052,6 +4225,7 @@ fn test_interface_name_cannot_be_reserved_2427() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4062,6 +4236,7 @@ fn test_interface_name_cannot_be_reserved_2427() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
@@ -4088,6 +4263,7 @@ fn test_const_modifier_on_class_property_1248() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4098,6 +4274,7 @@ fn test_const_modifier_on_class_property_1248() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
@@ -4128,6 +4305,7 @@ fn test_accessor_type_compatibility_2322() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4138,6 +4316,7 @@ fn test_accessor_type_compatibility_2322() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
@@ -4176,6 +4355,7 @@ class C {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4186,6 +4366,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -4214,6 +4395,7 @@ new cls2();
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4266,6 +4448,7 @@ new cls1();
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4318,6 +4501,7 @@ class NoError {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4425,6 +4609,7 @@ class Derived extends Base<string> {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -4435,6 +4620,7 @@ class Derived extends Base<string> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5040,6 +5226,7 @@ const handler: (x: string) => void = (x) => {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5050,6 +5237,7 @@ const handler: (x: string) => void = (x) => {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5078,6 +5266,7 @@ register((x) => {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5088,6 +5277,7 @@ register((x) => {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5149,6 +5339,7 @@ const h: Handler = { cb: x => x.toUpperCase() };
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5159,6 +5350,7 @@ const h: Handler = { cb: x => x.toUpperCase() };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5188,6 +5380,7 @@ value.bar();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5198,6 +5391,7 @@ value.bar();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5228,6 +5422,7 @@ obj.foo;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5238,6 +5433,7 @@ obj.foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -5275,6 +5471,7 @@ function f() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5285,6 +5482,7 @@ function f() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -5322,6 +5520,7 @@ function read(value: A | B) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5332,6 +5531,7 @@ function read(value: A | B) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5365,6 +5565,7 @@ Derived.foo;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5375,6 +5576,7 @@ Derived.foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5408,6 +5610,7 @@ c.hasOwnProperty("x");
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5418,6 +5621,7 @@ c.hasOwnProperty("x");
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5449,6 +5653,7 @@ class C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5459,6 +5664,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5494,6 +5700,7 @@ c.bar;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5504,6 +5711,7 @@ c.bar;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5533,6 +5741,7 @@ class C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5543,6 +5752,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5576,6 +5786,7 @@ class C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5586,6 +5797,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5621,6 +5833,7 @@ class A {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5631,6 +5844,7 @@ class A {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5665,6 +5879,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5675,6 +5890,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -5713,6 +5929,7 @@ c.y;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5723,6 +5940,7 @@ c.y;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6022,6 +6240,7 @@ fn test_variable_redeclaration_same_type() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6032,6 +6251,7 @@ fn test_variable_redeclaration_same_type() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have no errors - same type is allowed
@@ -6053,6 +6273,7 @@ fn test_variable_redeclaration_different_type_2403() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6063,6 +6284,7 @@ fn test_variable_redeclaration_different_type_2403() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have error 2403: Subsequent variable declarations must have the same type
@@ -6090,6 +6312,7 @@ fn test_variable_self_reference_no_2403() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6100,6 +6323,7 @@ fn test_variable_self_reference_no_2403() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6218,6 +6442,7 @@ const val = obj.someProperty;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6228,6 +6453,7 @@ const val = obj.someProperty;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6255,6 +6481,7 @@ const val = obj.explicitProp;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6265,6 +6492,7 @@ const val = obj.explicitProp;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6288,6 +6516,7 @@ const val = obj.x;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6298,6 +6527,7 @@ const val = obj.x;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6323,6 +6553,7 @@ type Qux = { [key: string]: Foo };
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6333,6 +6564,7 @@ type Qux = { [key: string]: Foo };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -6431,6 +6663,7 @@ const derived_value = obj.derived;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6441,6 +6674,7 @@ const derived_value = obj.derived;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -6488,6 +6722,7 @@ const value = obj.value;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6498,6 +6733,7 @@ const value = obj.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -6531,6 +6767,7 @@ const value = obj.value;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6541,6 +6778,7 @@ const value = obj.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -6572,6 +6810,7 @@ const value = obj.value;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6582,6 +6821,7 @@ const value = obj.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -6611,6 +6851,7 @@ interface Derived extends Base {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6621,6 +6862,7 @@ interface Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6648,6 +6890,7 @@ interface Derived extends Base {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6658,6 +6901,7 @@ interface Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6685,6 +6929,7 @@ const ok3: Foo = { x: undefined };
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6695,6 +6940,7 @@ const ok3: Foo = { x: undefined };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -6720,6 +6966,7 @@ interface Derived extends Base {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6730,6 +6977,7 @@ interface Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6757,6 +7005,7 @@ interface Derived extends Base<string> {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6767,6 +7016,7 @@ interface Derived extends Base<string> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6798,6 +7048,7 @@ interface Derived extends Base<string> {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6808,6 +7059,7 @@ interface Derived extends Base<string> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -6836,6 +7088,7 @@ interface Derived extends NS.Base {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6846,6 +7099,7 @@ interface Derived extends NS.Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -6877,6 +7131,7 @@ interface Derived extends Base {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6887,6 +7142,7 @@ interface Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -6912,6 +7168,7 @@ type Alias = Outer.Inner;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6922,6 +7179,7 @@ type Alias = Outer.Inner;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -6971,6 +7229,7 @@ namespace A {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -6981,6 +7240,7 @@ namespace A {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -7012,6 +7272,7 @@ namespace A {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7022,6 +7283,7 @@ namespace A {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -7050,6 +7312,7 @@ class C1 extends null {}
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7060,6 +7323,7 @@ class C1 extends null {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -7088,6 +7352,7 @@ exports.foo = 1;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7098,6 +7363,7 @@ exports.foo = 1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -7132,6 +7398,7 @@ namespace Models {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7142,6 +7409,7 @@ namespace Models {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -7171,6 +7439,7 @@ type AliasB = Outer.B;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7181,6 +7450,7 @@ type AliasB = Outer.B;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -7253,6 +7523,7 @@ type Alias = Box<string>;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7263,6 +7534,7 @@ type Alias = Box<string>;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -7316,6 +7588,7 @@ const f: <T>(value: T) => T = (value) => value;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7326,6 +7599,7 @@ const f: <T>(value: T) => T = (value) => value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -7388,6 +7662,7 @@ interface Callable {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7398,6 +7673,7 @@ interface Callable {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -7470,6 +7746,7 @@ interface Factory {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7480,6 +7757,7 @@ interface Factory {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -7552,6 +7830,7 @@ function id<T>(value: T): T {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7562,6 +7841,7 @@ function id<T>(value: T): T {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -7624,6 +7904,7 @@ function id(x: string) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7634,6 +7915,7 @@ function id(x: string) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -7671,6 +7953,7 @@ const f = (flag: boolean) => {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7681,6 +7964,7 @@ const f = (flag: boolean) => {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -7759,6 +8043,7 @@ const anon = () => { return null; };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7769,6 +8054,7 @@ const anon = () => { return null; };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -7834,6 +8120,7 @@ const obj = { baz() { return undefined; } };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7844,6 +8131,7 @@ const obj = { baz() { return undefined; } };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -7887,6 +8175,7 @@ class C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7897,6 +8186,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -7940,6 +8230,7 @@ const arrowReturnsAny = () => anyValue;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -7950,6 +8241,7 @@ const arrowReturnsAny = () => anyValue;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -7991,6 +8283,7 @@ function returnsNullOrUndefined(flag: boolean) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8001,6 +8294,7 @@ function returnsNullOrUndefined(flag: boolean) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8040,6 +8334,7 @@ function createClass() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8050,6 +8345,7 @@ function createClass() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts7010_errors: Vec<_> = checker
@@ -8121,6 +8417,7 @@ function loopWithNestedSwitchBreak(flag: boolean) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8212,6 +8509,7 @@ function fallsThrough(): number {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8222,6 +8520,7 @@ function fallsThrough(): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8270,6 +8569,7 @@ function loopWithBreak(): number {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8280,6 +8580,7 @@ function loopWithBreak(): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8326,6 +8627,7 @@ class C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8336,6 +8638,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8371,6 +8674,7 @@ async function f(): Promise<number> { }
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8381,6 +8685,7 @@ async function f(): Promise<number> { }
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8415,6 +8720,7 @@ async function* g4(): {} { yield 1; }
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8425,6 +8731,7 @@ async function* g4(): {} { yield 1; }
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8460,6 +8767,7 @@ async function f(): PromiseAlias<void> {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8470,6 +8778,7 @@ async function f(): PromiseAlias<void> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8523,6 +8832,7 @@ function usesFailInList(): number {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8533,6 +8843,7 @@ function usesFailInList(): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8598,6 +8909,7 @@ function tryCatchFallsThrough(): number {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8608,6 +8920,7 @@ function tryCatchFallsThrough(): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8643,6 +8956,7 @@ function implicitAnyParam(x) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8653,6 +8967,7 @@ function implicitAnyParam(x) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -8682,6 +8997,7 @@ function implicitAnyParam(x) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8692,6 +9008,7 @@ function implicitAnyParam(x) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -8741,6 +9058,7 @@ type PropAlias = { handler: (g) => void; };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8751,6 +9069,7 @@ type PropAlias = { handler: (g) => void; };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -8791,6 +9110,7 @@ const arrow = (...items) => items;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8801,6 +9121,7 @@ const arrow = (...items) => items;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have 4 errors:
@@ -8860,6 +9181,7 @@ const value = arr[0];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8870,6 +9192,7 @@ const value = arr[0];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -8896,6 +9219,7 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8906,6 +9230,7 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -8946,6 +9271,7 @@ const second = tup[1];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8956,6 +9282,7 @@ const second = tup[1];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -8979,6 +9306,7 @@ const second = tup[1];
 #[test]
 fn test_checker_array_element_access_unchecked() {
     use crate::parser::ParserState;
+    use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 
     let source = r#"
 const arr: number[] = [];
@@ -8989,6 +9317,8 @@ const value = arr[0];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    // Merge lib symbols BEFORE binding so global types are available
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -8999,6 +9329,9 @@ const value = arr[0];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    // Set lib contexts for global type resolution
+    setup_lib_contexts(&mut checker);
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9025,6 +9358,7 @@ const first = tup[0];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9035,6 +9369,7 @@ const first = tup[0];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9068,6 +9403,7 @@ const value = obj["x"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9078,6 +9414,7 @@ const value = obj["x"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9103,6 +9440,7 @@ const length = arr["length"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9113,6 +9451,7 @@ const length = arr["length"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9141,6 +9480,7 @@ const value = arr["0"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9151,6 +9491,7 @@ const value = arr["0"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9179,6 +9520,7 @@ const value = map["foo"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9189,6 +9531,7 @@ const value = map["foo"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9217,6 +9560,7 @@ const value = map[1];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9227,6 +9571,7 @@ const value = map[1];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9254,6 +9599,7 @@ const value = obj[key];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9264,6 +9610,7 @@ const value = obj[key];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -9295,6 +9642,7 @@ const value = obj[key];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9305,6 +9653,7 @@ const value = obj[key];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -9335,6 +9684,7 @@ const value = obj[key];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9345,6 +9695,7 @@ const value = obj[key];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -9372,6 +9723,7 @@ const value = obj[key];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9382,6 +9734,7 @@ const value = obj[key];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9419,6 +9772,7 @@ const value = obj[key];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9429,6 +9783,7 @@ const value = obj[key];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9471,6 +9826,7 @@ const value = obj[key];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9481,6 +9837,7 @@ const value = obj[key];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9509,6 +9866,7 @@ const value = tup[idx];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9519,6 +9877,7 @@ const value = tup[idx];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9556,6 +9915,7 @@ const value = arr[key];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9566,6 +9926,7 @@ const value = arr[key];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9602,6 +9963,7 @@ const value = obj["a"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9612,6 +9974,7 @@ const value = obj["a"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -9642,6 +10005,7 @@ const value = obj?.["a"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9652,6 +10016,7 @@ const value = obj?.["a"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9688,6 +10053,7 @@ const value = obj?.a;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9698,6 +10064,7 @@ const value = obj?.a;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9733,6 +10100,7 @@ const value = obj.a;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9743,6 +10111,7 @@ const value = obj.a;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9780,6 +10149,7 @@ type Alias = Foo.Bar;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9790,6 +10160,7 @@ type Alias = Foo.Bar;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9834,6 +10205,7 @@ type Alias = Foo.Bar;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9844,6 +10216,7 @@ type Alias = Foo.Bar;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9891,6 +10264,7 @@ const direct = Foo.value;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9901,6 +10275,7 @@ const direct = Foo.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9935,6 +10310,7 @@ const direct = Foo.value;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9945,6 +10321,7 @@ const direct = Foo.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9983,6 +10360,7 @@ const sum = Merge.a + Merge.b;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9993,6 +10371,7 @@ const sum = Merge.a + Merge.b;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10024,6 +10403,7 @@ const value: Merge.B = { y: 1 };
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10034,6 +10414,7 @@ const value: Merge.B = { y: 1 };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10082,6 +10463,7 @@ const direct = Merge.extra;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10092,6 +10474,7 @@ const direct = Merge.extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10126,6 +10509,7 @@ const direct = Merge.extra;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10136,6 +10520,7 @@ const direct = Merge.extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10167,6 +10552,7 @@ type Alias = Merge.Extra;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10177,6 +10563,7 @@ type Alias = Merge.Extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10221,6 +10608,7 @@ type Alias = Merge.Extra;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10231,6 +10619,7 @@ type Alias = Merge.Extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10281,6 +10670,7 @@ const direct = Merge.extra;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10291,6 +10681,7 @@ const direct = Merge.extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10327,6 +10718,7 @@ const direct = Merge.extra;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10337,6 +10729,7 @@ const direct = Merge.extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10370,6 +10763,7 @@ type Alias = Merge.Extra;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10380,6 +10774,7 @@ type Alias = Merge.Extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10426,6 +10821,7 @@ type Alias = Merge.Extra;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10436,6 +10832,7 @@ type Alias = Merge.Extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10485,6 +10882,7 @@ const direct = Foo["value"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10495,6 +10893,7 @@ const direct = Foo["value"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10529,6 +10928,7 @@ interface Bar {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10539,6 +10939,7 @@ interface Bar {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10614,6 +11015,7 @@ type T = typeof Alias.value;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10624,6 +11026,7 @@ type T = typeof Alias.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10661,6 +11064,7 @@ type Alias = typeof Foo<string>;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10671,6 +11075,7 @@ type Alias = typeof Foo<string>;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -10714,6 +11119,7 @@ type B = A;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10724,6 +11130,7 @@ type B = A;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let a_sym = binder.file_locals.get("A").expect("A should exist");
@@ -10797,6 +11204,7 @@ declare module "." {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10807,6 +11215,7 @@ declare module "." {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -10838,6 +11247,7 @@ declare module "@scoped/package" {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10848,6 +11258,7 @@ declare module "@scoped/package" {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -10881,6 +11292,7 @@ declare class AmbientClass {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10891,6 +11303,7 @@ declare class AmbientClass {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -10928,6 +11341,7 @@ class RegularClass {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10938,6 +11352,7 @@ class RegularClass {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -10968,6 +11383,7 @@ class A {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -10978,6 +11394,7 @@ class A {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11009,6 +11426,7 @@ let x = A.quux;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11019,6 +11437,7 @@ let x = A.quux;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11053,6 +11472,7 @@ class A {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11063,6 +11483,7 @@ class A {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11101,6 +11522,7 @@ class A {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11111,6 +11533,7 @@ class A {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11147,6 +11570,7 @@ namespace MyNamespace {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11157,6 +11581,7 @@ namespace MyNamespace {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11185,6 +11610,7 @@ var x: number;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11195,6 +11621,7 @@ var x: number;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11219,6 +11646,7 @@ var x: string;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11229,6 +11657,7 @@ var x: string;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11259,6 +11688,7 @@ var e: typeof E;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11269,6 +11699,7 @@ var e: typeof E;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11307,6 +11738,7 @@ var e: typeof E1;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11317,6 +11749,7 @@ var e: typeof E1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11351,6 +11784,7 @@ function f1() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11361,6 +11795,7 @@ function f1() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11388,6 +11823,7 @@ var n: number;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11398,6 +11834,7 @@ var n: number;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11425,6 +11862,7 @@ var p: foo.NotExist;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11435,6 +11873,7 @@ var p: foo.NotExist;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let diags = &checker.ctx.diagnostics;
@@ -11465,6 +11904,7 @@ const badAlias = Alias.missing;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11475,6 +11915,7 @@ const badAlias = Alias.missing;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11510,6 +11951,7 @@ var y: NS.Exported;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11520,6 +11962,7 @@ var y: NS.Exported;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let diags = &checker.ctx.diagnostics;
@@ -11550,6 +11993,7 @@ var x: Alias;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11560,6 +12004,7 @@ var x: Alias;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let diags = &checker.ctx.diagnostics;
@@ -11587,6 +12032,7 @@ Foo;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11597,6 +12043,7 @@ Foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11624,6 +12071,7 @@ let b: B = a;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11634,6 +12082,7 @@ let b: B = a;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11658,6 +12107,7 @@ let s: S = "a";
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11668,6 +12118,7 @@ let s: S = "a";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11692,6 +12143,7 @@ let n: number = e;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11702,6 +12154,7 @@ let n: number = e;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11727,6 +12180,7 @@ let str: string = s;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11737,6 +12191,7 @@ let str: string = s;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11762,6 +12217,7 @@ let e2: E2 = e1;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11772,6 +12228,7 @@ let e2: E2 = e1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11798,6 +12255,7 @@ let s2: S2 = s1;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11808,6 +12266,7 @@ let s2: S2 = s1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11838,6 +12297,7 @@ let missing: Outer.Inner.Missing;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11848,6 +12308,7 @@ let missing: Outer.Inner.Missing;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11882,6 +12343,7 @@ let missing: Alias.Missing;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11892,6 +12354,7 @@ let missing: Alias.Missing;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11924,6 +12387,7 @@ const bad = NS.Foo;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11934,6 +12398,7 @@ const bad = NS.Foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11959,6 +12424,7 @@ const bad = NS["Foo"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -11969,6 +12435,7 @@ const bad = NS["Foo"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -11997,6 +12464,7 @@ const bad = Outer.Inner.Foo;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12007,6 +12475,7 @@ const bad = Outer.Inner.Foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12039,6 +12508,7 @@ const bad = Alias;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12049,6 +12519,7 @@ const bad = Alias;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12076,6 +12547,7 @@ const bad = Alias.Foo;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12086,6 +12558,7 @@ const bad = Alias.Foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12121,6 +12594,7 @@ const bad = Alias.Inner.Foo;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12131,6 +12605,7 @@ const bad = Alias.Inner.Foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12161,6 +12636,7 @@ const bad = Foo;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12171,6 +12647,7 @@ const bad = Foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12195,6 +12672,7 @@ const bad = Foo;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12205,6 +12683,7 @@ const bad = Foo;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12229,6 +12708,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12239,6 +12719,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12263,6 +12744,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12273,6 +12755,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12296,6 +12779,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12306,6 +12790,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12329,6 +12814,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12339,6 +12825,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12365,6 +12852,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12375,6 +12863,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12399,6 +12888,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12409,6 +12899,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12433,6 +12924,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12443,6 +12935,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12470,6 +12963,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12480,6 +12974,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12508,6 +13003,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12518,6 +13014,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12544,6 +13041,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12554,6 +13052,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12581,6 +13080,7 @@ let useIt: T;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12591,6 +13091,7 @@ let useIt: T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12627,6 +13128,7 @@ const viaAlias = Alias.value;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12637,6 +13139,7 @@ const viaAlias = Alias.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -12687,6 +13190,7 @@ const viaAlias = Alias["value"];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12697,6 +13201,7 @@ const viaAlias = Alias["value"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -12738,6 +13243,7 @@ const bad = Alias.missing;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12748,6 +13254,7 @@ const bad = Alias.missing;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12782,6 +13289,7 @@ const badValue = Outer.Inner.missing;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12792,6 +13300,7 @@ const badValue = Outer.Inner.missing;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12828,6 +13337,7 @@ const bad = NS.hidden;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12838,6 +13348,7 @@ const bad = NS.hidden;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -12873,6 +13384,7 @@ fn test_deep_binary_expression_type_check() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -12883,6 +13395,7 @@ fn test_deep_binary_expression_type_check() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(checker.ctx.diagnostics.is_empty());
@@ -12964,6 +13477,7 @@ x;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(inner_expr.expression);
@@ -13041,6 +13555,7 @@ if (typeof x === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -13066,6 +13581,7 @@ if (typeof x === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13076,6 +13592,7 @@ if (typeof x === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -13148,6 +13665,7 @@ while (typeof x === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13219,6 +13737,7 @@ for (; typeof x === "string"; ) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13290,6 +13809,7 @@ for (const value of [x]) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13365,6 +13885,7 @@ for (const key in { a: x }) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13394,6 +13915,7 @@ do {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13404,6 +13926,7 @@ do {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -13463,6 +13986,7 @@ x;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13524,6 +14048,7 @@ x;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13583,6 +14108,7 @@ x;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13658,6 +14184,7 @@ if (typeof Alias.value === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -13728,6 +14255,7 @@ if (typeof Ns["value"] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -13754,6 +14282,7 @@ if (typeof Alias.value === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13764,6 +14293,7 @@ if (typeof Alias.value === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -13792,6 +14322,7 @@ if (typeof obj.prop === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13802,6 +14333,7 @@ if (typeof obj.prop === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -13831,6 +14363,7 @@ if (typeof obj["prop"] === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13841,6 +14374,7 @@ if (typeof obj["prop"] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -13868,6 +14402,7 @@ if (typeof obj["prop"] === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13878,6 +14413,7 @@ if (typeof obj["prop"] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -13904,6 +14440,7 @@ if (typeof obj.prop === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13914,6 +14451,7 @@ if (typeof obj.prop === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -13942,6 +14480,7 @@ if (typeof obj["prop"] === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13952,6 +14491,7 @@ if (typeof obj["prop"] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -13981,6 +14521,7 @@ if (typeof obj.prop === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -13991,6 +14532,7 @@ if (typeof obj.prop === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -14065,6 +14607,7 @@ if (typeof obj[key] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -14142,6 +14685,7 @@ if (typeof obj[key] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -14172,6 +14716,7 @@ if (typeof obj[key] === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -14182,6 +14727,7 @@ if (typeof obj[key] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -14256,6 +14802,7 @@ if (typeof arr[idx] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -14286,6 +14833,7 @@ if (typeof arr[idx] === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -14296,6 +14844,7 @@ if (typeof arr[idx] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -14370,6 +14919,7 @@ if (typeof obj[key] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -14444,6 +14994,7 @@ if (typeof arr[idx] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -14519,6 +15070,7 @@ if (obj[key] === "a") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -14592,6 +15144,7 @@ if (typeof obj["prop"] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -14621,6 +15174,7 @@ if (typeof obj.prop === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -14631,6 +15185,7 @@ if (typeof obj.prop === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -14660,6 +15215,7 @@ if (typeof obj["prop"] === "string") {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -14670,6 +15226,7 @@ if (typeof obj["prop"] === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -14729,6 +15286,7 @@ function f(x: number) { return x; }
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let param_type = checker.get_type_of_node(return_data.expression);
@@ -14939,6 +15497,7 @@ declare const p: MyPick<Person, "name">;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -14949,6 +15508,7 @@ declare const p: MyPick<Person, "name">;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // No diagnostics expected for type declarations
@@ -14997,6 +15557,7 @@ const ctor2: DefaultCtor = AnotherClass;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15007,6 +15568,7 @@ const ctor2: DefaultCtor = AnotherClass;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // No diagnostics expected - void constructor should accept any class
@@ -15045,6 +15607,7 @@ declare const y: NonDistributive<string>;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15055,6 +15618,7 @@ declare const y: NonDistributive<string>;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // No diagnostics expected for type declarations
@@ -15094,6 +15658,7 @@ declare const t: TupleCheck;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15104,6 +15669,7 @@ declare const t: TupleCheck;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // No diagnostics expected for well-formed declarations
@@ -15152,6 +15718,7 @@ declare const end: ExtractElementNonDist<string[]>;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15162,6 +15729,7 @@ declare const end: ExtractElementNonDist<string[]>;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // No diagnostics expected for well-formed declarations
@@ -15207,6 +15775,7 @@ const n: number = s;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15217,6 +15786,7 @@ const n: number = s;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Print diagnostics for debugging
@@ -15271,6 +15841,7 @@ const m: string = state.message;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15281,6 +15852,7 @@ const m: string = state.message;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15330,6 +15902,7 @@ const partial: PartialState = { nested: { value: 42 } };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15340,6 +15913,7 @@ const partial: PartialState = { nested: { value: 42 } };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15394,6 +15968,7 @@ const n: number = state;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15404,6 +15979,7 @@ const n: number = state;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15454,6 +16030,7 @@ declare const action: AllActions;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15464,6 +16041,7 @@ declare const action: AllActions;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15525,6 +16103,7 @@ const reducers: RootReducers = {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15535,6 +16114,7 @@ const reducers: RootReducers = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15601,6 +16181,7 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15611,6 +16192,7 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15656,6 +16238,7 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15666,6 +16249,7 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have exactly 2 errors (one for each return statement)
@@ -15728,6 +16312,7 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15738,6 +16323,7 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15810,6 +16396,7 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15820,6 +16407,7 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15883,6 +16471,7 @@ box.value = 42; // OK: setter accepts number
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15893,6 +16482,7 @@ box.value = 42; // OK: setter accepts number
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -15935,6 +16525,7 @@ const n: number = box.value; // ERROR: string not assignable to number
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -15945,6 +16536,7 @@ const n: number = box.value; // ERROR: string not assignable to number
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -15994,6 +16586,7 @@ box.value = true; // Should ERROR: boolean not assignable to string
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16004,6 +16597,7 @@ box.value = true; // Should ERROR: boolean not assignable to string
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -16062,6 +16656,7 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16072,6 +16667,7 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -16139,6 +16735,7 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16149,6 +16746,7 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -16209,6 +16807,7 @@ var CC: typeof C = B;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16219,6 +16818,7 @@ var CC: typeof C = B;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -16298,6 +16898,7 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16308,6 +16909,7 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -16376,6 +16978,7 @@ const c3: AnyCallable = named; // OK
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16386,6 +16989,7 @@ const c3: AnyCallable = named; // OK
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -16434,6 +17038,7 @@ const specific: SpecificFn = untyped; // This is actually allowed in TS due to a
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16444,6 +17049,7 @@ const specific: SpecificFn = untyped; // This is actually allowed in TS due to a
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // In TypeScript, (...args: any[]) => any IS assignable to specific functions
@@ -16508,6 +17114,7 @@ declare const obj: NotCallable;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16518,6 +17125,7 @@ declare const obj: NotCallable;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -16572,6 +17180,7 @@ const s: string = strings[0]; // OK
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16582,6 +17191,7 @@ const s: string = strings[0]; // OK
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -16644,6 +17254,7 @@ const name = pet.name; // OK: both Dog and Cat have name
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16654,6 +17265,7 @@ const name = pet.name; // OK: both Dog and Cat have name
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -16711,6 +17323,7 @@ const b: boolean = bools[0]; // OK
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16721,6 +17334,7 @@ const b: boolean = bools[0]; // OK
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -16782,6 +17396,7 @@ const l: string = box.label;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16792,6 +17407,7 @@ const l: string = box.label;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -16843,6 +17459,7 @@ const product: number = calc.multiply(3, 4);
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16853,6 +17470,7 @@ const product: number = calc.multiply(3, 4);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -16915,6 +17533,7 @@ const e: string = person.email;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16925,6 +17544,7 @@ const e: string = person.email;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -16983,6 +17603,7 @@ const fromString: Color = Color.fromHex("#FF0000");
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -16993,6 +17614,7 @@ const fromString: Color = Color.fromHex("#FF0000");
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -17063,6 +17685,7 @@ const created: Album = Album.create("New Album");
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17073,6 +17696,7 @@ const created: Album = Album.create("New Album");
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -17129,6 +17753,7 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17139,6 +17764,7 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -17206,6 +17832,7 @@ const animalHandler: HandlerWithAnimal = dogHandler;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17216,6 +17843,7 @@ const animalHandler: HandlerWithAnimal = dogHandler;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -17282,6 +17910,7 @@ const dogHandler: HandlerWithDog = animalHandler;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17292,6 +17921,7 @@ const dogHandler: HandlerWithDog = animalHandler;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -17356,6 +17986,7 @@ const dogHandler: HandlerWithDogProp = animalHandler;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17366,6 +17997,7 @@ const dogHandler: HandlerWithDogProp = animalHandler;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -17425,6 +18057,7 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17435,6 +18068,7 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -17497,6 +18131,7 @@ elem.addEventListener(handleMouse);
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17507,6 +18142,7 @@ elem.addEventListener(handleMouse);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -17573,6 +18209,7 @@ processor.process(dogs, handleDog);
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17583,6 +18220,7 @@ processor.process(dogs, handleDog);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -17637,6 +18275,7 @@ const arr: number[] = anyVal;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17647,6 +18286,7 @@ const arr: number[] = anyVal;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -17700,6 +18340,7 @@ anyTarget = arr;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17710,6 +18351,7 @@ anyTarget = arr;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -17758,6 +18400,7 @@ expectObject(anyVal);
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17768,6 +18411,7 @@ expectObject(anyVal);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -17817,6 +18461,7 @@ const obj: { x: number } = call;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17827,6 +18472,7 @@ const obj: { x: number } = call;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -17877,6 +18523,7 @@ function returnNever(): never {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17887,6 +18534,7 @@ function returnNever(): never {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -17936,6 +18584,7 @@ const config: Config = {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -17946,6 +18595,7 @@ const config: Config = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let excess_errors: Vec<_> = checker
@@ -18004,6 +18654,7 @@ const config: Config = obj;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18014,6 +18665,7 @@ const config: Config = obj;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -18058,6 +18710,7 @@ configure({ timeout: 5000, retries: 3 });
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18068,6 +18721,7 @@ configure({ timeout: 5000, retries: 3 });
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let excess_errors: Vec<_> = checker
@@ -18118,6 +18772,7 @@ function getResult(): Result {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18128,6 +18783,7 @@ function getResult(): Result {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let excess_errors: Vec<_> = checker
@@ -18170,6 +18826,7 @@ const u: U = { a: 1, c: 2 };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18180,6 +18837,7 @@ const u: U = { a: 1, c: 2 };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let excess_errors: Vec<_> = checker
@@ -18234,6 +18892,7 @@ const u: U = { c: 1 };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18244,6 +18903,7 @@ const u: U = { c: 1 };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let excess_errors: Vec<_> = checker
@@ -18299,6 +18959,7 @@ f({ c: 1 });
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18309,6 +18970,7 @@ f({ c: 1 });
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let excess_errors: Vec<_> = checker
@@ -18364,6 +19026,7 @@ const u: U = obj;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18374,6 +19037,7 @@ const u: U = obj;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<_> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -18416,6 +19080,7 @@ const config: Config = { ...base };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18426,6 +19091,7 @@ const config: Config = { ...base };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -18494,6 +19160,7 @@ const animal: Animal = new Dog();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18504,6 +19171,7 @@ const animal: Animal = new Dog();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -18571,6 +19239,7 @@ const result = new AdvancedBuilder()
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18581,6 +19250,7 @@ const result = new AdvancedBuilder()
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -18638,6 +19308,7 @@ const p2 = p1.clone();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18648,6 +19319,7 @@ const p2 = p1.clone();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -18714,6 +19386,7 @@ const b: Box = new NumberBox();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18724,6 +19397,7 @@ const b: Box = new NumberBox();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -18778,6 +19452,7 @@ const maybeNum: number | undefined = undefined;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18788,6 +19463,7 @@ const maybeNum: number | undefined = undefined;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -18826,6 +19502,7 @@ const str: string = null;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18840,6 +19517,7 @@ const str: string = null;
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should produce an error
@@ -18870,6 +19548,7 @@ const num: number = undefined;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18884,6 +19563,7 @@ const num: number = undefined;
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should produce an error
@@ -18919,6 +19599,7 @@ const num: number | undefined = 42;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18929,6 +19610,7 @@ const num: number | undefined = 42;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -18975,6 +19657,7 @@ function test(obj: AB) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -18985,6 +19668,7 @@ function test(obj: AB) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -19034,6 +19718,7 @@ function test(obj: AB) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19044,6 +19729,7 @@ function test(obj: AB) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let error_count = checker.ctx.diagnostics.len();
@@ -19089,6 +19775,7 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19099,6 +19786,7 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -19143,6 +19831,7 @@ function getKind(shape: Shape): string {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19153,6 +19842,7 @@ function getKind(shape: Shape): string {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
@@ -19202,6 +19892,7 @@ if (typeof x === "string") {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19212,6 +19903,7 @@ if (typeof x === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Just check it doesn't crash - narrowing behavior depends on CFA implementation
@@ -19255,6 +19947,7 @@ if (typeof x === "string") {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19265,6 +19958,7 @@ if (typeof x === "string") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Currently doesn't maintain narrowing in closures
@@ -19309,6 +20003,7 @@ if (value !== null) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19319,6 +20014,7 @@ if (value !== null) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Just check it doesn't crash
@@ -19363,6 +20059,7 @@ if (data !== undefined) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19373,6 +20070,7 @@ if (data !== undefined) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Just check it doesn't crash
@@ -19424,6 +20122,7 @@ const elem2 = <span id="foo" />;
     }
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19434,6 +20133,7 @@ const elem2 = <span id="foo" />;
         "test.tsx".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Currently expect errors - JSX type checking not implemented
@@ -19487,6 +20187,7 @@ const btn = <MyButton label="Click me" />;
     }
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19497,6 +20198,7 @@ const btn = <MyButton label="Click me" />;
         "test.tsx".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     eprintln!("=== JSX Component Uppercase Diagnostics ===");
@@ -19540,6 +20242,7 @@ const elem = <unknowntag />;
     }
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19550,6 +20253,7 @@ const elem = <unknowntag />;
         "test.tsx".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Once JSX checking is implemented, expect 1 error for unknown element
@@ -19600,6 +20304,7 @@ function getUser(): Models.User {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19610,6 +20315,7 @@ function getUser(): Models.User {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -19650,6 +20356,7 @@ const pair: Types.Pair<number> = [1, 2];
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19660,6 +20367,7 @@ const pair: Types.Pair<number> = [1, 2];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -19699,6 +20407,7 @@ const value: Outer.Inner.Deep.Value = "test";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19709,6 +20418,7 @@ const value: Outer.Inner.Deep.Value = "test";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -19748,6 +20458,7 @@ const optString: Collections.Optional<string> = null;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19758,6 +20469,7 @@ const optString: Collections.Optional<string> = null;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -19800,6 +20512,7 @@ const makeRequest: (req: API.Request) => API.Response = handleRequest;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19810,6 +20523,7 @@ const makeRequest: (req: API.Request) => API.Response = handleRequest;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     assert!(
@@ -19859,6 +20573,7 @@ function qux() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19869,6 +20584,7 @@ function qux() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -19910,6 +20626,7 @@ function foo() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19920,6 +20637,7 @@ function foo() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -19959,6 +20677,7 @@ function foo(items: number[]) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -19969,6 +20688,7 @@ function foo(items: number[]) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -20008,6 +20728,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20022,6 +20743,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -20057,6 +20779,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20067,6 +20790,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -20098,6 +20822,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20108,6 +20833,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Optional properties should not have TS2564 errors
@@ -20140,6 +20866,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20150,6 +20877,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Definite assignment assertion should not have TS2564 errors
@@ -20182,6 +20910,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20192,6 +20921,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Properties with initializers should not have TS2564 errors
@@ -20224,6 +20954,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20234,6 +20965,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Static properties should not have TS2564 errors (different initialization semantics)
@@ -20270,6 +21002,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20280,6 +21013,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Properties assigned in constructor should not have TS2564 errors
@@ -20326,6 +21060,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20340,6 +21075,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have TS2564 because switch might not execute any case
@@ -20386,6 +21122,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20399,6 +21136,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should NOT have TS2564 because default case ensures initialization
@@ -20434,6 +21172,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20447,6 +21186,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should NOT have TS2564 because properties are initialized via destructuring
@@ -20482,6 +21222,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20495,6 +21236,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should NOT have TS2564 because properties are initialized via array destructuring
@@ -20531,6 +21273,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20544,6 +21287,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have TS2564 because loop might not execute
@@ -20585,6 +21329,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20598,6 +21343,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should NOT have TS2564 because do-while always executes at least once
@@ -20634,6 +21380,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20647,6 +21394,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have TS2564 because while loop might not execute
@@ -20684,6 +21432,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20697,6 +21446,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have TS2564 for computed property without initialization
@@ -20737,6 +21487,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20750,6 +21501,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should NOT have TS2564 for property initialized in constructor
@@ -20781,6 +21533,7 @@ foo.a;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20791,6 +21544,7 @@ foo.a;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 }
 
@@ -20825,6 +21579,7 @@ x.type;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20835,6 +21590,7 @@ x.type;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 }
 
@@ -20867,6 +21623,7 @@ type AbstractConstructor<T> = abstract new (...args: any[]) => T;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20877,6 +21634,7 @@ type AbstractConstructor<T> = abstract new (...args: any[]) => T;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 }
 
@@ -20898,6 +21656,7 @@ fn test_unterminated_template_expression_reports_missing_name() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20908,6 +21667,7 @@ fn test_unterminated_template_expression_reports_missing_name() {
         "TemplateExpression1.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20940,6 +21700,7 @@ augmented;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20950,6 +21711,7 @@ augmented;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20980,6 +21742,7 @@ const z = Utils.y;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -20990,6 +21753,7 @@ const z = Utils.y;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21023,6 +21787,7 @@ declare module "pkg" {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21033,6 +21798,7 @@ declare module "pkg" {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21072,6 +21838,7 @@ declare let x: Recurse;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21082,6 +21849,7 @@ declare let x: Recurse;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have TS2456 error for circular type alias
@@ -21158,6 +21926,7 @@ interface MyError extends Error {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21168,6 +21937,7 @@ interface MyError extends Error {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Filter for TS2304 errors (Cannot find name)
@@ -21214,6 +21984,7 @@ type Foo = {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21224,6 +21995,7 @@ type Foo = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2304_errors: Vec<_> = checker
@@ -21269,6 +22041,7 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21279,6 +22052,7 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21309,6 +22083,7 @@ class Wat {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21319,6 +22094,7 @@ class Wat {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21349,6 +22125,7 @@ const assertFn: (value: unknown) => asserts value = value => {};
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21359,6 +22136,7 @@ const assertFn: (value: unknown) => asserts value = value => {};
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21394,6 +22172,7 @@ const obj = {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21404,6 +22183,7 @@ const obj = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21431,6 +22211,7 @@ exports.foo = 1;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21441,6 +22222,7 @@ exports.foo = 1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21466,6 +22248,7 @@ type Properties<T extends { [key: string]: Types }> = {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21476,6 +22259,7 @@ type Properties<T extends { [key: string]: Types }> = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21504,6 +22288,7 @@ accessor export default V1;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21514,6 +22299,7 @@ accessor export default V1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21548,6 +22334,7 @@ namespace Utils {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21558,6 +22345,7 @@ namespace Utils {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21592,6 +22380,7 @@ namespace A {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21602,6 +22391,7 @@ namespace A {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21638,6 +22428,7 @@ namespace C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21648,6 +22439,7 @@ namespace C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21683,6 +22475,7 @@ const x = globalValue;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21693,6 +22486,7 @@ const x = globalValue;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21726,6 +22520,7 @@ const opts: Options = { value: 1 };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21736,6 +22531,7 @@ const opts: Options = { value: 1 };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21793,6 +22589,7 @@ class D3 extends getBase() <string, number> {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21803,6 +22600,7 @@ class D3 extends getBase() <string, number> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21839,6 +22637,7 @@ const r: Base[] = [d1, d2];
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21849,6 +22648,7 @@ const r: Base[] = [d1, d2];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21883,6 +22683,7 @@ class C {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21893,6 +22694,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21926,6 +22728,7 @@ const willErrorSomeDay: typeof A = class {};
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21936,6 +22739,7 @@ const willErrorSomeDay: typeof A = class {};
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21969,6 +22773,7 @@ if ((o = fn()).done) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -21979,6 +22784,7 @@ if ((o = fn()).done) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22015,6 +22821,7 @@ const bb: 0 = b;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22025,6 +22832,7 @@ const bb: 0 = b;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22059,6 +22867,7 @@ if (a in c) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22069,6 +22878,7 @@ if (a in c) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22104,6 +22914,7 @@ function f<T>(x: T) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22114,6 +22925,7 @@ function f<T>(x: T) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22145,6 +22957,7 @@ if (o?.x === 1) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22155,6 +22968,7 @@ if (o?.x === 1) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22192,6 +23006,7 @@ class Derived extends Base {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22202,6 +23017,7 @@ class Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22253,6 +23069,7 @@ d.mixinMethod();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22263,6 +23080,7 @@ d.mixinMethod();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22328,6 +23146,7 @@ class Thing3 extends Thing2 {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22338,6 +23157,7 @@ class Thing3 extends Thing2 {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22401,6 +23221,7 @@ class D3 extends getBase() <string, number> {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22411,6 +23232,7 @@ class D3 extends getBase() <string, number> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22443,6 +23265,7 @@ function f(obj: B) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22453,6 +23276,7 @@ function f(obj: B) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22489,6 +23313,7 @@ class C extends B {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22499,6 +23324,7 @@ class C extends B {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22531,6 +23357,7 @@ function f(i: I) { return i.x; }
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22541,6 +23368,7 @@ function f(i: I) { return i.x; }
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22574,6 +23402,7 @@ function f(obj: C) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22584,6 +23413,7 @@ function f(obj: C) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22617,6 +23447,7 @@ class Derived extends Base {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22627,6 +23458,7 @@ class Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22672,6 +23504,7 @@ function f() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22682,6 +23515,7 @@ function f() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22732,6 +23566,7 @@ function f() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22742,6 +23577,7 @@ function f() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22789,6 +23625,7 @@ class C2 extends Mixed1 {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22799,6 +23636,7 @@ class C2 extends Mixed1 {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22850,6 +23688,7 @@ wasConcrete.mixinMethod();
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22860,6 +23699,7 @@ wasConcrete.mixinMethod();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22904,6 +23744,7 @@ class Derived extends getBase() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22914,6 +23755,7 @@ class Derived extends getBase() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22945,6 +23787,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -22955,6 +23798,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -22989,6 +23833,7 @@ function func(x: I) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23030,6 +23875,7 @@ function maybeReturn(x: boolean) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23040,6 +23886,7 @@ function maybeReturn(x: boolean) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts7030_errors: Vec<_> = checker
@@ -23085,6 +23932,7 @@ function maybeReturn(x: boolean) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23095,6 +23943,7 @@ function maybeReturn(x: boolean) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts7030_errors: Vec<_> = checker
@@ -23136,6 +23985,7 @@ class Example {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23146,6 +23996,7 @@ class Example {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts7030_errors: Vec<_> = checker
@@ -23194,6 +24045,7 @@ class Example {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23204,6 +24056,7 @@ class Example {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts7030_errors: Vec<_> = checker
@@ -23249,6 +24102,7 @@ aFn(), b;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23259,6 +24113,7 @@ aFn(), b;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2695_errors: Vec<_> = checker
@@ -23319,6 +24174,7 @@ void a, b;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23329,6 +24185,7 @@ void a, b;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2695_errors: Vec<_> = checker
@@ -23390,6 +24247,7 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23400,6 +24258,7 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2769_errors: Vec<_> = checker
@@ -23448,6 +24307,7 @@ fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23458,6 +24318,7 @@ fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2769_errors: Vec<_> = checker
@@ -23506,6 +24367,7 @@ declare var x: Circular<tup>;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23546,6 +24408,7 @@ product.users;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23583,6 +24446,7 @@ let { x, y }: { x: string, y: string } = obj;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23593,6 +24457,7 @@ let { x, y }: { x: string, y: string } = obj;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -23645,6 +24510,7 @@ let [a, b]: [number, number] = arr;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23655,6 +24521,7 @@ let [a, b]: [number, number] = arr;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -23708,6 +24575,7 @@ let { x = 42 }: { x: string } = obj;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23718,6 +24586,7 @@ let { x = 42 }: { x: string } = obj;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -23770,6 +24639,7 @@ let { a: { b } }: { a: { b: string } } = obj;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23780,6 +24650,7 @@ let { a: { b } }: { a: { b: string } } = obj;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -23831,6 +24702,7 @@ let { x = 42 }: { x: string } = obj;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23841,6 +24713,7 @@ let { x = 42 }: { x: string } = obj;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     eprintln!(
@@ -23893,6 +24766,7 @@ let { x = "hello" }: { x?: number } = {};
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -23903,6 +24777,7 @@ let { x = "hello" }: { x?: number } = {};
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     eprintln!(
@@ -24001,6 +24876,7 @@ type t1 = DeepMap<tpl, number>;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24077,6 +24953,7 @@ function identity<T>(x: T): T {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24087,6 +24964,7 @@ function identity<T>(x: T): T {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -24124,6 +25002,7 @@ class C {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24134,6 +25013,7 @@ class C {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have NO TS2339 errors for C.#x access
@@ -24181,6 +25061,7 @@ class A {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24243,6 +25124,7 @@ function extract<T>(x: Extract<T, typeof identity>): T {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24253,6 +25135,7 @@ function extract<T>(x: Extract<T, typeof identity>): T {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Check that we don't have TS2304 for type parameter names (T, etc.)
@@ -24286,6 +25169,7 @@ function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24296,6 +25180,7 @@ function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -24336,6 +25221,7 @@ function g1<T extends Box<T> | undefined>(x: T) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24346,6 +25232,7 @@ function g1<T extends Box<T> | undefined>(x: T) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -24392,6 +25279,7 @@ function f1<T extends string | undefined>(x: T): string {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have no TS2322 errors - after narrowing, x should be assignable to string
@@ -24438,6 +25326,7 @@ class A2 {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24448,6 +25337,7 @@ class A2 {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // TS2339 = "Property 'X' does not exist on type 'Y'"
@@ -24498,6 +25388,7 @@ var instance = MyClass();
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -24508,6 +25399,7 @@ var instance = MyClass();
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2348_errors: Vec<_> = checker
@@ -24582,6 +25474,7 @@ function f1<T extends string | undefined>(y: { a: T }): string {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have no TS2322 errors - after narrowing, y.a should be assignable to string
@@ -24642,6 +25535,7 @@ function test(obj: A | B | null) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -24700,6 +25594,7 @@ function test2(obj: A | B) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2339_errors: Vec<_> = checker
@@ -24876,6 +25771,7 @@ function test(obj: A | B) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -24943,6 +25839,7 @@ function test2(obj: NumberIndexed) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -24997,6 +25894,7 @@ function test(obj: NoIndex) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -25053,6 +25951,7 @@ function test(obj: A | null) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // obj?.a should NOT produce TS2339
@@ -25114,6 +26013,7 @@ function test2(obj: A & { c: boolean }) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -25157,6 +26057,7 @@ mixed(42, 99, 100);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25167,6 +26068,7 @@ mixed(42, 99, 100);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2554_errors: Vec<_> = checker
@@ -25227,6 +26129,7 @@ foo(1);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25237,6 +26140,7 @@ foo(1);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2555_errors: Vec<_> = checker
@@ -25286,6 +26190,7 @@ bar(1);
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25296,6 +26201,7 @@ bar(1);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2554_errors: Vec<_> = checker
@@ -25348,6 +26254,7 @@ baz("hello");
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25358,6 +26265,7 @@ baz("hello");
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2345_errors: Vec<_> = checker
@@ -25425,6 +26333,7 @@ const noAnnotation = () => {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25435,6 +26344,7 @@ const noAnnotation = () => {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25480,6 +26390,7 @@ const noAnnotation = function() {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25490,6 +26401,7 @@ const noAnnotation = function() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25524,6 +26436,7 @@ function outer(): (x: number) => string {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25534,6 +26447,7 @@ function outer(): (x: number) => string {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25579,6 +26493,7 @@ const switchWithDefault = (value: number): string => {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25589,6 +26504,7 @@ const switchWithDefault = (value: number): string => {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25638,6 +26554,7 @@ const tryFinallyFallthrough = (): number => {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25648,6 +26565,7 @@ const tryFinallyFallthrough = (): number => {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25691,6 +26609,7 @@ function test3(): string {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25701,6 +26620,7 @@ function test3(): string {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25736,6 +26656,7 @@ function test2(): number {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25746,6 +26667,7 @@ function test2(): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25783,6 +26705,7 @@ function test2(): void {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25793,6 +26716,7 @@ function test2(): void {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25847,6 +26771,7 @@ function test3(x: number): number {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25857,6 +26782,7 @@ function test3(x: number): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25899,6 +26825,7 @@ function test2(x: number): number {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25909,6 +26836,7 @@ function test2(x: number): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -25955,6 +26883,7 @@ function test3(x: number): number {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -25965,6 +26894,7 @@ function test3(x: number): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -26004,6 +26934,7 @@ class MyClass {
     assert!(parser.get_diagnostics().is_empty());
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26014,6 +26945,7 @@ class MyClass {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -26067,6 +26999,7 @@ const arrowPromise = async (): Promise<string> => "test";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26077,6 +27010,7 @@ const arrowPromise = async (): Promise<string> => "test";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -26111,6 +27045,7 @@ class DuplicateProperties {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26121,6 +27056,7 @@ class DuplicateProperties {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -26157,6 +27093,7 @@ const obj = {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26167,6 +27104,7 @@ const obj = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -26210,6 +27148,7 @@ const obj2 = {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26220,6 +27159,7 @@ const obj2 = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -26260,6 +27200,7 @@ declare global {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     // Verify that the binder tracked the global augmentations
@@ -26319,6 +27260,7 @@ const prop = win.myCustomProperty;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26329,6 +27271,7 @@ const prop = win.myCustomProperty;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -26363,6 +27306,7 @@ const MyClass = class {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26376,6 +27320,7 @@ const MyClass = class {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -26410,6 +27355,7 @@ const MyClass = class {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26423,6 +27369,7 @@ const MyClass = class {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -26453,6 +27400,7 @@ const MyClass = class NamedClass {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26466,6 +27414,7 @@ const MyClass = class NamedClass {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -26500,6 +27449,7 @@ const Derived = class extends Base {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26513,6 +27463,7 @@ const Derived = class extends Base {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -26544,6 +27495,7 @@ abstract class AbstractBase {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26554,6 +27506,7 @@ abstract class AbstractBase {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Abstract classes should not have TS2564 errors
@@ -26586,6 +27539,7 @@ function test() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26596,6 +27550,7 @@ function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -26630,6 +27585,7 @@ function test() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26640,6 +27596,7 @@ function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -26677,6 +27634,7 @@ function test() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26687,6 +27645,7 @@ function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -26718,6 +27677,7 @@ function test() {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26728,6 +27688,7 @@ function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -26766,6 +27727,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26779,6 +27741,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -26818,6 +27781,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26831,6 +27795,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -26865,6 +27830,7 @@ class Container<T> {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26878,6 +27844,7 @@ class Container<T> {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -26917,6 +27884,7 @@ class Container<T> {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26930,6 +27898,7 @@ class Container<T> {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -26966,6 +27935,7 @@ class Derived extends Base {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -26979,6 +27949,7 @@ class Derived extends Base {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -27025,6 +27996,7 @@ class Derived extends Base {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27038,6 +28010,7 @@ class Derived extends Base {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27074,6 +28047,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27087,6 +28061,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27121,6 +28096,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27134,6 +28110,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -27173,6 +28150,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27186,6 +28164,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27220,6 +28199,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27233,6 +28213,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -27275,6 +28256,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27288,6 +28270,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -27327,6 +28310,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27340,6 +28324,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27370,6 +28355,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27383,6 +28369,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let _has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27414,6 +28401,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27427,6 +28415,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -27466,6 +28455,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27479,6 +28469,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27513,6 +28504,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27526,6 +28518,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -27565,6 +28558,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27578,6 +28572,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27612,6 +28607,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27625,6 +28621,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27663,6 +28660,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27676,6 +28674,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let count = checker
@@ -27719,6 +28718,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -27732,6 +28732,7 @@ class Foo {
             ..Default::default()
         },
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
@@ -27814,6 +28815,7 @@ function booleanInstance(bool: Boolean): boolean {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     // Merge lib symbols into the binder (clone to retain ownership)
@@ -28158,6 +29160,7 @@ function process(node: ts.Node): void {}
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28168,6 +29171,7 @@ function process(node: ts.Node): void {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28236,6 +29240,7 @@ function createProgram(
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28246,6 +29251,7 @@ function createProgram(
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28311,6 +29317,7 @@ const result = str - 1;  // TS2362: left-hand side must be number/bigint/enum
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28321,6 +29328,7 @@ const result = str - 1;  // TS2362: left-hand side must be number/bigint/enum
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28356,6 +29364,7 @@ const result = num - str;  // TS2363: right-hand side must be number/bigint/enum
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28366,6 +29375,7 @@ const result = num - str;  // TS2363: right-hand side must be number/bigint/enum
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28401,6 +29411,7 @@ const result = a * b;  // TS2362 and TS2363: both operands invalid
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28411,6 +29422,7 @@ const result = a * b;  // TS2362 and TS2363: both operands invalid
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28458,6 +29470,7 @@ const result4 = a % b;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28468,6 +29481,7 @@ const result4 = a % b;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28514,6 +29528,7 @@ const result3 = anyVal / anyVal;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28524,6 +29539,7 @@ const result3 = anyVal / anyVal;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28571,6 +29587,7 @@ const result4 = a % b;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28581,6 +29598,7 @@ const result4 = a % b;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28639,6 +29657,7 @@ const result = a - b;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28649,6 +29668,7 @@ const result = a - b;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28692,6 +29712,7 @@ const result = flag - 1;  // TS2362: boolean is not a valid arithmetic operand
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28702,6 +29723,7 @@ const result = flag - 1;  // TS2362: boolean is not a valid arithmetic operand
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28736,6 +29758,7 @@ const result = 10 / obj;  // TS2363: object is not a valid arithmetic operand
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28746,6 +29769,7 @@ const result = 10 / obj;  // TS2363: object is not a valid arithmetic operand
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28784,6 +29808,7 @@ const r4 = str % num;  // TS2362
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28794,6 +29819,7 @@ const r4 = str % num;  // TS2362
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28833,6 +29859,7 @@ for (const x of num) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28843,6 +29870,7 @@ for (const x of num) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28878,6 +29906,7 @@ for (const x of arr) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28888,6 +29917,7 @@ for (const x of arr) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28923,6 +29953,7 @@ for (const ch of str) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28933,6 +29964,7 @@ for (const ch of str) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -28966,6 +29998,7 @@ const arr = [...num];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -28976,6 +30009,7 @@ const arr = [...num];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29009,6 +30043,7 @@ const arr2 = [...arr1];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29019,6 +30054,7 @@ const arr2 = [...arr1];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29053,6 +30089,7 @@ foo(...obj);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29063,6 +30100,7 @@ foo(...obj);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29098,6 +30136,7 @@ for (const x of b) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29108,6 +30147,7 @@ for (const x of b) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29143,6 +30183,7 @@ for (const x of tuple) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29153,6 +30194,7 @@ for (const x of tuple) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29187,6 +30229,7 @@ const [a, b] = num;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29197,6 +30240,7 @@ const [a, b] = num;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29230,6 +30274,7 @@ const [a, b] = arr;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29240,6 +30285,7 @@ const [a, b] = arr;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29278,6 +30324,7 @@ const [a, b] = num;  // TS2488: number is not iterable
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29288,6 +30335,7 @@ const [a, b] = num;  // TS2488: number is not iterable
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29322,6 +30370,7 @@ const [x] = flag;  // TS2488: boolean is not iterable
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29332,6 +30381,7 @@ const [x] = flag;  // TS2488: boolean is not iterable
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29366,6 +30416,7 @@ const [x, y] = obj;  // TS2488: object is not iterable
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29376,6 +30427,7 @@ const [x, y] = obj;  // TS2488: object is not iterable
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29409,6 +30461,7 @@ const [a, b, c] = arr;  // OK: array is iterable
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29419,6 +30472,7 @@ const [a, b, c] = arr;  // OK: array is iterable
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29452,6 +30506,7 @@ const [a, b, c] = str;  // OK: string is iterable
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29462,6 +30517,7 @@ const [a, b, c] = str;  // OK: string is iterable
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29496,6 +30552,7 @@ const [a] = val;  // TS2488: union with non-iterable member is not iterable
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29506,6 +30563,7 @@ const [a] = val;  // TS2488: union with non-iterable member is not iterable
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29539,6 +30597,7 @@ const [a, b] = tuple;  // OK: tuple is iterable
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29549,6 +30608,7 @@ const [a, b] = tuple;  // OK: tuple is iterable
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29583,6 +30643,7 @@ const [[a]] = [num];  // TS2488: inner array contains non-iterable number
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29593,6 +30654,7 @@ const [[a]] = [num];  // TS2488: inner array contains non-iterable number
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29634,6 +30696,7 @@ async function test() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29644,6 +30707,7 @@ async function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29681,6 +30745,7 @@ async function test() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29691,6 +30756,7 @@ async function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29728,6 +30794,7 @@ async function test() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29738,6 +30805,7 @@ async function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29775,6 +30843,7 @@ async function test() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29785,6 +30854,7 @@ async function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -29828,6 +30898,7 @@ function foo(a?: number, b: string) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29838,6 +30909,7 @@ function foo(a?: number, b: string) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts1016_count = checker
@@ -29876,6 +30948,7 @@ const fn = (a?: number, b: string) => a;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29886,6 +30959,7 @@ const fn = (a?: number, b: string) => a;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts1016_count = checker
@@ -29928,6 +31002,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29938,6 +31013,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts1016_count = checker
@@ -29978,6 +31054,7 @@ class Foo {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -29988,6 +31065,7 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts1016_count = checker
@@ -30028,6 +31106,7 @@ function foo(a: number, b?: string, c?: boolean) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30038,6 +31117,7 @@ function foo(a: number, b?: string, c?: boolean) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts1016_count = checker
@@ -30078,6 +31158,7 @@ function foo(a?: number, b: string = "default") {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30088,6 +31169,7 @@ function foo(a?: number, b: string = "default") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts1016_count = checker
@@ -30128,6 +31210,7 @@ function foo(a?: number, ...rest: string[]) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30138,6 +31221,7 @@ function foo(a?: number, ...rest: string[]) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts1016_count = checker
@@ -30178,6 +31262,7 @@ function foo(a?: number, b: string, c: boolean) {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30188,6 +31273,7 @@ function foo(a?: number, b: string, c: boolean) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts1016_count = checker
@@ -30234,6 +31320,7 @@ const handler: Handler = ({ x, y }) => {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30244,6 +31331,7 @@ const handler: Handler = ({ x, y }) => {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have no type errors - x and y should be inferred from contextual type
@@ -30287,6 +31375,7 @@ const handler: Handler = ([first, second]) => {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30297,6 +31386,7 @@ const handler: Handler = ([first, second]) => {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should have no type errors - first and second should be inferred from contextual type
@@ -30338,6 +31428,7 @@ let z: boolean = null;
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30348,6 +31439,7 @@ let z: boolean = null;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30394,6 +31486,7 @@ function getBoolean(): boolean {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30404,6 +31497,7 @@ function getBoolean(): boolean {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30442,6 +31536,7 @@ class Example {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30452,6 +31547,7 @@ class Example {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30496,6 +31592,7 @@ const p: Person = {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30506,6 +31603,7 @@ const p: Person = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30542,6 +31640,7 @@ const arr2: string[] = ["a", "b", 3, "d"];
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30552,6 +31651,7 @@ const arr2: string[] = ["a", "b", 3, "d"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30605,6 +31705,7 @@ class Valid {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30615,6 +31716,7 @@ class Valid {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30655,6 +31757,7 @@ function compute(value: number = "hello") {
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30665,6 +31768,7 @@ function compute(value: number = "hello") {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30701,6 +31805,7 @@ const y: number = "hello";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30711,6 +31816,7 @@ const y: number = "hello";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30747,6 +31853,7 @@ let y: "a" | "b" = "c";
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30757,6 +31864,7 @@ let y: "a" | "b" = "c";
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30792,6 +31900,7 @@ let tuple: [string, number] = [1, "hello"];
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30802,6 +31911,7 @@ let tuple: [string, number] = [1, "hello"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30842,6 +31952,7 @@ const numberBox: Box<number> = { value: "hello" };
     );
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30852,6 +31963,7 @@ const numberBox: Box<number> = { value: "hello" };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let ts2322_errors: Vec<_> = checker
@@ -30887,6 +31999,7 @@ foo(undeclaredArg);
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30897,6 +32010,7 @@ foo(undeclaredArg);
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -30920,6 +32034,7 @@ const result = undeclaredValue + 1;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30930,6 +32045,7 @@ const result = undeclaredValue + 1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -30958,6 +32074,7 @@ function test() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -30968,6 +32085,7 @@ function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -30993,6 +32111,7 @@ const result = myVarible + 1;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31003,6 +32122,7 @@ const result = myVarible + 1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31031,6 +32151,7 @@ function getValue(): number {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31041,6 +32162,7 @@ function getValue(): number {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31064,6 +32186,7 @@ const arr = [1, 2, ...undeclaredArray];
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31074,6 +32197,7 @@ const arr = [1, 2, ...undeclaredArray];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31100,6 +32224,7 @@ const obj = {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31110,6 +32235,7 @@ const obj = {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31133,6 +32259,7 @@ const result = true ? undeclaredTrue : 0;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31143,6 +32270,7 @@ const result = true ? undeclaredTrue : 0;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31166,6 +32294,7 @@ class Child extends MissingParent {}
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31176,6 +32305,7 @@ class Child extends MissingParent {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31199,6 +32329,7 @@ class MyClass implements MissingInterface {}
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31209,6 +32340,7 @@ class MyClass implements MissingInterface {}
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31232,6 +32364,7 @@ const msg = `Hello ${undeclaredName}!`;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31242,6 +32375,7 @@ const msg = `Hello ${undeclaredName}!`;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31267,6 +32401,7 @@ for (const item of undeclaredIterable) {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31277,6 +32412,7 @@ for (const item of undeclaredIterable) {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31301,6 +32437,7 @@ const result = declaredVar + 1;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31311,6 +32448,7 @@ const result = declaredVar + 1;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31339,6 +32477,7 @@ function hoistedFn() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31349,6 +32488,7 @@ function hoistedFn() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31375,6 +32515,7 @@ function test() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31385,6 +32526,7 @@ function test() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31416,6 +32558,7 @@ function foo(x: string | number): void {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31426,6 +32569,7 @@ function foo(x: string | number): void {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31455,6 +32599,7 @@ const x: Foo = { a: "hello", b: 42 };
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31465,6 +32610,7 @@ const x: Foo = { a: "hello", b: 42 };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31495,6 +32641,7 @@ function MyUtils() {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31505,6 +32652,7 @@ function MyUtils() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31535,6 +32683,7 @@ class MyNamespace {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31545,6 +32694,7 @@ class MyNamespace {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31575,6 +32725,7 @@ class MyInterface {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31585,6 +32736,7 @@ class MyInterface {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31609,6 +32761,7 @@ let x = 2;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31619,6 +32772,7 @@ let x = 2;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31643,6 +32797,7 @@ var x = 2;
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31653,6 +32808,7 @@ var x = 2;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31682,6 +32838,7 @@ class MyClass {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31692,6 +32849,7 @@ class MyClass {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31722,6 +32880,7 @@ class MyClass {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31732,6 +32891,7 @@ class MyClass {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let _codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31769,6 +32929,7 @@ class MyClass {
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -31779,6 +32940,7 @@ class MyClass {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
