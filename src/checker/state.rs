@@ -6413,9 +6413,16 @@ impl<'a> CheckerState<'a> {
     /// Handles cases like: export * as ns from './nonexistent';
     /// Check heritage clauses (extends/implements) for unresolved names.
     /// Emits TS2304 when a referenced name cannot be resolved.
+    /// Emits TS2689 when a class extends an interface.
+    ///
+    /// Parameters:
+    /// - `heritage_clauses`: The heritage clauses to check
+    /// - `is_class_declaration`: true if checking a class, false if checking an interface
+    ///   (TS2689 should only be emitted for classes extending interfaces, not interfaces extending interfaces)
     fn check_heritage_clauses_for_unresolved_names(
         &mut self,
         heritage_clauses: &Option<crate::parser::NodeList>,
+        is_class_declaration: bool,
     ) {
         use crate::parser::syntax_kind_ext::HERITAGE_CLAUSE;
         use crate::scanner::SyntaxKind;
@@ -6462,6 +6469,8 @@ impl<'a> CheckerState<'a> {
                         let symbol_type = self.get_type_of_symbol(heritage_sym);
 
                         // Check if this is an interface - emit TS2689 instead of TS2507
+                        // BUT only for class declarations, not interface declarations
+                        // (interfaces can validly extend other interfaces)
                         let is_interface = self
                             .ctx
                             .binder
@@ -6469,8 +6478,8 @@ impl<'a> CheckerState<'a> {
                             .map(|s| (s.flags & symbol_flags::INTERFACE) != 0)
                             .unwrap_or(false);
 
-                        if is_interface {
-                            // Emit TS2689: Cannot extend an interface
+                        if is_interface && is_class_declaration {
+                            // Emit TS2689: Cannot extend an interface (only for classes)
                             if let Some(name) = self.heritage_name_text(expr_idx) {
                                 use crate::checker::types::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
@@ -6485,10 +6494,13 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::CANNOT_EXTEND_AN_INTERFACE,
                                 );
                             }
-                        } else if !self.is_constructor_type(symbol_type)
+                        } else if !is_interface
+                            && is_class_declaration
+                            && !self.is_constructor_type(symbol_type)
                             && !self.is_class_symbol(heritage_sym)
                         {
-                            // Resolved to a non-constructor type - emit TS2507
+                            // For classes extending non-interfaces: emit TS2507 if not a constructor type
+                            // For interfaces: don't check constructor types (interfaces can extend any interface)
                             if let Some(name) = self.heritage_name_text(expr_idx) {
                                 use crate::checker::types::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
@@ -6644,7 +6656,7 @@ impl<'a> CheckerState<'a> {
 
         // Check heritage clauses for unresolved names (TS2304)
         // Must be checked AFTER type parameters are pushed so heritage can reference type params
-        self.check_heritage_clauses_for_unresolved_names(&class.heritage_clauses);
+        self.check_heritage_clauses_for_unresolved_names(&class.heritage_clauses, true);
 
         // Check for abstract members in non-abstract class (error 1253)
         // and private identifiers in ambient classes (error 2819)
@@ -7231,7 +7243,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check heritage clauses for unresolved names (TS2304)
-        self.check_heritage_clauses_for_unresolved_names(&iface.heritage_clauses);
+        self.check_heritage_clauses_for_unresolved_names(&iface.heritage_clauses, false);
 
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
 
