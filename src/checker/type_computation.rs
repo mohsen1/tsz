@@ -2691,8 +2691,8 @@ impl<'a> CheckerState<'a> {
         if self.is_dynamic_import(call) {
             self.check_dynamic_import_module_specifier(call);
             // Dynamic imports return Promise<typeof module>
-            // For unresolved modules, return any to allow type flow to continue
-            return TypeId::ANY;
+            // This creates Promise<ModuleNamespace> where ModuleNamespace contains all exports
+            return self.get_dynamic_import_type(call);
         }
 
         // Special handling for super() calls - treat as construct call

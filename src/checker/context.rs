@@ -322,6 +322,18 @@ pub struct CheckerContext<'a> {
     /// Set during multi-file type checking to allow resolving declarations across files.
     pub all_arenas: Option<Vec<Arc<NodeArena>>>,
 
+    /// All binders for cross-file resolution (indexed by file_idx).
+    /// Enables looking up exported symbols from other files during import resolution.
+    pub all_binders: Option<Vec<Arc<BinderState>>>,
+
+    /// Resolved module paths map: (source_file_idx, specifier) -> target_file_idx.
+    /// Used by get_type_of_symbol to resolve imports to their target file and symbol.
+    pub resolved_module_paths: Option<FxHashMap<(usize, String), usize>>,
+
+    /// Current file index in multi-file mode (index into all_arenas/all_binders).
+    /// Used with resolved_module_paths to look up cross-file imports.
+    pub current_file_idx: usize,
+
     /// Resolved module specifiers for this file (multi-file CLI mode).
     pub resolved_modules: Option<HashSet<String>>,
 
@@ -437,6 +449,9 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
             all_arenas: None,
+            all_binders: None,
+            resolved_module_paths: None,
+            current_file_idx: 0,
             resolved_modules: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
@@ -506,6 +521,9 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
             all_arenas: None,
+            all_binders: None,
+            resolved_module_paths: None,
+            current_file_idx: 0,
             resolved_modules: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
@@ -577,6 +595,9 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
             all_arenas: None,
+            all_binders: None,
+            resolved_module_paths: None,
+            current_file_idx: 0,
             resolved_modules: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
@@ -647,6 +668,9 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
             all_arenas: None,
+            all_binders: None,
+            resolved_module_paths: None,
+            current_file_idx: 0,
             resolved_modules: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
@@ -670,6 +694,21 @@ impl<'a> CheckerContext<'a> {
         self.all_arenas = Some(arenas);
     }
 
+    /// Set all binders for cross-file resolution.
+    pub fn set_all_binders(&mut self, binders: Vec<Arc<BinderState>>) {
+        self.all_binders = Some(binders);
+    }
+
+    /// Set resolved module paths map for cross-file import resolution.
+    pub fn set_resolved_module_paths(&mut self, paths: FxHashMap<(usize, String), usize>) {
+        self.resolved_module_paths = Some(paths);
+    }
+
+    /// Set the current file index.
+    pub fn set_current_file_idx(&mut self, idx: usize) {
+        self.current_file_idx = idx;
+    }
+
     /// Get the arena for a specific file index.
     /// Returns the current arena if file_idx is u32::MAX (single-file mode).
     pub fn get_arena_for_file(&self, file_idx: u32) -> &NodeArena {
@@ -682,6 +721,26 @@ impl<'a> CheckerContext<'a> {
             return arena.as_ref();
         }
         self.arena
+    }
+
+    /// Get the binder for a specific file index.
+    /// Returns None if file_idx is out of bounds or all_binders is not set.
+    pub fn get_binder_for_file(&self, file_idx: usize) -> Option<&BinderState> {
+        self.all_binders
+            .as_ref()
+            .and_then(|binders| binders.get(file_idx))
+            .map(Arc::as_ref)
+    }
+
+    /// Resolve an import specifier to its target file index.
+    /// Uses the resolved_module_paths map populated by the driver.
+    /// Returns None if the import cannot be resolved (e.g., external module).
+    pub fn resolve_import_target(&self, specifier: &str) -> Option<usize> {
+        self.resolved_module_paths.as_ref().and_then(|paths| {
+            paths
+                .get(&(self.current_file_idx, specifier.to_string()))
+                .copied()
+        })
     }
 
     /// Extract the persistent cache from this context.

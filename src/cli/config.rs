@@ -110,6 +110,9 @@ pub struct CompilerOptions {
     pub no_emit_on_error: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub isolated_modules: Option<bool>,
+    /// Custom conditions for package.json exports resolution
+    #[serde(default)]
+    pub custom_conditions: Option<Vec<String>>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -139,6 +142,8 @@ pub struct ResolvedCompilerOptions {
     pub incremental: bool,
     pub no_emit: bool,
     pub no_emit_on_error: bool,
+    /// Custom conditions for package.json exports resolution
+    pub custom_conditions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,6 +385,10 @@ pub fn resolve_compiler_options(
         resolved.checker.isolated_modules = isolated_modules;
     }
 
+    if let Some(ref custom_conditions) = options.custom_conditions {
+        resolved.custom_conditions = custom_conditions.clone();
+    }
+
     Ok(resolved)
 }
 
@@ -478,6 +487,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         no_emit: child.no_emit.or(base.no_emit),
         no_emit_on_error: child.no_emit_on_error.or(base.no_emit_on_error),
         isolated_modules: child.isolated_modules.or(base.isolated_modules),
+        custom_conditions: child.custom_conditions.or(base.custom_conditions),
     }
 }
 

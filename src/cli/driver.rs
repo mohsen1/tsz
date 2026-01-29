@@ -4,6 +4,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::binder::BinderState;
 use crate::binder::{SymbolId, SymbolTable, symbol_flags};
@@ -30,7 +31,7 @@ use crate::parser::node::{NodeAccess, NodeArena};
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeFormatter, TypeId};
-use rustc_hash::FxHasher;
+use rustc_hash::{FxHashMap, FxHasher};
 
 #[derive(Debug, Clone)]
 pub struct CompilationResult {
@@ -2568,14 +2569,49 @@ fn collect_diagnostics(
     let mut resolution_cache = ModuleResolutionCache::default();
     let mut program_paths = HashSet::new();
     let mut canonical_to_file_name: HashMap<PathBuf, String> = HashMap::new();
+    let mut canonical_to_file_idx: HashMap<PathBuf, usize> = HashMap::new();
 
-    for file in &program.files {
+    for (idx, file) in program.files.iter().enumerate() {
         let canonical = canonicalize_or_owned(Path::new(&file.file_name));
-        program_paths.insert(canonical);
-        canonical_to_file_name.insert(
-            canonicalize_or_owned(Path::new(&file.file_name)),
-            file.file_name.clone(),
-        );
+        program_paths.insert(canonical.clone());
+        canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
+        canonical_to_file_idx.insert(canonical, idx);
+    }
+
+    // Pre-create all binders for cross-file resolution
+    let all_binders: Vec<Arc<BinderState>> = program
+        .files
+        .iter()
+        .enumerate()
+        .map(|(file_idx, file)| Arc::new(create_binder_from_bound_file(file, program, file_idx)))
+        .collect();
+
+    // Collect all arenas for cross-file resolution
+    let all_arenas: Vec<Arc<NodeArena>> = program
+        .files
+        .iter()
+        .map(|file| Arc::clone(&file.arena))
+        .collect();
+
+    // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    for (file_idx, file) in program.files.iter().enumerate() {
+        let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+        for (specifier, _) in &module_specifiers {
+            if let Some(resolved) = resolve_module_specifier(
+                Path::new(&file.file_name),
+                specifier,
+                options,
+                base_dir,
+                &mut resolution_cache,
+                &program_paths,
+            ) {
+                let canonical = canonicalize_or_owned(&resolved);
+                if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                    resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                }
+            }
+        }
     }
 
     for (file_idx, file) in program.files.iter().enumerate() {
@@ -2642,6 +2678,14 @@ fn collect_diagnostics(
         if !lib_contexts.is_empty() {
             checker.ctx.set_lib_contexts(lib_contexts.to_vec());
         }
+        // Set cross-file resolution context for import type resolution
+        checker.ctx.set_all_arenas(all_arenas.clone());
+        checker.ctx.set_all_binders(all_binders.clone());
+        checker
+            .ctx
+            .set_resolved_module_paths(resolved_module_paths.clone());
+        checker.ctx.set_current_file_idx(file_idx);
+
         let mut resolved_modules = HashSet::new();
         for (specifier, _) in &module_specifiers {
             if let Some(resolved) = resolve_module_specifier(

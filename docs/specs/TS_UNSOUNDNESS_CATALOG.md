@@ -1,6 +1,6 @@
 # TypeScript Unsoundness Catalog
 
-This document catalogs known, intentional deviations from sound set-theoretic typing in TypeScript. It serves as the requirement specification for the **Compatibility Layer** (The "Lawyer") defined in `docs/SOLVER.md`. The Core Solver (The "Judge") should remain mathematically sound; the rules below are applied by the wrapper to mimic TypeScript's pragmatic design choices.
+This document catalogs known, intentional deviations from sound set-theoretic typing in TypeScript. It serves as the requirement specification for the **Compatibility Layer** (The "Lawyer") defined in `docs/architecture/SOLVER.md`. The Core Solver (The "Judge") should remain mathematically sound; the rules below are applied by the wrapper to mimic TypeScript's pragmatic design choices.
 
 ## 1. The "Any" Type
 **Behavior:** Acts as both Top (`unknown`) and Bottom (`never`). It is assignable to everything and everything is assignable to it.
@@ -465,67 +465,3 @@ function f<T extends string, U>(x: T, y: U) {
     *   *Conflict Resolution:* If properties collide, usually the first one wins or they become overloads (for methods), but for value props, it's often an error or union.
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Implementation Priority
-
-Do not attempt to implement all 44 rules at once. Follow this phased approach to maintain a working compiler at each step.
-
-### 🚨 Phase 1: The "Hello World" Barrier (Bootstrapping)
-*Goal: Compile `lib.d.ts` and basic variables without crashing or false errors.*
-
-These rules are required because the standard library relies on them heavily. Without these, even `const x: string = "a"` might fail if it interacts with global interfaces.
-
-1.  **#1 The "Any" Type:** The universal lubricant. Nothing works without short-circuiting `any`.
-2.  **#20 The `Object` vs `object` vs `{}` Trifecta:** Primitives must be assignable to the global `Object` interface.
-3.  **#6 Void Return Exception:** Callbacks in `lib.d.ts` (like `Array.forEach`) rely on this.
-4.  **#11 Error Poisoning:** Essential for debugging the compiler itself (prevents one bug from looking like 100).
-5.  **#3 Covariant Mutable Arrays:** `ReadonlyArray` and `Array` relationships break without this.
-
-### 🚧 Phase 2: The "Business Logic" Barrier (Common Patterns)
-*Goal: Compile standard application code involving functions, classes, and object literals.*
-
-1.  **#2 Function Bivariance:** Methods in classes will reject valid overrides without this.
-2.  **#4 Freshness / Excess Properties:** Prevents valid object literals from being flagged as errors.
-3.  **#10 Literal Widening:** Essential for `let` and `var` bindings to work intuitively.
-4.  **#19 Covariant `this`:** Critical for Fluent APIs (e.g., `builder.add().build()`).
-5.  **#14 Optionality vs Undefined:** Standard optional parameters won't match without this logic.
-
-### 🛠 Phase 3: The "Library" Barrier (Complex Types)
-*Goal: Compile modern npm packages (Zod, React, tRPC) which use advanced type algebra.*
-
-1.  **#25 Index Signature Consistency:** Validates dictionary types used in libraries.
-2.  **#40 Distributivity Disabling:** Used heavily in conditional type logic.
-3.  **#30 `keyof` Contravariance:** Essential for `Pick`, `Omit`, and mapped types.
-4.  **#21 Intersection Reduction:** Prevents "impossible" types from propagating.
-5.  **#41 Key Remapping (`as never`):** The engine behind the `Omit` utility type.
-
-### 🔮 Phase 4: The "Feature" Barrier (Edge Cases)
-*Goal: 100% Compliance with the Test Suite.*
-
-*   **Enums:** #7 (Open Numbers), #24 (Nominal), #34 (String Opaque).
-*   **Classes:** #5 (Private Nominal), #18 (Static Side), #43 (Abstract).
-*   **Module Interop:** #39 (Import Type), #44 (Augmentation).
-*   **JSX:** #36 (Intrinsic Lookup).
-*   **The Rest:** #13 (Weak Types), #17 (Depth Limits), etc.
-
----
-
-### Execution Strategy
-
-1.  **Build the "Judge" (Core) first.** Make sure it passes standard set-theory tests.
-2.  **Build the "Lawyer" (Compat) wrapper.**
-3.  **Implement Phase 1 rules.** Verify by trying to load a minimized `lib.d.ts`.
-4.  **Implement Phase 2 rules.** Verify by running simple source files with functions/classes.
-5.  **Iterate.** Use the official `tests/cases` suite to drive Phase 3 and 4 implementation.

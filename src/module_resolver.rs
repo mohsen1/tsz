@@ -377,7 +377,7 @@ impl ModuleResolver {
             ts_extensions: vec![".ts", ".tsx", ".d.ts"],
             js_extensions: vec![".js", ".jsx"],
             dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
-            custom_conditions: Vec::new(), // TODO: Add customConditions to ResolvedCompilerOptions
+            custom_conditions: options.custom_conditions.clone(),
             package_type_cache: FxHashMap::default(),
             current_package_type: None,
         }
@@ -678,7 +678,7 @@ impl ModuleResolver {
         &self,
         imports: &FxHashMap<String, PackageExports>,
         specifier: &str,
-        conditions: &[&str],
+        conditions: &[String],
     ) -> Option<String> {
         // Try exact match first
         if let Some(value) = imports.get(specifier) {
@@ -714,13 +714,13 @@ impl ModuleResolver {
     fn resolve_export_target_to_string(
         &self,
         value: &PackageExports,
-        conditions: &[&str],
+        conditions: &[String],
     ) -> Option<String> {
         match value {
             PackageExports::String(s) => Some(s.clone()),
             PackageExports::Conditional(cond_map) => {
                 for condition in conditions {
-                    if let Some(nested) = cond_map.get(*condition) {
+                    if let Some(nested) = cond_map.get(condition) {
                         if let Some(result) =
                             self.resolve_export_target_to_string(nested, conditions)
                         {
@@ -738,31 +738,34 @@ impl ModuleResolver {
     ///
     /// Returns conditions in priority order for conditional exports resolution.
     /// The order follows TypeScript's algorithm:
-    /// 1. "types" - TypeScript always checks this first
-    /// 2. Platform condition ("node" for Node.js, "browser" for bundler)
-    /// 3. Primary module condition based on importing file ("import" for ESM, "require" for CJS)
-    /// 4. "default" - fallback for unmatched conditions
-    /// 5. Opposite module condition as fallback (allows ESM-first packages to work with CJS imports)
-    /// 6. Additional platform fallbacks
-    fn get_export_conditions(
-        &self,
-        importing_module_kind: ImportingModuleKind,
-    ) -> Vec<&'static str> {
+    /// 1. Custom conditions from tsconfig (prepended to defaults)
+    /// 2. "types" - TypeScript always checks this first
+    /// 3. Platform condition ("node" for Node.js, "browser" for bundler)
+    /// 4. Primary module condition based on importing file ("import" for ESM, "require" for CJS)
+    /// 5. "default" - fallback for unmatched conditions
+    /// 6. Opposite module condition as fallback (allows ESM-first packages to work with CJS imports)
+    /// 7. Additional platform fallbacks
+    fn get_export_conditions(&self, importing_module_kind: ImportingModuleKind) -> Vec<String> {
         let mut conditions = Vec::new();
 
+        // Custom conditions from tsconfig are prepended to defaults
+        for cond in &self.custom_conditions {
+            conditions.push(cond.clone());
+        }
+
         // TypeScript always checks "types" first
-        conditions.push("types");
+        conditions.push("types".to_string());
 
         // Add platform condition based on resolution kind
         match self.resolution_kind {
             ModuleResolutionKind::Bundler => {
-                conditions.push("browser");
+                conditions.push("browser".to_string());
             }
             ModuleResolutionKind::Classic
             | ModuleResolutionKind::Node
             | ModuleResolutionKind::Node16
             | ModuleResolutionKind::NodeNext => {
-                conditions.push("node");
+                conditions.push("node".to_string());
             }
         }
 
@@ -770,27 +773,27 @@ impl ModuleResolver {
         // This allows packages that only export one format to still be resolved
         match importing_module_kind {
             ImportingModuleKind::Esm => {
-                conditions.push("import");
-                conditions.push("default");
-                conditions.push("require"); // Fallback: ESM file can use CJS-only package
+                conditions.push("import".to_string());
+                conditions.push("default".to_string());
+                conditions.push("require".to_string()); // Fallback: ESM file can use CJS-only package
             }
             ImportingModuleKind::CommonJs => {
-                conditions.push("require");
-                conditions.push("default");
-                conditions.push("import"); // Fallback: CJS file can use ESM-only package
+                conditions.push("require".to_string());
+                conditions.push("default".to_string());
+                conditions.push("import".to_string()); // Fallback: CJS file can use ESM-only package
             }
         }
 
         // Add additional platform fallbacks
         match self.resolution_kind {
             ModuleResolutionKind::Bundler => {
-                conditions.push("node"); // Bundler can also use node exports
+                conditions.push("node".to_string()); // Bundler can also use node exports
             }
             ModuleResolutionKind::Classic
             | ModuleResolutionKind::Node
             | ModuleResolutionKind::Node16
             | ModuleResolutionKind::NodeNext => {
-                conditions.push("browser"); // Node can use browser exports as last resort
+                conditions.push("browser".to_string()); // Node can use browser exports as last resort
             }
         }
 
@@ -977,7 +980,7 @@ impl ModuleResolver {
         subpath: Option<&str>,
         original_specifier: &str,
         containing_dir: &Path,
-        conditions: &[&str],
+        conditions: &[String],
     ) -> Option<ResolvedModule> {
         // Only available in Node16/NodeNext/Bundler
         if !matches!(
@@ -1045,7 +1048,7 @@ impl ModuleResolver {
         original_specifier: &str,
         containing_file: &str,
         specifier_span: Span,
-        conditions: &[&str],
+        conditions: &[String],
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Read package.json
         let package_json_path = package_dir.join("package.json");
@@ -1212,7 +1215,7 @@ impl ModuleResolver {
         package_dir: &Path,
         exports: &PackageExports,
         subpath: &str,
-        conditions: &[&str],
+        conditions: &[String],
     ) -> Option<PathBuf> {
         match exports {
             PackageExports::String(s) => {
@@ -1268,7 +1271,7 @@ impl ModuleResolver {
             PackageExports::Conditional(cond_map) => {
                 // Try conditions in the provided order
                 for condition in conditions {
-                    if let Some(value) = cond_map.get(*condition)
+                    if let Some(value) = cond_map.get(condition)
                         && let Some(resolved) = self.resolve_package_exports_with_conditions(
                             package_dir,
                             value,
@@ -1289,7 +1292,7 @@ impl ModuleResolver {
         &self,
         package_dir: &Path,
         value: &PackageExports,
-        conditions: &[&str],
+        conditions: &[String],
     ) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
@@ -1298,7 +1301,7 @@ impl ModuleResolver {
             }
             PackageExports::Conditional(cond_map) => {
                 for condition in conditions {
-                    if let Some(nested) = cond_map.get(*condition)
+                    if let Some(nested) = cond_map.get(condition)
                         && let Some(resolved) = self.resolve_export_value_with_conditions(
                             package_dir,
                             nested,
