@@ -853,8 +853,8 @@ impl ScannerState {
                         self.scan_identifier();
                         return self.token;
                     }
-                    // Skip unknown character
-                    self.pos += 1;
+                    // Skip unknown character (properly handle multi-byte UTF-8)
+                    self.pos += self.char_len_at(self.pos);
                     self.token = SyntaxKind::Unknown;
                     return self.token;
                 }
@@ -1789,9 +1789,10 @@ impl ScannerState {
             && self.pos < self.end
             && is_identifier_start(self.char_code_unchecked(self.pos))
         {
-            self.pos += 1;
+            // Properly handle multi-byte UTF-8 characters in private identifiers
+            self.pos += self.char_len_at(self.pos);
             while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos)) {
-                self.pos += 1;
+                self.pos += self.char_len_at(self.pos);
             }
             self.token_value = self.substring(self.token_start, self.pos);
             self.token = SyntaxKind::PrivateIdentifier;
@@ -1955,8 +1956,8 @@ impl ScannerState {
             return self.token;
         }
 
-        // Unknown character - advance and return Unknown
-        self.pos += 1;
+        // Unknown character - advance and return Unknown (properly handle multi-byte UTF-8)
+        self.pos += self.char_len_at(self.pos);
         self.token = SyntaxKind::Unknown;
         self.token
     }
@@ -2003,7 +2004,8 @@ impl ScannerState {
                     break;
                 }
                 _ => {
-                    self.pos += 1;
+                    // Properly handle multi-byte UTF-8 characters
+                    self.pos += self.char_len_at(self.pos);
                 }
             }
         }
@@ -2045,7 +2047,8 @@ impl ScannerState {
                 if ch == CharacterCodes::LINE_FEED || ch == CharacterCodes::CARRIAGE_RETURN {
                     break;
                 }
-                self.pos += 1;
+                // Use char_len_at to properly handle multi-byte UTF-8 characters
+                self.pos += self.char_len_at(self.pos);
             }
 
             // Include the newline in the shebang
