@@ -333,9 +333,36 @@ impl<'a> CheckerState<'a> {
                 // 1. The return type is ERROR (unresolved reference, likely Promise not in lib)
                 // 2. The return type annotation text looks like it references Promise
                 if is_async && !is_generator {
-                    let should_emit_ts2705 = !self.is_promise_type(return_type)
-                        && return_type != TypeId::ERROR
-                        && !self.return_type_annotation_looks_like_promise(type_annotation);
+                    use crate::scanner::SyntaxKind;
+
+                    let should_emit_ts2705 = if self.is_promise_type(return_type) {
+                        // Return type is Promise - OK
+                        false
+                    } else if return_type != TypeId::ERROR {
+                        // Return type resolved successfully but is not Promise - emit error
+                        !self.return_type_annotation_looks_like_promise(type_annotation)
+                    } else {
+                        // Return type is ERROR - use syntactic fallback
+                        // Check if the type annotation is a primitive keyword (never valid for async function)
+                        let type_node_result = self.ctx.arena.get(type_annotation);
+                        match type_node_result {
+                            Some(type_node) => {
+                                // Primitives are definitely not valid async function return types
+                                matches!(
+                                    type_node.kind as u32,
+                                    k if k == SyntaxKind::StringKeyword as u32
+                                        || k == SyntaxKind::NumberKeyword as u32
+                                        || k == SyntaxKind::BooleanKeyword as u32
+                                        || k == SyntaxKind::VoidKeyword as u32
+                                        || k == SyntaxKind::UndefinedKeyword as u32
+                                        || k == SyntaxKind::NullKeyword as u32
+                                        || k == SyntaxKind::NeverKeyword as u32
+                                        || k == SyntaxKind::ObjectKeyword as u32
+                                )
+                            }
+                            None => false,
+                        }
+                    };
 
                     if should_emit_ts2705 {
                         use crate::checker::types::diagnostics::{
