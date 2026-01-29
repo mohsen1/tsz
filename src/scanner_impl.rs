@@ -2188,9 +2188,14 @@ impl ScannerState {
             return self.interner.resolve(self.token_atom);
         }
 
-        // 2. For all other tokens (strings, numbers, operators, etc.),
-        // return token_value directly. Empty token_value is valid (e.g., "" or ``)
-        &self.token_value
+        // 2. Processed value (strings with escapes, template literals, etc.)
+        if !self.token_value.is_empty() {
+            return &self.token_value;
+        }
+
+        // 3. Fallback: raw source slice (for identifiers, numbers, operators that match source)
+        // This is the optimization - avoids redundant String allocations
+        &self.source[self.token_start..self.pos]
     }
 
     /// ZERO-COPY: Get the raw token text directly from source.
