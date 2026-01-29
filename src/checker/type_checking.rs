@@ -1645,6 +1645,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the type is a constructor type.
     pub(crate) fn is_constructor_type(&self, type_id: TypeId) -> bool {
+        // Any type is always considered a constructor type (TypeScript compatibility)
+        if type_id == TypeId::ANY {
+            return true;
+        }
+
         // First check if it directly has construct signatures
         if crate::solver::type_queries::has_construct_signatures(self.ctx.types, type_id) {
             return true;
