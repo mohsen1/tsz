@@ -2,6 +2,92 @@
 
 ## Completed Work
 
+### ✅ Phase 3: RegExp/Date Hardcoded Support - Complete (Jan 29)
+
+**Latest Progress**:
+- Pass rate: **41.4% (207/500)** - up from 39.2%
+- Major improvements in TS2339, TS2335 error types
+
+### ✅ TS2335 Super Keyword Fix - 88% Reduction (Jan 29)
+
+**Problem**: 144x extra TS2335 errors (super can only be referenced in a derived class)
+
+**Root Cause**: `enclosing_class` context not set during type computation phase (happens before statement checking)
+
+**Solution**: Walk parent chain to find enclosing class instead of relying on context
+
+**Impact**:
+- TS2335 errors: 144x → 17x (88% reduction)
+- Correctly handles super in arrow functions
+- Correctly handles super in nested class methods
+
+**Code Changes**:
+```rust
+// src/checker/super_checker.rs
+fn find_enclosing_class(&self, idx: NodeIndex) -> Option<NodeIndex> {
+    let mut current = idx;
+    while let Some(ext) = self.ctx.arena.get_extended(current) {
+        let parent_idx = ext.parent;
+        // ... walk up to find class declaration
+        // Skip arrow functions (they capture class context)
+    }
+}
+```
+
+**Files Modified**:
+- `src/checker/super_checker.rs`: Complete refactor of `check_super_expression()`
+
+**Commits**:
+- `aa9b5838b` - Fix super validation (TS2335)
+
+---
+
+### ✅ TS2705 Async Function Fix - Limited Impact (Jan 29)
+
+**Problem**: 73x missing TS2705 errors (async function must return Promise)
+
+**Root Cause**: Primitive types resolving to ERROR due to recursion guard in `get_type_of_node()`
+
+**Solution**:
+1. Bypass recursion guard for primitive keywords (StringKeyword, NumberKeyword, etc.)
+2. Add syntactic fallback when return_type is ERROR
+
+**Impact**:
+- Only 2x improvement (73x → 71x)
+- Manual tests all pass
+- Remaining failures are complex scenarios (generics, type references)
+
+**Code Changes**:
+```rust
+// src/checker/state.rs - bypass recursion guard for primitives
+if let Some(node) = self.ctx.arena.get(idx) {
+    match node.kind as u32 {
+        k if k == SyntaxKind::StringKeyword as u32 => return TypeId::STRING,
+        k if k == SyntaxKind::NumberKeyword as u32 => return TypeId::NUMBER,
+        // ... all primitive types
+    }
+}
+
+// src/checker/function_type.rs - syntactic fallback
+if return_type == TypeId::ERROR {
+    // Check if type_annotation is a primitive keyword syntactically
+    let type_node_result = self.ctx.arena.get(type_annotation);
+    // ... check for primitive keywords
+}
+```
+
+**Files Modified**:
+- `src/checker/state.rs`: Added primitive keyword bypass in `get_type_of_node()`
+- `src/checker/function_type.rs`: Added syntactic fallback for TS2705 check
+
+**Commits**:
+- `f39711b66` - Bypass recursion guard for primitive keywords
+- `55b393d44` - Add syntactic fallback for TS2705
+
+**Note**: Limited impact suggests remaining failures require deeper type resolution improvements
+
+---
+
 ### ✅ Lib.d.ts Symbol Resolution - ROOT CAUSE FIX (MAJOR WIN)
 
 **Problem**: 106x TS2339 errors because lib.d.ts symbols (Error, Math, JSON, Symbol, etc.) weren't being resolved
