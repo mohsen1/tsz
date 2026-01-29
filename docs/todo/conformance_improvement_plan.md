@@ -366,15 +366,17 @@ This document outlines the critical issues causing conformance failures, priorit
 
 ### Current State
 
-**Pass Rate:** 38.0% (190/500) - up from 34.4%
+**Pass Rate:** 38.2% (191/500) - up from 38.0%
 
-**Top Extra Errors (500-test sample):**
+**Top Extra Errors (500-test sample, Jan 29 latest):**
 1. TS2339: 140x (architectural gap - defer)
 2. TS2307: 30x (module resolution - duplicate bug)
-3. TS2507: ~5-10x (from 69x - ~85% progress ✓✓) - **JUST FIXED: constructor types**
+3. TS2507: 26x (from 69x - 62% progress ✓) - constructor types just fixed
 4. TS2349: 19x (call expression issues)
 5. TS2322: 17x (type assignability)
 6. TS2335: 17x (super errors)
+
+**Note:** TS2304 NOT in top extra errors - basic name resolution working correctly
 
 **TS2507 Progress (Jan 29 - Latest):**
 - ✅ Fixed: Constructor type syntax creates Callable types
