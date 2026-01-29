@@ -9,8 +9,8 @@ Before making changes, read these docs:
 | Document | What It Covers |
 |----------|----------------|
 | [docs/architecture/NORTH_STAR.md](docs/architecture/NORTH_STAR.md) | Target architecture, component responsibilities, type system rules |
+| [docs/architecture/MIGRATION_ROADMAP.md](docs/architecture/MIGRATION_ROADMAP.md) | Current state, migration phases, extraction patterns |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, building, testing |
-| [docs/todo/](docs/todo/) | Active work items and improvement plans |
 
 ## Core Rules
 
@@ -69,10 +69,8 @@ cargo clippy -- -D warnings
 Installed automatically on first `cargo build`. Run:
 1. TypeScript submodule check (blocks changes to `TypeScript/`)
 2. `cargo fmt`
-3. `cargo clippy --fix` (with `-D warnings`)
-4. Native build (with `-D warnings`)
-5. WASM build (with `-D warnings`)
-6. Unit tests
+3. `cargo clippy --fix`
+4. Unit tests
 
 ## When Is Work Done?
 
