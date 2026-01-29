@@ -2404,12 +2404,14 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a constructor type (new () => T)
     fn lower_constructor_type(&self, node_idx: NodeIndex) -> TypeId {
+        use crate::solver::CallSignature;
+
         let node = match self.arena.get(node_idx) {
             Some(n) => n,
             None => return TypeId::ERROR,
         };
 
-        // Constructor types use the same data structure as function types
+        // Constructor types create a Callable with construct_signatures
         if let Some(data) = self.arena.get_function_type(node) {
             let (type_params, (params, this_type, return_type, type_predicate)) = self
                 .with_type_params(&data.type_parameters, || {
@@ -2420,17 +2422,26 @@ impl<'a> TypeLowering<'a> {
                     (params, this_type, return_type, type_predicate)
                 });
 
-            let shape = FunctionShape {
+            // Create a construct signature instead of a function shape
+            let construct_sig = CallSignature {
                 type_params,
                 params,
                 this_type,
                 return_type,
                 type_predicate,
-                is_constructor: true, // Mark as constructor
                 is_method: false,
             };
 
-            self.interner.function(shape)
+            // Create a Callable shape with construct_signatures
+            let shape = crate::solver::CallableShape {
+                call_signatures: vec![],
+                construct_signatures: vec![construct_sig],
+                properties: vec![],
+                string_index: None,
+                number_index: None,
+            };
+
+            self.interner.callable(shape)
         } else {
             TypeId::ERROR
         }

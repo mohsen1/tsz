@@ -117,6 +117,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Function type (e.g., () => number, (x: string) => void)
             k if k == syntax_kind_ext::FUNCTION_TYPE => self.get_type_from_function_type(idx),
 
+            // Constructor type (e.g., new () => number, new (x: string) => any)
+            k if k == syntax_kind_ext::CONSTRUCTOR_TYPE => self.get_type_from_function_type(idx),
+
             // Type literal ({ a: number; b(): string; })
             k if k == syntax_kind_ext::TYPE_LITERAL => self.get_type_from_type_literal(idx),
 
