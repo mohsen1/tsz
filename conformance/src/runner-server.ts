@@ -880,12 +880,12 @@ async function printTestDetails(
   );
 
   if (timedOut) {
-    log('  ⏱️  TIMEOUT', colors.red);
+    log('  TIMEOUT', colors.red);
     return;
   }
 
   if (result?.oom) {
-    log('  💾 OOM', colors.red);
+    log('  OOM', colors.red);
     return;
   }
 
@@ -927,9 +927,9 @@ async function printTestDetails(
 
   log('\n📊 Comparison:', colors.bold);
   if (missing.length === 0 && extra.length === 0) {
-    log('  ✓ PASS - Exact match!', colors.green);
+    log('  PASS - Exact match!', colors.green);
   } else {
-    log('  ✗ FAIL', colors.red);
+    log('  FAIL', colors.red);
     if (missing.length > 0) {
       const grouped = missing.reduce((acc, code) => {
         acc[code] = (acc[code] || 0) + 1;
@@ -1101,7 +1101,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         const skipResult = shouldSkipTest(parsed.harness);
         if (skipResult.skip) {
           stats.skipped++;
-          if (verbose) log(`⊘ ${relativePath}: ${skipResult.reason}`, colors.dim);
+          if (verbose) log(`[skip] ${relativePath}: ${skipResult.reason}`, colors.dim);
           return;
         }
 
@@ -1133,7 +1133,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
           stats.timedOut++;
           stats.failed++;
           stats.timedOutTests.push(relativePath);
-          if (verbose) log(`⏱ ${relativePath}: timeout`, colors.yellow);
+          if (verbose) log(`[timeout] ${relativePath}`, colors.yellow);
           return;
         }
 
@@ -1142,7 +1142,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
           stats.oom++;
           stats.failed++;
           stats.oomTests.push(relativePath);
-          if (verbose) log(`💾 ${relativePath}: OOM`, colors.yellow);
+          if (verbose) log(`[oom] ${relativePath}`, colors.yellow);
           return;
         }
 
@@ -1239,12 +1239,12 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     log(`Time: ${elapsed.toFixed(1)}s (${(effectiveTotal / elapsed).toFixed(0)} tests/sec)`, colors.dim);
 
     log('\nSummary:', colors.bold);
-    log(`  ✓ Passed:   ${formatNumber(stats.passed)}`, colors.green);
-    log(`  ✗ Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
-    log(`  ⊘ Skipped:  ${formatNumber(stats.skipped)}`, stats.skipped > 0 ? colors.dim : colors.dim);
-    log(`  💥 Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
-    log(`  💾 OOM:      ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.magenta : colors.dim);
-    log(`  ⏱ Timeout:  ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
+    log(`  Passed:   ${formatNumber(stats.passed)}`, colors.green);
+    log(`  Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
+    log(`  Skipped:  ${formatNumber(stats.skipped)}`, stats.skipped > 0 ? colors.dim : colors.dim);
+    log(`  Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
+    log(`  OOM:      ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.magenta : colors.dim);
+    log(`  Timeout:  ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
 
     // Worker stats
     log('\nWorker Health:', colors.bold);

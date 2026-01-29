@@ -187,10 +187,47 @@ pub fn resolve_map_property(...) -> PropertyAccessResult {
 
 **HIGHEST** - This is the #1 extra error (283x) and affects fundamental TypeScript functionality
 
+## Implementation Progress
+
+### ✅ Phase 1: Promise (COMPLETED - January 29, 2026)
+
+**Implemented Methods**:
+- `resolve<T>(value: T): Promise<T>` - Static and instance
+- `reject<T>(reason: any): Promise<T>` - Static and instance
+- `then<TResult>(onfulfilled: (value: T) => TResult | Promise<TResult>): Promise<TResult>`
+- `catch<TResult>(onrejected: (reason: any) => TResult | Promise<TResult>): Promise<TResult>`
+- `finally(onfinally: () => void): Promise<T>`
+- `race<T>(promises: Promise<T>[]): Promise<T>` - Static
+- `all<T>(promises: Promise<T>[]): Promise<T[]>` - Static
+- `any<T>(promises: Promise<T>[]): Promise<T>` - Static
+
+**Implementation Details**:
+- File: `src/solver/operations.rs`
+- Added `resolve_promise_property()` function (line 3460)
+- Added `matches_promise_method()` helper (line 3454)
+- Modified Application type handling to detect Promise (line 2819)
+- Handles both `Application(PROMISE_BASE, [T])` and `Application(Ref(Promise), [T])`
+
+**Testing**:
+- ✅ Basic Promise method resolution works
+- ✅ Static methods (resolve, reject) work
+- ✅ Instance methods (then, catch, finally) work
+- ✅ Type parameter extraction works
+- ✅ Generic method chaining works
+
+**Estimated Impact**: ~100x TS2339 error reduction (estimated, needs conformance verification)
+
+**Commits**:
+- (To be added after conformance testing)
+
+### Phase 2: Map/Set (NEXT)
+### Phase 3: Other Built-ins (PENDING)
+
 ## Next Steps
 
-1. Create implementation plan for Promise/Map/Set
-2. Start with Promise (most impactful)
-3. Test with conformance suite
+1. ~~Create implementation plan for Promise/Map/Set~~ ✅ Done
+2. ~~Start with Promise (most impactful)~~ ✅ Done
+3. Test with conformance suite - IN PROGRESS
 4. Measure error reduction
-5. Iterate and refine
+5. Implement Map/Set methods (Phase 2)
+6. Implement other built-ins (Phase 3)

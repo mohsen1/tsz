@@ -168,23 +168,29 @@ Top Extra Errors:
 ### Major Improvements
 1. **TS7010**: 1209x → 110-175x (~85% reduction)
 2. **TS2307**: 1889x → 47x (~97% reduction) - from previous work
+3. **Promise Implementation**: Added hardcoded Promise methods (resolve, reject, then, catch, finally, race, all, any)
+   - Handles both synthetic PROMISE_BASE and Ref(Promise) from lib.d.ts
+   - Expected ~100x TS2339 error reduction (conformance testing pending)
 
 ### Documentation Created
 1. `docs/todo/ts7010_fix_summary.md` - Complete fix documentation
 2. `docs/todo/ts2339_investigation.md` - Comprehensive investigation
 3. `docs/todo/investigated_jan29.md` - Initial investigations
-4. `docs/todo/work_summary_jan29.md` - This file
+4. `docs/todo/promise_map_set_gap.md` - Promise/Map/Set implementation gap and plan
+5. `docs/todo/work_summary_jan29.md` - This file
 
 ---
 
 ## Next Steps (Priority Order)
 
 ### High Impact, Lower Complexity
-1. **TS2705** (113x missing) - Add error emission for async functions with non-Promise return types
-2. **TS2304** (58x extra) - Investigate why we emit "Cannot find name" when TypeScript doesn't
+1. **Promise Conformance Testing** - Measure actual TS2339 reduction from Promise implementation
+2. **Map/Set Implementation** - Phase 2 of Promise/Map/Set plan (~80x error reduction expected)
+3. **TS2705** (113x missing) - Add error emission for async functions with non-Promise return types
+4. **TS2304** (58x extra) - Investigate why we emit "Cannot find name" when TypeScript doesn't
 
 ### High Impact, High Complexity
-1. **TS2339** (283x extra) - Fix property access on complex types (requires architectural work)
+1. **Other Built-ins** - Phase 3: RegExp, Date, JSON, Math (~103x error reduction expected)
 
 ### Medium Impact
 1. **TS2318** (50x extra/110x missing) - Investigate the mismatch
@@ -204,8 +210,9 @@ Top Extra Errors:
 
 ## Time Investment
 
-- **Total Time**: ~4 hours
+- **Total Time**: ~6 hours
 - **TS7010 Fix**: 1 hour (investigation + fix + testing)
+- **Promise Implementation**: 2 hours (investigation + implementation + testing)
 - **Investigations**: 2 hours (TS2339, TS2507, TS2705)
 - **Documentation**: 1 hour (summaries, commit messages)
 
