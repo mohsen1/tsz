@@ -69,8 +69,11 @@ async function withTimeout<T>(
   }
 }
 
-// Default test timeout (3 seconds)
-const DEFAULT_TEST_TIMEOUT_MS = 3000;
+// Dynamic timeout: starts at 500ms, adapts to 10x average test time
+const INITIAL_TIMEOUT_MS = 500;
+const MIN_TIMEOUT_MS = 50;
+const MAX_TIMEOUT_MS = 5000;
+const TIMEOUT_MULTIPLIER = 10;
 
 // Lib directories for file-based resolution (set during test run)
 let libDirs: string[] = [];
@@ -1001,7 +1004,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   log(`  Server: ${serverPath}`, colors.dim);
   log(`  Workers: ${workerCount}`, colors.dim);
   log(`  Max tests: ${formatNumber(maxTests)}`, colors.dim);
-  log(`  Timeout: ${DEFAULT_TEST_TIMEOUT_MS / 1000}s per test`, colors.dim);
+  log(`  Timeout: dynamic (10x avg, ${INITIAL_TIMEOUT_MS}ms initial)`, colors.dim);
   log(`  Memory: ${formatMemory(memoryLimitMB)}/worker (${formatMemory(Math.round(memoryLimitMB * workerCount))} total, system: ${formatMemory(totalMemoryMB)})`, colors.dim);
   log(`${'═'.repeat(60)}\n`, colors.cyan);
 
@@ -1081,6 +1084,72 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     const startTime = Date.now();
     let completed = 0;
 
+    // Dynamic timeout tracking (10x average test time)
+    let testTimeSum = 0;
+    let testTimeCount = 0;
+    let currentTimeout = INITIAL_TIMEOUT_MS;
+
+    const getDynamicTimeout = (): number => {
+      if (testTimeCount < 10) return INITIAL_TIMEOUT_MS; // Need samples first
+      const avg = testTimeSum / testTimeCount;
+      const dynamic = Math.round(avg * TIMEOUT_MULTIPLIER);
+      return Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, dynamic));
+    };
+
+    const recordTestTime = (ms: number): void => {
+      testTimeSum += ms;
+      testTimeCount++;
+      // Update timeout every 50 tests for stability
+      if (testTimeCount % 50 === 0) {
+        currentTimeout = getDynamicTimeout();
+      }
+    };
+
+    // Progress bar state (time-throttled for smooth updates)
+    const PROGRESS_BAR_WIDTH = 30;
+    const PROGRESS_UPDATE_MS = 50;
+    let lastProgressUpdate = 0;
+    let progressInterval: NodeJS.Timeout | null = null;
+    let cachedPoolStats = { oomKills: 0, totalRestarts: 0 };
+
+    const renderProgressBar = (current: number, total: number): string => {
+      const percent = total > 0 ? current / total : 0;
+      const filled = Math.round(percent * PROGRESS_BAR_WIDTH);
+      const empty = PROGRESS_BAR_WIDTH - filled;
+      return `${colors.green}${'█'.repeat(filled)}${colors.dim}${'░'.repeat(empty)}${colors.reset}`;
+    };
+
+    const updateProgress = (force = false): void => {
+      if (verbose) return;
+      try {
+        const now = Date.now();
+        if (!force && now - lastProgressUpdate < PROGRESS_UPDATE_MS) return;
+        lastProgressUpdate = now;
+
+        const elapsed = (now - startTime) / 1000;
+        const rate = elapsed > 0 ? completed / elapsed : 0;
+        const percent = testFiles.length > 0 ? ((completed / testFiles.length) * 100).toFixed(1) : '0.0';
+
+        try { cachedPoolStats = pool.stats; } catch {}
+
+        const statusParts: string[] = [];
+        if (stats.crashed > 0) statusParts.push(`${colors.red}err:${stats.crashed}${colors.reset}`);
+        if (cachedPoolStats.oomKills > 0) statusParts.push(`${colors.magenta}oom:${cachedPoolStats.oomKills}${colors.reset}`);
+        if (stats.timedOut > 0) statusParts.push(`${colors.yellow}to:${stats.timedOut}${colors.reset}`);
+        statusParts.push(`${colors.dim}t:${currentTimeout}ms${colors.reset}`);
+        const status = statusParts.length > 0 ? ` ${statusParts.join(' ')}` : '';
+
+        const bar = renderProgressBar(completed, testFiles.length);
+        const line = `  ${bar} ${percent.padStart(5)}% | ${formatNumber(completed).padStart(6)}/${formatNumber(testFiles.length).padEnd(6)} | ${rate.toFixed(0).padStart(4)}/s${status}`;
+        process.stdout.write(`\r${line.padEnd(100)}`);
+      } catch {}
+    };
+
+    if (!verbose) {
+      progressInterval = setInterval(() => updateProgress(), PROGRESS_UPDATE_MS);
+      progressInterval.unref();
+    }
+
     const runTest = async (testFile: string): Promise<void> => {
       const category = path.basename(path.dirname(testFile));
       const relativePath = path.relative(testsBasePath, testFile);
@@ -1122,10 +1191,10 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         const cacheEntry = cacheEntries[relativePath];
         const tscCodes = cacheEntry?.codes || [];
 
-        // Run check via server with timeout (kills worker on timeout)
+        // Run check via server with dynamic timeout
         const { result, timedOut } = await pool.withClientTimeout(
           (client) => client.check(files, checkOptions),
-          DEFAULT_TEST_TIMEOUT_MS
+          currentTimeout
         );
 
         // Check for timeout
@@ -1144,6 +1213,11 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
           stats.oomTests.push(relativePath);
           if (verbose) log(`[oom] ${relativePath}`, colors.yellow);
           return;
+        }
+
+        // Record test time for dynamic timeout calculation
+        if (result!.elapsed_ms > 0) {
+          recordTestTime(result!.elapsed_ms);
         }
 
         const wasmCodes = result!.codes;
