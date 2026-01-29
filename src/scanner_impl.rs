@@ -1024,7 +1024,12 @@ impl ScannerState {
                     self.token = SyntaxKind::BigIntLiteral;
                     return;
                 }
-                self.token_value = self.substring(start, self.pos);
+                // OPTIMIZATION: Only allocate if separators present
+                if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
+                    self.token_value = self.substring(start, self.pos);
+                } else {
+                    self.token_value.clear();
+                }
                 self.token = SyntaxKind::NumericLiteral;
                 return;
             }
@@ -1041,7 +1046,12 @@ impl ScannerState {
                     self.token = SyntaxKind::BigIntLiteral;
                     return;
                 }
-                self.token_value = self.substring(start, self.pos);
+                // OPTIMIZATION: Only allocate if separators present
+                if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
+                    self.token_value = self.substring(start, self.pos);
+                } else {
+                    self.token_value.clear();
+                }
                 self.token = SyntaxKind::NumericLiteral;
                 return;
             }
@@ -1058,7 +1068,12 @@ impl ScannerState {
                     self.token = SyntaxKind::BigIntLiteral;
                     return;
                 }
-                self.token_value = self.substring(start, self.pos);
+                // OPTIMIZATION: Only allocate if separators present
+                if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
+                    self.token_value = self.substring(start, self.pos);
+                } else {
+                    self.token_value.clear();
+                }
                 self.token = SyntaxKind::NumericLiteral;
                 return;
             }
@@ -1097,7 +1112,13 @@ impl ScannerState {
             return;
         }
 
-        self.token_value = self.substring(start, self.pos);
+        // OPTIMIZATION: Only allocate token_value if number contains separators
+        // Plain numbers (no underscores) can use source slice via get_token_value_ref()
+        if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
+            self.token_value = self.substring(start, self.pos);
+        } else {
+            self.token_value.clear();
+        }
         self.token = SyntaxKind::NumericLiteral;
     }
 
