@@ -325,40 +325,62 @@ if let Some(ref module_specifier) = symbol.import_module {
 
 ## Phase 3: Advanced Features (Lower Impact)
 
-### 3.1 Import Type Inference
+### 3.1 Import Type Inference (Remaining)
 
 **Goal:** Infer types for `const x = await import('./mod')` destructuring.
+
+**Note:** Phase 1.3 already returns `Promise<ModuleNamespace>` for dynamic imports.
+This phase is about inferring types through destructuring and promise chains.
 
 **Tasks:**
 - [ ] Track dynamic import results in flow analysis
 - [ ] Apply contextual typing to import destructuring
 - [ ] Support `import('./mod').then(m => m.foo)`
 
-### 3.2 Module Kind Detection
+### 3.2 Module Kind Detection ✅ ALREADY IMPLEMENTED
 
 **Goal:** Correctly detect ESM vs CommonJS modules.
 
-**Tasks:**
-- [ ] Check package.json `type` field
-- [ ] Check file extension (.mjs, .cjs, .mts, .cts)
-- [ ] Apply correct import/export semantics per module kind
+**Status:** Already implemented in `cli/driver.rs`
 
-### 3.3 Type-Only Import Elision
+**Implementation:**
+- `PackageType` enum (Module vs CommonJs) in driver.rs
+- `package_type_for_dir()` walks up directories looking for package.json
+- Parses "type" field from package.json
+- `forces_esm()` and `forces_cjs()` on `ModuleExtension` for .mts/.mjs/.cts/.cjs
+- Used for resolution in Node16/NodeNext modes
+
+**Tasks:**
+- [x] Check package.json `type` field
+- [x] Check file extension (.mjs, .cjs, .mts, .cts)
+- [x] Apply correct import/export semantics per module kind
+
+### 3.3 Type-Only Import Elision ✅ ALREADY IMPLEMENTED
 
 **Goal:** Correctly elide type-only imports in emission.
 
-**Tasks:**
-- [ ] Track which imports are type-only vs value
-- [ ] Elide `import type` statements
-- [ ] Elide `import { type X }` bindings
+**Status:** Already implemented in `emitter/module_emission.rs`
 
-### 3.4 Additional Edge Cases
+**Implementation:**
+- Checks `is_type_only` on import/export clauses
+- Checks `is_type_only` on individual specifiers
+- `export_clause_is_type_only()` detects type-only exports
+- Skips emitting type-only imports/exports entirely
 
 **Tasks:**
-- [ ] Implement `preserveSymlinks` compiler option
+- [x] Track which imports are type-only vs value
+- [x] Elide `import type` statements
+- [x] Elide `import { type X }` bindings
+
+### 3.4 Additional Edge Cases (Remaining)
+
+**Tasks:**
+- [ ] Wire up `preserveSymlinks` CLI option to skip `canonicalize()` calls
 - [ ] Support `NODE_PATH` environment variable fallback
 - [ ] Handle side-effect imports for `isolatedModules`
 - [ ] Enforce Node16/NodeNext directory import restrictions
+
+**Note:** `preserveSymlinks` and `isolatedModules` are already parsed from CLI args but not fully wired up to module resolution.
 
 ---
 
@@ -372,12 +394,14 @@ if let Some(ref module_specifier) = symbol.import_module {
 3. ✅ **1.3 Dynamic Import Return Types** - COMPLETED (2026-01-29)
 4. ✅ **2.1 customConditions** - COMPLETED (2026-01-29)
 
-### Week 3: Validation (REMAINING)
-5. **2.2 Module Namespace Types** - Solver enhancement (optional, uses anonymous object for now)
-6. **2.3 Export Validation** - Reduces TS2305 errors
+### Week 3: Validation ✅ COMPLETED
+5. ✅ **2.2 Module Namespace Types** - COMPLETED (2026-01-29)
+6. ✅ **2.3 Export Validation** - COMPLETED (2026-01-29)
 
-### Week 4: Polish
-7. **3.1-3.4** - Advanced features as time permits
+### Week 4: Polish ✅ MOSTLY COMPLETE
+7. ✅ **3.2 Module Kind Detection** - Already implemented
+8. ✅ **3.3 Type-Only Import Elision** - Already implemented
+9. **3.1, 3.4** - Remaining advanced features
 
 ---
 
