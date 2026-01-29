@@ -38,6 +38,8 @@ use wasm::cli::config::{checker_target_from_emitter, default_lib_name_for_target
 use wasm::emitter::ScriptTarget;
 use wasm::lib_loader::LibFile;
 use wasm::parser::ParserState;
+use wasm::parser::base::NodeIndex;
+use wasm::parser::node::NodeArena;
 use wasm::solver::TypeInterner;
 
 /// Request from client
@@ -218,7 +220,7 @@ impl Server {
         // Build checker options
         let checker_options = self.build_checker_options(&options);
 
-        // Create type interner
+        // Create type interner (shared across all files)
         let type_interner = TypeInterner::new();
 
         // Build lib contexts for type resolution
@@ -230,39 +232,106 @@ impl Server {
             })
             .collect();
 
-        // Check each file and collect diagnostics
-        let mut all_codes: Vec<i32> = Vec::new();
+        // ========================================
+        // PHASE 1: Parse all files
+        // ========================================
+        struct ParsedFile {
+            name: String,
+            arena: Arc<NodeArena>,
+            root: NodeIndex,
+            parse_errors: Vec<i32>,
+        }
 
-        for (file_name, content) in files {
-            // Parse the file
-            let mut parser = ParserState::new(file_name.clone(), content);
+        let mut parsed_files: Vec<ParsedFile> = Vec::with_capacity(files.len());
+
+        for (file_name, content) in &files {
+            let mut parser = ParserState::new(file_name.clone(), content.clone());
             let root_idx = parser.parse_source_file();
 
             // Collect parse diagnostics
-            for diag in parser.get_diagnostics() {
-                all_codes.push(diag.code as i32);
-            }
+            let parse_errors: Vec<i32> = parser
+                .get_diagnostics()
+                .iter()
+                .map(|d| d.code as i32)
+                .collect();
 
-            // Bind the file
+            parsed_files.push(ParsedFile {
+                name: file_name.clone(),
+                arena: Arc::new(parser.into_arena()),
+                root: root_idx,
+                parse_errors,
+            });
+        }
+
+        // ========================================
+        // PHASE 2: Bind all files
+        // ========================================
+        struct BoundFile {
+            name: String,
+            arena: Arc<NodeArena>,
+            binder: Arc<BinderState>,
+            root: NodeIndex,
+            parse_errors: Vec<i32>,
+        }
+
+        let mut bound_files: Vec<BoundFile> = Vec::with_capacity(parsed_files.len());
+
+        for parsed in parsed_files {
             let mut binder = BinderState::new();
-            binder.bind_source_file(parser.get_arena(), root_idx);
+            binder.bind_source_file(&parsed.arena, parsed.root);
 
-            // Run type checker
+            bound_files.push(BoundFile {
+                name: parsed.name,
+                arena: parsed.arena,
+                binder: Arc::new(binder),
+                root: parsed.root,
+                parse_errors: parsed.parse_errors,
+            });
+        }
+
+        // ========================================
+        // PHASE 3: Build file contexts for cross-file resolution
+        // ========================================
+        // Create LibContext for each user file (similar to how lib files work)
+        let user_file_contexts: Vec<LibContext> = bound_files
+            .iter()
+            .map(|f| LibContext {
+                arena: f.arena.clone(),
+                binder: f.binder.clone(),
+            })
+            .collect();
+
+        // Combine lib contexts with user file contexts
+        let mut all_contexts = lib_contexts;
+        all_contexts.extend(user_file_contexts);
+
+        // ========================================
+        // PHASE 4: Type check all files
+        // ========================================
+        let mut all_codes: Vec<i32> = Vec::new();
+
+        for bound in &bound_files {
+            // Add parse errors
+            all_codes.extend(&bound.parse_errors);
+
+            // Create checker for this file
+            // Note: We pass the file's own binder as the primary binder,
+            // but all files (including this one) are available via contexts
             let mut checker = CheckerState::new(
-                parser.get_arena(),
-                &binder,
+                &bound.arena,
+                &bound.binder,
                 &type_interner,
-                file_name,
+                bound.name.clone(),
                 checker_options.clone(),
             );
 
-            // Set up lib contexts if we have libs
-            if !lib_contexts.is_empty() {
-                checker.ctx.set_lib_contexts(lib_contexts.clone());
+            // Set all contexts for cross-file symbol resolution
+            if !all_contexts.is_empty() {
+                checker.ctx.set_lib_contexts(all_contexts.clone());
             }
 
             // Type check the file
-            checker.check_source_file(root_idx);
+            checker.check_source_file(bound.root);
 
             // Collect diagnostics
             for diag in &checker.ctx.diagnostics {

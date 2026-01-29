@@ -717,6 +717,12 @@ impl<'a> CheckerContext<'a> {
         self.resolved_module_paths = Some(paths);
     }
 
+    /// Set resolved module specifiers (module names that exist in the project).
+    /// Used to suppress TS2307 errors for known modules.
+    pub fn set_resolved_modules(&mut self, modules: HashSet<String>) {
+        self.resolved_modules = Some(modules);
+    }
+
     /// Set the current file index.
     pub fn set_current_file_idx(&mut self, idx: usize) {
         self.current_file_idx = idx;

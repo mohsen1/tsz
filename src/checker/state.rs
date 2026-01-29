@@ -3062,17 +3062,24 @@ impl<'a> CheckerState<'a> {
 
         // Check fuel - return ERROR if exhausted to prevent timeout
         if !self.ctx.consume_fuel() {
+            // Cache ERROR so we don't keep trying to resolve this symbol
+            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
             return TypeId::ERROR;
         }
 
         // Check for circular reference
         if self.ctx.symbol_resolution_set.contains(&sym_id) {
+            // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
+            // This is key for fixing timeout issues with circular class inheritance
+            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
             return TypeId::ERROR; // Circular reference - propagate error
         }
 
         // Check recursion depth to prevent stack overflow
         let depth = self.ctx.symbol_resolution_depth.get();
         if depth >= self.ctx.max_symbol_resolution_depth {
+            // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
+            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
             return TypeId::ERROR; // Depth exceeded - prevent stack overflow
         }
         self.ctx.symbol_resolution_depth.set(depth + 1);
@@ -3080,6 +3087,13 @@ impl<'a> CheckerState<'a> {
         // Push onto resolution stack
         self.ctx.symbol_resolution_stack.push(sym_id);
         self.ctx.symbol_resolution_set.insert(sym_id);
+
+        // CRITICAL: Pre-cache a placeholder (ERROR) to break deep recursion chains
+        // This prevents stack overflow in circular class inheritance by ensuring
+        // that when we try to resolve this symbol again mid-resolution, we get
+        // the cached ERROR immediately instead of recursing deeper.
+        // We'll overwrite this with the real result later (line 3098).
+        self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
 
         self.push_symbol_dependency(sym_id, true);
         let (result, type_params) = self.compute_type_of_symbol(sym_id);

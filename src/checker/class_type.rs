@@ -551,8 +551,9 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Check for circular inheritance using node index tracking (for cross-file cycles)
+                // CRITICAL: Return immediately to prevent infinite recursion, not just break
                 if visited_nodes.contains(&base_class_idx) {
-                    break;
+                    return TypeId::ANY; // Cycle detected - break recursion
                 }
                 let Some(base_node) = self.ctx.arena.get(base_class_idx) else {
                     break;
@@ -573,6 +574,15 @@ impl<'a> CheckerState<'a> {
                         // Return ANY to break the cycle and stop recursion
                         return TypeId::ANY;
                     }
+                } else {
+                    // CRITICAL: Forward reference detected (symbol not bound yet)
+                    // If we've seen this node before in the current resolution path, it's a cycle
+                    // This handles cases like: class C extends E {} where E doesn't exist yet
+                    // but will be declared later with extends D, and D extends C
+                    if visited_nodes.contains(&base_class_idx) {
+                        return TypeId::ANY; // Forward reference cycle - break recursion
+                    }
+                    // Otherwise, continue - the forward reference might resolve later
                 }
 
                 let mut type_args = Vec::new();
@@ -598,12 +608,19 @@ impl<'a> CheckerState<'a> {
                     type_args.truncate(base_type_params.len());
                 }
 
-                let base_instance_type = self.get_class_instance_type_inner(
-                    base_class_idx,
-                    base_class,
-                    visited,
-                    visited_nodes,
-                );
+                // CRITICAL: Resolve base class through get_type_of_symbol instead of calling
+                // get_class_instance_type_inner directly. This provides:
+                // 1. Better cycle detection via symbol_resolution_set
+                // 2. Caching of ERROR types to prevent repeated resolution attempts
+                // 3. Fuel limiting to prevent infinite recursion
+                let base_instance_type =
+                    if let Some(base_sym) = self.ctx.binder.get_node_symbol(base_class_idx) {
+                        self.get_type_of_symbol(base_sym)
+                    } else {
+                        // Forward reference - symbol not bound yet
+                        // Return ANY to avoid infinite recursion
+                        TypeId::ANY
+                    };
                 let substitution =
                     TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                 let base_instance_type =
