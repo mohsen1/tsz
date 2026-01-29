@@ -1257,15 +1257,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       }
 
       completed++;
-      if (!verbose && completed % 10 === 0) {
-        const elapsed = (Date.now() - startTime) / 1000;
-        const rate = completed / elapsed;
-        const poolStats = pool.stats;
-        const oomInfo = poolStats.oomKills > 0 ? ` | OOM: ${poolStats.oomKills}` : '';
-        const timeoutInfo = stats.timedOut > 0 ? ` | TO: ${stats.timedOut}` : '';
-        const crashInfo = stats.crashed > 0 ? ` | Crash: ${stats.crashed}` : '';
-        process.stdout.write(`\r  Progress: ${formatNumber(completed)}/${formatNumber(testFiles.length)} (${rate.toFixed(0)}/s)${crashInfo}${oomInfo}${timeoutInfo}    `);
-      }
+      updateProgress();
     };
 
     // Run tests with concurrency limit
