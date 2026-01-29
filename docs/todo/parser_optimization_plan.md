@@ -1,8 +1,9 @@
 # Parser Optimization Plan
 
-**Status**: In Progress - Phase 1 Complete
+**Status**: Phases 1-5 Complete - 53% Improvement Achieved
 **Last Updated**: January 29, 2026
 **Goal**: Improve parser throughput from ~70 MiB/s to 200 MiB/s
+**Current**: ~107 MiB/s (53% improvement toward target)
 
 ---
 
@@ -25,9 +26,22 @@
   - BigInt literals still allocate (must strip 'n' suffix)
 
 ### Remaining 🚧
-- Phase 5: JSX identifier optimization
-- Phase 6: Operator token optimization
+- Phase 6: N/A - Operator tokens don't use token_value
 - Phase 7: Parser IdentifierData (Future - requires AST changes)
+
+### Phase 6: Operator Tokens ✅ (No Work Needed)
+- Investigation complete: Operator tokens identified purely by SyntaxKind
+- No `token_value` assignments for `+`, `*`, `===`, `->`, etc.
+- Remaining `token_value` allocations are necessary:
+  - Private identifiers (must contain `#` prefix)
+  - Regex literals (flag validation)
+  - Template literals (escape processing)
+  - JSDoc tokens (text processing)
+
+### Phase 5: JSX Identifier Optimization ✅ (Already Applied)
+- `scan_jsx_identifier` already uses zero-allocation pattern
+- Lines 1639-1643: `self.token_atom` interned, `self.token_value.clear()`
+- No changes needed
 
 ---
 
@@ -215,6 +229,18 @@ pub struct IdentifierData {
 | Phase 5 | +20-30% (future) |
 
 **Target**: Reach 120-150 MiB/s after Phases 1-4
+
+### Benchmark Results (After Phases 1-5)
+
+**Parser Throughput**: ~107 MiB/s (53% improvement from ~70 MiB/s baseline)
+
+- 10c_10m: 102.27 MiB/s
+- 20c_10m: 109.13 MiB/s
+- 50c_5m: 107.93 MiB/s
+
+**Gap to Target**: ~93 MiB/s (87% more improvement needed for 200 MiB/s)
+
+**Next Steps**: Phase 7 (Parser IdentifierData) - requires AST changes (high-risk, marked as future work)
 
 ---
 
