@@ -678,6 +678,8 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
 
 pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
     let default_lib = default_lib_name_for_target(target);
+
+    // Try to resolve from disk first
     match resolve_lib_files(&[default_lib.to_string()]) {
         Ok(files) => return Ok(files),
         Err(_) => {} // Fall through to fallbacks
@@ -694,17 +696,28 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
         fallbacks.push("lib");
     }
 
-    for fallback in fallbacks {
+    for fallback in &fallbacks {
         if let Ok(files) = resolve_lib_files(&[fallback.to_string()]) {
             return Ok(files);
         }
     }
 
-    // If all disk-based resolution fails, return an empty Vec to signal
-    // that we should fall back to embedded libs. The actual lib loading
-    // happens in load_lib_files_for_contexts() which will use embedded libs
-    // when disk files are not available.
-    Ok(Vec::new())
+    // If all disk-based resolution fails, return lib file paths anyway
+    // (even though they don't exist on disk). The loader will use embedded libs
+    // as a fallback via get_lib_by_file_name().
+    // This is critical for conformance tests where lib files aren't on disk.
+    let lib_dir = default_lib_dir().unwrap_or_else(|_| PathBuf::from("lib"));
+    let lib_file = lib_dir.join(format!("{}.d.ts", default_lib));
+
+    // Also include fallback lib files for better coverage
+    let mut result = vec![lib_file];
+
+    for fallback in &fallbacks {
+        let fallback_file = lib_dir.join(format!("{}.d.ts", fallback));
+        result.push(fallback_file);
+    }
+
+    Ok(result)
 }
 
 fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
