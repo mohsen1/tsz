@@ -181,6 +181,21 @@ This document outlines the critical issues causing conformance failures, priorit
      }
      ```
 
+15. **fix(checker): use TS2339 instead of TS2571 for property access on unknown** (6ddb06991)
+   - Files: src/checker/state.rs, src/checker/function_type.rs, src/checker/type_computation.rs
+   - Impact: 22 → 0 extra TS2571 errors (100% reduction)
+   - Fixed incorrect error code for property access on unknown types
+   - TypeScript uses TS2339 ("Property 'X' does not exist on type 'unknown'")
+     not TS2571 ("Object is of type 'unknown'")
+   - Changed all 4 locations that emitted TS2571 for IsUnknown to use error_property_not_exist_at
+   - Root cause: tsz had a specific error code for unknown property access, but TypeScript
+     treats this as a standard "property not found" error with 'unknown' as the type
+   - Example that now matches TypeScript:
+     ```typescript
+     let u: unknown;
+     u.prop;  // Now reports TS2339 instead of TS2571
+     ```
+
 ---
 
 ## Top Remaining Issues by Impact
@@ -191,8 +206,10 @@ This document outlines the critical issues causing conformance failures, priorit
 |-------|-------------|----------------|------------|--------|
 | **TS2339** | **121 → 0** | 0 | Property does not exist on type | ✅ **SOLVED** - 100% reduction, lib symbol resolution fixed |
 | **TS2336** | **87 → 0** | 0 | Super property access invalid context | ✅ **SOLVED** - 100% reduction, arrow function context capture |
+| **TS2571** | **22 → 0** | 0 | Object is of type unknown | ✅ **SOLVED** - 100% reduction, wrong error code |
 | **TS2507** | **43 → ~3** | 0 | Type not a constructor function type | ⚠️ **~95% SOLVED** - extends null fixed |
-| TS2307 | 30x | 0 | Cannot find module (edge cases) | 🔥 NEXT PRIORITY |
+| TS2307 | 30x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
+| TS2349 | 22x | 0 | Cannot invoke non-function | 🔥 **NEXT PRIORITY** |
 | TS2307 | 30x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
 | TS2571 | 22x | 0 | Object is of type unknown | Low impact |
 | TS2349 | 22x | 0 | Cannot invoke non-function | Low impact |
