@@ -14,7 +14,8 @@ This document outlines the critical issues causing conformance failures, priorit
 | Readonly Properties | 10,488 (TS2540) | 0 | ✅ COMPLETED - Array readonly fix |
 | Global Types | 0 | 7,560 (TS2318) | ✅ COMPLETED - Embedded libs wiring |
 | Target Library | 0 | 1,748 (TS2583) | ✅ COMPLETED - Embedded libs wiring |
-| **Total Fixed** | **~22,596** | **~9,308** | **~31,904 errors** |
+| Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
+| **Total Fixed** | **~26,231** | **~9,308** | **~35,539 errors** |
 
 ### Completed Commits
 
@@ -51,9 +52,11 @@ This document outlines the critical issues causing conformance failures, priorit
 
 ## Phase 1: Critical Fixes (Highest Impact) - NEXT UP
 
-### 1.1 Fix Circular Constraint Detection [NEXT - 2,123 errors]
+### 1.1 Fix Circular Constraint Detection [IN PROGRESS - 2,123 errors + timeouts]
 
 **Impact:** Fixes ~2,123 extra TS2313 errors + timeout issues
+
+**Status:** 4 tests timing out on classExtendsItself patterns
 
 **Problem:** `should_resolve_recursive_type_alias` in checker state returns `true` for classes, causing `get_type_of_symbol` to detect a false cycle when resolving constraints like `class C<T extends C<T>>`.
 

@@ -1401,9 +1401,23 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return true;
         };
-        if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
-            return true;
+
+        // Check if this is a type alias (original behavior)
+        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+            return self.type_args_match_alias_params(sym_id, type_args);
         }
+
+        // For classes and interfaces, allow recursive references in type parameter constraints
+        // Don't force eager resolution - this prevents false cycle detection for patterns like:
+        // class C<T extends C<T>>
+        // interface I<T extends I<T>>
+        if symbol.flags & (symbol_flags::CLASS | symbol_flags::INTERFACE) != 0 {
+            // Only resolve if we're not in a direct self-reference scenario
+            // The symbol_resolution_stack check above handles direct recursion
+            return false;
+        }
+
+        // For other symbol types, use type args matching
         self.type_args_match_alias_params(sym_id, type_args)
     }
 
