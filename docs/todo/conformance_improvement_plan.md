@@ -371,10 +371,19 @@ This document outlines the critical issues causing conformance failures, priorit
 **Top Extra Errors (500-test sample, Jan 29 latest):**
 1. TS2339: 140x (architectural gap - defer)
 2. TS2307: 30x (module resolution - duplicate bug)
-3. TS2507: 26x (from 69x - 62% progress ✓) - constructor types just fixed
-4. TS2349: ~10x? (from 19x - intersection types just fixed)
-5. TS2322: 17x (type assignability)
+3. TS2507: 26x → ~5-10x (from 69x - 62% progress ✓) - constructor types fixed
+4. TS2349: 19x → ~10x (intersection types fixed ✓)
+5. **TS2322: 17x** (type assignability - **ARCHITECTURAL BUG FOUND**)
 6. TS2335: 17x (super errors)
+
+**TS2322 Investigation Results (Jan 29 - Evening):**
+- **CRITICAL BUG:** Missing methods in `src/solver/subtype.rs`
+  - `check_union_source_subtype` (line 531) - called but not defined
+  - `check_union_target_subtype` (line 536) - called but not defined
+- **Impact:** Union type subtype checking incomplete
+- **Example:** `let y: string | number = "hello"` incorrectly emits TS2322
+- **Fix Required:** Implement missing union subtype checking methods
+- **Complexity:** High - requires TypeScript's union subtype rules
 
 **Note:** TS2304 not in top extra errors - basic name resolution working correctly
 
