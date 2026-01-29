@@ -1071,6 +1071,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
+            | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => false,
         }
     }

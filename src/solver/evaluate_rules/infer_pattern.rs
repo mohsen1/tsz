@@ -191,6 +191,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
+            | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => false,
         }
     }
@@ -647,6 +648,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
+            | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => true,
         }
     }

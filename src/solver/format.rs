@@ -273,6 +273,18 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("{}<{}>", kind_name, self.format(*type_arg))
             }
+            TypeKey::ModuleNamespace(sym) => {
+                let name = if let Some(arena) = self.symbol_arena {
+                    if let Some(symbol) = arena.get(SymbolId(sym.0)) {
+                        symbol.escaped_name.to_string()
+                    } else {
+                        format!("module({})", sym.0)
+                    }
+                } else {
+                    format!("module({})", sym.0)
+                };
+                format!("typeof import(\"{}\")", name)
+            }
             TypeKey::Error => "error".to_string(),
         }
     }

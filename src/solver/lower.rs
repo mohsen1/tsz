@@ -1332,6 +1332,7 @@ impl<'a> TypeLowering<'a> {
             | TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::UniqueSymbol(_)
+            | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => false,
         }
     }
@@ -1619,6 +1620,7 @@ impl<'a> TypeLowering<'a> {
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
+            | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => {}
         }
     }

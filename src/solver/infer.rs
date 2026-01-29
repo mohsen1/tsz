@@ -600,6 +600,7 @@ impl<'a> InferenceContext<'a> {
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
+            | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => {}
         }
     }
@@ -791,6 +792,7 @@ impl<'a> InferenceContext<'a> {
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
+            | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => false,
         }
     }

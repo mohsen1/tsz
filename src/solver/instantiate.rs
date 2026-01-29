@@ -251,9 +251,10 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Ref types might resolve to something that needs substitution
-            TypeKey::Ref(_) | TypeKey::TypeQuery(_) | TypeKey::UniqueSymbol(_) => {
-                self.interner.intern(key.clone())
-            }
+            TypeKey::Ref(_)
+            | TypeKey::TypeQuery(_)
+            | TypeKey::UniqueSymbol(_)
+            | TypeKey::ModuleNamespace(_) => self.interner.intern(key.clone()),
 
             // Application: instantiate base and args
             TypeKey::Application(app_id) => {

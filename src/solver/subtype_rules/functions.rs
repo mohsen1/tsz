@@ -292,6 +292,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             | TypeKey::Ref(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
+            | TypeKey::ModuleNamespace(_)
             | TypeKey::Error => false,
         }
     }
