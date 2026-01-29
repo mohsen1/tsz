@@ -7,6 +7,7 @@
 //! - Mapped types ({ [K in keyof T]: T[K] })
 //! - Type expansion and instantiation
 
+use crate::binder::SymbolId;
 use crate::solver::types::*;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -35,6 +36,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check Ref to Ref subtype with optional identity shortcut.
+    ///
+    /// For class-to-class checks, uses InheritanceGraph for O(1) nominal subtyping
+    /// before falling back to structural checking. This is critical for:
+    /// - Performance: Avoids expensive member-by-member comparison
+    /// - Correctness: Properly handles private/protected members (nominal, not structural)
+    /// - Recursive types: Breaks cycles in class inheritance (e.g., `class Box { next: Box }`)
     pub(crate) fn check_ref_ref_subtype(
         &mut self,
         source: TypeId,
@@ -44,6 +51,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         if s_sym == t_sym {
             return SubtypeResult::True;
+        }
+
+        // O(1) nominal class subtype checking using InheritanceGraph
+        // This short-circuits expensive structural checks for class inheritance
+        if let (Some(graph), Some(is_class)) = (self.inheritance_graph, self.is_class_symbol) {
+            // Check if both symbols are classes (not interfaces or type aliases)
+            let s_is_class = is_class(*s_sym);
+            let t_is_class = is_class(*t_sym);
+
+            if s_is_class && t_is_class {
+                // Both are classes - use nominal inheritance check
+                // Convert SymbolRef to SymbolId for InheritanceGraph
+                let s_sid = SymbolId(s_sym.0);
+                let t_sid = SymbolId(t_sym.0);
+
+                if graph.is_derived_from(s_sid, t_sid) {
+                    // O(1) bitset check: source is a subclass of target
+                    return SubtypeResult::True;
+                }
+
+                // Not a subclass - fall through to structural check below
+                // This handles the case where a class is structurally compatible
+                // even though it doesn't inherit from the target
+            }
         }
 
         let s_resolved = self.resolver.resolve_ref(*s_sym, self.interner);

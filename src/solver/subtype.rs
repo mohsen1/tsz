@@ -210,6 +210,12 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     // When true, disables method bivariance (methods use contravariance).
     // Default: false (methods are bivariant in TypeScript for compatibility).
     pub disable_method_bivariance: bool,
+    /// Optional inheritance graph for O(1) nominal class subtype checking.
+    /// When provided, enables fast nominal checks for class inheritance.
+    pub inheritance_graph: Option<&'a crate::solver::inheritance::InheritanceGraph>,
+    /// Optional callback to check if a symbol is a class (for nominal subtyping).
+    /// Returns true if the symbol has the CLASS flag set.
+    pub is_class_symbol: Option<&'a dyn Fn(SymbolRef) -> bool>,
 }
 
 /// Maximum total subtype checks allowed per SubtypeChecker instance.
@@ -235,6 +241,8 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
+            inheritance_graph: None,
+            is_class_symbol: None,
         }
     }
 }
@@ -257,7 +265,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             disable_method_bivariance: false,
+            inheritance_graph: None,
+            is_class_symbol: None,
         }
+    }
+
+    /// Set the inheritance graph for O(1) nominal class subtype checking.
+    pub fn with_inheritance_graph(
+        mut self,
+        graph: &'a crate::solver::inheritance::InheritanceGraph,
+    ) -> Self {
+        self.inheritance_graph = Some(graph);
+        self
+    }
+
+    /// Set the callback to check if a symbol is a class.
+    pub fn with_class_check(mut self, check: &'a dyn Fn(SymbolRef) -> bool) -> Self {
+        self.is_class_symbol = Some(check);
+        self
     }
 
     /// Set whether strict null checks are enabled.

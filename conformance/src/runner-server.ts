@@ -18,6 +18,7 @@ import * as os from 'os';
 import { loadTscCache, type CacheEntry } from './tsc-cache.js';
 import {
   parseDirectivesOnly,
+  parseTestCase,
   directivesToCheckOptions,
   type CheckOptions,
 } from './test-utils.js';
@@ -721,9 +722,13 @@ async function printTestDetails(
   libDirs: string[]
 ): Promise<void> {
   const content = fs.readFileSync(testFile, 'utf-8');
-  const files = { [path.basename(testFile)]: content };
-  const directives = parseDirectivesOnly(content);
-  const checkOptions = directivesToCheckOptions(directives, libDirs);
+  // Parse test case to handle @Filename directives for multi-file tests
+  const parsed = parseTestCase(content, testFile);
+  const files: Record<string, string> = {};
+  for (const file of parsed.files) {
+    files[file.name] = file.content;
+  }
+  const checkOptions = directivesToCheckOptions(parsed.directives, libDirs);
   const cacheEntry = cacheEntries[relativePath];
   const tscCodes = cacheEntry?.codes || [];
 
@@ -743,7 +748,7 @@ async function printTestDetails(
 
   // Print parsed directives
   log('\n⚙️  Parsed Directives:', colors.bold);
-  for (const [key, value] of Object.entries(directives)) {
+  for (const [key, value] of Object.entries(parsed.directives)) {
     if (value !== undefined) {
       log(`  ${key}: ${JSON.stringify(value)}`, colors.yellow);
     }
@@ -971,11 +976,15 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
 
       try {
         const content = fs.readFileSync(testFile, 'utf-8');
-        const files = { [path.basename(testFile)]: content };
+        // Parse test case to handle @Filename directives for multi-file tests
+        const parsed = parseTestCase(content, testFile);
+        const files: Record<string, string> = {};
+        for (const file of parsed.files) {
+          files[file.name] = file.content;
+        }
 
         // Parse test directives (@target, @lib, @strict, etc.)
-        const directives = parseDirectivesOnly(content);
-        const checkOptions = directivesToCheckOptions(directives, libDirs);
+        const checkOptions = directivesToCheckOptions(parsed.directives, libDirs);
 
         // Get TSC baseline from cache or skip
         const cacheEntry = cacheEntries[relativePath];
