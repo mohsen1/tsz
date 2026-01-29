@@ -68,6 +68,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a node is inside a class method body (non-static).
     ///
     /// Returns true if inside a non-static method body.
+    /// IMPORTANT: Skips arrow function boundaries since they capture the class context.
     pub(crate) fn is_in_class_method_body(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
 
@@ -79,6 +80,12 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
             };
+
+            // Arrow functions capture the class context, so skip them when checking
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                current = parent_idx;
+                continue;
+            }
 
             if parent_node.kind == syntax_kind_ext::METHOD_DECLARATION {
                 if let Some(method) = self.ctx.arena.get_method_decl(parent_node) {
@@ -102,6 +109,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a node is inside a class accessor body (getter/setter).
     ///
     /// Returns true if inside an accessor body.
+    /// IMPORTANT: Skips arrow function boundaries since they capture the class context.
     pub(crate) fn is_in_class_accessor_body(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
 
@@ -114,9 +122,54 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
+            // Arrow functions capture the class context, so skip them when checking
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                current = parent_idx;
+                continue;
+            }
+
             if parent_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
+                return true;
+            }
+
+            // Check if we've left the class
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    /// Check if a node is inside a class property initializer.
+    ///
+    /// Returns true if inside a property declaration (class field).
+    /// IMPORTANT: Skips arrow function boundaries since they capture the class context.
+    pub(crate) fn is_in_class_property_initializer(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            // Arrow functions capture the class context, so skip them when checking
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                current = parent_idx;
+                continue;
+            }
+
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                 return true;
             }
 
@@ -232,11 +285,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS2336: super property access must be in constructor, method, or accessor
+        // TS2336: super property access must be in constructor, method, accessor, or property initializer
+        // Note: Arrow functions capture the class context, so super inside arrow functions is valid
+        // if the arrow itself is in a valid context (checked by the helper functions)
         if is_super_property_access {
             let in_valid_context = class_info.in_constructor
                 || self.is_in_class_method_body(idx)
-                || self.is_in_class_accessor_body(idx);
+                || self.is_in_class_accessor_body(idx)
+                || self.is_in_class_property_initializer(idx);
 
             if !in_valid_context {
                 self.error_at_node(
