@@ -6549,6 +6549,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a class declaration.
     fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
+        use crate::checker::class_inheritance::ClassInheritanceChecker;
         use crate::checker::types::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
@@ -6558,6 +6559,14 @@ impl<'a> CheckerState<'a> {
         let Some(class) = self.ctx.arena.get_class(node) else {
             return;
         };
+
+        // CRITICAL: Check for circular inheritance using InheritanceGraph
+        // This prevents stack overflow from infinite recursion in get_class_instance_type
+        // Must be done BEFORE any type checking to catch cycles early
+        let mut checker = ClassInheritanceChecker::new(&mut self.ctx);
+        if let Err(()) = checker.check_class_inheritance_cycle(stmt_idx, class) {
+            return; // Cycle detected - error already emitted, skip all type checking
+        }
 
         // Check for reserved class names (error 2414)
         if !class.name.is_none()
@@ -6570,47 +6579,6 @@ impl<'a> CheckerState<'a> {
                 "Class name cannot be 'any'.",
                 diagnostic_codes::CLASS_NAME_CANNOT_BE_ANY,
             );
-        }
-
-        // CRITICAL: Check for circular inheritance BEFORE type checking
-        // This prevents stack overflow in cases like "class C extends C"
-        if let Some(heritage_clauses) = &class.heritage_clauses {
-            let current_class_sym = self.ctx.binder.get_node_symbol(stmt_idx);
-
-            for &clause_idx in &heritage_clauses.nodes {
-                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
-                    continue;
-                };
-                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
-                    continue;
-                };
-                if heritage.token != crate::scanner::SyntaxKind::ExtendsKeyword as u16 {
-                    continue;
-                }
-                let Some(&type_idx) = heritage.types.nodes.first() else {
-                    continue;
-                };
-                let Some(type_node) = self.ctx.arena.get(type_idx) else {
-                    continue;
-                };
-                let expr_idx =
-                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
-                        expr_type_args.expression
-                    } else {
-                        type_idx
-                    };
-
-                // Check if the extends clause references the current class itself
-                if let Some(extends_sym) = self.resolve_heritage_symbol(expr_idx) {
-                    if let Some(current_sym) = current_class_sym {
-                        if extends_sym == current_sym {
-                            // Self-referential inheritance - emit error and skip type checking
-                            self.error_circular_class_inheritance(expr_idx, stmt_idx);
-                            return; // Skip all type checking for this class
-                        }
-                    }
-                }
-            }
         }
 
         // Check if this is a declared class (ambient declaration)
