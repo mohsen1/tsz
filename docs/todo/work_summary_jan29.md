@@ -226,6 +226,45 @@ Top Extra Errors:
 
 ---
 
+### ⚠️ TS2705 Investigation - Architectural Fix, Type Resolution Issue Found (Jan 29)
+
+**Problem**: 73x missing TS2705 errors (async function must return Promise)
+
+**Investigation**:
+1. **Architectural Issue Found**: `is_promise_type()` used `type_ref_is_promise_like()` which conservatively returned `true` for ALL Object types
+   - This caused `async function foo(): MyInterface {}` to incorrectly pass the Promise check
+   - Root cause: Comment at promise_checker.rs:55-60 admits this is "conservative assumption"
+
+2. **Fix Implemented** (Commit: `224b2d7de`):
+   - Changed `is_promise_type()` to directly check symbol names for Application types
+   - Now returns `false` for non-Promise interfaces (correct)
+   - Handles nested applications recursively
+
+3. **Unexpected Result**: No conformance improvement (still 73x missing TS2705)
+
+4. **Deeper Investigation**: Manual testing revealed the real issue:
+   ```typescript
+   async function test(): string { return "hello"; }
+   ```
+   - Expected: TS2705 emitted (string is not Promise)
+   - Actual: No error (return_type == TypeId::ERROR)
+   - Root cause: `string` type resolving to `TypeId::ERROR` instead of `TypeId::STRING`
+
+5. **Type Resolution Bug Found**:
+   - `StringKeyword` should lower to `TypeId::STRING` (type_node.rs:88)
+   - But in some cases, it's resolving to `TypeId::ERROR`
+   - TS2705 check has condition: `return_type != TypeId::ERROR`
+   - So the check is skipped when types resolve to ERROR
+
+**Impact**:
+- Architectural fix is correct (committed)
+- Conformance unchanged due to separate type resolution bug
+- Need to investigate why primitive types resolve to ERROR
+
+**Next Action**: Debug type lowering to find why `StringKeyword` → `ERROR` happens
+
+---
+
 ## Progress Made
 
 ### Major Improvements
