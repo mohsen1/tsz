@@ -32,6 +32,7 @@ use std::time::Instant;
 
 use wasm::binder::BinderState;
 use wasm::checker::context::{CheckerOptions, LibContext};
+use wasm::checker::module_resolution::build_module_resolution_maps;
 use wasm::checker::state::CheckerState;
 use wasm::checker::types::diagnostics::DiagnosticCategory;
 use wasm::cli::config::{checker_target_from_emitter, default_lib_name_for_target};
@@ -313,56 +314,9 @@ impl Server {
         let mut all_contexts = lib_contexts;
         all_contexts.extend(user_file_contexts);
 
-        // Build resolved module paths map: (file_idx, specifier) -> target_file_idx
-        // Also build a set of all known module specifiers
-        let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-        let mut resolved_modules: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-
-        // For each file, compute what modules it can import
-        for (src_idx, src_file) in bound_files.iter().enumerate() {
-            let src_path = std::path::Path::new(&src_file.name);
-            let src_dir = src_path.parent();
-
-            for (tgt_idx, tgt_file) in bound_files.iter().enumerate() {
-                if src_idx == tgt_idx {
-                    continue;
-                }
-
-                let tgt_path = std::path::Path::new(&tgt_file.name);
-
-                // Compute relative specifier from src to tgt
-                // e.g., if src is "/tmp/test/main.ts" and tgt is "/tmp/test/types.ts"
-                // the specifier would be "./types"
-                if let Some(src_dir) = src_dir {
-                    if let Ok(rel_path) = tgt_path.strip_prefix(src_dir) {
-                        // Convert to module specifier format
-                        let rel_str = rel_path.to_string_lossy();
-                        let specifier = rel_str
-                            .trim_end_matches(".ts")
-                            .trim_end_matches(".tsx")
-                            .trim_end_matches(".d.ts");
-
-                        // Add with ./ prefix
-                        let full_specifier = format!("./{}", specifier);
-                        resolved_module_paths.insert((src_idx, full_specifier.clone()), tgt_idx);
-                        resolved_modules.insert(full_specifier);
-
-                        // Also add without ./ prefix
-                        resolved_module_paths.insert((src_idx, specifier.to_string()), tgt_idx);
-                        resolved_modules.insert(specifier.to_string());
-                    }
-                }
-
-                // Also add the full file name as a valid specifier
-                let tgt_name = tgt_path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                resolved_module_paths.insert((src_idx, format!("./{}", tgt_name)), tgt_idx);
-                resolved_modules.insert(format!("./{}", tgt_name));
-            }
-        }
+        // Build module resolution maps using shared utility
+        let file_names: Vec<String> = bound_files.iter().map(|f| f.name.clone()).collect();
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
 
         // ========================================
         // PHASE 4: Type check all files
