@@ -28698,6 +28698,8 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             exact_optional_property_types: false,
             no_lib: false,
             target: crate::checker::context::ScriptTarget::ESNext,
+            es_module_interop: false,
+            allow_synthetic_default_imports: false,
         },
     );
     assert!(
