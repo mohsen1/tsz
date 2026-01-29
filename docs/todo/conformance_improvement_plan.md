@@ -448,3 +448,67 @@ class D extends C { bar: string; }
 class E extends D { baz: number; }  // Cycle detected, but C already started resolving
 ```
 
+---
+
+## Investigation: TS2339 Property Access on Await Expressions (121x) - IN PROGRESS
+
+### Issue Description
+TS2339 "Property does not exist on type" errors appear when accessing properties on await expressions.
+
+**Example Test:** `awaitCallExpression8_es2017.ts`
+```typescript
+// @target: es2017
+declare var po: Promise<{ fn(arg0: boolean, arg1: boolean, arg2: boolean): void; }>;
+async function func(): Promise<void> {
+    var b = (await po).fn(a, a, a);  // TS2339: Property 'fn' does not exist
+}
+```
+
+**Expected:** No error - await unwraps Promise<T> to get T, then `.fn` property should be accessible
+**Actual:** tsz emits TS2339 for the `.fn` property access
+
+### Investigation Findings
+
+#### ✅ Verified Working
+1. **Object literal property access WITHOUT await works correctly:**
+   ```typescript
+   declare var o: { fn(arg0: boolean, ...): void; };
+   o.fn(true, true, true);  // No error ✓
+   ```
+
+2. **Await expression type computation looks correct** (state.rs:922-934):
+   ```rust
+   k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
+       if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+           let expr_type = self.get_type_of_node(unary.expression);
+           // Unwrap Promise<T> to get T
+           self.promise_like_return_type_argument(expr_type)
+               .unwrap_or(expr_type)
+       }
+   }
+   ```
+
+3. **Property access resolution works correctly** (operations.rs:2312-2356):
+   - Looks up object properties by name
+   - Falls back to index signatures
+   - Returns PropertyNotFound only if property truly missing
+
+### Current Hypothesis
+
+The issue is likely in how Promise types from lib files are being classified and unwrapped.
+
+**Possible causes:**
+1. `classify_promise_type` doesn't recognize Promise<T> from lib files correctly
+2. `promise_like_return_type_argument` fails to extract the type argument
+3. The type stored for `po` is not Promise<{...}> but something else
+
+### Next Steps
+
+1. ✅ Test object literal property access (DONE - works)
+2. ⏳ Debug what type `get_type_of_node` returns for `await po`
+3. ⏳ Verify `classify_promise_type` correctly identifies Promise<{...}>
+4. ⏳ Check if Promise symbol from lib is recognized as "Promise-like"
+5. ⏳ Test with direct Promise type (not from variable declaration)
+
+---
+
