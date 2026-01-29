@@ -2463,6 +2463,12 @@ fn load_lib_files_for_contexts(
     for lib_path in lib_files {
         if lib_path.exists() {
             pending_libs.push_back(lib_path.clone());
+        } else {
+            // File doesn't exist on disk, check embedded libs
+            let file_name = lib_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if crate::embedded_libs::get_lib_by_file_name(file_name).is_some() {
+                pending_libs.push_back(lib_path.clone());
+            }
         }
     }
 
@@ -2481,10 +2487,30 @@ fn load_lib_files_for_contexts(
             continue;
         }
 
-        // Read the lib file content
-        let source_text = match std::fs::read_to_string(&lib_path) {
-            Ok(content) => content,
-            Err(_) => continue,
+        // Read the lib file content, falling back to embedded libs if disk read fails
+        let source_text = if lib_path.exists() {
+            match std::fs::read_to_string(&lib_path) {
+                Ok(content) => content,
+                Err(_) => {
+                    // Fallback to embedded libs
+                    let file_name = lib_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    if let Some(embedded_lib) =
+                        crate::embedded_libs::get_lib_by_file_name(file_name)
+                    {
+                        embedded_lib.content.to_string()
+                    } else {
+                        continue;
+                    }
+                }
+            }
+        } else {
+            // File doesn't exist on disk, try embedded libs
+            let file_name = lib_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if let Some(embedded_lib) = crate::embedded_libs::get_lib_by_file_name(file_name) {
+                embedded_lib.content.to_string()
+            } else {
+                continue;
+            }
         };
 
         // Extract and queue referenced libs BEFORE moving source_text to parser
@@ -2515,8 +2541,13 @@ fn load_lib_files_for_contexts(
             // Resolve referenced lib to file path
             if let Ok(ref_paths) = resolve_lib_files(std::slice::from_ref(&ref_lib)) {
                 for ref_path in ref_paths {
-                    if ref_path.exists() && !loaded_lib_names.contains(ref_lib.as_str()) {
-                        pending_libs.push_back(ref_path);
+                    if !loaded_lib_names.contains(ref_lib.as_str()) {
+                        if ref_path.exists() {
+                            pending_libs.push_back(ref_path);
+                        } else if crate::embedded_libs::get_lib(ref_lib.as_str()).is_some() {
+                            // Referenced lib exists in embedded libs
+                            pending_libs.push_back(ref_path);
+                        }
                     }
                 }
             }
