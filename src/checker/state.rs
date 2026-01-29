@@ -628,17 +628,26 @@ impl<'a> CheckerState<'a> {
 
         // Check fuel - return ERROR if exhausted to prevent timeout
         if !self.ctx.consume_fuel() {
+            // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
+            self.ctx.node_types.insert(idx.0, TypeId::ERROR);
             return TypeId::ERROR;
         }
 
         // Check for circular reference - return ERROR to expose resolution bugs
         if self.ctx.node_resolution_set.contains(&idx) {
+            // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
+            self.ctx.node_types.insert(idx.0, TypeId::ERROR);
             return TypeId::ERROR;
         }
 
         // Push onto resolution stack
         self.ctx.node_resolution_stack.push(idx);
         self.ctx.node_resolution_set.insert(idx);
+
+        // CRITICAL: Pre-cache ERROR placeholder to break deep recursion chains
+        // This ensures that mid-resolution lookups get cached ERROR immediately
+        // We'll overwrite this with the real result later (line 650)
+        self.ctx.node_types.insert(idx.0, TypeId::ERROR);
 
         let result = self.compute_type_of_node(idx);
 

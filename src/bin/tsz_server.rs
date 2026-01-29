@@ -290,9 +290,17 @@ impl Server {
         }
 
         // ========================================
-        // PHASE 3: Build file contexts for cross-file resolution
+        // PHASE 3: Build cross-file resolution context
         // ========================================
-        // Create LibContext for each user file (similar to how lib files work)
+
+        // Collect all arenas and binders for cross-file resolution
+        let all_arenas: Vec<Arc<wasm::parser::node::NodeArena>> =
+            bound_files.iter().map(|f| f.arena.clone()).collect();
+
+        let all_binders: Vec<Arc<BinderState>> =
+            bound_files.iter().map(|f| f.binder.clone()).collect();
+
+        // Create LibContext for each user file (for global symbol resolution)
         let user_file_contexts: Vec<LibContext> = bound_files
             .iter()
             .map(|f| LibContext {
@@ -305,18 +313,67 @@ impl Server {
         let mut all_contexts = lib_contexts;
         all_contexts.extend(user_file_contexts);
 
+        // Build resolved module paths map: (file_idx, specifier) -> target_file_idx
+        // Also build a set of all known module specifiers
+        let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+        let mut resolved_modules: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        // For each file, compute what modules it can import
+        for (src_idx, src_file) in bound_files.iter().enumerate() {
+            let src_path = std::path::Path::new(&src_file.name);
+            let src_dir = src_path.parent();
+
+            for (tgt_idx, tgt_file) in bound_files.iter().enumerate() {
+                if src_idx == tgt_idx {
+                    continue;
+                }
+
+                let tgt_path = std::path::Path::new(&tgt_file.name);
+
+                // Compute relative specifier from src to tgt
+                // e.g., if src is "/tmp/test/main.ts" and tgt is "/tmp/test/types.ts"
+                // the specifier would be "./types"
+                if let Some(src_dir) = src_dir {
+                    if let Ok(rel_path) = tgt_path.strip_prefix(src_dir) {
+                        // Convert to module specifier format
+                        let rel_str = rel_path.to_string_lossy();
+                        let specifier = rel_str
+                            .trim_end_matches(".ts")
+                            .trim_end_matches(".tsx")
+                            .trim_end_matches(".d.ts");
+
+                        // Add with ./ prefix
+                        let full_specifier = format!("./{}", specifier);
+                        resolved_module_paths.insert((src_idx, full_specifier.clone()), tgt_idx);
+                        resolved_modules.insert(full_specifier);
+
+                        // Also add without ./ prefix
+                        resolved_module_paths.insert((src_idx, specifier.to_string()), tgt_idx);
+                        resolved_modules.insert(specifier.to_string());
+                    }
+                }
+
+                // Also add the full file name as a valid specifier
+                let tgt_name = tgt_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                resolved_module_paths.insert((src_idx, format!("./{}", tgt_name)), tgt_idx);
+                resolved_modules.insert(format!("./{}", tgt_name));
+            }
+        }
+
         // ========================================
         // PHASE 4: Type check all files
         // ========================================
         let mut all_codes: Vec<i32> = Vec::new();
 
-        for bound in &bound_files {
+        for (file_idx, bound) in bound_files.iter().enumerate() {
             // Add parse errors
             all_codes.extend(&bound.parse_errors);
 
             // Create checker for this file
-            // Note: We pass the file's own binder as the primary binder,
-            // but all files (including this one) are available via contexts
             let mut checker = CheckerState::new(
                 &bound.arena,
                 &bound.binder,
@@ -329,6 +386,15 @@ impl Server {
             if !all_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(all_contexts.clone());
             }
+
+            // Set multi-file resolution context
+            checker.ctx.set_all_arenas(all_arenas.clone());
+            checker.ctx.set_all_binders(all_binders.clone());
+            checker
+                .ctx
+                .set_resolved_module_paths(resolved_module_paths.clone());
+            checker.ctx.set_resolved_modules(resolved_modules.clone());
+            checker.ctx.set_current_file_idx(file_idx);
 
             // Type check the file
             checker.check_source_file(bound.root);

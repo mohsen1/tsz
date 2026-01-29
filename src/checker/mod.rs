@@ -53,6 +53,7 @@ pub mod jsx;
 pub mod jsx_checker;
 pub mod literal_type;
 pub mod module_checker;
+pub mod module_resolution;
 // pub mod module_validation; // TODO: Fix API mismatches
 pub mod namespace_checker;
 pub mod nullish;
