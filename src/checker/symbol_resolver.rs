@@ -817,6 +817,23 @@ impl<'a> CheckerState<'a> {
             if should_skip_lib_symbol(sym_id) {
                 return false;
             }
+            // Get symbol flags to check for special cases
+            let flags = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map(|s| s.flags)
+                .unwrap_or(0);
+
+            // Namespaces and modules are value-only but should be allowed in type position
+            // because they can contain types (e.g., MyNamespace.ValueInterface)
+            let is_namespace_or_module =
+                (flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0;
+
+            if is_namespace_or_module {
+                return true;
+            }
+
             let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
                 || self.symbol_is_value_only(sym_id, None))
                 && !self.symbol_is_type_only(sym_id, None);
