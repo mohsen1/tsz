@@ -109,6 +109,15 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Circular reference detected via node index
         }
 
+        // Check fuel to prevent timeout on pathological inheritance hierarchies
+        if !self.ctx.consume_fuel() {
+            // Cleanup global set before returning (if we have a symbol)
+            if let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+            return TypeId::ERROR; // Fuel exhausted - prevent infinite loop
+        }
+
         struct MethodAggregate {
             overload_signatures: Vec<CallSignature>,
             impl_signatures: Vec<CallSignature>,
@@ -467,6 +476,17 @@ impl<'a> CheckerState<'a> {
                         self.error_circular_class_inheritance(expr_idx, class_idx);
                         break;
                     }
+
+                    // CRITICAL: Check global resolution set to prevent infinite recursion
+                    // If the base class is currently being resolved, use ERROR type to break the cycle
+                    if self
+                        .ctx
+                        .class_instance_resolution_set
+                        .contains(&base_sym_id)
+                    {
+                        // Don't try to resolve - this would create infinite recursion
+                        break;
+                    }
                 }
 
                 // Check for circular inheritance using symbol tracking
@@ -496,6 +516,35 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let Some(base_class_idx) = base_class_idx else {
+                    // CRITICAL: Check if base class is currently being resolved to prevent infinite recursion
+                    // This happens when we have forward references in circular inheritance
+                    let base_sym_id = match self.resolve_heritage_symbol(expr_idx) {
+                        Some(sym_id) => sym_id,
+                        None => {
+                            // Can't resolve symbol, try expression-based resolution
+                            if let Some(base_instance_type) =
+                                self.base_instance_type_from_expression(expr_idx, type_arguments)
+                            {
+                                self.merge_base_instance_properties(
+                                    base_instance_type,
+                                    &mut properties,
+                                    &mut string_index,
+                                    &mut number_index,
+                                );
+                            }
+                            break;
+                        }
+                    };
+
+                    // If base class is being resolved, skip to prevent infinite loop
+                    if self
+                        .ctx
+                        .class_instance_resolution_set
+                        .contains(&base_sym_id)
+                    {
+                        break; // Base class type resolution in progress - skip to avoid cycle
+                    }
+
                     if let Some(base_instance_type) =
                         self.base_instance_type_from_expression(expr_idx, type_arguments)
                     {
