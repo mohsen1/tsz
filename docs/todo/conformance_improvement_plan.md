@@ -12,11 +12,12 @@ This document outlines the critical issues causing conformance failures, priorit
 |-------|-------------|----------------|--------|
 | Type Assignability | 12,108 (TS2322) | 755 | ✅ COMPLETED - ERROR propagation fix |
 | Readonly Properties | 10,488 (TS2540) | 0 | ✅ COMPLETED - Array readonly fix |
-| Global Types | 0 | 7,560 (TS2318) | ✅ COMPLETED - Embedded libs wiring |
-| Target Library | 0 | 1,748 (TS2583) | ✅ COMPLETED - Embedded libs wiring |
+| Global Types (wiring) | 0 | 7,560 (TS2318) | ✅ COMPLETED - Embedded libs fallback |
+| Global Types (paths) | 0 | 618 (TS2318) | ✅ COMPLETED - Lib path resolution |
+| Target Library | 0 | 1,748 (TS2583) | ✅ COMPLETED - Embedded libs fallback |
 | Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
 | Circular Constraints | 2,123 (TS2313) | 0 + 4 timeouts | ✅ COMPLETED - Recursive constraint fix |
-| **Total Fixed** | **~28,354** | **~9,308** | **~37,662 errors + 4 timeouts** |
+| **Total Fixed** | **~28,354** | **~9,976** | **~38,330 errors + 4 timeouts** |
 
 ### Completed Commits
 
