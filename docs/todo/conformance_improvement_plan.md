@@ -7,7 +7,8 @@
 **Recent Progress:**
 - ✅ TS2322 assignability errors reduced to **18x** (99.85% reduction from baseline)
 - Module Resolution: TS2307 reduced from 3,950x to 30x (99.2% reduction)
-- ✅ **NEW:** TS2583 lib caching bug fixed - reduced from 122x to 3x (97.5% reduction)
+- ✅ TS2583 lib caching bug fixed - reduced from 122x to 3x (97.5% reduction)
+- ✅ **NEW:** TS2339 Promise property access bug fixed - 121x errors eliminated (100% reduction)
 - Pass rate improved from 30.0% to 34.4% (+4.4 percentage points, +15% relative improvement)
 - ERROR propagation fix is highly effective
 - **Known Limitation:** 4 timeout tests remain for circular class inheritance (classExtendsItself*.ts)
@@ -33,7 +34,8 @@ This document outlines the critical issues causing conformance failures, priorit
 | Circular Inheritance | 0 + 4 timeouts | 0 | ⚠️ 95% COMPLETE - 4 timeout edge cases remain, InheritanceGraph integrated |
 | InheritanceGraph Integration | 0 | 0 | ✅ COMPLETED - O(1) nominal class subtyping |
 | Module Resolution | 3,950 (TS2307) | 0 | ✅ COMPLETED - Node.js-style resolution |
-| **Total Fixed** | **~32,426** | **~8,563** | **~40,989 errors + 4 timeouts** |
+| **TS2339 Lib Symbol Resolution (NEW)** | **121 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, lib symbol lookup in type lowering |
+| **Total Fixed** | **~32,547** | **~8,563** | **~41,110 errors + 4 timeouts** |
 | **Remaining** | | | **4 timeouts + 3 TS2583 edge cases** |
 
 ### Completed Commits
@@ -91,7 +93,7 @@ This document outlines the critical issues causing conformance failures, priorit
    - Used HashSet for O(1) file existence checks
    - Cascading benefits: TS2304, TS2488, TS2345 improvements
 
-9. **fix(server): store lib dependencies in cache to fix TS2583 errors** (PENDING)
+9. **fix(server): store lib dependencies in cache to fix TS2583 errors** (d5bf55273)
    - Files: src/bin/tsz_server.rs
    - Impact: 122 → 3 extra TS2583 errors (97.5% reduction)
    - Fixed lib caching bug where dependencies weren't loaded on cache hit
@@ -99,6 +101,25 @@ This document outlines the critical issues causing conformance failures, priorit
    - Now stores both lib file and its references (dependencies) in cache
    - When loading from cache, dependencies are loaded recursively before the lib itself
    - Root cause: async/es2017 tests failed when lib files were cached but dependencies (es2015, etc.) weren't loaded
+
+10. **fix(checker): use get_symbol_with_libs in resolve_alias_symbol for lib symbol support** (513807027)
+   - Files: src/checker/type_checking.rs
+   - Impact: 121 → 0 extra TS2339 errors (100% reduction)
+   - Fixed type lowering for types from lib files (Promise, Map, Set, etc.)
+   - Changed resolve_alias_symbol to use get_symbol_with_libs instead of get_symbol
+   - Root cause: When lowering Promise<T> from lib, resolve_alias_symbol used get_symbol()
+     which only checks the main binder, not lib binders, causing SymbolId lookup to fail
+   - Result: Promise types from lib are now properly resolved, allowing property access
+     on awaited Promise expressions
+   - Example test case that now passes:
+     ```typescript
+     // @target: es2017
+     declare var po: Promise<{ x: number }>;
+     async function func(): Promise<void> {
+         let obj = await po;
+         obj.x;  // No longer reports TS2339
+     }
+     ```
 
 ---
 
@@ -108,9 +129,9 @@ This document outlines the critical issues causing conformance failures, priorit
 
 | Issue | Extra Errors | Missing Errors | Root Cause | Status |
 |-------|-------------|----------------|------------|--------|
-| TS2339 | 121x | 0 | Property does not exist on type | 🔥 NEXT PRIORITY |
-| TS2336 | 87x | 0 | Super property access invalid context | High impact |
-| TS2507 | 43x | 0 | Async function must return Promise | Medium impact |
+| **TS2339** | **121 → 0** | 0 | Property does not exist on type | ✅ **SOLVED** - 100% reduction, lib symbol resolution fixed |
+| TS2336 | 87x | 0 | Super property access invalid context | 🔥 NEXT PRIORITY |
+| TS2507 | 43x | 0 | Async function must return Promise | High impact |
 | TS2307 | 30x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
 | TS2571 | 22x | 0 | Object is of type unknown | Low impact |
 | TS2349 | 22x | 0 | Cannot invoke non-function | Low impact |
