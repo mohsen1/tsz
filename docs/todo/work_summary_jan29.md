@@ -378,6 +378,30 @@ Top Extra Errors:
 
 ---
 
+## Session 2 - January 29, 2026 (Evening)
+
+### TS2300 Investigation (continued)
+- Attempted architectural fix using `lib_symbol_ids` tracking
+- Result: Made it worse (67x → 94x missing)
+- Reverted changes and documented findings
+
+### TS2705 Investigation
+- Investigated 73x missing TS2705 errors (async function must return Promise)
+- Created test case: `async function test(): string { return "hello"; }`
+- Confirmed bug: No error emitted (TypeScript emits TS1064)
+- Root cause: return_type resolves to TypeId::ERROR instead of TypeId::STRING
+- Traced type resolution flow through TypeNodeChecker
+- Found that compute_type() correctly returns TypeId::STRING for StringKeyword
+- Issue: Type becomes ERROR somewhere between compute_type and the TS2705 check
+- Likely cause: Caching bug or path confusion (expression vs type annotation)
+- Status: Requires deeper debugging of type resolution and caching system
+
+### Conformance Status
+- Pass Rate: 40.0% (200/500)
+- No improvement in this session
+
+---
+
 ## Git Commits
 
 1. `71ddeb924` - docs: update investigation with TS7010 analysis
