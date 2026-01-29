@@ -24,6 +24,7 @@
 const MAX_CLASS_INHERITANCE_DEPTH: usize = 256;
 
 use crate::binder::SymbolId;
+use crate::binder::symbol_flags;
 use crate::checker::state::{CheckerState, MemberAccessLevel};
 use crate::interner::Atom;
 use crate::parser::NodeIndex;
@@ -84,36 +85,48 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
 
-        // Use global class_instance_resolution_set for cross-call-chain cycle detection
-        // This is critical for detecting cycles across different entry points
-        if let Some(sym_id) = current_sym {
-            if !self.ctx.class_instance_resolution_set.insert(sym_id) {
-                return TypeId::ERROR; // Circular reference detected
+        // Try to insert into global class_instance_resolution_set for cross-call-chain cycle detection.
+        // If the symbol is already in the set, it means we have a cycle - return ERROR.
+        // We track whether we inserted so we know to remove it later.
+        let did_insert_into_global_set = if let Some(sym_id) = current_sym {
+            if self.ctx.class_instance_resolution_set.insert(sym_id) {
+                true // We inserted it
+            } else {
+                // Symbol already in set - this is a cycle, return ERROR
+                return TypeId::ERROR;
             }
-        }
+        } else {
+            false
+        };
 
         // Check for cycles using both symbol ID (for same-file cycles)
         // and node index (for cross-file cycles with @Filename annotations)
         if let Some(sym_id) = current_sym {
             if !visited.insert(sym_id) {
-                // Cleanup global set before returning
-                self.ctx.class_instance_resolution_set.remove(&sym_id);
+                // Cleanup global set before returning (only if we inserted it)
+                if did_insert_into_global_set {
+                    self.ctx.class_instance_resolution_set.remove(&sym_id);
+                }
                 return TypeId::ERROR; // Circular reference detected via symbol
             }
         }
         if !visited_nodes.insert(class_idx) {
-            // Cleanup global set before returning (if we have a symbol)
-            if let Some(sym_id) = current_sym {
-                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            // Cleanup global set before returning (only if we inserted it)
+            if did_insert_into_global_set {
+                if let Some(sym_id) = current_sym {
+                    self.ctx.class_instance_resolution_set.remove(&sym_id);
+                }
             }
             return TypeId::ERROR; // Circular reference detected via node index
         }
 
         // Check fuel to prevent timeout on pathological inheritance hierarchies
         if !self.ctx.consume_fuel() {
-            // Cleanup global set before returning (if we have a symbol)
-            if let Some(sym_id) = current_sym {
-                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            // Cleanup global set before returning (only if we inserted it)
+            if did_insert_into_global_set {
+                if let Some(sym_id) = current_sym {
+                    self.ctx.class_instance_resolution_set.remove(&sym_id);
+                }
             }
             return TypeId::ERROR; // Fuel exhausted - prevent infinite loop
         }
@@ -608,14 +621,25 @@ impl<'a> CheckerState<'a> {
                     type_args.truncate(base_type_params.len());
                 }
 
-                // CRITICAL: Resolve base class through get_type_of_symbol instead of calling
-                // get_class_instance_type_inner directly. This provides:
-                // 1. Better cycle detection via symbol_resolution_set
-                // 2. Caching of ERROR types to prevent repeated resolution attempts
-                // 3. Fuel limiting to prevent infinite recursion
+                // Get the base class instance type
+                // IMPORTANT: Use class_instance_type_from_symbol for class symbols to get the
+                // instance type (properties, methods), NOT the constructor type which is what
+                // get_type_of_symbol returns for classes.
                 let base_instance_type =
                     if let Some(base_sym) = self.ctx.binder.get_node_symbol(base_class_idx) {
-                        self.get_type_of_symbol(base_sym)
+                        // For class symbols, get the instance type directly
+                        if let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym) {
+                            if base_symbol.flags & symbol_flags::CLASS != 0 {
+                                // Use class_instance_type_from_symbol to get the instance type
+                                self.class_instance_type_from_symbol(base_sym)
+                                    .unwrap_or(TypeId::ANY)
+                            } else {
+                                // For non-class symbols (interfaces, etc.), use get_type_of_symbol
+                                self.get_type_of_symbol(base_sym)
+                            }
+                        } else {
+                            TypeId::ANY
+                        }
                     } else {
                         // Forward reference - symbol not bound yet
                         // Return ANY to avoid infinite recursion
@@ -867,7 +891,10 @@ impl<'a> CheckerState<'a> {
             }
             visited.remove(&sym_id);
             visited_nodes.remove(&class_idx);
-            self.ctx.class_instance_resolution_set.remove(&sym_id);
+            // Only remove from global set if we inserted it ourselves
+            if did_insert_into_global_set {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
         }
         instance_type
     }
@@ -940,7 +967,15 @@ impl<'a> CheckerState<'a> {
                     let type_id = if !prop.type_annotation.is_none() {
                         self.get_type_from_type_node(prop.type_annotation)
                     } else if !prop.initializer.is_none() {
-                        self.get_type_of_node(prop.initializer)
+                        // Set in_static_property_initializer for proper super checking
+                        if let Some(ref mut class_info) = self.ctx.enclosing_class {
+                            class_info.in_static_property_initializer = true;
+                        }
+                        let init_type = self.get_type_of_node(prop.initializer);
+                        if let Some(ref mut class_info) = self.ctx.enclosing_class {
+                            class_info.in_static_property_initializer = false;
+                        }
+                        init_type
                     } else {
                         TypeId::UNKNOWN
                     };
@@ -971,7 +1006,15 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let signature = self.call_signature_from_method(method);
+                    // For static methods, `this` refers to the constructor type
+                    // Get it from the symbol if available
+                    let static_this_type = self
+                        .ctx
+                        .binder
+                        .get_node_symbol(class_idx)
+                        .map(|sym_id| self.get_type_of_symbol(sym_id));
+                    let signature =
+                        self.call_signature_from_method_with_this(method, static_this_type);
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
                         impl_signatures: Vec::new(),
@@ -1130,6 +1173,9 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Track base class constructor for inheritance
+        let mut inherited_construct_signatures: Option<Vec<CallSignature>> = None;
+
         // Merge base class static properties (derived members take precedence)
         if let Some(ref heritage_clauses) = class.heritage_clauses {
             for &clause_idx in &heritage_clauses.nodes {
@@ -1169,6 +1215,29 @@ impl<'a> CheckerState<'a> {
                                 base_constructor_type,
                                 &mut properties,
                             );
+                            // Also extract construct signatures for inheritance
+                            if let Some(base_shape) =
+                                crate::solver::type_queries::get_callable_shape(
+                                    self.ctx.types,
+                                    base_constructor_type,
+                                )
+                            {
+                                if !base_shape.construct_signatures.is_empty() {
+                                    let sigs: Vec<CallSignature> = base_shape
+                                        .construct_signatures
+                                        .iter()
+                                        .map(|sig| CallSignature {
+                                            type_params: class_type_params.clone(),
+                                            params: sig.params.clone(),
+                                            this_type: sig.this_type,
+                                            return_type: instance_type,
+                                            type_predicate: sig.type_predicate.clone(),
+                                            is_method: sig.is_method,
+                                        })
+                                        .collect();
+                                    inherited_construct_signatures = Some(sigs);
+                                }
+                            }
                         }
                         break;
                     }
@@ -1202,6 +1271,27 @@ impl<'a> CheckerState<'a> {
                             base_constructor_type,
                             &mut properties,
                         );
+                        // Also extract construct signatures for inheritance
+                        if let Some(base_shape) = crate::solver::type_queries::get_callable_shape(
+                            self.ctx.types,
+                            base_constructor_type,
+                        ) {
+                            if !base_shape.construct_signatures.is_empty() {
+                                let sigs: Vec<CallSignature> = base_shape
+                                    .construct_signatures
+                                    .iter()
+                                    .map(|sig| CallSignature {
+                                        type_params: class_type_params.clone(),
+                                        params: sig.params.clone(),
+                                        this_type: sig.this_type,
+                                        return_type: instance_type,
+                                        type_predicate: sig.type_predicate.clone(),
+                                        is_method: sig.is_method,
+                                    })
+                                    .collect();
+                                inherited_construct_signatures = Some(sigs);
+                            }
+                        }
                     }
                     break;
                 };
@@ -1251,6 +1341,24 @@ impl<'a> CheckerState<'a> {
                         properties
                             .entry(base_prop.name)
                             .or_insert_with(|| base_prop.clone());
+                    }
+                    // Store base class construct signatures for inheritance
+                    // The signatures are already instantiated with the derived class's type arguments
+                    if !base_shape.construct_signatures.is_empty() {
+                        // Adjust return type to be the derived class's instance type
+                        let sigs: Vec<CallSignature> = base_shape
+                            .construct_signatures
+                            .iter()
+                            .map(|sig| CallSignature {
+                                type_params: class_type_params.clone(),
+                                params: sig.params.clone(),
+                                this_type: sig.this_type,
+                                return_type: instance_type, // Use derived class's instance type
+                                type_predicate: sig.type_predicate.clone(),
+                                is_method: sig.is_method,
+                            })
+                            .collect();
+                        inherited_construct_signatures = Some(sigs);
                     }
                 }
 
@@ -1313,14 +1421,20 @@ impl<'a> CheckerState<'a> {
 
         // Add default constructor if none exists
         if construct_signatures.is_empty() {
-            construct_signatures.push(CallSignature {
-                type_params: class_type_params,
-                params: Vec::new(),
-                this_type: None,
-                return_type: instance_type,
-                type_predicate: None,
-                is_method: false,
-            });
+            // If there's a base class with construct signatures, inherit them
+            if let Some(inherited) = inherited_construct_signatures {
+                construct_signatures = inherited;
+            } else {
+                // No base class or base class has no explicit constructor - use default
+                construct_signatures.push(CallSignature {
+                    type_params: class_type_params,
+                    params: Vec::new(),
+                    this_type: None,
+                    return_type: instance_type,
+                    type_predicate: None,
+                    is_method: false,
+                });
+            }
         }
 
         let properties: Vec<PropertyInfo> = properties.into_values().collect();

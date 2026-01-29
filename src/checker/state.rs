@@ -1549,7 +1549,11 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(decl_idx)?;
         let class = self.ctx.arena.get_class(node)?;
 
-        if !self.ctx.class_instance_resolution_set.insert(sym_id) {
+        // Check if we're already resolving this class - return fallback to break cycle.
+        // NOTE: We don't insert here because get_class_instance_type_inner will handle it.
+        // The check here is just to catch cycles from callers who go through this function.
+        if self.ctx.class_instance_resolution_set.contains(&sym_id) {
+            // Already resolving this class - return a fallback to break the cycle
             let fallback = self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
             return Some((fallback, Vec::new()));
         }
@@ -1557,7 +1561,6 @@ impl<'a> CheckerState<'a> {
         let (params, updates) = self.push_type_parameters(&class.type_parameters);
         let instance_type = self.get_class_instance_type(decl_idx, class);
         self.pop_type_parameters(updates);
-        self.ctx.class_instance_resolution_set.remove(&sym_id);
         Some((instance_type, params))
     }
 
@@ -1575,13 +1578,22 @@ impl<'a> CheckerState<'a> {
             }
             if symbol.flags & symbol_flags::INTERFACE != 0 {
                 if !symbol.declarations.is_empty() {
+                    // IMPORTANT: Use the correct arena for the symbol - lib types use a different arena
+                    let symbol_arena = self
+                        .ctx
+                        .binder
+                        .symbol_arenas
+                        .get(&sym_id)
+                        .map(|arena| arena.as_ref())
+                        .unwrap_or(self.ctx.arena);
+
                     let type_param_bindings = self.get_type_param_bindings();
                     let type_resolver =
                         |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
                     let value_resolver =
                         |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
                     let lowering = TypeLowering::with_resolvers(
-                        self.ctx.arena,
+                        symbol_arena,
                         self.ctx.types,
                         &type_resolver,
                         &value_resolver,
@@ -1598,6 +1610,112 @@ impl<'a> CheckerState<'a> {
             }
         }
         self.get_type_of_symbol(sym_id)
+    }
+
+    /// Like `type_reference_symbol_type` but also returns the type parameters used.
+    ///
+    /// This is critical for Application type evaluation: when instantiating a generic
+    /// type, we need the body type AND the type parameters to be built from the SAME
+    /// call to `push_type_parameters`, so the TypeIds in the body match those in the
+    /// substitution. Otherwise, substitution fails because the TypeIds don't match.
+    pub(crate) fn type_reference_symbol_type_with_params(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
+        use crate::solver::TypeLowering;
+
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            // For classes, use class_instance_type_with_params_from_symbol which
+            // returns both the instance type AND the type params used to build it
+            if symbol.flags & symbol_flags::CLASS != 0
+                && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
+            {
+                if let Some((instance_type, params)) =
+                    self.class_instance_type_with_params_from_symbol(sym_id)
+                {
+                    return (instance_type, params);
+                }
+            }
+
+            // For interfaces, lower with type parameters and return both
+            if symbol.flags & symbol_flags::INTERFACE != 0 {
+                if !symbol.declarations.is_empty() {
+                    // Get type parameters from first declaration
+                    let first_decl = symbol
+                        .declarations
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE);
+                    let type_params_list = if !first_decl.is_none() {
+                        self.ctx
+                            .arena
+                            .get(first_decl)
+                            .and_then(|node| self.ctx.arena.get_interface(node))
+                            .and_then(|iface| iface.type_parameters.clone())
+                    } else {
+                        None
+                    };
+
+                    // Push type params, lower interface, pop type params
+                    let (params, updates) = self.push_type_parameters(&type_params_list);
+
+                    let symbol_arena = self
+                        .ctx
+                        .binder
+                        .symbol_arenas
+                        .get(&sym_id)
+                        .map(|arena| arena.as_ref())
+                        .unwrap_or(self.ctx.arena);
+
+                    let type_param_bindings = self.get_type_param_bindings();
+                    let type_resolver =
+                        |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                    let value_resolver =
+                        |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                    let lowering = TypeLowering::with_resolvers(
+                        symbol_arena,
+                        self.ctx.types,
+                        &type_resolver,
+                        &value_resolver,
+                    )
+                    .with_type_param_bindings(type_param_bindings);
+                    let interface_type =
+                        lowering.lower_interface_declarations(&symbol.declarations);
+                    let merged =
+                        self.merge_interface_heritage_types(&symbol.declarations, interface_type);
+
+                    self.pop_type_parameters(updates);
+                    return (merged, params);
+                }
+            }
+
+            // For type aliases, get body type and params together
+            if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                let decl_idx = if !symbol.value_declaration.is_none() {
+                    symbol.value_declaration
+                } else {
+                    symbol
+                        .declarations
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE)
+                };
+                if !decl_idx.is_none()
+                    && let Some(node) = self.ctx.arena.get(decl_idx)
+                    && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+                {
+                    let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                    let alias_type = self.get_type_from_type_node(type_alias.type_node);
+                    self.pop_type_parameters(updates);
+                    return (alias_type, params);
+                }
+            }
+        }
+
+        // Fallback: get type of symbol and params separately
+        let body_type = self.get_type_of_symbol(sym_id);
+        let type_params = self.get_type_params_for_symbol(sym_id);
+        (body_type, type_params)
     }
 
     // NOTE: merge_namespace_exports_into_constructor, merge_namespace_exports_into_function,
@@ -2963,17 +3081,32 @@ impl<'a> CheckerState<'a> {
             let atom = self.ctx.types.intern_string(&name);
 
             let constraint = if data.constraint != NodeIndex::NONE {
+                // Check for circular constraint: T extends T
+                // First get the constraint type ID
                 let constraint_type = self.get_type_from_type_node(data.constraint);
-                // Validate that the constraint is a valid type
-                if constraint_type == TypeId::ERROR {
-                    // If constraint is invalid, emit diagnostic and use unknown
+
+                // Check if the constraint references the same type parameter
+                let is_circular =
+                    if let Some(&param_type_id) = self.ctx.type_parameter_scope.get(&name) {
+                        // Check if constraint_type is the same as the type parameter
+                        // or if it's a TypeReference that resolves to this type parameter
+                        self.is_same_type_parameter(constraint_type, param_type_id, &name)
+                    } else {
+                        false
+                    };
+
+                if is_circular {
+                    // TS2313: Type parameter 'T' has a circular constraint
                     self.error_at_node(
                         data.constraint,
-                        crate::checker::types::diagnostics::diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
+                        &format!("Type parameter '{}' has a circular constraint.", name),
                         crate::checker::types::diagnostics::diagnostic_codes::CONSTRAINT_OF_TYPE_PARAMETER,
                     );
                     Some(TypeId::UNKNOWN)
                 } else {
+                    // Note: Even if constraint_type is ERROR, we don't emit an error here
+                    // because the error for the unresolved type was already emitted by get_type_from_type_node.
+                    // This prevents duplicate error messages.
                     Some(constraint_type)
                 }
             } else {
@@ -3019,6 +3152,37 @@ impl<'a> CheckerState<'a> {
         }
 
         (params, updates)
+    }
+
+    /// Check if a constraint type is the same as a type parameter (circular constraint).
+    ///
+    /// This detects cases like `T extends T` where the type parameter references itself
+    /// in its own constraint.
+    fn is_same_type_parameter(
+        &self,
+        constraint_type: TypeId,
+        param_type_id: TypeId,
+        param_name: &str,
+    ) -> bool {
+        use crate::solver::TypeKey;
+
+        // Direct match
+        if constraint_type == param_type_id {
+            return true;
+        }
+
+        // Check if constraint is a TypeParameter with the same name
+        if let Some(type_key) = self.ctx.types.lookup(constraint_type) {
+            if let TypeKey::TypeParameter(info) = type_key {
+                // Check if the type parameter name matches
+                let name_str = self.ctx.types.resolve_atom(info.name);
+                if name_str == param_name {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Get type of a symbol with caching and circular reference detection.
@@ -3187,6 +3351,10 @@ impl<'a> CheckerState<'a> {
                 if id != sym_id {
                     checker.ctx.symbol_resolution_set.insert(id);
                 }
+            }
+            // Copy class_instance_resolution_set to detect circular class inheritance
+            for &id in &self.ctx.class_instance_resolution_set {
+                checker.ctx.class_instance_resolution_set.insert(id);
             }
             // Use get_type_of_symbol to ensure proper cycle detection
             let result = checker.get_type_of_symbol(sym_id);
@@ -4186,14 +4354,16 @@ impl<'a> CheckerState<'a> {
         };
         let sym_id = sym_ref.0;
 
-        // Get the symbol's type (which is the body of the type alias/interface)
-        let body_type = self.type_reference_symbol_type(SymbolId(sym_id));
+        // CRITICAL FIX: Get BOTH the body type AND the type parameters together
+        // to ensure the TypeIds in the body match the TypeIds in the substitution.
+        // Previously we called type_reference_symbol_type and get_type_params_for_symbol
+        // separately, which created DIFFERENT TypeIds for the same type parameters.
+        let (body_type, type_params) =
+            self.type_reference_symbol_type_with_params(SymbolId(sym_id));
         if body_type == TypeId::ANY || body_type == TypeId::ERROR {
             return type_id;
         }
 
-        // Get type parameters for this symbol
-        let type_params = self.get_type_params_for_symbol(SymbolId(sym_id));
         if type_params.is_empty() {
             return body_type;
         }
@@ -6539,6 +6709,19 @@ impl<'a> CheckerState<'a> {
 
                     if !is_valid_constructor {
                         if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
+                            // Special case: `extends null` is valid in TypeScript!
+                            // It creates a class that doesn't inherit from Object.prototype
+                            if expr_node.kind == SyntaxKind::NullKeyword as u16
+                                || (expr_node.kind == SyntaxKind::Identifier as u16
+                                    && self
+                                        .ctx
+                                        .arena
+                                        .get_identifier(expr_node)
+                                        .is_some_and(|id| id.escaped_text == "null"))
+                            {
+                                continue;
+                            }
+
                             // Check for literals - emit TS2507 for extends clauses
                             // NOTE: TypeScript allows `extends null` as a special case,
                             // so we don't emit TS2507 for null in extends clauses
@@ -6590,9 +6773,11 @@ impl<'a> CheckerState<'a> {
                         }
                         // Get the name for the error message
                         if let Some(name) = self.heritage_name_text(expr_idx) {
+                            // Skip certain reserved names that are handled elsewhere or shouldn't trigger errors
+                            // Note: "null" is not included because `extends null` is valid and handled above
                             if matches!(
                                 name.as_str(),
-                                "undefined" | "null" | "true" | "false" | "void" | "0"
+                                "undefined" | "true" | "false" | "void" | "0"
                             ) {
                                 continue;
                             }

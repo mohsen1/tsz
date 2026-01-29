@@ -2623,6 +2623,22 @@ pub fn classify_for_new_expression(
                 constraint: info.constraint,
             }
         }
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            // Objects might contain callable properties that represent construct signatures
+            // Check if the object has a "new" property or if any property is callable with construct signatures
+            let shape = db.object_shape(shape_id);
+            for prop in shape.properties.iter() {
+                // Check if this property is a callable type with construct signatures
+                if let Some(TypeKey::Callable(callable_shape_id)) = db.lookup(prop.type_id) {
+                    let callable_shape = db.callable_shape(callable_shape_id);
+                    if !callable_shape.construct_signatures.is_empty() {
+                        // Found a callable property with construct signatures
+                        return NewExpressionTypeKind::Callable(callable_shape_id);
+                    }
+                }
+            }
+            NewExpressionTypeKind::NotConstructable
+        }
         _ => NewExpressionTypeKind::NotConstructable,
     }
 }

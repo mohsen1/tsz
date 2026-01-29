@@ -65,10 +65,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a node is inside a class method body (non-static).
+    /// Check if a node is inside a class method body.
     ///
-    /// Returns true if inside a non-static method body.
-    /// IMPORTANT: Skips arrow function boundaries since they capture the class context.
+    /// Returns true if inside a method body (both static and non-static).
+    /// `super` property access is valid in both static and instance methods
+    /// of a derived class.
     pub(crate) fn is_in_class_method_body(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
 
@@ -88,9 +89,8 @@ impl<'a> CheckerState<'a> {
             }
 
             if parent_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                if let Some(method) = self.ctx.arena.get_method_decl(parent_node) {
-                    return !self.has_static_modifier(&method.modifiers);
-                }
+                // `super` property access is valid in both static and non-static methods
+                return true;
             }
 
             // Check if we've left the class
@@ -200,18 +200,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_super_expression(&mut self, idx: NodeIndex) {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        // Check TS17011: super in static property initializer
-        if let Some(ref class_info) = self.ctx.enclosing_class {
-            if class_info.in_static_property_initializer {
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
-                    diagnostic_codes::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
-                );
-                return;
-            }
-        }
-
         // Check if we're in a class context at all
         let Some(class_info) = self.ctx.enclosing_class.clone() else {
             self.error_at_node(
@@ -263,8 +251,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS2337: Super calls are not permitted outside constructors
+        // TS2337/TS17011: Super calls are not permitted outside constructors
+        // This includes super() in static property initializers
         if is_super_call {
+            // TS17011: super() is not allowed in static property initializers
+            if class_info.in_static_property_initializer {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
+                    diagnostic_codes::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
+                );
+                return;
+            }
             if !class_info.in_constructor {
                 self.error_at_node(
                     idx,
