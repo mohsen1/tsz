@@ -1,5 +1,44 @@
 # Investigated Issues (Jan 29)
 
+## TS7010: Function implicitly has 'any' return type
+
+**Status**: NEW - High priority issue
+
+**Issue Count**: 110x EXTRA errors (we emit when TypeScript doesn't)
+
+**Description**: "Function '{0}', which lacks return-type annotation, implicitly has an 'any' return type."
+
+**Common Cause**:
+1. **Recursive functions**: Most common cause - function calls itself, type depends on uncomputed result
+   ```typescript
+   // TypeScript infers correctly, we emit TS7010
+   function factorial(n: number) {
+       if (n <= 1) return 1;
+       return n * factorial(n - 1);
+   }
+   ```
+
+2. **Complex control flow**: Inference engine fails to resolve type
+
+**Root Cause**:
+- Inference engine in `src/solver/infer.rs` and `src/checker/function_type.rs` is less capable than tsc
+- Fails to infer return types in scenarios where tsc succeeds
+- Falls back to `any` and emits TS7010 incorrectly
+
+**Priority**: **VERY HIGH** (110x extra errors - much higher impact than other issues)
+
+**Solution Approach**:
+1. Investigate recursive function type inference
+2. Compare with tsc's inference algorithm
+3. Improve type inference in function_type.rs
+4. Consider adding explicit type annotation detection for recursive calls
+
+**Files Involved**:
+- src/checker/function_type.rs - Return type inference
+- src/solver/infer.rs - Type inference engine
+
+---
+
 ## TS2507: Type not a constructor function type
 
 **Status**: Investigated, identified root cause
