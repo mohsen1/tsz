@@ -303,14 +303,23 @@ if let Some(ref module_specifier) = symbol.import_module {
 
 **Note:** Property resolution uses cross-file resolution from Phase 1.1. Uses `SymbolRef` for lazy evaluation to avoid circular import issues.
 
-### 2.3 Export Validation Improvements
+### 2.3 Export Validation Improvements ✅ COMPLETED (2026-01-29)
 
 **Goal:** Properly validate that exported members exist.
 
+**Status:** Implemented on 2026-01-29
+
+**Implementation Summary:**
+1. Added `validate_reexported_members()` to `module_checker.rs`
+2. Validates named re-exports exist in target module
+3. Emits TS2305 for missing exported members in re-exports
+4. Handles renamed exports (`export { bar as baz }`)
+5. Skips type-only re-exports (which might reference types not in exports table)
+
 **Tasks:**
-- [ ] Validate named re-exports: `export { foo } from './bar'`
-- [ ] Validate wildcard re-exports don't create conflicts
-- [ ] Emit TS2305 for missing exported members
+- [x] Validate named re-exports: `export { foo } from './bar'`
+- [x] Emit TS2305 for missing exported members
+- [ ] Validate wildcard re-exports don't create conflicts (future enhancement)
 
 ---
 
