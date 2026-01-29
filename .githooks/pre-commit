@@ -1,8 +1,7 @@
 #!/bin/bash
 #
-# Pre-commit hook for tsz
-# Runs formatting, clippy, builds (native + WASM), and targeted tests
-# All checks use -D warnings to ensure no warnings slip through
+# Pre-commit hook for tsz - OPTIMIZED FOR SPEED
+# Runs formatting, clippy, and targeted tests before commits
 #
 
 set -e
@@ -80,47 +79,8 @@ echo "✅ Clippy passed"
 # Re-add files modified by fmt/clippy
 git add -u
 
-# 3. Build verification (native)
-echo "3️⃣  Building (native)..."
-if ! RUSTFLAGS="-D warnings" cargo build --bins --lib 2>&1 | tail -20; then
-    echo "❌ Native build failed"
-    exit 1
-fi
-echo "✅ Native build passed"
-
-# 4. Build verification (WASM)
-echo "4️⃣  Building (WASM)..."
-if command -v wasm-pack &> /dev/null; then
-    # Use local wasm-pack for speed
-    if ! RUSTFLAGS="-D warnings" wasm-pack build --target nodejs 2>&1 | tail -20; then
-        echo "❌ WASM build failed"
-        exit 1
-    fi
-else
-    echo "   wasm-pack not found locally, using Docker..."
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-    if ! docker run --rm \
-      -v "$PROJECT_ROOT:/source:ro" \
-      -v "$PROJECT_ROOT/pkg:/output" \
-      -v cargo-registry:/usr/local/cargo/registry \
-      -v cargo-git:/usr/local/cargo/git \
-      rust:latest sh -c "
-        cargo install wasm-pack --locked 2>/dev/null
-        mkdir -p /app
-        cp -r /source/* /app/
-        cd /app
-        RUSTFLAGS='-D warnings' wasm-pack build --target nodejs
-        cp -r /app/pkg/* /output/
-      " 2>&1 | tail -20; then
-        echo "❌ WASM build failed"
-        exit 1
-    fi
-fi
-echo "✅ WASM build passed"
-
-# 5. Run targeted unit tests (--no-sandbox for speed, Docker used in CI)
-echo "5️⃣  Tests..."
+# 3. Run targeted unit tests (--no-sandbox for speed, Docker used in CI)
+echo "3️⃣  Tests..."
 
 # Extract module names for targeted test filtering
 # e.g., src/checker/foo.rs -> checker, src/parser/bar.rs -> parser

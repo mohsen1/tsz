@@ -159,7 +159,7 @@ These constants in `src/limits.rs` prevent pathological cases from causing hangs
 This documentation complements:
 - [docs/specs/TS_UNSOUNDNESS_CATALOG.md](../specs/TS_UNSOUNDNESS_CATALOG.md) - TypeScript compatibility rules
 - [docs/architecture/NORTH_STAR.md](../architecture/NORTH_STAR.md) - Target architecture guide
-- [docs/todo/architecture_migration_plan.md](../todo/architecture_migration_plan.md) - Migration tasks
+- [docs/architecture/MIGRATION_ROADMAP.md](../architecture/MIGRATION_ROADMAP.md) - Migration plan
 - [AGENTS.md](../../AGENTS.md) - Architecture rules for contributors
 
 ## Navigation Tips
