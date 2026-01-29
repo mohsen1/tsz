@@ -2821,13 +2821,20 @@ impl<'a> CheckerState<'a> {
         for &arg_type in &arg_types {
             self.ensure_application_symbols_resolved(arg_type);
         }
+
+        // Evaluate application types to resolve Ref bases to actual Callable types
+        // This is needed for cases like `GenericCallable<string>` where the type is
+        // stored as Application(Ref(symbol_id), [string]) and needs to be resolved
+        // to the actual Callable with call signatures
+        let callee_type_for_call = self.evaluate_application_type(callee_type_for_resolution);
+
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
             checker.set_strict_function_types(self.ctx.strict_function_types());
             checker.set_strict_null_checks(self.ctx.strict_null_checks());
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-            evaluator.resolve_call(callee_type_for_resolution, &arg_types)
+            evaluator.resolve_call(callee_type_for_call, &arg_types)
         };
 
         match result {
