@@ -6279,7 +6279,7 @@ impl<'a> CheckerState<'a> {
     /// allowing primitive property access to use lib.d.ts definitions instead of just hardcoded lists.
     ///
     /// For example, "foo".length will look up the String interface from lib.d.ts.
-    fn resolve_property_access_with_env(
+    pub(crate) fn resolve_property_access_with_env(
         &mut self,
         object_type: TypeId,
         prop_name: &str,
