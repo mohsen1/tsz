@@ -741,19 +741,23 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
 ///   - DOM types
 ///   - ScriptHost types
 ///
-/// The `.full` libs chain together via `/// <reference lib="..." />` directives.
+/// Returns the core lib name (without DOM) - matches tsc conformance test behavior.
+/// Use core libs by default since:
+/// 1. Our conformance cache was generated with core libs (es5.d.ts, not es5.full.d.ts)
+/// 2. Core libs are smaller (~220KB vs ~2MB for .full)
+/// 3. Tests that need DOM should specify @lib: dom explicitly
 pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
     match target {
-        ScriptTarget::ES3 | ScriptTarget::ES5 => "es5.full",
-        ScriptTarget::ES2015 => "es2015.full",
-        ScriptTarget::ES2016 => "es2016.full",
-        ScriptTarget::ES2017 => "es2017.full",
-        ScriptTarget::ES2018 => "es2018.full",
-        ScriptTarget::ES2019 => "es2019.full",
-        ScriptTarget::ES2020 => "es2020.full",
-        ScriptTarget::ES2021 => "es2021.full",
-        ScriptTarget::ES2022 => "es2022.full",
-        ScriptTarget::ESNext => "esnext.full",
+        ScriptTarget::ES3 | ScriptTarget::ES5 => "es5",
+        ScriptTarget::ES2015 => "es2015",
+        ScriptTarget::ES2016 => "es2016",
+        ScriptTarget::ES2017 => "es2017",
+        ScriptTarget::ES2018 => "es2018",
+        ScriptTarget::ES2019 => "es2019",
+        ScriptTarget::ES2020 => "es2020",
+        ScriptTarget::ES2021 => "es2021",
+        ScriptTarget::ES2022 => "es2022",
+        ScriptTarget::ESNext => "esnext",
     }
 }
 

@@ -282,6 +282,9 @@ pub struct CheckerContext<'a> {
     /// O(1) lookup set for class instance type resolution to avoid recursion.
     pub class_instance_resolution_set: HashSet<SymbolId>,
 
+    /// Inheritance graph tracking class/interface relationships
+    pub inheritance_graph: crate::solver::inheritance::InheritanceGraph,
+
     /// Stack of nodes being resolved.
     pub node_resolution_stack: Vec<NodeIndex>,
     /// O(1) lookup set for node resolution stack.
@@ -440,6 +443,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
+            inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
             type_parameter_scope: HashMap::new(),
@@ -512,6 +516,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
+            inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
             type_parameter_scope: HashMap::new(),
@@ -586,6 +591,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
+            inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
             type_parameter_scope: HashMap::new(),
@@ -659,6 +665,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
+            inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
             type_parameter_scope: HashMap::new(),

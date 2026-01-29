@@ -49,6 +49,7 @@ memchr = "2.7"  # SIMD byte searching for string escaping
 walkdir = "2.5"
 smallvec = "1.13"
 dashmap = "6.1"  # Lock-free concurrent HashMap for sharded type storage
+fixedbitset = "0.4"  # Efficient bitsets for O(1) inheritance graph operations
 # Phase 7.5: Query-based Structural Solver
 salsa = "0.16"  # Query-based incremental computation (0.16 for query_group API)
 ena = "0.14"  # Union-Find for type unification
