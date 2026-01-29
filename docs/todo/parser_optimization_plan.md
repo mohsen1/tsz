@@ -18,10 +18,16 @@
   - `scan_identifier` uses `token_value.clear()` (line 1167)
   - Identifiers now use zero-copy source slices
 
+- **Phases 3&4**: Numeric Literal Optimization (commit 85147f7d9)
+  - Only allocate token_value for numbers with separators
+  - Plain numbers (42, 123.45, 0xABCD) use zero-copy fallback
+  - Applied to all numeric paths: decimal, hex, binary, octal
+  - BigInt literals still allocate (must strip 'n' suffix)
+
 ### Remaining 🚧
-- Phase 3: Numeric literal optimization
-- Phase 4: Operator token optimization
-- Phase 5: Parser-side optimization
+- Phase 5: JSX identifier optimization
+- Phase 6: Operator token optimization
+- Phase 7: Parser IdentifierData (Future - requires AST changes)
 
 ---
 
