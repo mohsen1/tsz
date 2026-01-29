@@ -12,7 +12,13 @@
  */
 
 import * as path from 'path';
+import * as fs from 'fs';
+import * as semver from 'semver';
+import { fileURLToPath } from 'url';
 import { normalizeLibName } from './lib-manifest.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ============================================================================
 // Test Directive Parsing
@@ -396,14 +402,11 @@ export function parseDirectivesOnly(content: string): { directives: ParsedDirect
       const [, key, value] = optionMatch;
       const lowKey = key.toLowerCase();
 
-      // Parse value - keep version-like strings as strings (e.g., "6.0", "5.5")
+      // Parse value
       let parsedValue: unknown;
       if (value.toLowerCase() === 'true') parsedValue = true;
       else if (value.toLowerCase() === 'false') parsedValue = false;
-      else if (lowKey === 'typescriptversion') {
-        // Keep TypeScript version as string to preserve minor version (e.g., "6.0")
-        parsedValue = value;
-      } else if (!isNaN(Number(value))) parsedValue = Number(value);
+      else if (!isNaN(Number(value))) parsedValue = Number(value);
       else parsedValue = value;
 
       // Route to harness or directives
@@ -446,53 +449,92 @@ export function parseDirectivesOnly(content: string): { directives: ParsedDirect
 // ============================================================================
 
 /**
- * Current TypeScript version that tsz targets for compatibility.
+ * Load the TypeScript version that tsz targets from typescript-versions.json.
  * Used to skip tests requiring newer TS features.
  */
-export const TSZ_TARGET_TS_VERSION = '5.5';
+function loadTargetTsVersion(): string {
+  try {
+    const versionsPath = path.resolve(__dirname, '../typescript-versions.json');
+    const content = fs.readFileSync(versionsPath, 'utf-8');
+    const versions = JSON.parse(content);
+
+    // Try to get the current mapping version, fall back to default
+    // The mappings contain the actual TS version we're testing against
+    const mappings = versions.mappings || {};
+    const mappingKeys = Object.keys(mappings);
+
+    if (mappingKeys.length > 0) {
+      // Use the first (most recent) mapping's npm version
+      const latestMapping = mappings[mappingKeys[0]];
+      const npmVersion = latestMapping?.npm;
+      if (npmVersion) {
+        // Coerce to valid semver (handles "6.0.0-dev.20260116" -> "6.0.0")
+        const coerced = semver.coerce(npmVersion);
+        if (coerced) return coerced.version;
+      }
+    }
+
+    // Fall back to default version
+    const defaultNpm = versions.default?.npm;
+    if (defaultNpm) {
+      const coerced = semver.coerce(defaultNpm);
+      if (coerced) return coerced.version;
+    }
+  } catch {
+    // If we can't read the file, fall back to a safe default
+  }
+
+  // Ultimate fallback
+  return '5.5.0';
+}
 
 /**
- * Parse a TypeScript version string like "5.0", "4.7.2", ">=5.0"
+ * Current TypeScript version that tsz targets for compatibility.
+ * Loaded from typescript-versions.json at startup.
  */
-function parseVersionRequirement(versionStr: string): { operator: string; major: number; minor: number } | null {
-  const match = versionStr.match(/^(>=|>|<=|<|=)?\s*(\d+)\.(\d+)/);
-  if (!match) return null;
+export const TSZ_TARGET_TS_VERSION = loadTargetTsVersion();
+
+/**
+ * Coerce a version string to a valid semver format.
+ * Handles TypeScript's version formats like "5.5", "5", ">=5.0"
+ */
+function coerceVersion(versionStr: string): { range: string; version: string | null } {
+  // Extract operator and version parts
+  const match = versionStr.match(/^(>=|>|<=|<|=|~|\^)?\s*(.+)$/);
+  if (!match) return { range: versionStr, version: null };
+
+  const operator = match[1] || '>='; // Default to >= for TypeScript version requirements
+  const versionPart = match[2].trim();
+
+  // Try to coerce to valid semver (handles "5.5" -> "5.5.0", "5" -> "5.0.0")
+  const coerced = semver.coerce(versionPart);
+  if (!coerced) return { range: versionStr, version: null };
+
   return {
-    operator: match[1] || '>=',
-    major: parseInt(match[2], 10),
-    minor: parseInt(match[3], 10),
+    range: `${operator}${coerced.version}`,
+    version: coerced.version,
   };
 }
 
 /**
  * Check if a test should be skipped based on @typeScriptVersion directive.
  * Returns true if the test requires a newer TS version than we support.
+ *
+ * Uses semver for robust version comparison.
  */
 export function shouldSkipForVersion(harness: HarnessOptions): boolean {
   if (!harness.typeScriptVersion) return false;
 
-  const req = parseVersionRequirement(harness.typeScriptVersion);
-  if (!req) return false;
+  const { range } = coerceVersion(harness.typeScriptVersion);
 
-  const targetParts = TSZ_TARGET_TS_VERSION.split('.').map(Number);
-  const targetMajor = targetParts[0];
-  const targetMinor = targetParts[1] || 0;
-
-  // Compare versions based on operator
-  switch (req.operator) {
-    case '>=':
-      // Test requires >= X.Y, we support up to TARGET
-      // Skip if required version > target
-      return req.major > targetMajor || (req.major === targetMajor && req.minor > targetMinor);
-    case '>':
-      return req.major > targetMajor || (req.major === targetMajor && req.minor >= targetMinor);
-    case '<=':
-    case '<':
-    case '=':
-      // These would typically not cause skips (test requires older version)
-      return false;
-    default:
-      return false;
+  // Check if our target version satisfies the requirement
+  // If it doesn't satisfy, we should skip the test
+  try {
+    const satisfies = semver.satisfies(TSZ_TARGET_TS_VERSION, range);
+    return !satisfies;
+  } catch {
+    // If semver can't parse the range, don't skip
+    return false;
   }
 }
 
