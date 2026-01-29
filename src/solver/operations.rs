@@ -549,7 +549,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     Ok(ty) => ty,
                     Err(_) => {
                         // Inference from constraints failed - try fallback options
-                        // Use ERROR as ultimate fallback to avoid returning Any (which silences TS2322)
+                        // Use ERROR as ultimate fallback when constraints exist but inference fails
+                        // (this indicates a real type conflict that should be reported)
                         if let Some(default) = tp.default {
                             instantiate_type(self.interner, default, &final_subst)
                         } else if let Some(constraint) = tp.constraint {
@@ -564,7 +565,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             } else if let Some(constraint) = tp.constraint {
                 instantiate_type(self.interner, constraint, &final_subst)
             } else {
-                TypeId::ERROR
+                // TypeScript infers 'unknown' for unconstrained type parameters without defaults
+                TypeId::UNKNOWN
             };
 
             final_subst.insert(tp.name, ty);

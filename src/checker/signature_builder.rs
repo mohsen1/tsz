@@ -52,9 +52,36 @@ impl<'a> CheckerState<'a> {
         &mut self,
         method: &crate::parser::node::MethodDeclData,
     ) -> crate::solver::CallSignature {
+        self.call_signature_from_method_with_this(method, None)
+    }
+
+    /// Build a CallSignature from a method declaration with an explicit `this` type.
+    /// This is used for static methods where `this` refers to the constructor type.
+    pub(crate) fn call_signature_from_method_with_this(
+        &mut self,
+        method: &crate::parser::node::MethodDeclData,
+        explicit_this_type: Option<TypeId>,
+    ) -> crate::solver::CallSignature {
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
-        let (return_type, type_predicate) = self.return_type_and_predicate(method.type_annotation);
+        let (return_type, type_predicate) =
+            if method.type_annotation.is_none() && !method.body.is_none() {
+                // Infer return type from body when there's no annotation
+                // Push the this type for proper resolution
+                let pushed_this = if let Some(this_ty) = explicit_this_type {
+                    self.ctx.this_type_stack.push(this_ty);
+                    true
+                } else {
+                    false
+                };
+                let inferred = self.infer_return_type_from_body(method.body, None);
+                if pushed_this {
+                    self.ctx.this_type_stack.pop();
+                }
+                (inferred, None)
+            } else {
+                self.return_type_and_predicate(method.type_annotation)
+            };
 
         self.pop_type_parameters(type_param_updates);
 

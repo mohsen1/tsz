@@ -8,6 +8,7 @@
       "Bash(./conformance/run-conformance.sh:*)"
     ]
   },
+
   "hooks": {
     "Stop": [
       {

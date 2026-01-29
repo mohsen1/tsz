@@ -1726,6 +1726,7 @@ impl<'a> CheckerState<'a> {
             // This handles cases like:
             // 1. `class C extends MyClass` where MyClass is a class
             // 2. `function f<T>(ctor: T)` then `class B extends ctor` where ctor has a constructor type
+            // 3. `class C extends Object` where Object is declared as ObjectConstructor interface
             ConstructorCheckKind::SymbolRef(symbol_ref) => {
                 use crate::binder::SymbolId;
                 let symbol_id = SymbolId(symbol_ref.0);
@@ -1733,6 +1734,59 @@ impl<'a> CheckerState<'a> {
                     // Check if this is a class symbol - classes are always constructors
                     if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
                         return true;
+                    }
+
+                    // Check if this is an interface symbol with construct signatures
+                    // This handles cases like ObjectConstructor, ArrayConstructor, etc.
+                    // which are interfaces with `new()` signatures
+                    if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
+                        // Check the cached type for interface - it should be Callable if it has construct signatures
+                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                            if cached_type != type_id {
+                                // Interface type was already resolved - check if it has construct signatures
+                                if crate::solver::type_queries::has_construct_signatures(
+                                    self.ctx.types,
+                                    cached_type,
+                                ) {
+                                    return true;
+                                }
+                            }
+                        } else if !symbol.declarations.is_empty() {
+                            // Interface not cached - check if it has construct signatures by examining declarations
+                            // This handles lib.d.ts interfaces like ObjectConstructor that may not be resolved yet
+                            // IMPORTANT: Use the correct arena for the symbol (may be different for lib types)
+                            use crate::solver::TypeLowering;
+                            let symbol_arena = self
+                                .ctx
+                                .binder
+                                .symbol_arenas
+                                .get(&symbol_id)
+                                .map(|arena| arena.as_ref())
+                                .unwrap_or(self.ctx.arena);
+
+                            let type_param_bindings = self.get_type_param_bindings();
+                            let type_resolver = |node_idx: crate::parser::NodeIndex| {
+                                self.resolve_type_symbol_for_lowering(node_idx)
+                            };
+                            let value_resolver = |node_idx: crate::parser::NodeIndex| {
+                                self.resolve_value_symbol_for_lowering(node_idx)
+                            };
+                            let lowering = TypeLowering::with_resolvers(
+                                symbol_arena,
+                                self.ctx.types,
+                                &type_resolver,
+                                &value_resolver,
+                            )
+                            .with_type_param_bindings(type_param_bindings);
+                            let interface_type =
+                                lowering.lower_interface_declarations(&symbol.declarations);
+                            if crate::solver::type_queries::has_construct_signatures(
+                                self.ctx.types,
+                                interface_type,
+                            ) {
+                                return true;
+                            }
+                        }
                     }
 
                     // For other symbols (variables, parameters, type aliases), check their cached type
