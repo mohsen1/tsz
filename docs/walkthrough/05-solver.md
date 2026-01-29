@@ -1,6 +1,6 @@
 # Solver Module Deep Dive
 
-The solver is the type system core (~142,000 lines), implementing subtyping, inference, instantiation, and type evaluation. It uses semantic subtyping with coinductive semantics for recursive types.
+The solver is the type system core (~160,000 lines), implementing subtyping, inference, instantiation, and type evaluation. It uses semantic subtyping with coinductive semantics for recursive types.
 
 ## File Structure
 
@@ -46,92 +46,77 @@ src/solver/
 
 ### 📍 KEY: TypeKey Enum (`types.rs`)
 
-```rust
-pub enum TypeKey {
-    // Primitives
-    Intrinsic(IntrinsicKind),       // number, string, boolean, etc.
-    Literal(LiteralValue),           // "hello", 42, true
+`TypeKey` enum variants (25+ total):
 
-    // Collections
-    Array(TypeId),                   // T[]
-    Tuple(TupleListId),              // [T, U, ...V]
+**Primitives:**
+- `Intrinsic(IntrinsicKind)` - number, string, boolean, etc.
+- `Literal(LiteralValue)` - "hello", 42, true
 
-    // Objects
-    Object(ObjectShapeId),           // { prop: T }
-    ObjectWithIndex(ObjectShapeId),  // { [key: string]: T }
+**Collections:**
+- `Array(TypeId)` - T[]
+- `Tuple(TupleListId)` - [T, U, ...V]
 
-    // Composites
-    Union(TypeListId),               // T | U
-    Intersection(TypeListId),        // T & U
+**Objects:**
+- `Object(ObjectShapeId)` - { prop: T }
+- `ObjectWithIndex(ObjectShapeId)` - { [key: string]: T }
 
-    // Functions
-    Function(FunctionShapeId),       // (x: T) => U
-    Callable(CallableShapeId),       // Overloaded functions
+**Composites:**
+- `Union(TypeListId)` - T | U
+- `Intersection(TypeListId)` - T & U
 
-    // Generics
-    TypeParameter(TypeParamInfo),    // T (unresolved)
-    Infer(TypeParamInfo),            // infer T
-    Ref(SymbolRef),                  // Named type reference
-    Application(TypeApplicationId),  // Generic<Args>
+**Functions:**
+- `Function(FunctionShapeId)` - (x: T) => U
+- `Callable(CallableShapeId)` - Overloaded functions
 
-    // Advanced
-    Conditional(ConditionalTypeId),  // T extends U ? X : Y
-    Mapped(MappedTypeId),            // { [K in T]: V }
-    IndexAccess { object: TypeId, key: TypeId },  // T[K]
-    KeyOf(TypeId),                   // keyof T
-    TemplateLiteral(TemplateLiteralId),  // `prefix${T}suffix`
-    TypeQuery(SymbolRef),            // typeof value
-    ThisType,                        // this
-    UniqueSymbol(Atom),              // unique symbol
-    ReadonlyType(Box<TypeKey>),      // readonly T
-    DestructuringPattern,            // For destructuring
-}
-```
+**Generics:**
+- `TypeParameter(TypeParamInfo)` - T (unresolved)
+- `Infer(TypeParamInfo)` - infer T
+- `Ref(SymbolRef)` - Named type reference
+- `Application(TypeApplicationId)` - Generic<Args>
+
+**Advanced:**
+- `Conditional(ConditionalTypeId)` - T extends U ? X : Y
+- `Mapped(MappedTypeId)` - { [K in T]: V }
+- `IndexAccess(TypeId, TypeId)` - T[K]
+- `KeyOf(TypeId)` - keyof T
+- `TemplateLiteral(TemplateLiteralId)` - `prefix${T}suffix`
+- `TypeQuery(SymbolRef)` - typeof value
+- `ReadonlyType(TypeId)` - readonly T
+- `ThisType` - this
+- `UniqueSymbol(SymbolRef)` - unique symbol
+- `StringIntrinsic { kind, type_arg }` - Uppercase<T>, etc.
+- `ModuleNamespace(SymbolRef)` - import * as ns
+- `Error` - Error recovery
 
 ### TypeId
 
-Newtype wrapper enabling O(1) comparison:
+`TypeId(u32)` - Newtype wrapper enabling O(1) comparison.
 
-```rust
-pub struct TypeId(u32);
+**Built-in constants** (in order):
+- `NONE` (0) - Internal placeholder
+- `ERROR` (1) - Error sentinel, propagates through operations
+- `NEVER` (2) - Bottom type
+- `UNKNOWN` (3) - Type-safe top type
+- `ANY` (4) - Opts out of type checking
+- `VOID` (5), `UNDEFINED` (6), `NULL` (7)
+- `BOOLEAN` (8), `NUMBER` (9), `STRING` (10), `BIGINT` (11), `SYMBOL` (12)
+- `OBJECT` (13), `BOOLEAN_TRUE` (14), `BOOLEAN_FALSE` (15), `FUNCTION` (16)
+- `PROMISE_BASE` (17), `DELEGATE` (18)
+- `FIRST_USER = 100` - First user-defined type ID
 
-impl TypeId {
-    // Built-in constants
-    pub const ANY: TypeId = TypeId(0);
-    pub const NEVER: TypeId = TypeId(1);
-    pub const UNKNOWN: TypeId = TypeId(2);
-    pub const ERROR: TypeId = TypeId(3);
-    pub const STRING: TypeId = TypeId(4);
-    pub const NUMBER: TypeId = TypeId(5);
-    pub const BOOLEAN: TypeId = TypeId(6);
-    pub const BIGINT: TypeId = TypeId(7);
-    pub const SYMBOL: TypeId = TypeId(8);
-    pub const VOID: TypeId = TypeId(9);
-    pub const NULL: TypeId = TypeId(10);
-    pub const UNDEFINED: TypeId = TypeId(11);
-    pub const OBJECT: TypeId = TypeId(12);
-    pub const FUNCTION: TypeId = TypeId(13);
-}
-```
+Helper methods: `is_intrinsic()`, `is_error()`, `is_any()`, `is_unknown()`, `is_never()`
 
 ### Type Interning (`intern.rs`)
 
-All types go through the interner for structural deduplication:
+All types go through `TypeInterner` for structural deduplication:
 
-```rust
-pub struct TypeInterner {
-    types: RefCell<IndexSet<TypeKey>>,
-    object_shapes: RefCell<Vec<ObjectShape>>,
-    function_shapes: RefCell<Vec<FunctionShape>>,
-    type_lists: RefCell<Vec<Vec<TypeId>>>,
-    // ... more pools
-}
+**Key fields:**
+- `types: RefCell<IndexSet<TypeKey>>` - Main type storage
+- `object_shapes`, `function_shapes`, `type_lists`, etc. - Interned shape pools
 
-impl TypeInterner {
-    pub fn intern(&self, key: TypeKey) -> TypeId {
-        let mut types = self.types.borrow_mut();
-        let (index, _) = types.insert_full(key);
-        TypeId(index as u32 + BUILTIN_TYPE_COUNT)
+**Key methods:**
+- `intern(key) -> TypeId` - Intern a TypeKey, returns deduplicated TypeId
+- `lookup(id) -> Option<TypeKey>` - Retrieve TypeKey for a TypeId
     }
 
     pub fn lookup(&self, id: TypeId) -> Option<TypeKey> {

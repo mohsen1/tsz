@@ -13,7 +13,7 @@ This document consolidates all known gaps, TODOs, and incomplete implementations
 
 ## Conformance Error Mapping
 
-Current conformance: **37.0%** (4,508 / 12,197 tests)
+Run `./conformance/run.sh --server` to get current conformance rate.
 
 ### False Positives (We report, TSC doesn't)
 
@@ -42,31 +42,22 @@ Current conformance: **37.0%** (4,508 / 12,197 tests)
 ## Scanner Gaps
 
 ### 🟡 Unicode Support
-**Location**: `scanner_impl.rs` in `char_code_unchecked()`
-**Issue**: Simplified check treats all non-ASCII as potential identifier chars
-```rust
-if ch > 127 { /* treat as identifier */ }
-```
+**Location**: `scanner_impl.rs` - `is_identifier_start()`, `is_identifier_part()`
+**Issue**: Simplified check treats all non-ASCII (> 127) as potential identifier chars
 **Should**: Use proper Unicode category tables (`ID_Start`, `ID_Continue`)
 **Impact**: May incorrectly accept/reject Unicode identifiers
 
-### 🟢 Comment Nesting
-**Location**: `scanner_impl.rs` in comment scanning
-**Issue**: Doesn't track nested `/* */` comments
-```typescript
-/* outer /* inner */ */  // Edge case not handled
-```
-**Impact**: Rare edge case, differs from TSC
+### ✅ RESOLVED: Octal Escapes in Templates
+**Location**: `scanner_impl.rs` - `scan_template_escape_sequence()`
+Octal escape sequences in template literals now properly set the `ContainsInvalidEscape` flag.
 
-### 🟢 Octal Escapes in Templates
-**Location**: `scanner_impl.rs` in template escape handling
-**Issue**: Not fully implemented (comment: "octal in template is complex")
-**Impact**: May misparse legacy code with octal escapes
+### ✅ RESOLVED: Regex Flag Validation
+**Location**: `scanner_impl.rs` - `re_scan_slash_token()`
+Regex flag validation now detects duplicate flags, invalid flags, and incompatible flags (u/v).
+Use `get_regex_flag_error()` and `get_regex_flag_error_pos()` to retrieve error information.
 
-### 🟢 Regex Flag Validation
-**Location**: `scanner_impl.rs` in regex scanning
-**Issue**: Lists valid flags but doesn't validate combinations
-**Impact**: Invalid flag combinations accepted
+### Note: Comment Nesting (Not a Gap)
+JavaScript/TypeScript does **not** support nested multi-line comments. The scanner's behavior of finding the first `*/` to close a `/* */` comment is correct and matches TSC behavior.
 
 ---
 
@@ -303,26 +294,14 @@ function f(x: string | null) {
 ## Emitter Gaps
 
 ### 🟡 Decorator ES5 Emission
-**Location**: `emitter/special_expressions.rs`
+**Location**: `emitter/special_expressions.rs` - `emit_decorator()`
 
-Decorator ES5 lowering is not fully implemented. Instead of silently skipping, the emitter now
-emits a warning comment explaining the limitation:
-```rust
-if self.ctx.target_es5 {
-    // Emit warning: /* @decoratorName - ES5 decorator lowering not implemented */
-}
-```
+Decorator ES5 lowering is not fully implemented. The emitter emits a warning comment instead of silently skipping.
 **Impact**: Decorators not downleveled to ES5, but warning is visible in output
-
 **Note**: Full decorator ES5 lowering requires class-level coordination with `__decorate` helper.
-This is documented behavior, not a silent failure.
 
 ### 🟢 Interface/Type Alias Infrastructure
-**Location**: `emitter/declarations.rs`
-```rust
-#[allow(dead_code)]
-fn emit_interface_declaration(&mut self, ...) { ... }
-```
+**Location**: `emitter/declarations.rs` - `emit_interface_declaration()`, `emit_type_alias_declaration()`
 **Note**: Types stripped in JS output - infrastructure only for potential .d.ts emission
 
 ### 🟢 Export Assignment Suppression
@@ -332,29 +311,27 @@ fn emit_interface_declaration(&mut self, ...) { ... }
 
 ### 🟢 Recursion Overflow Handling
 **Location**: `emitter/mod.rs`
-```rust
-if self.emit_recursion_depth > MAX_EMIT_RECURSION_DEPTH {
-    self.writer.write("/* emit recursion limit exceeded */");
-}
-```
-**Impact**: Very deep ASTs emit comment instead of code (intentional safety limit)
+**Behavior**: When `emit_recursion_depth > MAX_EMIT_RECURSION_DEPTH`, emits comment instead of code
+**Impact**: Very deep ASTs (>1000 levels) emit comment marker (intentional safety limit)
 
 ---
 
 ## Critical Limits Reference
 
-| Constant | Value | Module | Purpose |
-|----------|-------|--------|---------|
-| MAX_SUBTYPE_DEPTH | 100 | Solver | Subtype recursion |
-| MAX_TOTAL_SUBTYPE_CHECKS | 100,000 | Solver | Total checks |
-| MAX_INSTANTIATION_DEPTH | 50 | Checker | Generic instantiation |
-| MAX_CALL_DEPTH | 20 | Checker | Call resolution |
-| MAX_EMIT_RECURSION_DEPTH | 1,000 | Emitter | Code generation |
-| MAX_RECURSION_DEPTH | 1,000 | Parser | Parse recursion |
-| MAX_TYPE_RESOLUTION_OPS | 500,000 | Checker | Fuel counter |
-| MAX_EVALUATE_DEPTH | 50 | Solver | Type evaluation |
-| MAX_TOTAL_EVALUATIONS | 100,000 | Solver | Evaluation count |
-| TEMPLATE_LITERAL_EXPANSION_LIMIT | 100,000 | Solver | Template expansion |
+All constants are defined in `src/limits.rs`:
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| MAX_SUBTYPE_DEPTH | 100 | Subtype recursion |
+| MAX_TOTAL_SUBTYPE_CHECKS | 100,000 | Total checks |
+| MAX_INSTANTIATION_DEPTH | 50 | Generic instantiation |
+| MAX_CALL_DEPTH | 20 | Call resolution |
+| MAX_EMIT_RECURSION_DEPTH | 1,000 | Code generation |
+| MAX_PARSER_RECURSION_DEPTH | 1,000 | Parse recursion |
+| MAX_TYPE_RESOLUTION_OPS | 100,000 (native) / 20,000 (WASM) | Fuel counter |
+| MAX_EVALUATE_DEPTH | 50 | Type evaluation |
+| MAX_TOTAL_EVALUATIONS | 100,000 | Evaluation count |
+| TEMPLATE_LITERAL_EXPANSION_LIMIT | 100,000 (native) / 2,000 (WASM) | Template expansion |
 
 ---
 

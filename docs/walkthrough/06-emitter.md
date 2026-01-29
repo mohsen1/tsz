@@ -5,60 +5,48 @@ The emitter transforms the AST into JavaScript code. It supports multiple module
 ## File Structure
 
 ```
-src/emitter/
-├── mod.rs               (71 KB)  Main dispatcher and source file logic
-├── declarations.rs      (17.9 KB) Classes, enums, modules, interfaces
-├── expressions.rs       (7.8 KB)  Binary/unary ops, calls, literals
-├── statements.rs        (14.8 KB) Control flow, variable declarations
-├── functions.rs         (6.6 KB)  Arrow functions, function expressions
-├── types.rs             (7.3 KB)  Type references (for .d.ts)
-├── jsx.rs               (3.4 KB)  JSX elements and attributes
-├── helpers.rs                     Source mapping utilities
-├── es5_helpers.rs       (1,098)   ES5 downlevel transforms
-├── es5_bindings.rs      (908)     Variable/destructuring ES5
-├── module_emission.rs   (469)     Import/export handling
-├── module_wrapper.rs    (4.5 KB)  AMD/UMD/System wrappers
-└── special_expressions.rs         Decorators, spread, etc.
+src/emitter/        (~8,600 LOC total, 19 files)
+├── mod.rs              Main dispatcher and source file logic
+├── declarations.rs     Classes, enums, modules, interfaces
+├── expressions.rs      Binary/unary ops, calls, literals
+├── statements.rs       Control flow, variable declarations
+├── functions.rs        Arrow functions, function expressions
+├── types.rs            Type references (for .d.ts)
+├── jsx.rs              JSX elements and attributes
+├── helpers.rs          Source mapping utilities
+├── es5_helpers.rs      ES5 downlevel transforms
+├── es5_bindings.rs     Variable/destructuring ES5
+├── es5_templates.rs    Template literal ES5 transforms
+├── module_emission.rs  Import/export handling
+├── module_wrapper.rs   AMD/UMD/System wrappers
+├── special_expressions.rs  Decorators, spread, etc.
+├── template_literals.rs    Template string handling
+├── literals.rs         Literal value emission
+├── binding_patterns.rs Destructuring patterns
+├── comments.rs         Comment handling
+└── comment_helpers.rs  Comment utilities
 ```
 
 ## Core Architecture
 
 ### Printer Struct (`mod.rs`)
 
-```rust
-pub struct Printer<'a> {
-    arena: &'a NodeArena,              // AST access
-    writer: SourceWriter,              // Output + source maps
-    ctx: EmitContext,                  // Options and state
-    transforms: TransformContext,      // Phase 2 directives
-    emit_recursion_depth: u32,         // Limit: 1000
-    // ... more fields
-}
-```
+`Printer<'a>` key fields:
+- `arena: &'a NodeArena` - AST access
+- `writer: SourceWriter` - Output + source maps
+- `ctx: EmitContext` - Options and state
+- `transforms: TransformContext` - Phase 2 directives
+- `emit_recursion_depth: u32` - Recursion limit (MAX_EMIT_RECURSION_DEPTH = 1000)
 
 ### Two-Phase Architecture
 
 **Phase 1**: Parse and transform AST (handled by parser/transforms)
 **Phase 2**: Emit directives guide code generation
 
-```rust
-pub enum EmitDirective {
-    ES5Class,
-    ES5ClassExpression,
-    ES5Namespace,
-    ES5Enum,
-    ES5ArrowFunction { captures_this: bool },
-    ES5AsyncFunction,
-    ES5ForOf,
-    ES5ObjectLiteral,
-    ES5VariableDeclarationList,
-    ES5FunctionParameters,
-    ES5TemplateLiteral,
-    CommonJSExport,
-    CommonJSExportDefaultExpr,
-    ModuleWrapper { format: ModuleFormat, dependencies: Vec<String> },
-    Chain(Vec<EmitDirective>),
-}
+`EmitDirective` enum variants:
+- ES5 transforms: `ES5Class`, `ES5ClassExpression`, `ES5Namespace`, `ES5Enum`, `ES5ArrowFunction`, `ES5AsyncFunction`, `ES5ForOf`, `ES5ObjectLiteral`, `ES5VariableDeclarationList`, `ES5FunctionParameters`, `ES5TemplateLiteral`
+- Module transforms: `CommonJSExport`, `CommonJSExportDefaultExpr`, `ModuleWrapper`
+- Composition: `Chain(Vec<EmitDirective>)`
 ```
 
 ### Node Dispatch (`mod.rs`)
