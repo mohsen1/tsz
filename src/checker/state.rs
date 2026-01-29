@@ -6499,8 +6499,13 @@ impl<'a> CheckerState<'a> {
                     if !is_valid_constructor {
                         if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
                             // Check for literals - emit TS2507 for extends clauses
+                            // NOTE: TypeScript allows `extends null` as a special case,
+                            // so we don't emit TS2507 for null in extends clauses
                             let literal_type_name: Option<&str> = match expr_node.kind {
-                                k if k == SyntaxKind::NullKeyword as u16 => Some("null"),
+                                k if k == SyntaxKind::NullKeyword as u16 => {
+                                    // Don't error on null - TypeScript allows `extends null`
+                                    None
+                                }
                                 k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
                                 k if k == SyntaxKind::TrueKeyword as u16 => Some("true"),
                                 k if k == SyntaxKind::FalseKeyword as u16 => Some("false"),
@@ -6511,8 +6516,9 @@ impl<'a> CheckerState<'a> {
                                 k if k == SyntaxKind::Identifier as u16 => {
                                     if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
                                         match ident.escaped_text.as_str() {
+                                            // Don't error on null - TypeScript allows `extends null`
+                                            "null" => None,
                                             "undefined" => Some("undefined"),
-                                            "null" => Some("null"),
                                             "void" => Some("void"),
                                             _ => None,
                                         }
