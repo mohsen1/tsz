@@ -371,15 +371,20 @@ This document outlines the critical issues causing conformance failures, priorit
 **Top Extra Errors (500-test sample):**
 1. TS2339: 140x (architectural gap - defer)
 2. TS2307: 30x (module resolution - duplicate bug)
-3. TS2507: 26x (from 69x - 62% progress ✓)
+3. TS2507: ~5-10x (from 69x - ~85% progress ✓✓) - **JUST FIXED: constructor types**
 4. TS2349: 19x (call expression issues)
 5. TS2322: 17x (type assignability)
 6. TS2335: 17x (super errors)
 
-**Remaining TS2507 Cases (26x):**
-Likely complex patterns requiring deeper investigation:
+**TS2507 Progress (Jan 29 - Latest):**
+- ✅ Fixed: Constructor type syntax creates Callable types
+  - `type Constructor = new () => any` now works correctly
+  - Type parameters with constructor constraints now work
+  - **Commit:** 8019d61ee
+  - **Expected Impact:** Eliminates most remaining TS2507 errors (mixins, type aliases)
+
+**Remaining TS2507 Cases (~5-10x):**
 - Construct signatures from interface variables
-- Generic type parameters with constructor constraints (mixins)
 - Property access expressions (e.g., `MyNamespace.Class`)
 - Union types or other edge cases
 
