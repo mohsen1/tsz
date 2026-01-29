@@ -483,9 +483,8 @@ function runTsc(testCase: ParsedTestCase): number[] {
   const libNames = getLibNamesForTestCase(testCase.options, compilerOptions.target);
   const libFiles = libNames.length ? collectLibFiles(libNames) : new Map<string, string>();
 
-  if (!compilerOptions.noLib && libNames.length) {
-    compilerOptions.lib = libNames;
-  }
+  // DON'T set compilerOptions.lib - it causes tsc to look for libs at absolute paths
+  // Instead, we provide libs via getSourceFile/getDefaultLibFileName
 
   for (const file of testCase.files) {
     // Determine script kind based on file extension
@@ -544,7 +543,22 @@ function runTsc(testCase: ParsedTestCase): number[] {
     if (libSource && libName === 'lib.d.ts') return libSource;
     return undefined;
   };
-  host.getDefaultLibFileName = () => 'lib.d.ts';
+  // Return the base lib file that's in sourceFiles
+  // For ES5 target, this is lib.es5.d.ts; tsc will follow /// <reference lib="..." /> directives
+  host.getDefaultLibFileName = () => {
+    // If we have lib files loaded, return the base lib
+    if (libFiles.size > 0) {
+      // Find the base lib (es5 or the lowest available)
+      if (sourceFiles.has('lib.es5.d.ts')) return 'lib.es5.d.ts';
+      // Fallback to first lib file
+      for (const name of sourceFiles.keys()) {
+        if (name.startsWith('lib.') && name.endsWith('.d.ts')) {
+          return name;
+        }
+      }
+    }
+    return 'lib.d.ts';
+  };
   host.getCurrentDirectory = () => '/';
   host.getCanonicalFileName = (name) => name;
   host.useCaseSensitiveFileNames = () => true;

@@ -26,6 +26,7 @@ pub mod assignment_checker;
 pub mod call_checker;
 pub mod callable_type;
 pub mod class_checker;
+pub mod class_inheritance;
 pub mod class_type;
 pub mod conditional_type;
 pub mod constructor_checker;

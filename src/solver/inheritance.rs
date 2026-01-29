@@ -191,6 +191,16 @@ impl InheritanceGraph {
         self.is_derived_from(parent, child)
     }
 
+    /// Get the direct parents of a symbol (for cycle detection).
+    pub fn get_parents(&self, symbol_id: SymbolId) -> Vec<SymbolId> {
+        let nodes = self.nodes.borrow();
+        if let Some(node) = nodes.get(&symbol_id) {
+            node.parents.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
     // =========================================================================
     // Internal Lazy Computation Methods
     // =========================================================================

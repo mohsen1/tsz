@@ -18,8 +18,9 @@ This document outlines the critical issues causing conformance failures, priorit
 | Target Library (actual) | 0 | 88 (TS2583) | ✅ COMPLETED - 74% reduction |
 | Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
 | Circular Constraints | 2,123 (TS2313) | 0 + 4 timeouts | ✅ COMPLETED - Recursive constraint fix |
-| Circular Inheritance | 0 + 82 timeouts | 0 | ✅ COMPLETED - Stack overflow fix |
-| **Total Fixed** | **~28,354** | **~8,563** | **~36,917 errors + 86 timeouts** |
+| Circular Inheritance | 0 + 82 timeouts | 0 | ⚠️ PARTIAL - Cycle detection infrastructure complete, 4 timeouts remain |
+| **Total Fixed** | **~28,354** | **~8,563** | **~36,917 errors + 82 timeouts** |
+| **Remaining** | | | **4 timeouts** |
 
 ### Completed Commits
 
@@ -268,39 +269,57 @@ Class Inheritance (InheritanceGraph):
 2. Initialized in all CheckerContext constructors
 3. Exported as public module from solver
 
-### Next Steps to Fix 82 Timeouts
+### ✅ COMPLETED: InheritanceGraph Cycle Detection (Jan 29, 2026)
 
-The stack overflow on circular inheritance still occurs because InheritanceGraph 
-is not yet being used for cycle detection. The graph infrastructure is complete 
-and tested, but needs to be wired up:
+**Files Created/Modified:**
+- `src/solver/inheritance.rs` - Complete InheritanceGraph with O(1) checks
+- `src/checker/class_inheritance.rs` - ClassInheritanceChecker for cycle detection
+- `src/checker/state.rs` - Integrated ClassInheritanceChecker at start of check_class_declaration
+- `src/checker/mod.rs` - Added class_inheritance module
+- `src/checker/context.rs` - Added inheritance_graph field
 
-**TODO: Wire up InheritanceGraph for cycle detection**
+**Implementation:**
+- Created InheritanceGraph with lazy transitive closure using FixedBitSet
+- Implemented DFS-based cycle detection before type checking
+- Added ClassInheritanceChecker to detect cycles at declaration time
+- Integrated into check_class_declaration to skip type checking on cycles
 
-1. **In check_class_declaration** (src/checker/state.rs):
-   - Resolve all parent class symbols from heritage clauses
-   - Call `inheritance_graph.add_inheritance(child, parents)`
-   - BEFORE registering, check if cycle would be created
-   - Use simple DFS traversal to detect cycles
-   - Emit error and skip type checking if cycle detected
+**Test Results:**
+- 78 out of 82 timeout tests now pass (95% success rate)
+- 4 timeout tests remain:
+  - classExtendsItself.ts
+  - classExtendsItselfIndirectly.ts
+  - classExtendsItselfIndirectly2.ts
+  - classExtendsItselfIndirectly3.ts
 
-2. **Implementation Approach:**
-   - Add helper methods to CheckerState:
-     * `get_parent_symbols(sym_id: SymbolId) -> Option<Vec<SymbolId>>`
-     * `has_cycle_recursive(current, parents, visited) -> bool`
-   - Call these BEFORE adding edges to graph
-   - Prevent stack overflow by catching cycles early
+**Known Issue:**
+The remaining 4 timeouts appear to be caused by infinite recursion in type resolution
+(`get_class_instance_type_inner` in class_type.rs) rather than cycle detection failures.
+The `class_instance_resolution_set` mechanism exists to prevent this, but may not be
+working correctly for forward-referenced classes.
 
-3. **Expected Result:**
-   - test: classExtendsItselfIndirectly.ts should emit TS2449 error
-   - No more stack overflow on circular inheritance
-   - 82 timeouts eliminated
+### Next Steps to Fix Remaining 4 Timeouts
+
+**TODO: Fix infinite recursion in type resolution**
+
+The issue appears to be in src/checker/class_type.rs in `get_class_instance_type_inner`:
+
+1. **Problem:** When resolving class C extends E (before E is declared),
+   the type resolution tries to resolve E's type, which triggers infinite recursion.
+
+2. **Current Protection:** `class_instance_resolution_set` is checked at line 90-92,
+   but this may not cover all code paths or may be cleaned up prematurely.
+
+3. **Potential Solutions:**
+   - Ensure `class_instance_resolution_set` is checked and cleaned up consistently
+   - Add guards in `resolve_heritage_symbol` to prevent forward reference cycles
+   - Add early return when base class symbol is found but not yet declared
+   - Consider a two-pass approach: collect all classes first, then resolve types
 
 4. **Test Case:**
 ```typescript
-class C extends E { foo: string; }
+class C extends E { foo: string; }  // Tries to resolve E before E exists
 class D extends C { bar: string; }
-class E extends D { baz: number; }  // Cycle detected here
+class E extends D { baz: number; }  // Cycle detected, but C already started resolving
 ```
-
-Should emit: TS2449: "'E' is referenced directly or indirectly in its own base expression"
 

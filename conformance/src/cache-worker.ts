@@ -97,9 +97,58 @@ function parseLibOption(libOpt: unknown): string[] {
   return [];
 }
 
-function getLibNamesForTestCase(opts: Record<string, unknown>): string[] {
+function normalizeTargetName(target: unknown): string {
+  if (typeof target === 'number') {
+    const name = (ts.ScriptTarget as Record<number, string>)[target];
+    if (typeof name === 'string') return name.toLowerCase();
+  }
+  return String(target ?? 'es2020').toLowerCase();
+}
+
+function defaultCoreLibNameForTarget(targetName: string): string {
+  switch (targetName) {
+    case 'es3':
+    case 'es5':
+      return 'es5';
+    case 'es6':
+    case 'es2015':
+      return 'es2015';
+    case 'es2016':
+      return 'es2016';
+    case 'es2017':
+      return 'es2017';
+    case 'es2018':
+      return 'es2018';
+    case 'es2019':
+      return 'es2019';
+    case 'es2020':
+      return 'es2020';
+    case 'es2021':
+      return 'es2021';
+    case 'es2022':
+      return 'es2022';
+    case 'es2023':
+      return 'es2023';
+    case 'es2024':
+      return 'es2024';
+    case 'esnext':
+      return 'esnext';
+    default:
+      return 'es5';
+  }
+}
+
+function getLibNamesForTestCase(
+  opts: Record<string, unknown>,
+  compilerOptionsTarget: ts.ScriptTarget | undefined
+): string[] {
   if (opts.nolib) return [];
-  return parseLibOption(opts.lib);
+  const explicit = parseLibOption(opts.lib);
+  if (explicit.length > 0) return explicit;
+
+  // No explicit @lib - return default libs based on target
+  const targetName = normalizeTargetName(compilerOptionsTarget ?? opts.target);
+  return [defaultCoreLibNameForTarget(targetName)];
 }
 
 function collectLibFiles(libNames: string[]): Map<string, string> {
@@ -223,12 +272,11 @@ function runTsc(testCase: ParsedTestCase): number[] {
   const compilerOptions = toCompilerOptions(testCase.options);
   const sourceFiles = new Map<string, ts.SourceFile>();
   const fileNames: string[] = [];
-  const libNames = getLibNamesForTestCase(testCase.options);
+  const libNames = getLibNamesForTestCase(testCase.options, compilerOptions.target);
   const libFiles = libNames.length ? collectLibFiles(libNames) : new Map<string, string>();
 
-  if (!compilerOptions.noLib && libNames.length) {
-    compilerOptions.lib = libNames;
-  }
+  // DON'T set compilerOptions.lib - it causes tsc to look for libs at absolute paths
+  // Instead, we provide libs via getSourceFile/getDefaultLibFileName
 
   for (const file of testCase.files) {
     let scriptKind = ts.ScriptKind.TS;
@@ -280,7 +328,22 @@ function runTsc(testCase: ParsedTestCase): number[] {
     if (libSource && libName === 'lib.d.ts') return libSource;
     return undefined;
   };
-  host.getDefaultLibFileName = () => 'lib.d.ts';
+  // Return the base lib file that's in sourceFiles
+  // For ES5 target, this is lib.es5.d.ts; tsc will follow /// <reference lib="..." /> directives
+  host.getDefaultLibFileName = () => {
+    // If we have lib files loaded, return the base lib
+    if (libFiles.size > 0) {
+      // Find the base lib (es5 or the lowest available)
+      if (sourceFiles.has('lib.es5.d.ts')) return 'lib.es5.d.ts';
+      // Fallback to first lib file
+      for (const name of sourceFiles.keys()) {
+        if (name.startsWith('lib.') && name.endsWith('.d.ts')) {
+          return name;
+        }
+      }
+    }
+    return 'lib.d.ts';
+  };
   host.getCurrentDirectory = () => '/';
   host.getCanonicalFileName = (name) => name;
   host.useCaseSensitiveFileNames = () => true;
