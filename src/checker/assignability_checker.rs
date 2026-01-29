@@ -274,12 +274,27 @@ impl<'a> CheckerState<'a> {
     /// This is the main entry point for subtype checking, used for type compatibility
     /// throughout the type system. Subtyping is stricter than assignability.
     pub fn is_subtype_of(&mut self, source: TypeId, target: TypeId) -> bool {
+        use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
         let depth_exceeded = {
             let env = self.ctx.type_env.borrow();
+            let binder = self.ctx.binder;
+
+            // Helper to check if a symbol is a class (for nominal subtyping)
+            let is_class_fn = |sym_ref: crate::solver::types::SymbolRef| -> bool {
+                let sym_id = crate::binder::SymbolId(sym_ref.0);
+                if let Some(sym) = binder.get_symbol(sym_id) {
+                    (sym.flags & symbol_flags::CLASS) != 0
+                } else {
+                    false
+                }
+            };
+
             let mut checker = SubtypeChecker::with_resolver(self.ctx.types, &*env)
-                .with_strict_null_checks(self.ctx.strict_null_checks());
+                .with_strict_null_checks(self.ctx.strict_null_checks())
+                .with_inheritance_graph(&self.ctx.inheritance_graph)
+                .with_class_check(&is_class_fn);
             let result = checker.is_subtype_of(source, target);
             let depth_exceeded = checker.depth_exceeded;
             (result, depth_exceeded)
@@ -302,10 +317,24 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: &crate::solver::TypeEnvironment,
     ) -> bool {
+        use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
+
+        // Helper to check if a symbol is a class (for nominal subtyping)
+        let is_class_fn = |sym_ref: crate::solver::types::SymbolRef| -> bool {
+            let sym_id = crate::binder::SymbolId(sym_ref.0);
+            if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                (sym.flags & symbol_flags::CLASS) != 0
+            } else {
+                false
+            }
+        };
+
         let mut checker = SubtypeChecker::with_resolver(self.ctx.types, env)
-            .with_strict_null_checks(self.ctx.strict_null_checks());
+            .with_strict_null_checks(self.ctx.strict_null_checks())
+            .with_inheritance_graph(&self.ctx.inheritance_graph)
+            .with_class_check(&is_class_fn);
         let result = checker.is_subtype_of(source, target);
         let depth_exceeded = checker.depth_exceeded;
 
