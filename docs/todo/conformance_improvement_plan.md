@@ -15,7 +15,8 @@ This document outlines the critical issues causing conformance failures, priorit
 | Global Types | 0 | 7,560 (TS2318) | ✅ COMPLETED - Embedded libs wiring |
 | Target Library | 0 | 1,748 (TS2583) | ✅ COMPLETED - Embedded libs wiring |
 | Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
-| **Total Fixed** | **~26,231** | **~9,308** | **~35,539 errors** |
+| Circular Constraints | 2,123 (TS2313) | 0 + 4 timeouts | ✅ COMPLETED - Recursive constraint fix |
+| **Total Fixed** | **~28,354** | **~9,308** | **~37,662 errors + 4 timeouts** |
 
 ### Completed Commits
 
@@ -52,11 +53,15 @@ This document outlines the critical issues causing conformance failures, priorit
 
 ## Phase 1: Critical Fixes (Highest Impact) - NEXT UP
 
-### 1.1 Fix Circular Constraint Detection [IN PROGRESS - 2,123 errors + timeouts]
+### 1.1 Fix Circular Constraint Detection [✅ COMPLETED - 2,123 errors + timeouts]
 
 **Impact:** Fixes ~2,123 extra TS2313 errors + timeout issues
 
-**Status:** 4 tests timing out on classExtendsItself patterns
+**Status:** ✅ COMPLETED (2026-01-29)
+- All 4 timeout tests now pass
+- No more infinite loops on classExtendsItself patterns
+
+**Commit:** 4f924c5db
 
 **Problem:** `should_resolve_recursive_type_alias` in checker state returns `true` for classes, causing `get_type_of_symbol` to detect a false cycle when resolving constraints like `class C<T extends C<T>>`.
 
@@ -70,7 +75,7 @@ This document outlines the critical issues causing conformance failures, priorit
 
 ---
 
-### 1.2 Fix Parser Keyword Handling [NEXT - 3,635 errors]
+### 1.2 Fix Parser Keyword Handling [✅ COMPLETED]
 
 **Impact:** Fixes ~3,635 extra TS1005 errors
 
