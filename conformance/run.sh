@@ -113,7 +113,7 @@ OPTIONS:
     --category=CAT      Test categories to run, comma-separated
                         Options: conformance, compiler, projects
                         Default: conformance,compiler,projects
-    --filter=PATTERN    Only run tests matching glob pattern
+    --filter=PATTERN    Only run tests matching pattern (substring match)
 
     Execution:
     --workers=N         Number of parallel workers (default: auto-detect)
@@ -121,6 +121,8 @@ OPTIONS:
 
     Output:
     -v, --verbose       Show detailed output for each test
+    --print-test        Show detailed info for filtered tests (use with --filter)
+                        Displays: file content, directives, TSC expected, tsz actual
     -q, --quiet         Minimal output (only summary)
     --json              Output results as JSON (implies --quiet)
 
@@ -606,25 +608,34 @@ run_server() {
     local timeout="$3"
     local categories="$4"
     local verbose="$5"
+    local filter="${6:-}"
+    local print_test="${7:-false}"
 
-    # Print banner
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                          ${RESET}${CYAN}║${RESET}"
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-    echo -e "${CYAN}║${RESET}  Mode:       $(printf '%-48s' "Server (persistent)")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$max_tests")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Workers:    $(printf '%-48s' "$workers")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Categories: $(printf '%-48s' "$categories")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Timeout:    $(printf '%-48s' "${timeout}s")${CYAN}║${RESET}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
-    echo ""
+    # Print banner (skip for print-test mode to keep output clean)
+    if [[ "$print_test" != "true" ]]; then
+        echo ""
+        echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
+        echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                          ${RESET}${CYAN}║${RESET}"
+        echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
+        echo -e "${CYAN}║${RESET}  Mode:       $(printf '%-48s' "Server (persistent)")${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$max_tests")${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  Workers:    $(printf '%-48s' "$workers")${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  Categories: $(printf '%-48s' "$categories")${CYAN}║${RESET}"
+        echo -e "${CYAN}║${RESET}  Timeout:    $(printf '%-48s' "${timeout}s")${CYAN}║${RESET}"
+        if [[ -n "$filter" ]]; then
+            echo -e "${CYAN}║${RESET}  Filter:     $(printf '%-48s' "$filter")${CYAN}║${RESET}"
+        fi
+        echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
+        echo ""
+    fi
 
     build_server
     build_runner
 
-    log_step "Starting tsz-server pool..."
-    echo ""
+    if [[ "$print_test" != "true" ]]; then
+        log_step "Starting tsz-server pool..."
+        echo ""
+    fi
 
     cd "$SCRIPT_DIR"
 
@@ -638,6 +649,12 @@ run_server() {
     local runner_args="--max=$max_tests --workers=$workers --category=$categories --server"
     if [[ "$verbose" == "true" ]]; then
         runner_args="$runner_args --verbose"
+    fi
+    if [[ -n "$filter" ]]; then
+        runner_args="$runner_args --filter=$filter"
+    fi
+    if [[ "$print_test" == "true" ]]; then
+        runner_args="$runner_args --print-test"
     fi
 
     # Run with timeout
@@ -672,6 +689,8 @@ main() {
     local dry_run=false
     local command=""
     local positional_args=()
+    local filter=""
+    local print_test=false
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -728,8 +747,10 @@ main() {
                 categories="${1#*=}"
                 ;;
             --filter=*)
-                # TODO: Implement filter
-                log_warning "--filter not yet implemented"
+                filter="${1#*=}"
+                ;;
+            --print-test)
+                print_test=true
                 ;;
             
             # Execution
@@ -810,7 +831,7 @@ main() {
     # Run tests based on mode
     case "$mode" in
         server)
-            run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
+            run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose" "$filter" "$print_test"
             ;;
         wasm)
             local use_wasm=true
