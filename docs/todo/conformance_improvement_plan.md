@@ -2,11 +2,13 @@
 
 ## Executive Summary
 
-**Current State:** 30.0% pass rate (150/500 tests - 500-test sample, Jan 29 2026)
+**Current State:** 34.4% pass rate (172/500 tests - 500-test sample, Jan 29 2026)
 
 **Recent Progress:**
 - ✅ TS2322 assignability errors reduced to **18x** (99.85% reduction from baseline)
 - Module Resolution: TS2307 reduced from 3,950x to 30x (99.2% reduction)
+- ✅ **NEW:** TS2583 lib caching bug fixed - reduced from 122x to 3x (97.5% reduction)
+- Pass rate improved from 30.0% to 34.4% (+4.4 percentage points, +15% relative improvement)
 - ERROR propagation fix is highly effective
 - **Known Limitation:** 4 timeout tests remain for circular class inheritance (classExtendsItself*.ts)
   - Root cause: Stack overflow from deep recursion before cycle detection
@@ -25,13 +27,14 @@ This document outlines the critical issues causing conformance failures, priorit
 | Global Types (paths) | 0 | 618 (TS2318) | ✅ COMPLETED - Lib path resolution |
 | Target Library (wiring) | 0 | 1,748 (TS2583) | ✅ COMPLETED - Embedded libs fallback |
 | Target Library (actual) | 0 | 88 (TS2583) | ✅ COMPLETED - 74% reduction |
+| **TS2583 Lib Caching (NEW)** | **122 → 3** | 0 | ✅ **COMPLETED** - 97.5% reduction, lib dependency caching fix |
 | Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
 | Circular Constraints | 2,123 (TS2313) | 0 + 4 timeouts | ✅ COMPLETED - Recursive constraint fix |
 | Circular Inheritance | 0 + 4 timeouts | 0 | ⚠️ 95% COMPLETE - 4 timeout edge cases remain, InheritanceGraph integrated |
 | InheritanceGraph Integration | 0 | 0 | ✅ COMPLETED - O(1) nominal class subtyping |
 | Module Resolution | 3,950 (TS2307) | 0 | ✅ COMPLETED - Node.js-style resolution |
-| **Total Fixed** | **~32,304** | **~8,563** | **~40,867 errors + 4 timeouts** |
-| **Remaining** | | | **4 timeouts** |
+| **Total Fixed** | **~32,426** | **~8,563** | **~40,989 errors + 4 timeouts** |
+| **Remaining** | | | **4 timeouts + 3 TS2583 edge cases** |
 
 ### Completed Commits
 
@@ -88,6 +91,15 @@ This document outlines the critical issues causing conformance failures, priorit
    - Used HashSet for O(1) file existence checks
    - Cascading benefits: TS2304, TS2488, TS2345 improvements
 
+9. **fix(server): store lib dependencies in cache to fix TS2583 errors** (PENDING)
+   - Files: src/bin/tsz_server.rs
+   - Impact: 122 → 3 extra TS2583 errors (97.5% reduction)
+   - Fixed lib caching bug where dependencies weren't loaded on cache hit
+   - Changed lib_cache from `FxHashMap<String, Arc<LibFile>>` to `FxHashMap<String, (Arc<LibFile>, Vec<String>)>`
+   - Now stores both lib file and its references (dependencies) in cache
+   - When loading from cache, dependencies are loaded recursively before the lib itself
+   - Root cause: async/es2017 tests failed when lib files were cached but dependencies (es2015, etc.) weren't loaded
+
 ---
 
 ## Top Remaining Issues by Impact
@@ -96,13 +108,14 @@ This document outlines the critical issues causing conformance failures, priorit
 
 | Issue | Extra Errors | Missing Errors | Root Cause | Status |
 |-------|-------------|----------------|------------|--------|
-| TS2583 | 123x | 0 | ES2015+ global types not in default lib | 🔥 NEXT PRIORITY |
-| TS2339 | 119x | 0 | Property does not exist on type | High impact |
-| TS2336 | 93x | 0 | Super property access invalid context | Medium impact |
-| TS2507 | 40x | 0 | Async function must return Promise | Medium impact |
+| TS2339 | 121x | 0 | Property does not exist on type | 🔥 NEXT PRIORITY |
+| TS2336 | 87x | 0 | Super property access invalid context | High impact |
+| TS2507 | 43x | 0 | Async function must return Promise | Medium impact |
 | TS2307 | 30x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
-| TS2349 | 20x | 0 | Cannot invoke non-function | Low impact |
-| TS2322 | **18x** | 0 | Type not assignable | ✅ **SOLVED** - 99.85% reduction |
+| TS2571 | 22x | 0 | Object is of type unknown | Low impact |
+| TS2349 | 22x | 0 | Cannot invoke non-function | Low impact |
+| TS2322 | **20x** | 0 | Type not assignable | ✅ **SOLVED** - 99.85% reduction |
+| **TS2583** | **3x** | 0 | ES2015+ global types edge cases | ⚠️ **95% SOLVED** - 122→3, lib caching fixed |
 | Iterators | 0 | 1,558 (TS2488) | Iterable checker incomplete |
 | Circular Inheritance Timeouts | 0 | 4 timeouts | ⚠️ KNOWN LIMITATION - Stack overflow before cycle detection |
 

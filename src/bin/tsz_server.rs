@@ -129,8 +129,9 @@ struct Server {
     lib_dir: PathBuf,
     /// Fallback directory for tests (TypeScript/tests/lib)
     tests_lib_dir: PathBuf,
-    /// Cache of parsed+bound lib files
-    lib_cache: FxHashMap<String, Arc<LibFile>>,
+    /// Cache of parsed+bound lib files AND their dependencies (references)
+    /// Stores (lib, references) tuple to ensure dependencies are loaded on cache hit
+    lib_cache: FxHashMap<String, (Arc<LibFile>, Vec<String>)>,
     /// Number of checks completed
     checks_completed: u64,
 }
@@ -396,10 +397,16 @@ impl Server {
         loaded.insert(normalized.clone());
 
         // Check cache first
-        if let Some(lib) = self.lib_cache.get(&normalized) {
-            // Even if cached, we need to load its dependencies first
-            // Parse references from the cached content (we don't store content, so skip deps for cached)
-            result.push(lib.clone());
+        if let Some((lib, references)) = self.lib_cache.get(&normalized) {
+            // Clone lib and references to end the immutable borrow before recursive call
+            let lib_clone = lib.clone();
+            let refs = references.clone();
+
+            // Load dependencies from the cached references list
+            for ref_lib in &refs {
+                self.load_lib_recursive(ref_lib, result, loaded)?;
+            }
+            result.push(lib_clone);
             return Ok(());
         }
 
@@ -420,8 +427,8 @@ impl Server {
                 // Parse /// <reference lib="..." /> directives BEFORE loading this lib
                 // This ensures dependencies are loaded first
                 let references = Self::parse_lib_references(&content);
-                for ref_lib in references {
-                    self.load_lib_recursive(&ref_lib, result, loaded)?;
+                for ref_lib in &references {
+                    self.load_lib_recursive(ref_lib, result, loaded)?;
                 }
 
                 // Now parse and bind this lib
@@ -441,7 +448,9 @@ impl Server {
                     Arc::new(binder),
                 ));
 
-                self.lib_cache.insert(normalized, lib.clone());
+                // Store both the lib and its references (dependencies) in the cache
+                self.lib_cache
+                    .insert(normalized, (lib.clone(), references.clone()));
                 result.push(lib);
                 return Ok(());
             }
