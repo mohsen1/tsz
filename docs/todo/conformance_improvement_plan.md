@@ -248,16 +248,18 @@ This document outlines the critical issues causing conformance failures, priorit
 
 | Issue | Extra Errors | Missing Errors | Root Cause | Status |
 |-------|-------------|----------------|------------|--------|
-| **TS2339** | **121 → 0** | 0 | Property does not exist on type | ✅ **SOLVED** - 100% reduction, lib symbol resolution fixed |
+| **TS2339** | **121 → 0** | 0 | Property does not exist on type | ✅ **SOLVED (lib)** - 100% reduction, lib symbol resolution |
+| **TS2339** | **332x** | 0 | Property does not exist on type | 🔥 **NEXT PRIORITY** - Other cases remain |
 | **TS2336** | **87 → 0** | 0 | Super property access invalid context | ✅ **SOLVED** - 100% reduction, arrow function context capture |
 | **TS2571** | **22 → 0** | 0 | Object is of type unknown | ✅ **SOLVED** - 100% reduction, wrong error code |
 | **TS2349** | **22 → 0** | 0 | Cannot invoke non-function | ✅ **SOLVED** - 100% reduction, Application type resolution |
 | **TS2507** | **43 → ~3** | 0 | Type not a constructor function type | ⚠️ **~95% SOLVED** - extends null fixed |
-| TS2307 | 30x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
 | TS2322 | **20x** | 0 | Type not assignable | ✅ **SOLVED** - 99.85% reduction |
 | **TS2583** | **3x** | 0 | ES2015+ global types edge cases | ⚠️ **95% SOLVED** - 122→3, lib caching fixed |
-| **TS2304** | **~5,000x** | ~1,700x | Cannot find name | 🔥 **NEXT PRIORITY** - Name resolution issues |
-| Value/Type Namespace | ~1,700x | 0 | Namespace discrimination | High - requires symbol_resolver audit |
+| **TS2304** | **57x** | ~0 | Cannot find name | ⚠️ **PARTIAL** - Namespace type position fixed, global augmentation remains |
+| TS2307 | 96x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
+| TS7010 | 110x | 0 | Unknown error code | Needs investigation |
+| Value/Type Namespace | ~1,700x | 0 | Namespace discrimination | ⚠️ **PARTIAL** - Type position fixed, other cases remain |
 | Iterators | 0 | 1,558 (TS2488) | Iterable checker incomplete | Medium - requires implementation |
 | Circular Inheritance Timeouts | 0 | 4 timeouts | ⚠️ KNOWN LIMITATION - Stack overflow before cycle detection | |
 
