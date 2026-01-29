@@ -23,6 +23,12 @@ impl Atom {
     /// A sentinel value representing no atom / empty string.
     pub const NONE: Atom = Atom(0);
 
+    /// Returns Atom::NONE - used for serde default.
+    #[inline]
+    pub fn none() -> Atom {
+        Atom::NONE
+    }
+
     /// Check if this is the empty/none atom.
     #[inline]
     pub fn is_none(self) -> bool {
@@ -166,7 +172,7 @@ const COMMON_STRINGS: &[&str] = &[
 /// assert_eq!(a1, a2); // Same atom for same string
 /// assert_eq!(interner.resolve(a1), "hello");
 /// ```
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct Interner {
     /// Map from string to atom index
     map: FxHashMap<Arc<str>, Atom>,
