@@ -22,7 +22,8 @@ struct ClassNode {
     ancestors_bitset: Option<FixedBitSet>,
     /// Cached Method Resolution Order (linearized ancestors)
     mro: Option<Vec<SymbolId>>,
-    /// Cycle detection marker
+    /// Cycle detection marker (used during DFS traversal)
+    #[allow(dead_code)]
     on_stack: bool,
 }
 

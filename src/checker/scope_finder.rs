@@ -11,6 +11,9 @@
 //! This module extends CheckerState with scope-finding methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
+// TODO: Remove this once the methods are used by the checker
+#![allow(dead_code)]
+
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
