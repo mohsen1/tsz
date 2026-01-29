@@ -190,6 +190,125 @@ impl<'a> CheckerState<'a> {
     // Super Expression Validation
     // =========================================================================
 
+    /// Check if super is in a static property initializer.
+    ///
+    /// Returns true if super is inside a static property declaration's initializer.
+    fn is_in_static_property_initializer(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            // Arrow functions capture the class context
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                current = parent_idx;
+                continue;
+            }
+
+            // Found a property declaration
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                // Check if it's static
+                if let Some(prop) = self.ctx.arena.get_property_decl(parent_node) {
+                    if self.has_static_modifier(&prop.modifiers) {
+                        return true;
+                    }
+                }
+            }
+
+            // Found a class - stop searching
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    /// Check if super is in a constructor.
+    ///
+    /// Returns true if super is inside a constructor declaration.
+    fn is_in_constructor(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            // Arrow functions capture the class context
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                current = parent_idx;
+                continue;
+            }
+
+            // Found the constructor
+            if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                return true;
+            }
+
+            // Found a class - stop searching
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    /// Find the enclosing class by walking up the parent chain.
+    ///
+    /// This is more reliable than relying on `enclosing_class` which may not be set
+    /// during type computation (before class declarations are checked).
+    /// This function correctly handles arrow functions which capture the class context.
+    fn find_enclosing_class(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            // Arrow functions capture the class context, so skip them
+            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                current = parent_idx;
+                continue;
+            }
+
+            // Found the enclosing class
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return Some(parent_idx);
+            }
+
+            current = parent_idx;
+        }
+
+        None
+    }
+
     /// Check a super expression for proper usage.
     ///
     /// Validates that super expressions are used correctly:
@@ -200,18 +319,22 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_super_expression(&mut self, idx: NodeIndex) {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        // Check if we're in a class context at all
-        let Some(class_info) = self.ctx.enclosing_class.clone() else {
-            self.error_at_node(
-                idx,
-                diagnostic_messages::SUPER_ONLY_IN_DERIVED_CLASS,
-                diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS,
-            );
-            return;
+        // Find the enclosing class by walking up the parent chain
+        // This works even during type computation when `enclosing_class` is not yet set
+        let class_idx = match self.find_enclosing_class(idx) {
+            Some(idx) => idx,
+            None => {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_ONLY_IN_DERIVED_CLASS,
+                    diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS,
+                );
+                return;
+            }
         };
 
         // Check if the class has a base class (is a derived class)
-        let has_base_class = self.get_base_class_idx(class_info.class_idx).is_some();
+        let has_base_class = self.get_base_class_idx(class_idx).is_some();
 
         // Detect if this is a super() call or super property access
         let parent_info = self
@@ -255,7 +378,7 @@ impl<'a> CheckerState<'a> {
         // This includes super() in static property initializers
         if is_super_call {
             // TS17011: super() is not allowed in static property initializers
-            if class_info.in_static_property_initializer {
+            if self.is_in_static_property_initializer(idx) {
                 self.error_at_node(
                     idx,
                     diagnostic_messages::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
@@ -263,7 +386,7 @@ impl<'a> CheckerState<'a> {
                 );
                 return;
             }
-            if !class_info.in_constructor {
+            if !self.is_in_constructor(idx) {
                 self.error_at_node(
                     idx,
                     diagnostic_messages::SUPER_CALL_NOT_IN_CONSTRUCTOR,
@@ -287,7 +410,7 @@ impl<'a> CheckerState<'a> {
         // Note: Arrow functions capture the class context, so super inside arrow functions is valid
         // if the arrow itself is in a valid context (checked by the helper functions)
         if is_super_property_access {
-            let in_valid_context = class_info.in_constructor
+            let in_valid_context = self.is_in_constructor(idx)
                 || self.is_in_class_method_body(idx)
                 || self.is_in_class_accessor_body(idx)
                 || self.is_in_class_property_initializer(idx);
