@@ -12,6 +12,7 @@
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
+use crate::interner::Atom;
 use crate::parser::{
     NodeIndex, NodeList,
     node::{
@@ -937,6 +938,7 @@ impl ParserState {
             pos,
             pos,
             IdentifierData {
+                atom: Atom::NONE,
                 escaped_text: String::new(),
                 original_text: None,
                 type_arguments: None,
@@ -4403,6 +4405,7 @@ impl ParserState {
                 name_start,
                 name_end,
                 IdentifierData {
+                    atom: self.scanner.interner_mut().intern("global"),
                     escaped_text: "global".to_string(),
                     original_text: None,
                     type_arguments: None,
@@ -4427,6 +4430,7 @@ impl ParserState {
                     name_start,
                     name_end,
                     IdentifierData {
+                        atom: Atom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
                         type_arguments: None,
@@ -4484,6 +4488,7 @@ impl ParserState {
                 name_start,
                 name_end,
                 IdentifierData {
+                    atom: self.scanner.interner_mut().intern("global"),
                     escaped_text: "global".to_string(),
                     original_text: None,
                     type_arguments: None,
@@ -4508,6 +4513,7 @@ impl ParserState {
                     name_start,
                     name_end,
                     IdentifierData {
+                        atom: Atom::NONE,
                         escaped_text: String::new(),
                         original_text: None,
                         type_arguments: None,
@@ -6640,12 +6646,14 @@ impl ParserState {
                         // Parse 'await' as regular identifier in parameter defaults of non-async functions
                         let start_pos = self.token_pos();
                         let end_pos = self.token_end(); // capture end before consuming
+                        let atom = self.scanner.get_token_atom();
                         self.next_token(); // consume the await token
                         return self.arena.add_identifier(
                             SyntaxKind::Identifier as u16,
                             start_pos,
                             end_pos,
                             crate::parser::node::IdentifierData {
+                                atom,
                                 escaped_text: String::from("await"),
                                 original_text: None,
                                 type_arguments: None,
@@ -7181,7 +7189,9 @@ impl ParserState {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
-        // Use zero-copy accessor and clone only when storing
+        // OPTIMIZATION: Capture atom for O(1) comparison
+        let atom = self.scanner.get_token_atom();
+        // Use zero-copy accessor and clone only when storing (legacy, to be removed)
         let text = self.scanner.get_token_value_ref().to_string();
         self.parse_expected(SyntaxKind::Identifier);
 
@@ -7190,6 +7200,7 @@ impl ParserState {
             start_pos,
             end_pos,
             IdentifierData {
+                atom,
                 escaped_text: text,
                 original_text: None,
                 type_arguments: None,
@@ -7204,13 +7215,15 @@ impl ParserState {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
-        let text = if self.is_identifier_or_keyword() {
+        let (atom, text) = if self.is_identifier_or_keyword() {
+            // OPTIMIZATION: Capture atom for O(1) comparison
+            let atom = self.scanner.get_token_atom();
             let text = self.scanner.get_token_value_ref().to_string();
             self.next_token();
-            text
+            (atom, text)
         } else {
             self.error_identifier_expected();
-            String::new()
+            (Atom::NONE, String::new())
         };
 
         self.arena.add_identifier(
@@ -7218,6 +7231,7 @@ impl ParserState {
             start_pos,
             end_pos,
             IdentifierData {
+                atom,
                 escaped_text: text,
                 original_text: None,
                 type_arguments: None,
@@ -7230,6 +7244,8 @@ impl ParserState {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
+        // OPTIMIZATION: Capture atom for O(1) comparison
+        let atom = self.scanner.get_token_atom();
         let text = self.scanner.get_token_value_ref().to_string();
         self.parse_expected(SyntaxKind::PrivateIdentifier);
 
@@ -7238,6 +7254,7 @@ impl ParserState {
             start_pos,
             end_pos,
             IdentifierData {
+                atom,
                 escaped_text: text,
                 original_text: None,
                 type_arguments: None,
@@ -8472,6 +8489,8 @@ impl ParserState {
             _ => {
                 // Identifier or keyword used as property name
                 let start_pos = self.token_pos();
+                // OPTIMIZATION: Capture atom for O(1) comparison
+                let atom = self.scanner.get_token_atom();
                 // Use zero-copy accessor
                 let text = self.scanner.get_token_value_ref().to_string();
                 self.next_token(); // Accept any token as property name
@@ -8482,6 +8501,7 @@ impl ParserState {
                     start_pos,
                     end_pos,
                     IdentifierData {
+                        atom,
                         escaped_text: text,
                         original_text: None,
                         type_arguments: None,
@@ -8959,6 +8979,7 @@ impl ParserState {
                 start_pos,
                 self.token_pos(),
                 crate::parser::node::IdentifierData {
+                    atom: Atom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,
@@ -10282,6 +10303,8 @@ impl ParserState {
     /// Parse a keyword as an identifier (for type keywords like string, number, etc.)
     fn parse_keyword_as_identifier(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        // OPTIMIZATION: Capture atom for O(1) comparison
+        let atom = self.scanner.get_token_atom();
         let text = self.scanner.get_token_value_ref().to_string();
         self.next_token();
         let end_pos = self.token_end();
@@ -10291,6 +10314,7 @@ impl ParserState {
             start_pos,
             end_pos,
             IdentifierData {
+                atom,
                 escaped_text: text,
                 original_text: None,
                 type_arguments: None,
@@ -10344,7 +10368,9 @@ impl ParserState {
 
     /// Consume the parser and return the arena.
     /// This is used for lib files where we need to store the arena in an Arc.
-    pub fn into_arena(self) -> NodeArena {
+    pub fn into_arena(mut self) -> NodeArena {
+        // Transfer the interner from the scanner to the arena so atoms can be resolved
+        self.arena.set_interner(self.scanner.take_interner());
         self.arena
     }
 
@@ -10532,6 +10558,7 @@ impl ParserState {
                 start_pos,
                 end_pos,
                 IdentifierData {
+                    atom: Atom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,
@@ -10833,7 +10860,9 @@ impl ParserState {
 
     /// Consume the parser and return its parts.
     /// This is useful for taking ownership of the arena after parsing.
-    pub fn into_parts(self) -> (NodeArena, Vec<ParseDiagnostic>) {
+    pub fn into_parts(mut self) -> (NodeArena, Vec<ParseDiagnostic>) {
+        // Transfer the interner from the scanner to the arena so atoms can be resolved
+        self.arena.set_interner(self.scanner.take_interner());
         (self.arena, self.parse_diagnostics)
     }
 }
