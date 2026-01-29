@@ -51,7 +51,26 @@ This document outlines the critical issues causing conformance failures, priorit
 
 ### Completed Commits
 
-1. **Investigation: TS2339 Property Access Errors** (Jan 29, 2026)
+1. **Investigation: TS2339 Architectural Gap** (Jan 29, 2026)
+   - Verified Promise await unwrapping working correctly
+   - Tested string primitives (length, toUpperCase, etc.) - working
+   - **Critical Finding**: apparent_primitive_member_kind uses hardcoded lists
+   - **Issue**: Does NOT look up String/Number/Boolean interfaces from lib.d.ts
+   - **Impact**: 140x TS2339 errors in 500-test sample (332x in 1000-test sample)
+   - **Root Cause**: Solver bypasses lib definitions, uses only hardcoded properties
+   - **Gemini Review**: Confirmed "critical architectural gap" - main cause of TS2339
+   - **Recommended Fix**: Two-phase approach
+     1. Connect primitives to global interfaces (complex, requires lib context in solver)
+     2. Verify array resolution (likely has same issue)
+   - **Files Investigated**:
+     - src/solver/operations.rs: resolve_property_access (line 2269)
+     - src/solver/operations.rs: resolve_primitive_property (line 3080)
+     - src/solver/operations.rs: resolve_apparent_property (line 3018)
+     - src/solver/apparent.rs: apparent_primitive_member_kind (line 155)
+   - **Status**: Requires significant architectural work (Solver to lib context bridge)
+   - **Next Action**: Consider simpler high-impact fixes first due to complexity
+
+2. **Investigation: TS2339 Property Access Errors** (Jan 29, 2026)
    - Promise await unwrapping verified working correctly
    - Test case: `await po` where `po: Promise<{ fn: ... }>` works
    - Infrastructure in place: `promise_like_return_type_argument` in promise_checker.rs
