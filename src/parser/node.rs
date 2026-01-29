@@ -26,6 +26,7 @@
 //! 4. **O(1) node access**: Direct index into typed pool
 
 use super::base::{NodeIndex, NodeList};
+use crate::interner::{Atom, Interner};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -137,6 +138,10 @@ pub enum NodeCategory {
 /// Data for identifier nodes (Identifier, PrivateIdentifier)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IdentifierData {
+    /// Interned atom for O(1) comparison (OPTIMIZATION: use this instead of escaped_text)
+    #[serde(skip, default = "Atom::none")]
+    pub atom: Atom,
+    /// The identifier text (DEPRECATED: kept for backward compatibility during migration)
     pub escaped_text: String,
     pub original_text: Option<String>,
     pub type_arguments: Option<NodeList>,
@@ -901,6 +906,11 @@ pub struct NodeArena {
     /// The thin node headers (16 bytes each)
     pub nodes: Vec<Node>,
 
+    /// String interner for resolving identifier atoms
+    /// This is populated from the scanner after parsing completes
+    #[serde(skip)]
+    pub interner: Interner,
+
     // ==========================================================================
     // Typed data pools - organized by category
     // ==========================================================================
@@ -1053,6 +1063,26 @@ impl NodeArena {
     const MAX_NODE_PREALLOC: usize = 5_000_000;
     pub fn new() -> NodeArena {
         NodeArena::default()
+    }
+
+    /// Set the interner (called after parsing to transfer ownership from scanner)
+    pub fn set_interner(&mut self, interner: Interner) {
+        self.interner = interner;
+    }
+
+    /// Get a reference to the interner
+    pub fn interner(&self) -> &Interner {
+        &self.interner
+    }
+
+    /// Resolve an identifier's text using atom (fast) or escaped_text (fallback)
+    #[inline]
+    pub fn resolve_identifier_text<'a>(&'a self, data: &'a IdentifierData) -> &'a str {
+        if data.atom != Atom::NONE {
+            self.interner.resolve(data.atom)
+        } else {
+            &data.escaped_text
+        }
     }
 
     /// Create an arena with pre-allocated capacity.
@@ -4621,7 +4651,8 @@ impl NodeAccess for NodeArena {
     fn get_identifier_text(&self, index: NodeIndex) -> Option<&str> {
         let node = self.get(index)?;
         let data = self.get_identifier(node)?;
-        Some(&data.escaped_text)
+        // Use atom for O(1) lookup if available, otherwise fall back to escaped_text
+        Some(self.resolve_identifier_text(data))
     }
 
     fn get_literal_text(&self, index: NodeIndex) -> Option<&str> {
