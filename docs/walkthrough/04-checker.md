@@ -1,112 +1,68 @@
 # Checker Module Deep Dive
 
-The checker is the largest module (~61,000 lines), responsible for type checking orchestration. It coordinates symbol resolution, type computation, control flow analysis, and error reporting.
+The checker is a large module (~64,000 lines), responsible for type checking orchestration. It coordinates symbol resolution, type computation, control flow analysis, and error reporting.
 
 ## File Structure
 
 ```
 src/checker/
-├── mod.rs                    Module organization
-├── state.rs         (12,314) Main orchestration and state machine
-├── context.rs         (976)  Shared checking context
-├── type_checking.rs (11,183) Type checking utilities
-├── type_computation.rs(3,352) Expression type computation
-├── control_flow.rs   (3,856) Control flow analysis
-├── symbol_resolver.rs(1,417) Symbol resolution
-├── flow_analysis.rs  (1,643) Definite assignment analysis
-├── error_reporter.rs (1,927) Error emission and formatting
-├── class_type.rs             Class-specific type checking
-├── function_type.rs          Function-specific type checking
-├── array_type.rs             Array type handling
-├── interface_type.rs         Interface type handling
-├── union_type.rs             Union type operations
-├── intersection_type.rs      Intersection type operations
-├── iterators.rs              Iterator protocol checking
-├── generators.rs             Generator support
-├── jsx.rs                    JSX type checking
-├── promise_checker.rs        Promise type checking
-└── types/                    Type-specific modules
+├── mod.rs              Module organization
+├── state.rs            Main orchestration and state machine (~9,000 LOC)
+├── context.rs          Shared checking context (~1,100 LOC)
+├── type_checking.rs    Type checking utilities (~7,900 LOC)
+├── type_computation.rs Expression type computation (~3,200 LOC)
+├── control_flow.rs     Control flow analysis (~3,900 LOC)
+├── symbol_resolver.rs  Symbol resolution (~2,000 LOC)
+├── flow_analysis.rs    Definite assignment analysis (~1,700 LOC)
+├── error_reporter.rs   Error emission and formatting (~2,100 LOC)
+├── class_type.rs       Class-specific type checking
+├── function_type.rs    Function-specific type checking
+├── array_type.rs       Array type handling
+├── interface_type.rs   Interface type handling
+├── union_type.rs       Union type operations
+├── intersection_type.rs Intersection type operations
+├── iterators.rs        Iterator protocol checking
+├── generators.rs       Generator support
+├── jsx.rs              JSX type checking
+├── promise_checker.rs  Promise type checking
+└── types/              Type-specific modules
 ```
 
 ## Core Architecture
 
 ### CheckerState (`state.rs`)
 
-The main orchestration struct:
-
-```rust
-pub struct CheckerState<'a> {
-    pub ctx: CheckerContext<'a>,  // All shared state
-}
-```
+The main orchestration struct with `ctx: CheckerContext` containing all shared state.
 
 ### CheckerContext (`context.rs`)
 
 Houses all shared state during type checking:
 
-```rust
-pub struct CheckerContext<'a> {
-    // Compiler options
-    pub options: &'a CompilerOptions,
-    pub strict_null_checks: bool,
-    pub no_implicit_any: bool,
-    pub strict_function_types: bool,
-    pub strict_property_initialization: bool,
+**Compiler options:** `options`, `strict_null_checks`, `no_implicit_any`, `strict_function_types`, `strict_property_initialization`
 
-    // Caching
-    pub symbol_types: RefCell<FxHashMap<SymbolId, TypeId>>,
-    pub node_types: RefCell<FxHashMap<NodeIndex, TypeId>>,
-    pub type_parameter_names: RefCell<FxHashMap<TypeId, Atom>>,
+**Caching:** `symbol_types`, `node_types`, `type_parameter_names` (all `RefCell<FxHashMap<...>>`)
 
-    // Recursion guards
-    pub symbol_resolution_stack: RefCell<Vec<SymbolId>>,
-    pub node_resolution_set: RefCell<FxHashSet<u32>>,
-    pub class_instance_resolution_set: RefCell<FxHashSet<SymbolId>>,
+**Recursion guards:** `symbol_resolution_stack`, `node_resolution_set`, `class_instance_resolution_set`
 
-    // Type environment
-    pub type_env: RefCell<TypeEnvironment>,
+**Type environment:** `type_env: RefCell<TypeEnvironment>`
 
-    // Diagnostics
-    pub diagnostics: RefCell<Vec<Diagnostic>>,
+**Diagnostics:** `diagnostics: RefCell<Vec<Diagnostic>>`
 
-    // Fuel counter (prevents infinite loops)
-    pub fuel: RefCell<u32>,  // MAX_TYPE_RESOLUTION_OPS: 500,000
-}
-```
+**Fuel counter:** `fuel: RefCell<u32>` - `MAX_TYPE_RESOLUTION_OPS` (100,000 native / 20,000 WASM)
 
 ## Type Resolution Entry Points
 
-### 📍 KEY: get_type_of_node (`state.rs:615`)
+### 📍 KEY: get_type_of_node (`state.rs`)
 
-Main type computation with caching and circular reference detection:
+Main type computation with caching and circular reference detection.
 
-```rust
-pub fn get_type_of_node(&mut self, arena: &NodeArena, node: NodeIndex) -> TypeId {
-    // 1. Check cache
-    if let Some(cached) = self.ctx.node_types.borrow().get(&node) {
-        return *cached;
-    }
-
-    // 2. Check for circular reference
-    if self.ctx.node_resolution_set.borrow().contains(&node.index()) {
-        return TypeId::ERROR;  // Circular reference
-    }
-
-    // 3. Mark as in-progress
-    self.ctx.node_resolution_set.borrow_mut().insert(node.index());
-
-    // 4. Compute type
-    let result = self.compute_type_of_node(arena, node);
-
-    // 5. Remove from in-progress set
-    self.ctx.node_resolution_set.borrow_mut().remove(&node.index());
-
-    // 6. Cache result
-    self.ctx.node_types.borrow_mut().insert(node, result);
-
-    result
-}
-```
+`get_type_of_node(idx) -> TypeId`:
+1. Check cache (`ctx.node_types`)
+2. Check for circular reference (`ctx.node_resolution_set`)
+3. Mark as in-progress
+4. Compute type via `compute_type_of_node()`
+5. Remove from in-progress set
+6. Cache and return result
 
 ### get_type_of_symbol (`state.rs:4020`)
 

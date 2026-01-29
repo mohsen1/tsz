@@ -334,34 +334,36 @@ All LSP modules are located in `src/lsp/`:
 
 ```
 src/lsp/
-├── mod.rs              # Module exports and documentation
-├── project.rs          # Multi-file project container (~3,100 lines)
-├── resolver.rs         # Symbol resolution utilities (~1,970 lines)
-├── code_actions.rs     # Quick fixes and refactorings (~2,730 lines)
-├── completions.rs      # Code completion (~1,190 lines)
-├── signature_help.rs   # Parameter hints (~1,140 lines)
-├── references.rs       # Find references (~1,140 lines)
-├── definition.rs       # Go to definition (~880 lines)
-├── semantic_tokens.rs  # Syntax highlighting (~790 lines)
-├── document_symbols.rs # File outline (~675 lines)
-├── rename.rs           # Symbol rename (~615 lines)
-├── code_lens.rs        # Code lens (~550 lines) ✅ NEW
-├── folding.rs          # Code folding (~535 lines)
-├── hover.rs            # Hover information (~520 lines)
-├── type_definition.rs  # Type definition (~500 lines) ✅ NEW
-├── highlighting.rs     # Document highlighting (~400 lines)
-├── formatting.rs       # Code formatting (~400 lines)
-├── selection_range.rs  # Selection range (~350 lines) ✅ NEW
-├── inlay_hints.rs      # Inlay hints (~305 lines)
-├── position.rs         # Position utilities (~225 lines)
-├── jsdoc.rs            # JSDoc parsing (~200 lines)
-├── diagnostics.rs      # Error reporting (~165 lines)
-├── utils.rs            # Shared utilities
-├── symbols.rs          # Symbol definitions
-└── *_tests.rs          # Test files
+├── mod.rs              Module exports and documentation
+├── project.rs          Multi-file project container
+├── resolver.rs         Symbol resolution utilities
+├── code_actions.rs     Quick fixes and refactorings
+├── completions.rs      Code completion
+├── signature_help.rs   Parameter hints
+├── references.rs       Find references
+├── definition.rs       Go to definition
+├── semantic_tokens.rs  Syntax highlighting
+├── document_symbols.rs File outline
+├── rename.rs           Symbol rename
+├── code_lens.rs        Code lens
+├── folding.rs          Code folding
+├── hover.rs            Hover information
+├── type_definition.rs  Type definition
+├── highlighting.rs     Document highlighting
+├── formatting.rs       Code formatting
+├── selection_range.rs  Selection range
+├── inlay_hints.rs      Inlay hints
+├── position.rs         Position utilities
+├── jsdoc.rs            JSDoc parsing
+├── diagnostics.rs      Error reporting
+├── utils.rs            Shared utilities
+├── symbols.rs          Symbol definitions
+├── symbol_index.rs     Symbol indexing
+├── dependency_graph.rs Dependency tracking
+└── *_tests.rs          Test files
 
 src/bin/
-└── tsz_lsp.rs          # LSP server binary (~800 lines) ✅ NEW
+└── tsz_lsp.rs          LSP server binary
 ```
 
 ---
