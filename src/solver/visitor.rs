@@ -188,6 +188,11 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
+    /// Visit a module namespace type (import * as ns).
+    fn visit_module_namespace(&mut self, _symbol_ref: u32) -> Self::Output {
+        Self::default_output()
+    }
+
     // =========================================================================
     // Helper Methods
     // =========================================================================
@@ -234,6 +239,7 @@ pub trait TypeVisitor: Sized {
             TypeKey::StringIntrinsic { kind, type_arg } => {
                 self.visit_string_intrinsic(*kind, *type_arg)
             }
+            TypeKey::ModuleNamespace(sym_ref) => self.visit_module_namespace(sym_ref.0),
             TypeKey::Error => self.visit_error(),
         }
     }
@@ -327,6 +333,7 @@ impl TypeKindVisitor {
             TypeKey::UniqueSymbol(_) => TypeKind::Primitive, // unique symbol is a primitive
             TypeKey::ThisType => TypeKind::TypeParameter,    // this is type-parameter-like
             TypeKey::StringIntrinsic { .. } => TypeKind::Primitive, // string intrinsics produce strings
+            TypeKey::ModuleNamespace(_) => TypeKind::Object, // module namespace is object-like
             TypeKey::Error => TypeKind::Error,
         }
     }
@@ -546,6 +553,13 @@ where
 /// Matches: TypeKey::Literal(_)
 pub fn is_literal_type(types: &TypeInterner, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Literal(_)))
+}
+
+/// Check if a type is a module namespace type (import * as ns).
+///
+/// Matches: TypeKey::ModuleNamespace(_)
+pub fn is_module_namespace_type(types: &TypeInterner, type_id: TypeId) -> bool {
+    matches!(types.lookup(type_id), Some(TypeKey::ModuleNamespace(_)))
 }
 
 /// Check if a type is a function type (Function or Callable).
@@ -821,7 +835,10 @@ impl<'a> RecursiveTypeCollector<'a> {
                     self.visit(default);
                 }
             }
-            TypeKey::Ref(_) | TypeKey::TypeQuery(_) | TypeKey::UniqueSymbol(_) => {
+            TypeKey::Ref(_)
+            | TypeKey::TypeQuery(_)
+            | TypeKey::UniqueSymbol(_)
+            | TypeKey::ModuleNamespace(_) => {
                 // Symbol references - don't traverse (would need resolver)
             }
             TypeKey::Application(app_id) => {
@@ -1001,7 +1018,10 @@ where
                 info.constraint.map(|c| self.check(c)).unwrap_or(false)
                     || info.default.map(|d| self.check(d)).unwrap_or(false)
             }
-            TypeKey::Ref(_) | TypeKey::TypeQuery(_) | TypeKey::UniqueSymbol(_) => false,
+            TypeKey::Ref(_)
+            | TypeKey::TypeQuery(_)
+            | TypeKey::UniqueSymbol(_)
+            | TypeKey::ModuleNamespace(_) => false,
             TypeKey::Application(app_id) => {
                 let app = self.types.type_application(*app_id);
                 self.check(app.base) || app.args.iter().any(|&a| self.check(a))
@@ -1045,6 +1065,11 @@ use crate::solver::TypeDatabase;
 /// Check if a type is a literal type (TypeDatabase version).
 pub fn is_literal_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Literal(_)))
+}
+
+/// Check if a type is a module namespace type (TypeDatabase version).
+pub fn is_module_namespace_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(types.lookup(type_id), Some(TypeKey::ModuleNamespace(_)))
 }
 
 /// Check if a type is a function type (TypeDatabase version).

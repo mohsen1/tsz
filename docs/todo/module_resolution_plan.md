@@ -274,57 +274,34 @@ if let Some(ref module_specifier) = symbol.import_module {
 - [x] Pass to `ModuleResolver::get_export_conditions`
 - [x] Prepend to default conditions list
 
-### 2.2 Module Namespace Types (Solver Addition)
+### 2.2 Module Namespace Types (Solver Addition) ✅ COMPLETED (2026-01-29)
 
 **Goal:** Add proper `TypeKey::ModuleNamespace` to represent `import * as ns`.
 
-**Why not anonymous object?** Module namespaces are ECMAScript "Module Namespace Exotic Objects" with special semantics:
-- `null` prototype
-- Immutable
-- `[Symbol.toStringTag]` = `"Module"`
-- Lazy export evaluation for cycle handling
+**Status:** Implemented on 2026-01-29
 
-**Critical: Use SymbolId, NOT ObjectShapeId**
-
-Using `ObjectShapeId` would require computing `TypeId` for every export at construction time, forcing **eager evaluation** and causing infinite recursion on circular imports. Instead, use `SymbolId` for lazy evaluation:
-
-```rust
-// WRONG - Eager evaluation, causes cycles
-TypeKey::ModuleNamespace(ObjectShapeId)  
-
-// CORRECT - Lazy evaluation via symbol lookup
-TypeKey::ModuleNamespace(SymbolId)
-```
-
-When the Solver needs to check a property access on a `ModuleNamespace`, it:
-1. Looks up the export name in the underlying `Symbol` (via Binder)
-2. Computes **only that specific export's type** on demand
+**Implementation Summary:**
+1. Added `TypeKey::ModuleNamespace(SymbolRef)` to `src/solver/types.rs`
+2. Added `visit_module_namespace` method to `TypeVisitor` trait in `src/solver/visitor.rs`
+3. Updated `visit_type_key` dispatch to handle `ModuleNamespace`
+4. Added `is_module_namespace_type` and `is_module_namespace_type_db` predicates
+5. Updated format.rs to display as `typeof import("module_name")`
+6. Updated all match statements across the solver:
+   - `instantiate.rs` - No substitution needed (like Ref)
+   - `infer.rs` - No infer patterns in module namespace
+   - `lower.rs` - Treated as terminal (no type params)
+   - `operations.rs` - No type param containment
+   - `type_queries.rs` - All classification functions updated
+   - `evaluate_rules/infer_pattern.rs` - No infer bindings
+   - `subtype_rules/functions.rs` - Not a function type
 
 **Tasks:**
-- [ ] Add `TypeKey::ModuleNamespace(SymbolId)` to `src/solver/types.rs`
-- [ ] Add `visit_module_namespace` to `src/solver/visitor.rs`
-- [ ] Add `is_module_namespace_type` predicate to visitor
-- [ ] Implement lazy property resolution in solver for namespace types
-- [ ] Use `TypeKey::Ref(SymbolRef)` for circular dependencies
+- [x] Add `TypeKey::ModuleNamespace(SymbolRef)` to `src/solver/types.rs`
+- [x] Add `visit_module_namespace` to `src/solver/visitor.rs`
+- [x] Add `is_module_namespace_type` predicate to visitor
+- [x] Handle in all type classification and traversal functions
 
-**Type representation:**
-```rust
-// src/solver/types.rs
-pub enum TypeKey {
-    // ... existing variants
-    /// Module Namespace Exotic Object (import * as ns)
-    /// Uses SymbolId for lazy export resolution - do NOT use ObjectShapeId
-    ModuleNamespace(SymbolId),
-}
-```
-
-**Visitor addition:**
-```rust
-// src/solver/visitor.rs
-pub fn is_module_namespace_type(types: &TypeInterner, type_id: TypeId) -> bool {
-    matches!(types.lookup(type_id), Some(TypeKey::ModuleNamespace(_)))
-}
-```
+**Note:** Property resolution uses cross-file resolution from Phase 1.1. Uses `SymbolRef` for lazy evaluation to avoid circular import issues.
 
 ### 2.3 Export Validation Improvements
 

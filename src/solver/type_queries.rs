@@ -406,7 +406,10 @@ where
                 info.constraint.map(|c| self.check(c)).unwrap_or(false)
                     || info.default.map(|d| self.check(d)).unwrap_or(false)
             }
-            TypeKey::Ref(_) | TypeKey::TypeQuery(_) | TypeKey::UniqueSymbol(_) => false,
+            TypeKey::Ref(_)
+            | TypeKey::TypeQuery(_)
+            | TypeKey::UniqueSymbol(_)
+            | TypeKey::ModuleNamespace(_) => false,
             TypeKey::Application(app_id) => {
                 let app = self.db.type_application(*app_id);
                 self.check(app.base) || app.args.iter().any(|&a| self.check(a))
@@ -819,6 +822,7 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => ConstructorTypeKind::NotConstructor,
     }
 }
@@ -1113,6 +1117,7 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
         | TypeKey::ReadonlyType(_)
         | TypeKey::TypeQuery(_)
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => ConstraintTypeKind::NoConstraint,
     }
 }
@@ -1204,6 +1209,7 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         | TypeKey::ThisType
         | TypeKey::TypeQuery(_)
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => SignatureTypeKind::NoSignatures,
     }
 }
@@ -1328,6 +1334,7 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
         | TypeKey::TypeQuery(_)
         | TypeKey::KeyOf(_)
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => FullIterableTypeKind::NotIterable,
     }
 }
@@ -1516,6 +1523,7 @@ pub fn classify_for_property_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> P
         | TypeKey::TypeQuery(_)
         | TypeKey::ReadonlyType(_)
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => PropertyLookupKind::NoProperties,
     }
 }
@@ -1605,6 +1613,7 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => EvaluationNeeded::Resolved(type_id),
     }
 }
@@ -1693,6 +1702,7 @@ pub fn classify_for_property_access(
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => PropertyAccessClassification::Resolved(type_id),
     }
 }
@@ -1798,6 +1808,7 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         | TypeKey::ThisType
         | TypeKey::TypeQuery(_)
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => TypeTraversalKind::Terminal,
     }
 }
@@ -1900,6 +1911,7 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         | TypeKey::TypeQuery(_)
         | TypeKey::ReadonlyType(_)
         | TypeKey::StringIntrinsic { .. }
+        | TypeKey::ModuleNamespace(_)
         | TypeKey::Error => InterfaceMergeKind::Other,
     }
 }

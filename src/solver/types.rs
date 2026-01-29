@@ -371,6 +371,10 @@ pub enum TypeKey {
         type_arg: TypeId,
     },
 
+    /// Module namespace type (import * as ns from "module")
+    /// Uses SymbolRef for lazy evaluation to avoid circular dependency issues
+    ModuleNamespace(SymbolRef),
+
     /// Error type for recovery
     Error,
 }
@@ -788,7 +792,7 @@ pub fn is_compiler_managed_type(name: &str) -> bool {
         "Uppercase" |       // String intrinsic
         "Lowercase" |       // String intrinsic
         "Capitalize" |      // String intrinsic
-        "Uncapitalize"      // String intrinsic
+        "Uncapitalize" // String intrinsic
     )
 }
 
