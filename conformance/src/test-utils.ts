@@ -6,13 +6,7 @@
  */
 
 import * as path from 'path';
-import {
-  loadLibManifest,
-  resolveLibsUniversal,
-  getDefaultLibNameForTarget,
-  normalizeLibName,
-  type LibManifest,
-} from './lib-manifest.js';
+import { normalizeLibName } from './lib-manifest.js';
 
 // ============================================================================
 // Test Directive Parsing
@@ -169,64 +163,36 @@ export interface CheckOptions {
   emitDecoratorMetadata?: boolean;
 }
 
-// Cached manifest
-let cachedManifest: LibManifest | null | undefined = undefined;
-
-function getManifest(): LibManifest | null {
-  if (cachedManifest === undefined) {
-    try {
-      cachedManifest = loadLibManifest();
-    } catch {
-      cachedManifest = null;
-    }
-  }
-  return cachedManifest;
-}
-
 /**
- * Convert parsed directives to CheckOptions for tsz-server or WASM.
- * Resolves lib dependencies automatically.
+ * Convert parsed directives to CheckOptions for tsz-server.
+ * Just passes through the directives - tsz handles lib loading.
  */
 export function directivesToCheckOptions(
   directives: ParsedDirectives,
-  libDirs: string[] = []
+  _libDirs: string[] = []
 ): CheckOptions {
   const options: CheckOptions = {};
-  const manifest = getManifest();
 
-  // Target
+  // Target - pass through as-is
   if (directives.target !== undefined) {
     options.target = String(directives.target);
   }
 
-  // noLib
+  // noLib - pass through as-is
   if (directives.nolib !== undefined) {
     options.noLib = Boolean(directives.nolib);
   }
 
-  // Resolve libs with dependencies
-  if (!options.noLib) {
-    let libNames: string[];
-
-    if (directives.lib !== undefined) {
-      // Explicit lib option
-      const libVal = directives.lib;
-      if (typeof libVal === 'string') {
-        libNames = (libVal as string).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-      } else if (Array.isArray(libVal)) {
-        libNames = libVal.map(s => String(s).trim().toLowerCase()).filter(Boolean);
-      } else {
-        libNames = [];
-      }
-    } else {
-      // Derive from target
-      const defaultLib = getDefaultLibNameForTarget(options.target || 'es5');
-      libNames = [defaultLib];
+  // lib - pass through as-is, tsz handles resolution
+  if (directives.lib !== undefined) {
+    const libVal = directives.lib;
+    if (typeof libVal === 'string') {
+      options.lib = (libVal as string).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    } else if (Array.isArray(libVal)) {
+      options.lib = libVal.map(s => String(s).trim().toLowerCase()).filter(Boolean);
     }
-
-    // Use universal resolver (manifest or file-based fallback)
-    options.lib = resolveLibsUniversal(libNames, libDirs, manifest);
   }
+  // If no @lib specified, don't set options.lib - let tsz decide defaults
 
   // Strict mode flags
   if (directives.strict !== undefined) {
@@ -294,33 +260,27 @@ export function directivesToCheckOptions(
 }
 
 /**
- * Get lib names for a test case (used by both modes).
+ * Get lib names for a test case.
+ * Just parses the @lib directive - doesn't resolve dependencies.
  */
 export function getLibNamesForDirectives(
   directives: ParsedDirectives,
-  libDirs: string[] = []
+  _libDirs: string[] = []
 ): string[] {
   if (directives.nolib) {
     return [];
   }
 
-  const manifest = getManifest();
-  let libNames: string[];
-
-  if (directives.lib !== undefined) {
-    const libVal = directives.lib;
-    if (typeof libVal === 'string') {
-      libNames = (libVal as string).split(',').map(s => normalizeLibName(s)).filter(Boolean);
-    } else if (Array.isArray(libVal)) {
-      libNames = libVal.map(s => normalizeLibName(String(s))).filter(Boolean);
-    } else {
-      libNames = [];
-    }
-  } else {
-    const target = directives.target ? String(directives.target) : 'es5';
-    const defaultLib = getDefaultLibNameForTarget(target);
-    libNames = [defaultLib];
+  if (directives.lib === undefined) {
+    return [];
   }
 
-  return resolveLibsUniversal(libNames, libDirs, manifest);
+  const libVal = directives.lib;
+  if (typeof libVal === 'string') {
+    return (libVal as string).split(',').map(s => normalizeLibName(s)).filter(Boolean);
+  } else if (Array.isArray(libVal)) {
+    return libVal.map(s => normalizeLibName(String(s))).filter(Boolean);
+  }
+
+  return [];
 }

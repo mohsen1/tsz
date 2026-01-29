@@ -733,10 +733,19 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
     Ok(result)
 }
 
-fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
+/// Get the default lib name for a target.
+///
+/// This matches tsc's default behavior:
+/// - Each target loads the corresponding `.full` lib which includes:
+///   - The ES version libs (e.g., es5, es2015.promise, etc.)
+///   - DOM types
+///   - ScriptHost types
+///
+/// The `.full` libs chain together via `/// <reference lib="..." />` directives.
+pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
     match target {
-        ScriptTarget::ES3 | ScriptTarget::ES5 => "lib",
-        ScriptTarget::ES2015 => "es6",
+        ScriptTarget::ES3 | ScriptTarget::ES5 => "es5.full",
+        ScriptTarget::ES2015 => "es2015.full",
         ScriptTarget::ES2016 => "es2016.full",
         ScriptTarget::ES2017 => "es2017.full",
         ScriptTarget::ES2018 => "es2018.full",
@@ -748,7 +757,14 @@ fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
     }
 }
 
-fn default_lib_dir() -> Result<PathBuf> {
+/// Get the default lib directory.
+///
+/// Searches in order:
+/// 1. TSZ_LIB_DIR environment variable
+/// 2. Relative to the executable
+/// 3. Relative to current working directory
+/// 4. TypeScript/src/lib in the source tree
+pub fn default_lib_dir() -> Result<PathBuf> {
     if let Some(dir) = lib_dir_from_env() {
         return Ok(dir);
     }
@@ -905,7 +921,9 @@ fn normalize_lib_name(value: &str) -> String {
         .to_string()
 }
 
-pub(crate) fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptTarget {
+/// Convert emitter ScriptTarget to checker ScriptTarget.
+/// The emitter has more variants (ES2021, ES2022) which map to ESNext in the checker.
+pub fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptTarget {
     match target {
         ScriptTarget::ES3 => CheckerScriptTarget::ES3,
         ScriptTarget::ES5 => CheckerScriptTarget::ES5,

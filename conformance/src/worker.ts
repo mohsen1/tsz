@@ -981,21 +981,8 @@ process.on('unhandledRejection', (reason) => {
     }
   } catch {}
 
-  // Set TypeScript lib directory (for es2015, dom, etc.)
-  try {
-    // Try multiple possible locations for TypeScript lib files
-    const candidates = [
-      path.resolve(__dirname, '../../TypeScript/node_modules/typescript/lib'),
-      path.resolve(process.cwd(), 'TypeScript/node_modules/typescript/lib'),
-      '/work/TypeScript/node_modules/typescript/lib',
-    ];
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        tsLibDir = candidate;
-        break;
-      }
-    }
-  } catch {}
+  // Set TypeScript lib directory - always at TypeScript/src/lib relative to project root
+  tsLibDir = path.resolve(__dirname, '../../TypeScript/src/lib');
 
   // Build lib directories list for shared utilities
   workerLibDirs = [];
