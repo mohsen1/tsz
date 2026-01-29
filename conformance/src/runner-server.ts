@@ -657,6 +657,8 @@ interface ServerRunnerConfig {
   verbose?: boolean;
   categories?: string[];
   memoryLimitMB?: number;
+  filter?: string;
+  printTest?: boolean;
 }
 
 interface TestStats {
@@ -708,6 +710,133 @@ function formatMemory(mb: number): string {
 }
 
 /**
+ * Print detailed information about a specific test.
+ * Used with --print-test --filter=<pattern> for debugging.
+ */
+async function printTestDetails(
+  testFile: string,
+  relativePath: string,
+  cacheEntries: Record<string, CacheEntry>,
+  pool: TszServerPool,
+  libDirs: string[]
+): Promise<void> {
+  const content = fs.readFileSync(testFile, 'utf-8');
+  const files = { [path.basename(testFile)]: content };
+  const directives = parseDirectivesOnly(content);
+  const checkOptions = directivesToCheckOptions(directives, libDirs);
+  const cacheEntry = cacheEntries[relativePath];
+  const tscCodes = cacheEntry?.codes || [];
+
+  log('\n' + '═'.repeat(70), colors.cyan);
+  log(`  TEST: ${relativePath}`, colors.bold);
+  log('═'.repeat(70), colors.cyan);
+
+  // Print file content with line numbers
+  log('\n📄 File Content:', colors.bold);
+  log('─'.repeat(50), colors.dim);
+  const lines = content.split('\n');
+  lines.forEach((line, i) => {
+    const lineNum = String(i + 1).padStart(3, ' ');
+    log(`${colors.dim}${lineNum}│${colors.reset} ${line}`);
+  });
+  log('─'.repeat(50), colors.dim);
+
+  // Print parsed directives
+  log('\n⚙️  Parsed Directives:', colors.bold);
+  for (const [key, value] of Object.entries(directives)) {
+    if (value !== undefined) {
+      log(`  ${key}: ${JSON.stringify(value)}`, colors.yellow);
+    }
+  }
+
+  // Print check options sent to server
+  log('\n📤 Options sent to tsz-server:', colors.bold);
+  log(`  ${JSON.stringify(checkOptions, null, 2).split('\n').join('\n  ')}`, colors.dim);
+
+  // Run the check
+  log('\n🔍 Running tsz check...', colors.bold);
+  const { result, timedOut } = await pool.withClientTimeout(
+    (client) => client.check(files, checkOptions),
+    10000
+  );
+
+  if (timedOut) {
+    log('  ⏱️  TIMEOUT', colors.red);
+    return;
+  }
+
+  if (result?.oom) {
+    log('  💾 OOM', colors.red);
+    return;
+  }
+
+  const tszCodes = result?.codes || [];
+
+  // Print TSC expected errors
+  log('\n📋 TSC Expected Errors (from cache):', colors.bold);
+  if (tscCodes.length === 0) {
+    log('  (none)', colors.green);
+  } else {
+    const grouped = tscCodes.reduce((acc, code) => {
+      acc[code] = (acc[code] || 0) + 1;
+      return acc;
+    }, {} as Record<number, number>);
+    for (const [code, count] of Object.entries(grouped)) {
+      log(`  TS${code}: ${count}x`, colors.yellow);
+    }
+  }
+
+  // Print tsz actual errors
+  log('\n🔧 tsz Actual Errors:', colors.bold);
+  if (tszCodes.length === 0) {
+    log('  (none)', colors.green);
+  } else {
+    const grouped = tszCodes.reduce((acc, code) => {
+      acc[code] = (acc[code] || 0) + 1;
+      return acc;
+    }, {} as Record<number, number>);
+    for (const [code, count] of Object.entries(grouped)) {
+      log(`  TS${code}: ${count}x`, colors.yellow);
+    }
+  }
+
+  // Compare
+  const tscSet = new Set(tscCodes);
+  const tszSet = new Set(tszCodes);
+  const missing = tscCodes.filter(c => !tszSet.has(c));
+  const extra = tszCodes.filter(c => !tscSet.has(c));
+
+  log('\n📊 Comparison:', colors.bold);
+  if (missing.length === 0 && extra.length === 0) {
+    log('  ✓ PASS - Exact match!', colors.green);
+  } else {
+    log('  ✗ FAIL', colors.red);
+    if (missing.length > 0) {
+      const grouped = missing.reduce((acc, code) => {
+        acc[code] = (acc[code] || 0) + 1;
+        return acc;
+      }, {} as Record<number, number>);
+      log('\n  Missing (tsz should emit but doesn\'t):', colors.yellow);
+      for (const [code, count] of Object.entries(grouped)) {
+        log(`    TS${code}: ${count}x`, colors.yellow);
+      }
+    }
+    if (extra.length > 0) {
+      const grouped = extra.reduce((acc, code) => {
+        acc[code] = (acc[code] || 0) + 1;
+        return acc;
+      }, {} as Record<number, number>);
+      log('\n  Extra (tsz emits but shouldn\'t):', colors.red);
+      for (const [code, count] of Object.entries(grouped)) {
+        log(`    TS${code}: ${count}x`, colors.red);
+      }
+    }
+  }
+
+  log('\n' + '═'.repeat(70) + '\n', colors.cyan);
+}
+
+/**
  * Run conformance tests using tsz-server (persistent process).
  *
  * This is 5-10x faster than spawn-per-test mode because:
@@ -724,6 +853,8 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   const verbose = config.verbose ?? false;
   const categories = config.categories ?? ['conformance', 'compiler'];
   const testTimeout = config.testTimeout ?? 10000;
+  const filter = config.filter;
+  const printTest = config.printTest ?? false;
   // Calculate memory limit: 80% of total memory / number of workers
   const memoryLimitMB = config.memoryLimitMB ?? calculateMemoryLimitMB(workerCount);
   const totalMemoryMB = Math.round(os.totalmem() / 1024 / 1024);
@@ -771,7 +902,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   };
 
   // Discover test files
-  const testFiles: string[] = [];
+  let testFiles: string[] = [];
   for (const category of categories) {
     const categoryPath = path.join(testsBasePath, category);
     if (fs.existsSync(categoryPath)) {
@@ -779,8 +910,39 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     }
   }
 
+  // Apply filter if specified
+  if (filter) {
+    const filterLower = filter.toLowerCase();
+    testFiles = testFiles.filter(f => f.toLowerCase().includes(filterLower));
+    log(`Filter "${filter}": ${formatNumber(testFiles.length)} tests match\n`, colors.yellow);
+  }
+
   if (testFiles.length === 0) {
     log('No test files found!', colors.red);
+    return stats;
+  }
+
+  // Handle --print-test mode
+  if (printTest) {
+    log(`Print-test mode: showing details for ${testFiles.length} test(s)\n`, colors.cyan);
+    
+    // Create a single-worker pool for print-test mode
+    const pool = new TszServerPool(1, { serverPath, libDir: localLibDir, memoryLimitMB });
+    try {
+      await pool.start();
+      
+      for (const testFile of testFiles.slice(0, 10)) { // Limit to 10 for safety
+        const relativePath = path.relative(testsBasePath, testFile);
+        await printTestDetails(testFile, relativePath, cacheEntries, pool, libDirs);
+      }
+      
+      if (testFiles.length > 10) {
+        log(`\n(Showing first 10 of ${testFiles.length} matching tests. Use a more specific filter.)`, colors.yellow);
+      }
+    } finally {
+      await pool.stop();
+    }
+    
     return stats;
   }
 

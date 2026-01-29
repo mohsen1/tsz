@@ -790,31 +790,21 @@ impl<'a> CheckerContext<'a> {
 
     /// Push a diagnostic with deduplication.
     /// Diagnostics with the same (start, code) are only emitted once.
+    /// Exception: TS2318 (missing global type) at position 0 uses message hash
+    /// to allow multiple distinct global type errors.
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
-        let key = (diag.start, diag.code);
-        use std::fs::OpenOptions;
-        use std::io::Write;
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/tsz_debug.txt")
-        {
-            let _ = writeln!(
-                file,
-                "push_diagnostic: start={}, code={}, key={:?}",
-                diag.start, diag.code, key
-            );
-            let _ = writeln!(
-                file,
-                "  emitted_diagnostics contains: {}",
-                self.emitted_diagnostics.contains(&key)
-            );
-            if self.emitted_diagnostics.contains(&key) {
-                let _ = writeln!(file, "  -> DUPLICATE SUPPRESSED");
-                return;
-            }
-            let _ = writeln!(file, "  -> EMITTING");
-        }
+        // For TS2318 at position 0, include message hash in key to allow distinct errors
+        // (e.g., "Cannot find global type 'Array'" vs "Cannot find global type 'Object'")
+        let key = if diag.code == 2318 && diag.start == 0 {
+            // Use a hash of the message to distinguish different TS2318 errors
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            diag.message_text.hash(&mut hasher);
+            (hasher.finish() as u32, diag.code)
+        } else {
+            (diag.start, diag.code)
+        };
+
         if self.emitted_diagnostics.contains(&key) {
             return;
         }

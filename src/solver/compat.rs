@@ -596,10 +596,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == TypeId::ANY || source == TypeId::NEVER {
             return true;
         }
-        // ERROR types should NOT silently pass - they represent unresolved types
-        // and should propagate errors rather than being silently compatible
+        // ERROR types should silently pass to prevent cascading errors
+        // (same as fast path behavior)
         if source == TypeId::ERROR {
-            return false;
+            return true;
         }
         if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
             return true;

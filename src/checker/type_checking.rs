@@ -2341,8 +2341,8 @@ impl<'a> CheckerState<'a> {
                 }
                 // Awaited is checked when using await type operator or async functions
                 "Awaited" => {
-                    // Check if there's async/await usage that would require Awaited
-                    !self.ctx.has_lib_loaded() || self.ctx.async_depth > 0
+                    // Only check if async/await is actually used, not just because noLib is set
+                    self.ctx.async_depth > 0
                 }
                 // CallableFunction/NewableFunction are needed for strict checks
                 "CallableFunction" | "NewableFunction" => {
@@ -2360,7 +2360,8 @@ impl<'a> CheckerState<'a> {
                     0,
                     0,
                 );
-                self.ctx.diagnostics.push(diag);
+                // Use push_diagnostic for consistent deduplication
+                self.ctx.push_diagnostic(diag);
             }
         }
     }
@@ -2368,35 +2369,14 @@ impl<'a> CheckerState<'a> {
     /// Check if we should emit an error for a feature-specific global type.
     ///
     /// This heuristic determines if a feature that requires a specific global type
-    /// is likely being used in the code.
-    fn should_check_for_feature_type(&self, type_name: &str) -> bool {
-        match type_name {
-            // For generators, we could traverse the AST looking for function* syntax
-            // For now, use a simple heuristic: emit if lib is minimal
-            "IterableIterator" => {
-                // Emit if we're using ES5 lib or noLib
-                !self.ctx.has_lib_loaded()
-            }
-            "AsyncIterableIterator" => {
-                // Emit if we're using ES5/ES2015 lib without ES2018+
-                !self.ctx.has_lib_loaded()
-            }
-            "TypedPropertyDescriptor" => {
-                // Emit if decorators are potentially used and type not available
-                // This requires checking for decorator syntax
-                !self.ctx.has_lib_loaded()
-            }
-            "Disposable" => {
-                // Check for 'using' declarations
-                // For now, use simple heuristic
-                false // Will be refined based on test results
-            }
-            "AsyncDisposable" => {
-                // Check for 'await using' declarations
-                false // Will be refined based on test results
-            }
-            _ => false,
-        }
+    /// is likely being used in the code. These errors are NOT emitted just because
+    /// noLib is set - they require the actual feature to be used.
+    fn should_check_for_feature_type(&self, _type_name: &str) -> bool {
+        // Don't emit feature-specific global type errors based on simple noLib detection.
+        // TSC only emits these when the actual feature is used (generators, decorators, etc.)
+        // For now, disable these to match TSC's behavior for @noLib tests.
+        // TODO: Implement proper feature detection (AST traversal for generators, decorators, etc.)
+        false
     }
 
     /// Check for duplicate identifiers (TS2300, TS2451, TS2392).
