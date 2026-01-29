@@ -4562,7 +4562,9 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        // Use get_symbol_with_libs to properly handle symbols from lib files
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
         // Defensive: Verify symbol is valid before accessing fields
         // This prevents crashes when symbol IDs reference non-existent symbols
         if symbol.flags & symbol_flags::ALIAS == 0 {
