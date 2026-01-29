@@ -3901,13 +3901,9 @@ impl<'a> CheckerState<'a> {
                 property_type.unwrap_or(TypeId::UNKNOWN)
             }
             PropertyAccessResult::IsUnknown => {
-                // TS2571: Object is of type 'unknown'
-                use crate::checker::types::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    access.expression,
-                    "Object is of type 'unknown'.",
-                    diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
-                );
+                // TS2339: Property does not exist on type 'unknown'
+                // Use the same error as TypeScript for property access on unknown
+                self.error_property_not_exist_at(&property_name, object_type_for_check, name_idx);
                 TypeId::ERROR
             }
         };
