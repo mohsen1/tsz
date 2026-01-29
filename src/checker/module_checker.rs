@@ -184,6 +184,8 @@ impl<'a> CheckerState<'a> {
                     self.check_reexport_chain_for_cycles(source_module, &mut visited);
                 }
             }
+            // Validate named re-exports exist in target module
+            self.validate_reexported_members(&export_decl, module_name);
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -197,6 +199,8 @@ impl<'a> CheckerState<'a> {
                     self.check_reexport_chain_for_cycles(source_module, &mut visited);
                 }
             }
+            // Validate named re-exports exist in target module
+            self.validate_reexported_members(&export_decl, module_name);
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -226,6 +230,105 @@ impl<'a> CheckerState<'a> {
         );
 
         self.ctx.import_resolution_stack.pop();
+    }
+
+    /// Validate that named re-exports exist in the target module.
+    ///
+    /// For `export { foo, bar as baz } from './module'`, validates that
+    /// `foo` and `bar` are actually exported by './module'.
+    ///
+    /// ## Emits TS2305 when:
+    /// - A named re-export doesn't exist in the target module
+    fn validate_reexported_members(
+        &mut self,
+        export_decl: &crate::parser::node::ExportDeclData,
+        module_name: &str,
+    ) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+        use crate::parser::syntax_kind_ext;
+
+        // Only validate named exports (not wildcard exports or declarations)
+        if export_decl.export_clause.is_none() {
+            return;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
+            return;
+        };
+
+        // Only check NAMED_EXPORTS (export { x, y } from 'module')
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return;
+        }
+
+        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+            return;
+        };
+
+        // Get the module's exports (try local binder first, then cross-file)
+        let module_exports = self
+            .ctx
+            .binder
+            .module_exports
+            .get(module_name)
+            .cloned()
+            .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
+
+        let Some(module_exports) = module_exports else {
+            return; // Module exports not found - TS2307 already emitted
+        };
+
+        // Check each export specifier
+        for &specifier_idx in &named_exports.elements.nodes {
+            let Some(spec_node) = self.ctx.arena.get(specifier_idx) else {
+                continue;
+            };
+
+            let Some(specifier) = self.ctx.arena.get_specifier(spec_node) else {
+                continue;
+            };
+
+            // Skip type-only re-exports since they might reference types that
+            // don't appear in the exports table
+            if specifier.is_type_only {
+                continue;
+            }
+
+            // Get the property name (what we're exporting from the source module)
+            // For `export { bar as baz }`, property_name is "bar"
+            // For `export { foo }`, we use the name "foo"
+            let export_name = if !specifier.property_name.is_none() {
+                if let Some(text) = self.get_identifier_text_from_idx(specifier.property_name) {
+                    text
+                } else {
+                    continue;
+                }
+            } else if !specifier.name.is_none() {
+                if let Some(text) = self.get_identifier_text_from_idx(specifier.name) {
+                    text
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+
+            // Check if this name is exported from the source module
+            if !module_exports.has(&export_name) {
+                // TS2305: Module has no exported member
+                let message = format_message(
+                    diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                    &[&export_name, module_name],
+                );
+                self.error_at_node(
+                    specifier_idx,
+                    &message,
+                    diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                );
+            }
+        }
     }
 
     // =========================================================================

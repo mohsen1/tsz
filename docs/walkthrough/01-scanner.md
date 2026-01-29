@@ -20,22 +20,17 @@ src/
 
 **Location**: `scanner_impl.rs` - struct `ScannerState`
 
-```rust
-pub struct ScannerState {
-    source: Arc<str>,                    // Shared source (zero-copy)
-    pos: usize,                          // Current byte position
-    end: usize,                          // End byte position
-    full_start_pos: usize,               // Start including trivia
-    token_start: usize,                  // Start excluding trivia
-    token: SyntaxKind,                   // Current token type
-    token_value: String,                 // Token text value
-    token_flags: u32,                    // TokenFlags bitfield
-    skip_trivia: bool,                   // Skip whitespace/comments?
-    interner: Interner,                  // String deduplication
-    token_atom: Atom,                    // Interned identifier
-    // ... additional fields
-}
-```
+Key fields:
+- `source: Arc<str>` - Shared source text (zero-copy)
+- `pos`, `end` - Current and end byte positions
+- `full_start_pos`, `token_start` - Token position tracking (with/without trivia)
+- `token: SyntaxKind` - Current token type
+- `token_value: String` - Token text value
+- `token_flags: u32` - TokenFlags bitfield
+- `skip_trivia: bool` - Skip whitespace/comments?
+- `interner: Interner` - String deduplication
+- `token_atom: Atom` - Interned identifier
+- Additional regex and separator error tracking fields
 
 ### 📍 KEY: SyntaxKind Enum
 
@@ -55,32 +50,20 @@ pub struct ScannerState {
 
 **Location**: `scanner_impl.rs` - enum `TokenFlags`
 
-16 flags packed into a single `u32`:
-
-```rust
-pub enum TokenFlags {
-    None = 0,
-    PrecedingLineBreak = 1,      // For ASI detection
-    Unterminated = 4,            // Unclosed string/comment
-    Scientific = 16,             // 1e10 notation
-    HexSpecifier = 64,           // 0x prefix
-    BinarySpecifier = 128,       // 0b prefix
-    OctalSpecifier = 256,        // 0o prefix
-    ContainsSeparator = 512,     // 1_000 syntax
-    ContainsInvalidSeparator = 16384,
-    // ...
-}
-```
+16+ flags packed into a single `u32`:
+- `None`, `PrecedingLineBreak` (ASI detection), `PrecedingJSDocComment`
+- `Unterminated` (unclosed string/comment), `ExtendedUnicodeEscape`
+- `Scientific` (1e10 notation), `Octal`
+- `HexSpecifier` (0x), `BinarySpecifier` (0b), `OctalSpecifier` (0o)
+- `ContainsSeparator` (1_000 syntax), `ContainsInvalidSeparator`
+- `UnicodeEscape`, `ContainsInvalidEscape`, `HexEscape`, `ContainsLeadingZero`
+- `PrecedingJSDocLeadingAsterisks`
 
 ## Tokenization Process
 
 ### Main Scan Loop
 
-**Location**: `scanner_impl.rs` - method `scan()`
-
-```rust
-pub fn scan(&mut self) -> SyntaxKind
-```
+**Location**: `scanner_impl.rs` - method `scan() -> SyntaxKind`
 
 The scanner uses a massive match statement on character codes:
 
@@ -144,11 +127,7 @@ Numeric separator validation fully detects invalid cases (`1__0`, `_1`, `1_`) an
 
 ### String Literals
 
-**Location**: `scanner_impl.rs` - method `scan_string()`
-
-```rust
-fn scan_string(&mut self, quote: char) -> SyntaxKind
-```
+**Location**: `scanner_impl.rs` - method `scan_string(quote) -> SyntaxKind`
 
 - Handles escape sequences: `\n`, `\r`, `\t`, `\\`, `\'`, `\"`
 - Line continuations: backslash before newline
@@ -204,28 +183,18 @@ Map<string, Map<string, number>>
 **Location**: `scanner_impl.rs` - JSX-related methods
 
 JSX requires special tokenization rules:
+- `scan_jsx_identifier()` - Allows hyphens (e.g., `data-testid`)
+- `re_scan_jsx_token()` - Switch to JSX mode
+- `scan_jsx_attribute_value()` - String or expression
+- `re_scan_jsx_attribute_value()` - Re-parse attribute
 
-```rust
-scan_jsx_identifier()         // Allows hyphens: data-testid
-re_scan_jsx_token()           // Switch to JSX mode
-scan_jsx_attribute_value()    // String or expression
-re_scan_jsx_attribute_value() // Re-parse attribute
-```
-
-**JSX identifiers** can contain hyphens (unlike regular identifiers):
-```typescript
-<my-component data-testid="foo" />
-```
+**JSX identifiers** can contain hyphens (unlike regular identifiers): `<my-component data-testid="foo" />`
 
 ## Performance Optimizations
 
 ### 1. Zero-Copy Architecture
 
-**Location**: `scanner_impl.rs` - `source` field
-
-```rust
-source: Arc<str>,  // Shared reference, NOT Vec<char>
-```
+**Location**: `scanner_impl.rs` - `source: Arc<str>` field
 
 Benefits:
 - No duplication across scanner, parser, AST phases
@@ -236,15 +205,8 @@ Benefits:
 
 **Location**: `interner.rs` - struct `Interner`
 
-```rust
-// 64-way sharded hash map for thread safety
-const SHARD_BITS: usize = 6;  // 2^6 = 64 shards
-
-// Returns Atom (u32) instead of String
-fn intern(&self, s: &str) -> Atom
-```
-
-Benefits:
+- 64-way sharded hash map for thread safety (`SHARD_BITS = 6`)
+- `intern(s) -> Atom` returns u32 handle instead of String
 - O(1) identifier comparison: `atom_a == atom_b`
 - Pre-interned common keywords (100+ words)
 - Deduplication saves memory for repeated identifiers
@@ -253,25 +215,13 @@ Benefits:
 
 **Location**: `scanner_impl.rs` - method `char_code_unchecked()`
 
-```rust
-#[inline(always)]
-fn char_code_unchecked(&self) -> u32 {
-    let b = self.source.as_bytes()[self.pos];
-    if b < 128 {
-        b as u32  // Fast path: single byte ASCII
-    } else {
-        // UTF-8 fallback
-    }
-}
-```
+- Fast path for ASCII bytes (< 128): single byte read
+- UTF-8 fallback for multi-byte characters
+- Inline always for hot loop performance
 
 ### 4. Buffer Reuse
 
-**Location**: `scanner_impl.rs` - in `scan()` method
-
-```rust
-self.token_value.clear();  // Reuse allocation
-```
+**Location**: `scanner_impl.rs` - `scan()` method calls `token_value.clear()` to reuse allocation
 
 ## State Snapshots for Lookahead
 
@@ -279,23 +229,16 @@ The parser needs to look ahead without consuming tokens:
 
 **Location**: `scanner_impl.rs` - struct `ScannerSnapshot`
 
-```rust
-pub struct ScannerSnapshot {
-    pos: usize,
-    end: usize,
-    full_start_pos: usize,
-    token_start: usize,
-    token: SyntaxKind,
-    token_value: String,
-    token_flags: u32,
-    // ... 10 fields total
-}
+Fields captured for snapshot:
+- `pos`, `full_start_pos`, `token_start` - Position tracking
+- `token: SyntaxKind` - Current token type
+- `token_value: String` - Token text
+- `token_flags: u32` - Token flags
+- `token_atom: Atom` - Interned identifier
+- `token_invalid_separator_pos`, `token_invalid_separator_is_consecutive` - Separator error tracking
+- `regex_flag_errors: Vec<RegexFlagError>` - Regex validation errors
 
-// Usage in parser:
-let snapshot = self.scanner.save_state();
-// ... lookahead logic ...
-self.scanner.restore_state(snapshot);
-```
+**Key methods**: `save_state()` and `restore_state(snapshot)` on `ScannerState`
 
 ## Integration with Parser
 
@@ -315,26 +258,18 @@ self.scanner.restore_state(snapshot);
 
 ### Zero-Copy Accessors
 
-**Location**: `scanner_impl.rs` - accessor methods
-
-```rust
-get_token_value_ref()  // Uses interned atom when possible
-get_token_text_ref()   // Direct source slice
-source_slice()         // Direct reference slicing
-```
+**Location**: `scanner_impl.rs` - accessor methods:
+- `get_token_value_ref()` - Uses interned atom when possible
+- `get_token_text_ref()` - Direct source slice
+- `source_slice()` - Direct reference slicing
 
 ## Known Gaps
 
 ### ⚠️ GAP: Unicode Support
 
-**Location**: `scanner_impl.rs` - in `is_identifier_start()`
+**Location**: `scanner_impl.rs` - `is_identifier_start()` and `is_identifier_part()`
 
-```rust
-// Simplified check: all non-ASCII treated as potential identifier chars
-ch > 127 // Unicode letter (simplified check)
-```
-
-**Issue**: Should use proper Unicode category tables (`ID_Start`, `ID_Continue`)
+**Issue**: Simplified check treats all non-ASCII chars (> 127) as potential identifier chars. Should use proper Unicode category tables (`ID_Start`, `ID_Continue`).
 **Impact**: May incorrectly accept/reject some Unicode identifiers
 
 ### ✅ FIXED: Octal Escapes in Templates

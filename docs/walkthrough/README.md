@@ -7,9 +7,8 @@ TSZ ("Zang" - Persian for "rust") is a high-performance TypeScript compiler writ
 
 ## Current Status
 
-- **Conformance**: 37.0% (4,508 / 12,197 tests passing)
-- **Codebase**: ~356,000 lines of Rust
-- **Target**: 60%+ conformance via systematic improvements
+- **Codebase**: ~560,000 lines of Rust
+- **Target**: Systematic conformance improvements
 
 ## Compilation Pipeline
 
@@ -19,37 +18,37 @@ Source Code (.ts/.tsx)
        ▼
 ┌─────────────────┐
 │    Scanner      │  Tokenization: Source → Token Stream
-│  scanner*.rs    │  ~2,800 LOC
+│  scanner*.rs    │  ~3,500 LOC
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │    Parser       │  Parsing: Tokens → AST (NodeArena)
-│  parser/        │  ~11,000 LOC
+│  parser/        │  ~18,000 LOC
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │    Binder       │  Binding: AST → Symbol Table + Control Flow Graph
-│  binder/        │  ~5,000 LOC
+│  binder/        │  ~6,000 LOC
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │    Checker      │  Type Checking: Symbols → Type Errors
-│  checker/       │  ~61,000 LOC
+│  checker/       │  ~64,000 LOC
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │    Solver       │  Type System: Subtyping, Inference, Evaluation
-│  solver/        │  ~142,000 LOC
+│  solver/        │  ~160,000 LOC
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │    Emitter      │  Code Generation: AST → JavaScript
-│  emitter/       │  ~19 files, ~71KB
+│  emitter/       │  19 files, ~8,600 LOC
 └─────────────────┘
 ```
 
@@ -96,16 +95,9 @@ All types go through `TypeInterner` for structural deduplication:
 - O(1) equality: `type_a == type_b`
 - Enables efficient caching and memoization
 
-```rust
-// src/solver/types.rs - TypeKey enum
-pub enum TypeKey {
-    Intrinsic(IntrinsicKind),
-    Literal(LiteralValue),
-    Union(TypeListId),
-    Object(ObjectShapeId),
-    // ... 20+ variants
-}
-```
+**Key types in `solver/types.rs`:**
+- `TypeId` - lightweight handle with built-in constants (`NONE`, `ERROR`, `NEVER`, `UNKNOWN`, `ANY`, `VOID`, `UNDEFINED`, `NULL`, `BOOLEAN`, `NUMBER`, `STRING`, `BIGINT`, `SYMBOL`, `OBJECT`, `FUNCTION`, etc.)
+- `TypeKey` - structural representation with 25+ variants including `Intrinsic`, `Literal`, `Object`, `Union`, `Intersection`, `Array`, `Tuple`, `Function`, `Callable`, `TypeParameter`, `Ref`, `Application`, `Conditional`, `Mapped`, `IndexAccess`, `TemplateLiteral`, `KeyOf`, `StringIntrinsic`, `ModuleNamespace`, etc.
 
 ### 3. Coinductive Subtyping
 
@@ -132,14 +124,11 @@ Leverages Salsa-style incremental computation:
 
 Replaces repetitive match statements with composable visitors:
 
-```rust
-// src/solver/visitor.rs
-pub trait TypeVisitor {
-    fn visit_intrinsic(&mut self, kind: IntrinsicKind);
-    fn visit_union(&mut self, types: &[TypeId]) { /* default */ }
-    // ... extensible for new operations
-}
-```
+**Key trait in `solver/visitor.rs`:**
+- `TypeVisitor` trait with associated `type Output`
+- Required methods: `visit_intrinsic()`, `visit_literal()`
+- Optional methods with defaults: `visit_object()`, `visit_union()`, `visit_intersection()`, `visit_array()`, `visit_tuple()`, `visit_function()`, `visit_type_parameter()`, etc.
+- Convenience functions: `is_type_kind()`, `is_literal_type()`, `is_function_type()`, `contains_type_parameters()`, etc.
 
 ### 6. Zero-Copy Source Text
 
@@ -150,25 +139,27 @@ Scanner uses `Arc<str>` for shared source ownership:
 
 ## Critical Limits
 
-These constants prevent pathological cases from causing hangs or OOM:
+These constants in `src/limits.rs` prevent pathological cases from causing hangs or OOM:
 
-| Constant | Value | Location | Purpose |
-|----------|-------|----------|---------|
-| `MAX_SUBTYPE_DEPTH` | 100 | solver/subtype.rs | Recursion limit |
-| `MAX_TOTAL_SUBTYPE_CHECKS` | 100,000 | solver/subtype.rs | Total checks per instance |
-| `MAX_INSTANTIATION_DEPTH` | 50 | checker/state.rs | Generic instantiation |
-| `MAX_CALL_DEPTH` | 20 | checker/type_computation.rs | Function call nesting |
-| `MAX_EMIT_RECURSION_DEPTH` | 1000 | emitter/mod.rs | Code generation |
-| `MAX_RECURSION_DEPTH` | 1000 | parser/state.rs | Parser recursion |
-| `MAX_TYPE_RESOLUTION_OPS` | 500,000 | checker/context.rs | Fuel counter |
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `MAX_SUBTYPE_DEPTH` | 100 | Subtype recursion limit |
+| `MAX_TOTAL_SUBTYPE_CHECKS` | 100,000 | Total checks per instance |
+| `MAX_INSTANTIATION_DEPTH` | 50 | Generic instantiation depth |
+| `MAX_CALL_DEPTH` | 20 | Function call nesting |
+| `MAX_EMIT_RECURSION_DEPTH` | 1,000 | Code generation depth |
+| `MAX_PARSER_RECURSION_DEPTH` | 1,000 | Parser recursion |
+| `MAX_TYPE_RESOLUTION_OPS` | 100,000 (native) / 20,000 (WASM) | Fuel counter |
+| `MAX_EVALUATE_DEPTH` | 50 | Type evaluation depth |
+| `MAX_TOTAL_EVALUATIONS` | 100,000 | Total type evaluations |
+| `TEMPLATE_LITERAL_EXPANSION_LIMIT` | 100,000 (native) / 2,000 (WASM) | Template expansion |
 
 ## Cross-References
 
 This documentation complements:
-- [docs/SOLVER.md](../SOLVER.md) - Mathematical foundations of type solver
 - [docs/specs/TS_UNSOUNDNESS_CATALOG.md](../specs/TS_UNSOUNDNESS_CATALOG.md) - TypeScript compatibility rules
-- [docs/TYPE_VISITOR_PATTERN_GUIDE.md](../TYPE_VISITOR_PATTERN_GUIDE.md) - Visitor pattern usage
-- [PROJECT_DIRECTION.md](../../PROJECT_DIRECTION.md) - Conformance improvement plan
+- [docs/architecture/NORTH_STAR.md](../architecture/NORTH_STAR.md) - Target architecture guide
+- [docs/architecture/MIGRATION_ROADMAP.md](../architecture/MIGRATION_ROADMAP.md) - Migration plan
 - [AGENTS.md](../../AGENTS.md) - Architecture rules for contributors
 
 ## Navigation Tips
