@@ -35,6 +35,8 @@ This document outlines the critical issues causing conformance failures, priorit
 | InheritanceGraph Integration | 0 | 0 | ✅ COMPLETED - O(1) nominal class subtyping |
 | Module Resolution | 3,950 (TS2307) | 0 | ✅ COMPLETED - Node.js-style resolution |
 | **TS2339 Lib Symbol Resolution (NEW)** | **121 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, lib symbol lookup in type lowering |
+| **UTF-8 Scanner (NEW)** | **Panic** | 0 | ✅ **COMPLETED** - Fixed multi-byte char handling in 5 locations |
+| **Path Resolution (NEW)** | **Infrastructure** | 0 | ✅ **COMPLETED** - Improved lib dir finding for test runner |
 | **Total Fixed** | **~32,547** | **~8,563** | **~41,110 errors + 4 timeouts** |
 | **Remaining** | | | **4 timeouts + 3 TS2583 edge cases** |
 
@@ -120,6 +122,27 @@ This document outlines the critical issues causing conformance failures, priorit
          obj.x;  // No longer reports TS2339
      }
      ```
+
+11. **fix(scanner): handle multi-byte UTF-8 characters correctly** (63991309f)
+   - Files: src/scanner_impl.rs
+   - Impact: Eliminates scanner panics on UTF-8 files
+   - Fixed 5 locations where scanner used `self.pos += 1` instead of `self.pos += self.char_len_at(self.pos)`
+   - Functions fixed: `scan_shebang_trivia`, `scan` (default case), `scan_jsdoc_token`,
+     `scan_jsdoc_comment_text_token`, `re_scan_hash_token`
+   - Root cause: Scanner assumed 1 character = 1 byte, which is false for UTF-8
+   - Example problematic character: │ (U+2502 BOX DRAWINGS LIGHT VERTICAL) = 3 bytes in UTF-8
+   - Result: Scanner now properly handles multi-byte characters without panicking
+
+12. **fix(server): enhance lib directory path resolution** (a9602fae8)
+   - Files: src/bin/tsz_server.rs
+   - Impact: Improves server reliability when spawned from different working directories
+   - Enhanced `find_lib_dir()` with multiple search strategies:
+     * Resolves relative TSZ_LIB_DIR paths from CWD
+     * Searches TypeScript/src/lib relative to CWD
+     * Walks up directory tree (up to 10 levels) to find project root
+     * Provides detailed error messages showing CWD and attempted paths
+   - Root cause: tsz-server failed to find lib files when spawned from subdirectories
+   - Result: Server now works reliably from any working directory context
 
 ---
 
