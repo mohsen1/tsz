@@ -626,6 +626,28 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
+        // OPTIMIZATION: Bypass recursion guard for primitive keywords
+        // Primitive types (string, number, boolean, etc.) are intrinsic and never recurse
+        // This prevents false positive recursion detection and improves performance
+        if let Some(node) = self.ctx.arena.get(idx) {
+            use crate::scanner::SyntaxKind;
+            match node.kind as u32 {
+                k if k == SyntaxKind::StringKeyword as u32 => return TypeId::STRING,
+                k if k == SyntaxKind::NumberKeyword as u32 => return TypeId::NUMBER,
+                k if k == SyntaxKind::BooleanKeyword as u32 => return TypeId::BOOLEAN,
+                k if k == SyntaxKind::VoidKeyword as u32 => return TypeId::VOID,
+                k if k == SyntaxKind::AnyKeyword as u32 => return TypeId::ANY,
+                k if k == SyntaxKind::NeverKeyword as u32 => return TypeId::NEVER,
+                k if k == SyntaxKind::UnknownKeyword as u32 => return TypeId::UNKNOWN,
+                k if k == SyntaxKind::UndefinedKeyword as u32 => return TypeId::UNDEFINED,
+                k if k == SyntaxKind::NullKeyword as u32 => return TypeId::NULL,
+                k if k == SyntaxKind::ObjectKeyword as u32 => return TypeId::OBJECT,
+                k if k == SyntaxKind::BigIntKeyword as u32 => return TypeId::BIGINT,
+                k if k == SyntaxKind::SymbolKeyword as u32 => return TypeId::SYMBOL,
+                _ => {} // Fall through to general logic
+            }
+        }
+
         // Check fuel - return ERROR if exhausted to prevent timeout
         if !self.ctx.consume_fuel() {
             // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
