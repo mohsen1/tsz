@@ -46,7 +46,7 @@ This document outlines the critical issues causing conformance failures, priorit
 | **Path Resolution** | **Infrastructure** | 0 | ✅ **COMPLETED** - Improved lib dir finding for test runner |
 | **TS2336 Super in Arrow Functions** | **87 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, arrow function context capture |
 | **TS2507 Extends Null** | **43 → ~3** | 0 | ✅ **~95% COMPLETED** - extends null now allowed |
-| **TS2507 Extends Interface** | **69 → 36** | 0 | ✅ **~48% COMPLETED** - TS2689 now used for class extends interface (bug fixed) |
+| **TS2507 Extends Interface/Any** | **69 → 26** | 0 | ✅ **~62% COMPLETED** - TS2689 for class extends interface, ANY type supported |
 | **TS2571 Wrong Error Code** | **22 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, now uses TS2339 |
 | **TS2349 Generic Callable** | **22 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, Application type resolution |
 | **Total Fixed** | **~32,863** | **~8,563** | **~41,426 errors + 4 timeouts** |
@@ -264,7 +264,19 @@ This document outlines the critical issues causing conformance failures, priorit
      class C extends I {} // TS2689 ✓
      ```
 
-17. **fix(checker): use TS2339 instead of TS2571 for property access on unknown** (6ddb06991)
+18. **fix(checker): treat ANY type as valid constructor for extends clauses** (e82c2c53b)
+   - Files: src/checker/type_checking.rs
+   - Impact: TS2507 reduced from 36x to 26x (10 fewer errors, 28% improvement)
+   - Total progress: 69x → 26x (62% reduction from baseline)
+   - Added TypeId::ANY check in is_constructor_type function
+   - In TypeScript, `any` is compatible with everything including constructors
+   - Example that now works:
+     ```typescript
+     declare var AnyBase: any;
+     class Dynamic extends AnyBase {} // Was: TS2507, Now: ✓
+     ```
+
+19. **fix(checker): use TS2339 instead of TS2571 for property access on unknown** (6ddb06991)
    - Files: src/checker/state.rs, src/checker/function_type.rs, src/checker/type_computation.rs
    - Impact: 22 → 0 extra TS2571 errors (100% reduction)
    - Fixed incorrect error code for property access on unknown types
