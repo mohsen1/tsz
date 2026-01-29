@@ -170,6 +170,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // the union is callable
                 self.resolve_union_call(func_type, list_id, arg_types)
             }
+            TypeKey::Intersection(list_id) => {
+                // Handle intersection types: if any member is callable, use that
+                // This handles cases like: Function & { prop: number }
+                self.resolve_intersection_call(func_type, list_id, arg_types)
+            }
             TypeKey::Application(app_id) => {
                 // Handle Application types (e.g., GenericCallable<string>)
                 // Get the application and resolve the call on its base type
@@ -300,6 +305,50 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             CallResult::NotCallable {
                 type_id: union_type,
             }
+        }
+    }
+
+    /// Resolve a call on an intersection type.
+    ///
+    /// This handles cases like:
+    /// - `Function & { prop: number }` - intersection with callable member
+    /// - Overloaded functions merged via intersection
+    ///
+    /// When at least one intersection member is callable, this delegates to that member.
+    /// For intersections with multiple callable members, we use the first one.
+    fn resolve_intersection_call(
+        &mut self,
+        intersection_type: TypeId,
+        list_id: TypeListId,
+        arg_types: &[TypeId],
+    ) -> CallResult {
+        let members = self.interner.type_list(list_id);
+
+        // For intersection types: if ANY member is callable, the intersection is callable
+        // This is different from unions where ALL members must be callable
+        // We try each member in order and use the first callable one
+        for &member in members.iter() {
+            let result = self.resolve_call(member, arg_types);
+            match result {
+                CallResult::Success(return_type) => {
+                    // Found a callable member - use its return type
+                    return CallResult::Success(return_type);
+                }
+                CallResult::NotCallable { .. } => {
+                    // This member is not callable, try the next one
+                    continue;
+                }
+                other => {
+                    // Got a different error (argument mismatch, etc.)
+                    // Return this error as it's likely the most relevant
+                    return other;
+                }
+            }
+        }
+
+        // No members were callable
+        CallResult::NotCallable {
+            type_id: intersection_type,
         }
     }
 
