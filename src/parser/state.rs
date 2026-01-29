@@ -7189,11 +7189,21 @@ impl ParserState {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
-        // OPTIMIZATION: Capture atom for O(1) comparison
-        let atom = self.scanner.get_token_atom();
-        // Use zero-copy accessor and clone only when storing (legacy, to be removed)
-        let text = self.scanner.get_token_value_ref().to_string();
-        self.parse_expected(SyntaxKind::Identifier);
+
+        // Check if current token is an identifier or keyword that can be used as identifier
+        // This allows contextual keywords (type, interface, package, etc.) to be used as identifiers
+        // in appropriate contexts (e.g., type aliases, interface names)
+        let (atom, text) = if self.is_identifier_or_keyword() {
+            // OPTIMIZATION: Capture atom for O(1) comparison
+            let atom = self.scanner.get_token_atom();
+            // Use zero-copy accessor and clone only when storing
+            let text = self.scanner.get_token_value_ref().to_string();
+            self.next_token();
+            (atom, text)
+        } else {
+            self.error_identifier_expected();
+            (Atom::NONE, String::new())
+        };
 
         self.arena.add_identifier(
             SyntaxKind::Identifier as u16,
