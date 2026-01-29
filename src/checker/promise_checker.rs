@@ -67,9 +67,30 @@ impl<'a> CheckerState<'a> {
     ///
     /// This is used to validate async function return types.
     /// Handles both Promise<T> applications and direct Promise references.
+    ///
+    /// IMPORTANT: This method is STRICT - it only returns true for actual Promise/PromiseLike types.
+    /// It does NOT use the conservative assumption that all Object types might be Promise-like.
+    /// This ensures TS2705 is correctly emitted for async functions with non-Promise return types.
     pub fn is_promise_type(&self, type_id: TypeId) -> bool {
         match classify_promise_type(self.ctx.types, type_id) {
-            PromiseTypeKind::Application { base, .. } => self.type_ref_is_promise_like(base),
+            PromiseTypeKind::Application { base, .. } => {
+                // For Application types, STRICTLY check if the base symbol is Promise/PromiseLike
+                // We do NOT use type_ref_is_promise_like here because it conservatively assumes
+                // all Object types are Promise-like, which causes false negatives for TS2705
+                match classify_promise_type(self.ctx.types, base) {
+                    PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
+                        if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+                            return self.is_promise_like_name(symbol.escaped_name.as_str());
+                        }
+                        false
+                    }
+                    // Handle nested applications (e.g., Promise<SomeType<T>>)
+                    PromiseTypeKind::Application {
+                        base: inner_base, ..
+                    } => self.is_promise_type(inner_base),
+                    _ => false,
+                }
+            }
             PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
                 // Check for direct Promise or PromiseLike reference (this also handles type aliases)
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {

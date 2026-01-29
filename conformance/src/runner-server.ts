@@ -1287,61 +1287,49 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       }
     }
 
+    // Stop progress interval and show final state
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      progressInterval = null;
+    }
+    updateProgress(true);
     const elapsed = (Date.now() - startTime) / 1000;
-    process.stdout.write('\r' + ' '.repeat(80) + '\r');
+    process.stdout.write('\r' + ' '.repeat(100) + '\r');
 
     // Update worker stats from pool
     const poolStats = pool.stats;
     stats.workerStats.crashed = poolStats.oomKills;
     stats.workerStats.respawned = poolStats.totalRestarts;
 
-    // Print summary (matching WASM runner output format)
+    // Print summary (reversed order: details first, pass rate last)
     log('\n' + '═'.repeat(60), colors.dim);
     log('CONFORMANCE TEST RESULTS', colors.bold);
     log('═'.repeat(60), colors.dim);
 
-    // Calculate actual failed (failed includes oom and timedOut, but NOT crashed or skipped)
+    // Calculate stats
     const actualFailed = stats.failed - stats.oom - stats.timedOut;
-    // Pass rate excludes skipped tests from denominator
     const effectiveTotal = stats.total - stats.skipped;
     const passRate = effectiveTotal > 0 ? ((stats.passed / effectiveTotal) * 100).toFixed(1) : '0.0';
 
-    log(`\nPass Rate: ${passRate}% (${formatNumber(stats.passed)}/${formatNumber(effectiveTotal)})`, stats.passed === effectiveTotal ? colors.green : colors.yellow);
-    if (stats.skipped > 0) {
-      log(`  (${formatNumber(stats.skipped)} tests skipped due to harness directives)`, colors.dim);
-    }
-    log(`Time: ${elapsed.toFixed(1)}s (${(effectiveTotal / elapsed).toFixed(0)} tests/sec)`, colors.dim);
-
-    log('\nSummary:', colors.bold);
-    log(`  Passed:   ${formatNumber(stats.passed)}`, colors.green);
-    log(`  Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
-    log(`  Skipped:  ${formatNumber(stats.skipped)}`, stats.skipped > 0 ? colors.dim : colors.dim);
-    log(`  Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
-    log(`  OOM:      ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.magenta : colors.dim);
-    log(`  Timeout:  ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
-
-    // Worker stats
-    log('\nWorker Health:', colors.bold);
-    log(`  Spawned:   ${workerCount}`, colors.dim);
-    log(`  Crashed:   ${poolStats.oomKills}`, poolStats.oomKills > 0 ? colors.red : colors.dim);
-    log(`  Respawned: ${poolStats.totalRestarts}`, poolStats.totalRestarts > 0 ? colors.yellow : colors.dim);
-
-    // By Category
-    log('\nBy Category:', colors.bold);
-    for (const [cat, s] of Object.entries(stats.byCategory)) {
-      const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
-      log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
+    // Top errors first
+    log('\nTop Extra Errors:', colors.bold);
+    for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+      log(`  TS${c}: ${n}x`, colors.yellow);
     }
 
-    // Show problematic tests
-    if (stats.crashedTests.length > 0) {
-      log('\nCrashed Tests:', colors.red);
-      for (const t of stats.crashedTests.slice(0, 5)) {
-        log(`  ${t.path}`, colors.dim);
-        log(`    ${t.error.slice(0, 80)}`, colors.dim);
+    log('\nTop Missing Errors:', colors.bold);
+    for (const [c, n] of [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+      log(`  TS${c}: ${n}x`, colors.yellow);
+    }
+
+    // Problematic tests
+    if (stats.timedOutTests.length > 0) {
+      log('\nTimed Out Tests:', colors.yellow);
+      for (const t of stats.timedOutTests.slice(0, 5)) {
+        log(`  ${t}`, colors.dim);
       }
-      if (stats.crashedTests.length > 5) {
-        log(`  ... and ${stats.crashedTests.length - 5} more`, colors.dim);
+      if (stats.timedOutTests.length > 5) {
+        log(`  ... and ${stats.timedOutTests.length - 5} more`, colors.dim);
       }
     }
 
@@ -1355,25 +1343,44 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       }
     }
 
-    if (stats.timedOutTests.length > 0) {
-      log('\nTimed Out Tests:', colors.yellow);
-      for (const t of stats.timedOutTests.slice(0, 5)) {
-        log(`  ${t}`, colors.dim);
+    if (stats.crashedTests.length > 0) {
+      log('\nCrashed Tests:', colors.red);
+      for (const t of stats.crashedTests.slice(0, 5)) {
+        log(`  ${t.path}`, colors.dim);
+        log(`    ${t.error.slice(0, 80)}`, colors.dim);
       }
-      if (stats.timedOutTests.length > 5) {
-        log(`  ... and ${stats.timedOutTests.length - 5} more`, colors.dim);
+      if (stats.crashedTests.length > 5) {
+        log(`  ... and ${stats.crashedTests.length - 5} more`, colors.dim);
       }
     }
 
-    // Top errors
-    log('\nTop Missing Errors:', colors.bold);
-    for (const [c, n] of [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
-      log(`  TS${c}: ${n}x`, colors.yellow);
+    // By Category
+    log('\nBy Category:', colors.bold);
+    for (const [cat, s] of Object.entries(stats.byCategory)) {
+      const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
+      log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
     }
 
-    log('\nTop Extra Errors:', colors.bold);
-    for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
-      log(`  TS${c}: ${n}x`, colors.yellow);
+    // Worker stats
+    log('\nWorker Health:', colors.bold);
+    log(`  Spawned:   ${workerCount}`, colors.dim);
+    log(`  Crashed:   ${poolStats.oomKills}`, poolStats.oomKills > 0 ? colors.red : colors.dim);
+    log(`  Respawned: ${poolStats.totalRestarts}`, poolStats.totalRestarts > 0 ? colors.yellow : colors.dim);
+
+    // Summary
+    log('\nSummary:', colors.bold);
+    log(`  Passed:   ${formatNumber(stats.passed)}`, colors.green);
+    log(`  Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
+    log(`  Skipped:  ${formatNumber(stats.skipped)}`, stats.skipped > 0 ? colors.dim : colors.dim);
+    log(`  Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
+    log(`  OOM:      ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.magenta : colors.dim);
+    log(`  Timeout:  ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
+
+    // Time and Pass Rate last
+    log(`\nTime: ${elapsed.toFixed(1)}s (${(effectiveTotal / elapsed).toFixed(0)} tests/sec)`, colors.dim);
+    log(`\nPass Rate: ${passRate}% (${formatNumber(stats.passed)}/${formatNumber(effectiveTotal)})`, stats.passed === effectiveTotal ? colors.green : colors.yellow);
+    if (stats.skipped > 0) {
+      log(`  (${formatNumber(stats.skipped)} tests skipped due to harness directives)`, colors.dim);
     }
 
     log('\n' + '═'.repeat(60), colors.dim);
