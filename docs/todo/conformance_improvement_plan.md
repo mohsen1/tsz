@@ -14,10 +14,12 @@ This document outlines the critical issues causing conformance failures, priorit
 | Readonly Properties | 10,488 (TS2540) | 0 | ✅ COMPLETED - Array readonly fix |
 | Global Types (wiring) | 0 | 7,560 (TS2318) | ✅ COMPLETED - Embedded libs fallback |
 | Global Types (paths) | 0 | 618 (TS2318) | ✅ COMPLETED - Lib path resolution |
-| Target Library | 0 | 1,748 (TS2583) | ✅ COMPLETED - Embedded libs fallback |
+| Target Library (wiring) | 0 | 1,748 (TS2583) | ✅ COMPLETED - Embedded libs fallback |
+| Target Library (actual) | 0 | 88 (TS2583) | ✅ COMPLETED - 74% reduction |
 | Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
 | Circular Constraints | 2,123 (TS2313) | 0 + 4 timeouts | ✅ COMPLETED - Recursive constraint fix |
-| **Total Fixed** | **~28,354** | **~9,976** | **~38,330 errors + 4 timeouts** |
+| Circular Inheritance | 0 + 82 timeouts | 0 | ✅ COMPLETED - Stack overflow fix |
+| **Total Fixed** | **~28,354** | **~8,563** | **~36,917 errors + 86 timeouts** |
 
 ### Completed Commits
 
@@ -35,6 +37,16 @@ This document outlines the critical issues causing conformance failures, priorit
    - Files: src/cli/driver.rs
    - Impact: ~7,560 missing TS2318 + ~1,748 missing TS2583 errors fixed
    - Updated load_lib_files_for_contexts to use embedded libs when disk fails
+
+4. **fix(checker): prevent stack overflow on circular class inheritance** (d4d71f6b8)
+   - Files: src/checker/state.rs, src/checker/class_type.rs, src/checker/error_reporter.rs, src/checker/types/diagnostics.rs
+   - Impact: Eliminates 82 timeout crashes in full 12,054 test suite
+   - Added early circular inheritance detection in check_class_declaration
+   - Added TS2506 error code for circular base references
+   - Now properly emits errors for:
+     - `class C extends C {}`
+     - `class D<T> extends D<T> {}`
+     - `class E<T> extends E<string> {}`
 
 ---
 

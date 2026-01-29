@@ -459,6 +459,16 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
+                // CRITICAL: Check for self-referential class BEFORE processing
+                // This catches class C extends C, class D<T> extends D<T>, etc.
+                if let Some(current_sym) = current_sym {
+                    if base_sym_id == current_sym {
+                        // Self-referential inheritance - emit error and stop
+                        self.error_circular_class_inheritance(expr_idx, class_idx);
+                        break;
+                    }
+                }
+
                 // Check for circular inheritance using symbol tracking
                 if visited.contains(&base_sym_id) {
                     break;
