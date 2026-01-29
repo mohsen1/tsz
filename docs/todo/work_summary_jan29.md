@@ -191,6 +191,84 @@ async function foo(): string {  // TypeScript: TS1064
 
 ---
 
+### ⚠️ TS2300 Investigation - Duplicate Identifier (Jan 29)
+
+**Problem**: 67x missing TS2300 errors (duplicate identifier)
+
+**Investigation**:
+1. **Initial Approach**: Tried filtering lib symbols using `lib_symbol_ids` HashSet
+   - Added `is_lib_symbol()` method to `BinderState`
+   - Modified `check_duplicate_identifiers()` to filter lib symbols
+   - **Result**: Made it WORSE (67x → 94x missing)
+
+2. **Root Cause of Failure**: `lib_symbol_ids` is never populated in the codebase!
+   - The HashSet is always empty
+   - So `is_lib_symbol()` always returns `false`
+   - The filter doesn't actually filter anything
+
+3. **Understanding the Architecture**:
+   - Early return when lib loaded: Added to prevent false positives for lib symbols (interface merging)
+   - Binder behavior: Adds duplicate declarations to existing symbol even when `can_merge_flags` returns `false`
+   - Checker logic: Has extensive merge rules (interface+interface, function+function for overloads, namespace+class, etc.)
+   - File arena check: Lines 2575-2582 already filter cross-file conflicts
+
+4. **Second Approach**: Removed early return entirely
+   - **Result**: Still 94x missing (made it worse)
+   - **Issue**: Lib symbols merged into user binder have multiple legitimate declarations (interface merging)
+   - Checker tries to report these as conflicts but test runner filters them out (they're on lib files)
+   - Result: Errors show as "missing" instead of "extra"
+
+5. **Key Insight**:
+   - In merged program mode, ALL symbols (lib + user) are in `self.ctx.binder.symbols`
+   - Lib symbols have `decl_file_idx` pointing to original lib file
+   - But checker's `both_in_current_file` check (line 2575) doesn't work for merged symbols
+   - Need to track which symbols originated from lib files during merge
+
+**Real Issue**:
+The 67x missing errors might be from tests WITHOUT `@noLib` directive. When lib is loaded:
+1. Early return skips ALL duplicate checking (including user code)
+2. This suppresses valid TS2300 errors for user code duplicates
+
+**Status**: Architectural understanding achieved, fix is complex
+
+**Final Findings**:
+- Tested duplicate checking with `let x = 1; let x = 2;` - **WORKS CORRECTLY**, emits TS2451
+- The duplicate identifier detection logic is correct
+- `var` declarations CAN be redeclared in JavaScript/TypeScript (not a bug)
+- The 67x missing errors are likely from tests where lib is loaded and early return prevents checking
+
+**Architectural Fix Attempted**:
+1. Added `lib_symbol_ids: FxHashSet<SymbolId>` to `MergedProgram`
+2. Populated during merge in `src/parallel.rs` PHASE 1
+3. Added to `CheckerContext` and set in `driver.rs`
+4. Used to filter lib symbols in `check_duplicate_identifiers`
+5. **Result**: Made it worse (67x → 94x missing)
+
+**Why the fix made things worse**:
+- Unknown - needs deeper investigation
+- Possible issues:
+  - Some lib symbols might not be in `lib_symbol_ids`
+  - Some user symbols might be incorrectly marked as lib
+  - Early return might be preventing user code checking in ways not understood
+
+**Recommendation**:
+- This issue requires deeper investigation than initially estimated
+- Consider as a complex architectural task for later
+- Focus on higher-impact, lower-complexity tasks first
+
+**Files**:
+- `src/checker/type_checking.rs:2486-2700` - `check_duplicate_identifiers()`
+- `src/binder/state.rs:2660-2749` - `declare_symbol()`
+- `src/binder/state.rs:2753-2835` - `can_merge_flags()`
+
+**Next Steps**:
+- Investigate which specific tests expect TS2300
+- Check if they use `@noLib` directive
+- Consider populating `lib_symbol_ids` during merge in `src/parallel.rs`
+- Or add `decl_file_idx` check in duplicate detection
+
+---
+
 ## Conformance Test Results
 
 ### Current Status (1000-test sample)
