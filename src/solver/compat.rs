@@ -259,10 +259,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return Some(true);
         }
 
-        // Error types - if not skipping, check if both are error types
+        // Error types - suppress cascading errors
         if !skip_error_check && (source == TypeId::ERROR || target == TypeId::ERROR) {
-            // Error types should NOT silently pass assignability checks
-            return None; // Delegate to subtype checker
+            // Error types ARE assignable to suppress cascading errors
+            return Some(true);
         }
 
         // unknown is not assignable to non-top types
@@ -295,13 +295,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            // Error types should NOT silently pass assignability checks.
-            // Delegate to subtype checker which returns false for ERROR.
-            let prev = self.subtype.strict_function_types;
-            self.configure_subtype(true);
-            let result = self.subtype.is_subtype_of(source, target);
-            self.subtype.strict_function_types = prev;
-            return result;
+            // Error types ARE assignable to suppress cascading errors
+            return true;
         }
         if source == TypeId::UNKNOWN {
             return false;
@@ -350,10 +345,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             });
         }
 
-        // Error types should NOT return None - let subtype checker explain the failure
+        // Error types should NOT produce diagnostics - suppress cascading errors
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            self.configure_subtype(self.strict_function_types);
-            return self.subtype.explain_failure(source, target);
+            return None;
         }
 
         // Weak type violations

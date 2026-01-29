@@ -342,10 +342,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Error types are NOT compatible (propagate errors instead of silencing)
-        // This treats ERROR as more strict than Any/Unknown to catch type errors
+        // Error types ARE compatible to suppress cascading errors
+        // This treats ERROR as more permissive than Any to avoid error storms
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return SubtypeResult::False;
+            return SubtypeResult::True;
         }
 
         // =========================================================================
@@ -791,13 +791,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source == TypeId::NEVER {
             return None;
         }
-        // ERROR types should produce a failure reason, not be silently ignored.
-        // This ensures that unresolved types (TS2304) still trigger downstream TS2322 errors.
+        // ERROR types should NOT produce diagnostics - suppress cascading errors
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return Some(SubtypeFailureReason::ErrorType {
-                source_type: source,
-                target_type: target,
-            });
+            return None;
         }
 
         // Look up the type keys
