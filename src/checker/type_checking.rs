@@ -2337,6 +2337,48 @@ impl<'a> CheckerState<'a> {
         self.check_feature_specific_global_types();
     }
 
+    /// Register boxed types (String, Number, Boolean, etc.) from lib.d.ts in TypeEnvironment.
+    ///
+    /// This enables primitive property access to use lib.d.ts definitions instead of
+    /// hardcoded lists. For example, "foo".length will look up the String interface
+    /// from lib.d.ts and find the length property there.
+    pub(crate) fn register_boxed_types(&mut self) {
+        use crate::solver::types::IntrinsicKind;
+
+        // Only register if lib files are loaded
+        if !self.ctx.has_lib_loaded() {
+            return;
+        }
+
+        // 1. Resolve types first (avoids holding a mutable borrow on type_env while resolving)
+        // resolve_lib_type_by_name handles looking up in lib.d.ts and merging declarations
+        let string_type = self.resolve_lib_type_by_name("String");
+        let number_type = self.resolve_lib_type_by_name("Number");
+        let boolean_type = self.resolve_lib_type_by_name("Boolean");
+        let symbol_type = self.resolve_lib_type_by_name("Symbol");
+        let bigint_type = self.resolve_lib_type_by_name("BigInt");
+
+        // 2. Populate the environment
+        // We use try_borrow_mut to be safe, though at this stage it should be free
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            if let Some(ty) = string_type {
+                env.set_boxed_type(IntrinsicKind::String, ty);
+            }
+            if let Some(ty) = number_type {
+                env.set_boxed_type(IntrinsicKind::Number, ty);
+            }
+            if let Some(ty) = boolean_type {
+                env.set_boxed_type(IntrinsicKind::Boolean, ty);
+            }
+            if let Some(ty) = symbol_type {
+                env.set_boxed_type(IntrinsicKind::Symbol, ty);
+            }
+            if let Some(ty) = bigint_type {
+                env.set_boxed_type(IntrinsicKind::Bigint, ty);
+            }
+        }
+    }
+
     /// Check for feature-specific global types that may be missing.
     ///
     /// This function checks if certain global types that are required for specific

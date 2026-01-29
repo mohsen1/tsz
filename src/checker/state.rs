@@ -5464,6 +5464,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.compiler_options.use_unknown_in_catch_variables =
                 self.resolve_use_unknown_in_catch_variables_from_source(&sf.text);
 
+            // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
+            // This enables primitive property access to use lib definitions instead of hardcoded lists
+            self.register_boxed_types();
+
             // Type check each top-level statement
             for &stmt_idx in &sf.statements.nodes {
                 self.check_statement(stmt_idx);
@@ -6269,6 +6273,29 @@ impl<'a> CheckerState<'a> {
         // Note: Missing property checks are handled by solver's explain_failure
     }
 
+    /// Resolve property access using TypeEnvironment (includes lib.d.ts types).
+    ///
+    /// This method creates a PropertyAccessEvaluator with the TypeEnvironment as the resolver,
+    /// allowing primitive property access to use lib.d.ts definitions instead of just hardcoded lists.
+    ///
+    /// For example, "foo".length will look up the String interface from lib.d.ts.
+    fn resolve_property_access_with_env(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> crate::solver::PropertyAccessResult {
+        use crate::solver::operations::PropertyAccessEvaluator;
+
+        // Ensure symbols are resolved in the environment
+        self.ensure_application_symbols_resolved(object_type);
+
+        // Borrow the environment and create evaluator with resolver
+        let env = self.ctx.type_env.borrow();
+        let evaluator = PropertyAccessEvaluator::with_resolver(self.ctx.types, &*env);
+
+        evaluator.resolve_property_access(object_type, prop_name)
+    }
+
     /// Check if an assignment target is a readonly property.
     /// Reports error TS2540 if trying to assign to a readonly property.
     pub(crate) fn check_readonly_assignment(
@@ -6361,8 +6388,8 @@ impl<'a> CheckerState<'a> {
         // If the property doesn't exist, skip the readonly check - TS2339 will be
         // reported elsewhere. This matches tsc behavior which checks existence before
         // readonly status.
-        use crate::solver::{PropertyAccessResult, QueryDatabase};
-        let property_result = self.ctx.types.property_access_type(obj_type, &prop_name);
+        use crate::solver::PropertyAccessResult;
+        let property_result = self.resolve_property_access_with_env(obj_type, &prop_name);
         let property_exists = matches!(
             property_result,
             PropertyAccessResult::Success { .. }

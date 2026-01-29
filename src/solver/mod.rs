@@ -34,7 +34,7 @@ mod lawyer;
 mod lower;
 mod narrowing;
 mod object_literal;
-mod operations;
+pub mod operations;
 // salsa_db is feature-gated until salsa API is updated
 #[cfg(feature = "experimental_salsa")]
 pub mod salsa_db;

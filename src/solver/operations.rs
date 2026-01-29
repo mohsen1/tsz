@@ -33,6 +33,7 @@ use crate::solver::diagnostics::PendingDiagnostic;
 use crate::solver::evaluate::evaluate_type;
 use crate::solver::infer::InferenceContext;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
+use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::{
@@ -2086,19 +2087,20 @@ pub enum PropertyAccessResult {
 }
 
 /// Evaluates property access.
-pub struct PropertyAccessEvaluator<'a> {
+pub struct PropertyAccessEvaluator<'a, R: TypeResolver = NoopResolver> {
     interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
     no_unchecked_indexed_access: bool,
     mapped_access_visiting: RefCell<FxHashSet<TypeId>>,
     mapped_access_depth: RefCell<u32>,
 }
 
-struct MappedAccessGuard<'a> {
-    evaluator: &'a PropertyAccessEvaluator<'a>,
+struct MappedAccessGuard<'a, R: TypeResolver> {
+    evaluator: &'a PropertyAccessEvaluator<'a, R>,
     obj_type: TypeId,
 }
 
-impl<'a> Drop for MappedAccessGuard<'a> {
+impl<'a, R: TypeResolver> Drop for MappedAccessGuard<'a, R> {
     fn drop(&mut self) {
         self.evaluator
             .mapped_access_visiting
@@ -2108,10 +2110,23 @@ impl<'a> Drop for MappedAccessGuard<'a> {
     }
 }
 
-impl<'a> PropertyAccessEvaluator<'a> {
+impl<'a> PropertyAccessEvaluator<'a, NoopResolver> {
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         PropertyAccessEvaluator {
             interner,
+            resolver: &NoopResolver,
+            no_unchecked_indexed_access: false,
+            mapped_access_visiting: RefCell::new(FxHashSet::default()),
+            mapped_access_depth: RefCell::new(0),
+        }
+    }
+}
+
+impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
+    pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        PropertyAccessEvaluator {
+            interner,
+            resolver,
             no_unchecked_indexed_access: false,
             mapped_access_visiting: RefCell::new(FxHashSet::default()),
             mapped_access_depth: RefCell::new(0),
@@ -2131,7 +2146,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.resolve_property_access_inner(obj_type, prop_name, None)
     }
 
-    fn enter_mapped_access_guard(&self, obj_type: TypeId) -> Option<MappedAccessGuard<'_>> {
+    fn enter_mapped_access_guard(&self, obj_type: TypeId) -> Option<MappedAccessGuard<'_, R>> {
         const MAX_MAPPED_ACCESS_DEPTH: u32 = 50;
 
         let mut depth = self.mapped_access_depth.borrow_mut();
@@ -3135,6 +3150,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
+        // STEP 1: Try to get the boxed interface type from the resolver (e.g. Number for number)
+        // This allows us to use lib.d.ts definitions instead of just hardcoded lists
+        if let Some(boxed_type) = self.resolver.get_boxed_type(kind) {
+            // Resolve the property on the boxed interface type
+            // This handles inheritance (e.g., String extends Object) automatically
+            // and allows user-defined augmentations to lib.d.ts to work
+            return self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+        }
+
+        // STEP 2: Fallback to hardcoded apparent members (bootstrapping/no-lib behavior)
         self.resolve_apparent_property(kind, type_id, prop_name, prop_atom)
     }
 
