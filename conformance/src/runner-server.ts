@@ -73,6 +73,66 @@ const DEFAULT_TEST_TIMEOUT_MS = 3000;
 // Lib directories for file-based resolution (set during test run)
 let libDirs: string[] = [];
 
+// Counter for unique temp directories
+let tempDirCounter = 0;
+
+/**
+ * For multi-file tests, write virtual files to a temp directory as real files.
+ * Returns the temp directory path and a map of real file paths to content.
+ * For single-file tests, returns null tempDir and original files.
+ */
+function prepareTestFiles(
+  parsed: { files: Array<{ name: string; content: string }>; isMultiFile: boolean },
+  testFile: string
+): { tempDir: string | null; files: Record<string, string> } {
+  // Single file test - just return the original file
+  if (!parsed.isMultiFile || parsed.files.length <= 1) {
+    const files: Record<string, string> = {};
+    for (const file of parsed.files) {
+      // Use original test file path for single-file tests
+      files[testFile] = file.content;
+    }
+    return { tempDir: null, files };
+  }
+
+  // Multi-file test - create temp directory and write real files
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `tsz-test-${tempDirCounter++}-`));
+  const files: Record<string, string> = {};
+
+  for (const file of parsed.files) {
+    // Normalize the filename (remove leading ./ if present)
+    const normalizedName = file.name.replace(/^\.\//, '');
+    const filePath = path.join(tempDir, normalizedName);
+
+    // Create subdirectories if needed
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Write the file
+    fs.writeFileSync(filePath, file.content, 'utf-8');
+
+    // Add to files map with absolute path
+    files[filePath] = file.content;
+  }
+
+  return { tempDir, files };
+}
+
+/**
+ * Clean up temp directory after test
+ */
+function cleanupTempDir(tempDir: string | null): void {
+  if (tempDir) {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
 export interface CheckResult {
   codes: number[];
   elapsed_ms: number;
@@ -724,10 +784,12 @@ async function printTestDetails(
   const content = fs.readFileSync(testFile, 'utf-8');
   // Parse test case to handle @Filename directives for multi-file tests
   const parsed = parseTestCase(content, testFile);
-  const files: Record<string, string> = {};
-  for (const file of parsed.files) {
-    files[file.name] = file.content;
-  }
+
+  // For multi-file tests, write real files to temp directory
+  const prepared = prepareTestFiles(parsed, testFile);
+  const tempDir = prepared.tempDir;
+  const files = prepared.files;
+
   const checkOptions = directivesToCheckOptions(parsed.directives, libDirs);
   const cacheEntry = cacheEntries[relativePath];
   const tscCodes = cacheEntry?.codes || [];
@@ -837,6 +899,9 @@ async function printTestDetails(
       }
     }
   }
+
+  // Clean up temp directory for multi-file tests
+  cleanupTempDir(tempDir);
 
   log('\n' + '═'.repeat(70) + '\n', colors.cyan);
 }
@@ -974,14 +1039,16 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       stats.byCategory[category].total++;
       stats.total++;
 
+      let tempDir: string | null = null;
       try {
         const content = fs.readFileSync(testFile, 'utf-8');
         // Parse test case to handle @Filename directives for multi-file tests
         const parsed = parseTestCase(content, testFile);
-        const files: Record<string, string> = {};
-        for (const file of parsed.files) {
-          files[file.name] = file.content;
-        }
+
+        // For multi-file tests, write real files to temp directory
+        const prepared = prepareTestFiles(parsed, testFile);
+        tempDir = prepared.tempDir;
+        const files = prepared.files;
 
         // Parse test directives (@target, @lib, @strict, etc.)
         const checkOptions = directivesToCheckOptions(parsed.directives, libDirs);
@@ -1045,6 +1112,9 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         stats.crashed++;
         stats.crashedTests.push({ path: relativePath, error: err.message });
         if (verbose) log(`💥 ${relativePath}: ${err.message}`, colors.red);
+      } finally {
+        // Clean up temp directory for multi-file tests
+        cleanupTempDir(tempDir);
       }
 
       completed++;
