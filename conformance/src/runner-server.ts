@@ -973,7 +973,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   const __dirname = path.dirname(new URL(import.meta.url).pathname);
   const ROOT_DIR = path.resolve(__dirname, '../..');
 
-  const maxTests = config.maxTests ?? 500;
+  const maxTests = config.maxTests ?? Infinity;
   const workerCount = config.workers ?? 8;
   const verbose = config.verbose ?? false;
   const categories = config.categories ?? ['conformance', 'compiler'];
