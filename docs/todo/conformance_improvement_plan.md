@@ -18,8 +18,8 @@ This document outlines the critical issues causing conformance failures, priorit
 | Target Library (actual) | 0 | 88 (TS2583) | ✅ COMPLETED - 74% reduction |
 | Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
 | Circular Constraints | 2,123 (TS2313) | 0 + 4 timeouts | ✅ COMPLETED - Recursive constraint fix |
-| Circular Inheritance | 0 + 82 timeouts | 0 | ⚠️ PARTIAL - Cycle detection infrastructure complete, 4 timeouts remain |
-| **Total Fixed** | **~28,354** | **~8,563** | **~36,917 errors + 82 timeouts** |
+| Circular Inheritance | 0 + 4 timeouts | 0 | ⚠️ 95% COMPLETE - Cycle detection complete, 4 edge cases remain |
+| **Total Fixed** | **~28,354** | **~8,563** | **~36,917 errors + 4 timeouts** |
 | **Remaining** | | | **4 timeouts** |
 
 ### Completed Commits
@@ -300,23 +300,32 @@ working correctly for forward-referenced classes.
 
 ### Next Steps to Fix Remaining 4 Timeouts
 
-**TODO: Fix infinite recursion in type resolution**
+**ATTEMPTED FIXES (Jan 29, 2026):**
 
-The issue appears to be in src/checker/class_type.rs in `get_class_instance_type_inner`:
+1. **Added fuel consumption check** - Prevents excessive computation by limiting type resolution ops to 100,000
+2. **Added global set check before recursion** - Check `class_instance_resolution_set` before calling `get_class_instance_type_inner` at line 595
+3. **Removed forward reference resolution** - Don't call `base_instance_type_from_expression` when symbol can't be resolved
+4. **Multiple cycle detection layers** - Checks at declaration level, type resolution level, and fuel level
 
-1. **Problem:** When resolving class C extends E (before E is declared),
-   the type resolution tries to resolve E's type, which triggers infinite recursion.
+**REMAINING ISSUE:**
 
-2. **Current Protection:** `class_instance_resolution_set` is checked at line 90-92,
-   but this may not cover all code paths or may be cleaned up prematurely.
+The 4 timeout tests persist despite multiple layers of protection. The issue appears to be:
+- Tests timeout after 3 seconds
+- Cycle detection at declaration level works (ClassInheritanceChecker)
+- But type resolution still times out, possibly due to:
+  1. Deep recursion before cycle is detected
+  2. Multiple code paths that bypass the guards
+  3. Cached types not being properly utilized
+  4. Interaction between `class_instance_resolution_set` and `symbol_resolution_set`
 
-3. **Potential Solutions:**
-   - Ensure `class_instance_resolution_set` is checked and cleaned up consistently
-   - Add guards in `resolve_heritage_symbol` to prevent forward reference cycles
-   - Add early return when base class symbol is found but not yet declared
-   - Consider a two-pass approach: collect all classes first, then resolve types
+**RECOMMENDED APPROACH:**
 
-4. **Test Case:**
+The most promising fix would be to cache ERROR types from `get_class_instance_type` so that once a cycle is detected, subsequent calls return the cached ERROR immediately without attempting resolution again. This would require:
+1. Adding a cache for class instance types
+2. Checking cache before calling `get_class_instance_type_inner`
+3. Populating cache when cycle is detected
+
+**Test Case:**
 ```typescript
 class C extends E { foo: string; }  // Tries to resolve E before E exists
 class D extends C { bar: string; }

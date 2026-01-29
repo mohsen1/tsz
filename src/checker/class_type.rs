@@ -454,16 +454,7 @@ impl<'a> CheckerState<'a> {
                 let base_sym_id = match self.resolve_heritage_symbol(expr_idx) {
                     Some(base_sym_id) => base_sym_id,
                     None => {
-                        if let Some(base_instance_type) =
-                            self.base_instance_type_from_expression(expr_idx, type_arguments)
-                        {
-                            self.merge_base_instance_properties(
-                                base_instance_type,
-                                &mut properties,
-                                &mut string_index,
-                                &mut number_index,
-                            );
-                        }
+                        // Can't resolve symbol - skip this base class
                         break;
                     }
                 };
@@ -478,13 +469,14 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // CRITICAL: Check global resolution set to prevent infinite recursion
-                    // If the base class is currently being resolved, use ERROR type to break the cycle
+                    // If the base class is currently being resolved, skip it immediately
                     if self
                         .ctx
                         .class_instance_resolution_set
                         .contains(&base_sym_id)
                     {
-                        // Don't try to resolve - this would create infinite recursion
+                        // Base class is already being resolved up the call stack
+                        // Skip to prevent infinite recursion
                         break;
                     }
                 }
@@ -568,6 +560,20 @@ impl<'a> CheckerState<'a> {
                 let Some(base_class) = self.ctx.arena.get_class(base_node) else {
                     break;
                 };
+
+                // CRITICAL: Check global resolution set BEFORE recursing into base class
+                // This prevents infinite recursion when we have forward references in cycles
+                if let Some(base_class_sym) = self.ctx.binder.get_node_symbol(base_class_idx) {
+                    if self
+                        .ctx
+                        .class_instance_resolution_set
+                        .contains(&base_class_sym)
+                    {
+                        // Base class is already being resolved up the call stack
+                        // Return ANY to break the cycle and stop recursion
+                        return TypeId::ANY;
+                    }
+                }
 
                 let mut type_args = Vec::new();
                 if let Some(args) = type_arguments {

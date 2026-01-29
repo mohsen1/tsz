@@ -70,9 +70,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let members = self.interner.type_list(members);
         for &member in members.iter() {
-            // Don't accept `any` as universal subtype in union checks
-            if member == TypeId::ANY && target != TypeId::ANY {
-                return SubtypeResult::False;
+            // Any poisoning: if any member is `any`, the whole union acts as `any`
+            // and is assignable to everything (TypeScript unsoundness rule)
+            if member == TypeId::ANY {
+                return SubtypeResult::True;
             }
             if !self.check_subtype(member, target).is_true() {
                 return SubtypeResult::False;
