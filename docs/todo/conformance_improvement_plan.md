@@ -9,6 +9,10 @@
 - Module Resolution: TS2307 reduced from 3,950x to 30x (99.2% reduction)
 - ✅ TS2583 lib caching bug fixed - reduced from 122x to 3x (97.5% reduction)
 - ✅ **NEW:** TS2339 Promise property access bug fixed - 121x errors eliminated (100% reduction)
+- ✅ **NEW:** TS2336 Super in arrow functions bug fixed - 87x errors eliminated (100% reduction)
+- ✅ **NEW:** TS2571 Wrong error code bug fixed - 22x errors eliminated (100% reduction)
+- ✅ **NEW:** TS2349 Generic callable invocation bug fixed - 22x errors eliminated (100% reduction)
+- ✅ **NEW:** TS2507 Extends null bug fixed - ~40x of 43x errors eliminated (95% reduction)
 - Pass rate improved from 30.0% to 34.4% (+4.4 percentage points, +15% relative improvement)
 - ERROR propagation fix is highly effective
 - **Known Limitation:** 4 timeout tests remain for circular class inheritance (classExtendsItself*.ts)
@@ -28,17 +32,21 @@ This document outlines the critical issues causing conformance failures, priorit
 | Global Types (paths) | 0 | 618 (TS2318) | ✅ COMPLETED - Lib path resolution |
 | Target Library (wiring) | 0 | 1,748 (TS2583) | ✅ COMPLETED - Embedded libs fallback |
 | Target Library (actual) | 0 | 88 (TS2583) | ✅ COMPLETED - 74% reduction |
-| **TS2583 Lib Caching (NEW)** | **122 → 3** | 0 | ✅ **COMPLETED** - 97.5% reduction, lib dependency caching fix |
+| **TS2583 Lib Caching** | **122 → 3** | 0 | ✅ **COMPLETED** - 97.5% reduction, lib dependency caching fix |
 | Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
 | Circular Constraints | 2,123 (TS2313) | 0 + 4 timeouts | ✅ COMPLETED - Recursive constraint fix |
 | Circular Inheritance | 0 + 4 timeouts | 0 | ⚠️ 95% COMPLETE - 4 timeout edge cases remain, InheritanceGraph integrated |
 | InheritanceGraph Integration | 0 | 0 | ✅ COMPLETED - O(1) nominal class subtyping |
 | Module Resolution | 3,950 (TS2307) | 0 | ✅ COMPLETED - Node.js-style resolution |
-| **TS2339 Lib Symbol Resolution (NEW)** | **121 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, lib symbol lookup in type lowering |
-| **UTF-8 Scanner (NEW)** | **Panic** | 0 | ✅ **COMPLETED** - Fixed multi-byte char handling in 5 locations |
-| **Path Resolution (NEW)** | **Infrastructure** | 0 | ✅ **COMPLETED** - Improved lib dir finding for test runner |
-| **Total Fixed** | **~32,547** | **~8,563** | **~41,110 errors + 4 timeouts** |
-| **Remaining** | | | **4 timeouts + 3 TS2583 edge cases** |
+| **TS2339 Lib Symbol Resolution** | **121 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, lib symbol lookup in type lowering |
+| **UTF-8 Scanner** | **Panic** | 0 | ✅ **COMPLETED** - Fixed multi-byte char handling in 5 locations |
+| **Path Resolution** | **Infrastructure** | 0 | ✅ **COMPLETED** - Improved lib dir finding for test runner |
+| **TS2336 Super in Arrow Functions** | **87 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, arrow function context capture |
+| **TS2507 Extends Null** | **43 → ~3** | 0 | ✅ **~95% COMPLETED** - extends null now allowed |
+| **TS2571 Wrong Error Code** | **22 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, now uses TS2339 |
+| **TS2349 Generic Callable** | **22 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, Application type resolution |
+| **Total Fixed** | **~32,863** | **~8,563** | **~41,426 errors + 4 timeouts** |
+| **Remaining** | | | **~6,700 errors + 4 timeouts** |
 
 ### Completed Commits
 
@@ -196,6 +204,24 @@ This document outlines the critical issues causing conformance failures, priorit
      u.prop;  // Now reports TS2339 instead of TS2571
      ```
 
+16. **fix(checker): evaluate Application types before call checking** (6864454c6)
+   - Files: src/checker/type_computation.rs, src/solver/operations.rs
+   - Impact: 22 → 0 extra TS2349 errors (100% reduction)
+   - Fixed call expression type checking for generic callable interfaces
+   - Added evaluate_application_type call before CallEvaluator in type_computation.rs (~2820)
+   - Added Application case to resolve_call in operations.rs (~173)
+   - Root cause: When calling GenericCallable<string>, tsz stored type as
+     Application(Ref(symbol_id), [string]) and didn't resolve the Ref base to actual Callable
+   - Result: Generic callable interfaces like GenericCallable<string> now work correctly
+   - Example test case that now passes:
+     ```typescript
+     interface GenericCallable<T> {
+         (value: T): void;
+     }
+     const callable: GenericCallable<string> = (val: string) => {};
+     callable("test");  // No longer reports TS2349
+     ```
+
 ---
 
 ## Top Remaining Issues by Impact
@@ -207,16 +233,15 @@ This document outlines the critical issues causing conformance failures, priorit
 | **TS2339** | **121 → 0** | 0 | Property does not exist on type | ✅ **SOLVED** - 100% reduction, lib symbol resolution fixed |
 | **TS2336** | **87 → 0** | 0 | Super property access invalid context | ✅ **SOLVED** - 100% reduction, arrow function context capture |
 | **TS2571** | **22 → 0** | 0 | Object is of type unknown | ✅ **SOLVED** - 100% reduction, wrong error code |
+| **TS2349** | **22 → 0** | 0 | Cannot invoke non-function | ✅ **SOLVED** - 100% reduction, Application type resolution |
 | **TS2507** | **43 → ~3** | 0 | Type not a constructor function type | ⚠️ **~95% SOLVED** - extends null fixed |
 | TS2307 | 30x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
-| TS2349 | 22x | 0 | Cannot invoke non-function | 🔥 **NEXT PRIORITY** |
-| TS2307 | 30x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
-| TS2571 | 22x | 0 | Object is of type unknown | Low impact |
-| TS2349 | 22x | 0 | Cannot invoke non-function | Low impact |
 | TS2322 | **20x** | 0 | Type not assignable | ✅ **SOLVED** - 99.85% reduction |
 | **TS2583** | **3x** | 0 | ES2015+ global types edge cases | ⚠️ **95% SOLVED** - 122→3, lib caching fixed |
-| Iterators | 0 | 1,558 (TS2488) | Iterable checker incomplete |
-| Circular Inheritance Timeouts | 0 | 4 timeouts | ⚠️ KNOWN LIMITATION - Stack overflow before cycle detection |
+| **TS2304** | **~5,000x** | ~1,700x | Cannot find name | 🔥 **NEXT PRIORITY** - Name resolution issues |
+| Value/Type Namespace | ~1,700x | 0 | Namespace discrimination | High - requires symbol_resolver audit |
+| Iterators | 0 | 1,558 (TS2488) | Iterable checker incomplete | Medium - requires implementation |
+| Circular Inheritance Timeouts | 0 | 4 timeouts | ⚠️ KNOWN LIMITATION - Stack overflow before cycle detection | |
 
 ---
 
