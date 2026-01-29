@@ -1875,10 +1875,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+        // IMPORTANT: Mark as emitted BEFORE calling self.error() to prevent race conditions
+        // where multiple code paths check the set simultaneously
         let module_key = module_specifier.to_string();
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             return; // Already emitted - skip duplicate
         }
+        self.ctx
+            .modules_with_ts2307_emitted
+            .insert(module_key.clone());
 
         // Try to find the import declaration node to get the module specifier span
         let (start, length) = if !decl_node.is_none() {
@@ -1956,9 +1961,6 @@ impl<'a> CheckerState<'a> {
         use crate::checker::types::diagnostics::{diagnostic_messages, format_message};
         let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_specifier]);
         self.error(start, length, message, diagnostic_codes::CANNOT_FIND_MODULE);
-
-        // Mark this module as having TS2307 emitted (prevents duplicate emissions)
-        self.ctx.modules_with_ts2307_emitted.insert(module_key);
     }
 
     pub(crate) fn apply_type_arguments_to_constructor_type(
