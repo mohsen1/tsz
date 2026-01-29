@@ -281,11 +281,14 @@ export function parseTestCase(code: string, filePath: string): ParsedTestCase {
       const [, key, value] = optionMatch;
       const lowKey = key.toLowerCase();
 
-      // Parse value
+      // Parse value - keep version-like strings as strings (e.g., "6.0", "5.5")
       let parsedValue: unknown;
       if (value.toLowerCase() === 'true') parsedValue = true;
       else if (value.toLowerCase() === 'false') parsedValue = false;
-      else if (!isNaN(Number(value))) parsedValue = Number(value);
+      else if (lowKey === 'typescriptversion') {
+        // Keep TypeScript version as string to preserve minor version (e.g., "6.0")
+        parsedValue = value;
+      } else if (!isNaN(Number(value))) parsedValue = Number(value);
       else parsedValue = value;
 
       // Route to harness or directives based on directive type
@@ -393,11 +396,14 @@ export function parseDirectivesOnly(content: string): { directives: ParsedDirect
       const [, key, value] = optionMatch;
       const lowKey = key.toLowerCase();
 
-      // Parse value
+      // Parse value - keep version-like strings as strings (e.g., "6.0", "5.5")
       let parsedValue: unknown;
       if (value.toLowerCase() === 'true') parsedValue = true;
       else if (value.toLowerCase() === 'false') parsedValue = false;
-      else if (!isNaN(Number(value))) parsedValue = Number(value);
+      else if (lowKey === 'typescriptversion') {
+        // Keep TypeScript version as string to preserve minor version (e.g., "6.0")
+        parsedValue = value;
+      } else if (!isNaN(Number(value))) parsedValue = Number(value);
       else parsedValue = value;
 
       // Route to harness or directives

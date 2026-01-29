@@ -841,12 +841,29 @@ async function printTestDetails(
   });
   log('─'.repeat(50), colors.dim);
 
-  // Print parsed directives
-  log('\n⚙️  Parsed Directives:', colors.bold);
+  // Print harness options (test control)
+  log('\n🎛️  Harness Options:', colors.bold);
+  const harnessEntries = Object.entries(parsed.harness).filter(([, v]) => v !== undefined);
+  if (harnessEntries.length === 0) {
+    log('  (none)', colors.dim);
+  } else {
+    for (const [key, value] of harnessEntries) {
+      log(`  ${key}: ${JSON.stringify(value)}`, colors.magenta);
+    }
+  }
+
+  // Print parsed compiler directives
+  log('\n⚙️  Compiler Directives:', colors.bold);
   for (const [key, value] of Object.entries(parsed.directives)) {
     if (value !== undefined) {
       log(`  ${key}: ${JSON.stringify(value)}`, colors.yellow);
     }
+  }
+
+  // Check if test would be skipped
+  const skipResult = shouldSkipTest(parsed.harness);
+  if (skipResult.skip) {
+    log(`\n⚠️  Test would be SKIPPED: ${skipResult.reason}`, colors.yellow);
   }
 
   // Print check options sent to server
