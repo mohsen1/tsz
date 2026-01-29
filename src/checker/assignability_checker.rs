@@ -26,6 +26,106 @@ impl<'a> CheckerState<'a> {
     // Type Evaluation for Assignability
     // =========================================================================
 
+    /// Ensure all Ref types in a type are resolved and in the type environment.
+    ///
+    /// This is critical for intersection/union type assignability. When we have
+    /// `type AB = A & B`, the intersection contains Ref(A) and Ref(B). Before we
+    /// can check assignability against the intersection, we need to ensure A and B
+    /// are resolved and in type_env so the subtype checker can resolve them.
+    fn ensure_refs_resolved(&mut self, type_id: TypeId) {
+        use crate::solver::TypeKey;
+
+        let Some(type_key) = self.ctx.types.lookup(type_id) else {
+            return;
+        };
+
+        match type_key {
+            // For Ref types, resolve the symbol to ensure it's in type_env
+            TypeKey::Ref(symbol_ref) => {
+                let sym_id = crate::binder::SymbolId(symbol_ref.0);
+                // Call get_type_of_symbol which will resolve and cache in type_env
+                // This is LAZY resolution - only resolve when needed for checking
+                let _ = self.get_type_of_symbol(sym_id);
+            }
+
+            // For intersections, ensure all members are resolved
+            TypeKey::Intersection(members) => {
+                let member_list = self.ctx.types.type_list(members);
+                for &member in member_list.iter() {
+                    self.ensure_refs_resolved(member);
+                }
+            }
+
+            // For unions, ensure all members are resolved
+            TypeKey::Union(members) => {
+                let member_list = self.ctx.types.type_list(members);
+                for &member in member_list.iter() {
+                    self.ensure_refs_resolved(member);
+                }
+            }
+
+            // For type applications, ensure base and args are resolved
+            TypeKey::Application(app_id) => {
+                let app = self.ctx.types.type_application(app_id);
+                self.ensure_refs_resolved(app.base);
+                for &arg in &app.args {
+                    self.ensure_refs_resolved(arg);
+                }
+            }
+
+            // For functions, resolve parameter and return types
+            TypeKey::Function(sig) => {
+                let func_sig = self.ctx.types.function_shape(sig);
+                self.ensure_refs_resolved(func_sig.return_type);
+                for param in &func_sig.params {
+                    self.ensure_refs_resolved(param.type_id);
+                }
+            }
+
+            // For objects, resolve property types and index signatures
+            TypeKey::Object(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.ensure_refs_resolved(prop.type_id);
+                }
+                if let Some(ref sig) = shape.string_index {
+                    self.ensure_refs_resolved(sig.value_type);
+                }
+                if let Some(ref sig) = shape.number_index {
+                    self.ensure_refs_resolved(sig.value_type);
+                }
+            }
+
+            // For object with index signature
+            TypeKey::ObjectWithIndex(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.ensure_refs_resolved(prop.type_id);
+                }
+                if let Some(ref sig) = shape.string_index {
+                    self.ensure_refs_resolved(sig.value_type);
+                }
+                if let Some(ref sig) = shape.number_index {
+                    self.ensure_refs_resolved(sig.value_type);
+                }
+            }
+
+            // For type queries, resolve the referenced symbol
+            TypeKey::TypeQuery(symbol_ref) => {
+                let sym_id = crate::binder::SymbolId(symbol_ref.0);
+                let _ = self.get_type_of_symbol(sym_id);
+            }
+
+            // For arrays, tuples, readonly, etc., resolve the inner type
+            TypeKey::Array(inner) | TypeKey::ReadonlyType(inner) => {
+                self.ensure_refs_resolved(inner);
+            }
+
+            // For other types (primitives, literals, etc.), no resolution needed
+            _ => {}
+        }
+    }
+
     /// Evaluate a type for assignability checking.
     ///
     /// Determines if the type needs evaluation (applications, env-dependent types)
@@ -51,6 +151,12 @@ impl<'a> CheckerState<'a> {
     /// Assignability is more permissive than subtyping.
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
+
+        // CRITICAL: Ensure all Ref types are resolved before assignability check.
+        // This fixes intersection type assignability where `type AB = A & B` needs
+        // A and B in type_env before we can check if a type is assignable to the intersection.
+        self.ensure_refs_resolved(source);
+        self.ensure_refs_resolved(target);
 
         self.ensure_application_symbols_resolved(source);
         self.ensure_application_symbols_resolved(target);
@@ -277,6 +383,14 @@ impl<'a> CheckerState<'a> {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
+
+        // CRITICAL: Before checking subtypes, ensure all Ref types in source and target
+        // are resolved and in the type environment. This fixes intersection type
+        // assignability where `type AB = A & B` needs A and B in type_env before
+        // we can check if a type is assignable to the intersection.
+        self.ensure_refs_resolved(source);
+        self.ensure_refs_resolved(target);
+
         let depth_exceeded = {
             let env = self.ctx.type_env.borrow();
             let binder = self.ctx.binder;
@@ -320,6 +434,10 @@ impl<'a> CheckerState<'a> {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
+
+        // CRITICAL: Before checking subtypes, ensure all Ref types are resolved
+        self.ensure_refs_resolved(source);
+        self.ensure_refs_resolved(target);
 
         // Helper to check if a symbol is a class (for nominal subtyping)
         let is_class_fn = |sym_ref: crate::solver::types::SymbolRef| -> bool {
