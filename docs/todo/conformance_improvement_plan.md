@@ -377,13 +377,14 @@ This document outlines the critical issues causing conformance failures, priorit
 6. TS2335: 17x (super errors)
 
 **TS2322 Investigation Results (Jan 29 - Evening):**
-- **CRITICAL BUG:** Missing methods in `src/solver/subtype.rs`
-  - `check_union_source_subtype` (line 531) - called but not defined
-  - `check_union_target_subtype` (line 536) - called but not defined
-- **Impact:** Union type subtype checking incomplete
-- **Example:** `let y: string | number = "hello"` incorrectly emits TS2322
-- **Fix Required:** Implement missing union subtype checking methods
-- **Complexity:** High - requires TypeScript's union subtype rules
+- **IMPLEMENTED:** Inline union/intersection subtype checking in `src/solver/subtype.rs`
+- **Commit:** 4bf44e636
+- **Result:** Still 17x TS2322 errors - no improvement
+- **Working cases:** Basic string assignment, literal widening
+- **Failing:** `let y: string | number = "hello"` - incorrectly emits TS2322
+- **Hypothesis:** Assignment checker may not use subtype checker for variable declarations
+- **Status:** Requires deeper investigation of assignability chain
+- **Complexity:** HIGH - requires tracing through multiple layers
 
 **Note:** TS2304 not in top extra errors - basic name resolution working correctly
 
