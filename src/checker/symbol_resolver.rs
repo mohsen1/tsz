@@ -1244,7 +1244,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for wildcard re-exports: `export * from 'bar'`
+        // TSC behavior: If two `export *` declarations export the same name,
+        // that name is considered AMBIGUOUS and is NOT exported
+        // (unless explicitly re-exported by name, which is checked above).
         if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
+            let mut found_result: Option<SymbolId> = None;
+            let mut found_count = 0;
+
             for source_module in source_modules {
                 if let Some(sym_id) = self.resolve_reexported_member_symbol_inner(
                     source_module,
@@ -1252,8 +1258,18 @@ impl<'a> CheckerState<'a> {
                     visited_aliases,
                     visited_modules,
                 ) {
-                    return Some(sym_id);
+                    found_count += 1;
+                    if found_count == 1 {
+                        found_result = Some(sym_id);
+                    } else {
+                        // Multiple sources export the same name - ambiguous, treat as not exported
+                        return None;
+                    }
                 }
+            }
+
+            if found_result.is_some() {
+                return found_result;
             }
         }
 
