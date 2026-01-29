@@ -144,6 +144,27 @@ This document outlines the critical issues causing conformance failures, priorit
    - Root cause: tsz-server failed to find lib files when spawned from subdirectories
    - Result: Server now works reliably from any working directory context
 
+13. **fix(checker): allow super in arrow functions within property initializers** (a7d86f86d)
+   - Files: src/checker/super_checker.rs
+   - Impact: 87 → 0 extra TS2336 errors (100% reduction)
+   - Fixed super property access validation to account for arrow function context capture
+   - Modified `is_in_class_method_body` to skip arrow function boundaries when checking
+   - Modified `is_in_class_accessor_body` to skip arrow function boundaries
+   - Added `is_in_class_property_initializer` to check for property declarations
+   - Updated `check_super_expression` to include property initializer context
+   - Root cause: Arrow functions capture the class context, so super inside arrow functions
+     is valid if the arrow itself is within a valid class context
+   - Example cases now correctly handled:
+     ```typescript
+     class Derived extends Base {
+         // Arrow function captures class context
+         arrowField = () => super.method();
+
+         // Static arrow captures static context
+         static staticArrow = () => super.staticMethod();
+     }
+     ```
+
 ---
 
 ## Top Remaining Issues by Impact
@@ -153,8 +174,8 @@ This document outlines the critical issues causing conformance failures, priorit
 | Issue | Extra Errors | Missing Errors | Root Cause | Status |
 |-------|-------------|----------------|------------|--------|
 | **TS2339** | **121 → 0** | 0 | Property does not exist on type | ✅ **SOLVED** - 100% reduction, lib symbol resolution fixed |
-| TS2336 | 87x | 0 | Super property access invalid context | 🔥 NEXT PRIORITY |
-| TS2507 | 43x | 0 | Async function must return Promise | High impact |
+| **TS2336** | **87 → 0** | 0 | Super property access invalid context | ✅ **SOLVED** - 100% reduction, arrow function context capture |
+| TS2507 | 43x | 0 | Async function must return Promise | 🔥 NEXT PRIORITY |
 | TS2307 | 30x | 0 | Cannot find module (edge cases) | Low - already fixed 99% |
 | TS2571 | 22x | 0 | Object is of type unknown | Low impact |
 | TS2349 | 22x | 0 | Cannot invoke non-function | Low impact |
