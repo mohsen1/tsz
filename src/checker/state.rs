@@ -3329,6 +3329,30 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Get a symbol from the current binder, lib binders, or other file binders.
+    /// This ensures we can resolve symbols from lib.d.ts and other files.
+    fn get_symbol_globally(&self, sym_id: SymbolId) -> Option<&crate::binder::Symbol> {
+        // 1. Check current file
+        if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+            return Some(sym);
+        }
+        // 2. Check lib files (lib.d.ts, etc.)
+        for lib in &self.ctx.lib_contexts {
+            if let Some(sym) = lib.binder.get_symbol(sym_id) {
+                return Some(sym);
+            }
+        }
+        // 3. Check other files in the project (multi-file mode)
+        if let Some(binders) = &self.ctx.all_binders {
+            for binder in binders {
+                if let Some(sym) = binder.get_symbol(sym_id) {
+                    return Some(sym);
+                }
+            }
+        }
+        None
+    }
+
     /// Compute type of a symbol (internal, not cached).
     ///
     /// Uses TypeLowering to bridge symbol declarations to solver types.
@@ -3372,23 +3396,27 @@ impl<'a> CheckerState<'a> {
             return (result, Vec::new());
         }
 
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return (TypeId::UNKNOWN, Vec::new());
-        };
-
-        let flags = symbol.flags;
-        let value_decl = symbol.value_declaration;
+        // Use get_symbol_globally to find symbols in lib files and other files
+        // Extract needed data to avoid holding borrow across mutable operations
+        let (flags, value_decl, declarations, import_module, import_name, escaped_name) =
+            match self.get_symbol_globally(sym_id) {
+                Some(symbol) => (
+                    symbol.flags,
+                    symbol.value_declaration,
+                    symbol.declarations.clone(),
+                    symbol.import_module.clone(),
+                    symbol.import_name.clone(),
+                    symbol.escaped_name.clone(),
+                ),
+                None => return (TypeId::UNKNOWN, Vec::new()),
+            };
 
         // Class - return class constructor type (merging namespace exports when present)
         if flags & symbol_flags::CLASS != 0 {
             let decl_idx = if !value_decl.is_none() {
                 value_decl
             } else {
-                symbol
-                    .declarations
-                    .first()
-                    .copied()
-                    .unwrap_or(NodeIndex::NONE)
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
@@ -3437,7 +3465,7 @@ impl<'a> CheckerState<'a> {
             let mut overloads = Vec::new();
             let mut implementation_decl = NodeIndex::NONE;
 
-            for &decl_idx in &symbol.declarations {
+            for &decl_idx in &declarations {
                 let Some(node) = self.ctx.arena.get(decl_idx) else {
                     continue;
                 };
@@ -3480,17 +3508,13 @@ impl<'a> CheckerState<'a> {
 
         // Interface - return interface type with call signatures
         if flags & symbol_flags::INTERFACE != 0 {
-            if !symbol.declarations.is_empty() {
+            if !declarations.is_empty() {
                 // Get type parameters from the first interface declaration
                 let mut params = Vec::new();
                 let mut updates = Vec::new();
 
                 // Try to get type parameters from the interface declaration
-                let first_decl = symbol
-                    .declarations
-                    .first()
-                    .copied()
-                    .unwrap_or(NodeIndex::NONE);
+                let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
                 if !first_decl.is_none() {
                     if let Some(node) = self.ctx.arena.get(first_decl) {
                         if let Some(interface) = self.ctx.arena.get_interface(node) {
@@ -3499,7 +3523,7 @@ impl<'a> CheckerState<'a> {
                         }
                     } else if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
                         debug!(
-                            name = %symbol.escaped_name,
+                            name = %escaped_name,
                             sym_id = sym_id.0,
                             first_decl = ?first_decl,
                             arena_len = self.ctx.arena.len(),
@@ -3520,14 +3544,14 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
-                let interface_type = lowering.lower_interface_declarations(&symbol.declarations);
+                let interface_type = lowering.lower_interface_declarations(&declarations);
 
                 // Restore the type parameter scope
                 self.pop_type_parameters(updates);
 
                 // Return the interface type along with the type parameters that were used
                 return (
-                    self.merge_interface_heritage_types(&symbol.declarations, interface_type),
+                    self.merge_interface_heritage_types(&declarations, interface_type),
                     params,
                 );
             }
@@ -3543,11 +3567,7 @@ impl<'a> CheckerState<'a> {
             let decl_idx = if !value_decl.is_none() {
                 value_decl
             } else {
-                symbol
-                    .declarations
-                    .first()
-                    .copied()
-                    .unwrap_or(NodeIndex::NONE)
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
@@ -3684,7 +3704,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // For ES6 imports with import_module set, resolve using module_exports
-            if let Some(ref module_name) = symbol.import_module {
+            if let Some(ref module_name) = import_module {
                 // Check if this is a shorthand ambient module (declare module "foo" without body)
                 // Imports from shorthand ambient modules are typed as `any`
                 if self
@@ -3698,7 +3718,7 @@ impl<'a> CheckerState<'a> {
 
                 // Check if this is a namespace import (import * as ns)
                 // Namespace imports have import_name set to None and should return all exports as an object
-                if symbol.import_name.is_none() {
+                if import_name.is_none() {
                     // This is a namespace import: import * as ns from 'module'
                     // Create an object type containing all module exports
 
@@ -3743,7 +3763,7 @@ impl<'a> CheckerState<'a> {
 
                 // This is a named import: import { X } from 'module'
                 // Use import_name if set (for renamed imports), otherwise use escaped_name
-                let export_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
+                let export_name = import_name.as_ref().unwrap_or(&escaped_name);
 
                 // First, try local binder's module_exports
                 let export_sym_id = self
@@ -5007,23 +5027,23 @@ impl<'a> CheckerState<'a> {
             return checker.get_type_params_for_symbol(sym_id);
         }
 
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return Vec::new();
+        // Use get_symbol_globally to find symbols in lib files and other files
+        // Extract needed data to avoid holding borrow
+        let (flags, value_decl, declarations) = match self.get_symbol_globally(sym_id) {
+            Some(symbol) => (
+                symbol.flags,
+                symbol.value_declaration,
+                symbol.declarations.clone(),
+            ),
+            None => return Vec::new(),
         };
-
-        let flags = symbol.flags;
-        let value_decl = symbol.value_declaration;
 
         // Type alias - get type parameters from declaration
         if flags & symbol_flags::TYPE_ALIAS != 0 {
             let decl_idx = if !value_decl.is_none() {
                 value_decl
             } else {
-                symbol
-                    .declarations
-                    .first()
-                    .copied()
-                    .unwrap_or(NodeIndex::NONE)
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
@@ -5040,11 +5060,7 @@ impl<'a> CheckerState<'a> {
             let decl_idx = if !value_decl.is_none() {
                 value_decl
             } else {
-                symbol
-                    .declarations
-                    .first()
-                    .copied()
-                    .unwrap_or(NodeIndex::NONE)
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
@@ -5061,11 +5077,7 @@ impl<'a> CheckerState<'a> {
             let decl_idx = if !value_decl.is_none() {
                 value_decl
             } else {
-                symbol
-                    .declarations
-                    .first()
-                    .copied()
-                    .unwrap_or(NodeIndex::NONE)
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
