@@ -14,6 +14,7 @@
 - ✅ **NEW:** TS2349 Generic callable invocation bug fixed - 22x errors eliminated (100% reduction)
 - ✅ **NEW:** TS2507 Extends null bug fixed - ~40x of 43x errors eliminated (95% reduction)
 - ✅ **NEW:** TS2304 Namespace type position bug fixed - namespace-qualified types now work
+- ⚠️ **NEW:** TS2339 Architectural gap investigated - uses hardcoded lists instead of lib.d.ts lookup
 - Pass rate improved from 30.0% to 34.4% (+4.4 percentage points, +15% relative improvement)
 - ERROR propagation fix is highly effective
 - **Known Limitation:** 4 timeout tests remain for circular class inheritance (classExtendsItself*.ts)
