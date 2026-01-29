@@ -139,6 +139,9 @@ pub mod diagnostic_messages {
     pub const CLASS_INCORRECTLY_IMPLEMENTS: &str =
         "Class '{0}' incorrectly implements interface '{1}'.";
     pub const CLASS_INCORRECTLY_EXTENDS: &str = "Class '{0}' incorrectly extends base class '{1}'.";
+    /// TS2506: '{0}' is referenced directly or indirectly in its own base expression.
+    pub const CIRCULAR_BASE_REFERENCE: &str =
+        "'{0}' is referenced directly or indirectly in its own base expression.";
     pub const TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE: &str =
         "Type '{0}' is not a constructor function type.";
     pub const PROPERTY_HAS_NO_INITIALIZER: &str =
@@ -506,6 +509,9 @@ pub mod diagnostic_codes {
     /// TS2504: Type '{0}' must have a '[Symbol.asyncIterator]()' method that returns an async iterator.
     /// Used for for-await-of loops with non-async-iterable types.
     pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR: u32 = 2504;
+    /// TS2506: '{0}' is referenced directly or indirectly in its own base expression.
+    /// Used for circular class inheritance (class C extends C, class C extends D, D extends C).
+    pub const CIRCULAR_BASE_REFERENCE: u32 = 2506;
     pub const REST_ELEMENT_MUST_BE_LAST: u32 = 2462;
 
     // JSX errors
