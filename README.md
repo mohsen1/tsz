@@ -12,10 +12,10 @@ To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript
 test suite against it.
 
 <!-- CONFORMANCE_START -->
-Currently targeting TypeScript 6.0.0-dev.20260116
+Currently targeting `TypeScript`@`6.0.0-dev.20260116`
 
 ```
-Progress: [███████░░░░░░░░░░░░░] 37.0% (4,508 / 12,197 tests)
+Progress: [████████░░░░░░░░░░░░] 40.0% (200 / 500 tests)
 ```
 <!-- CONFORMANCE_END -->
 
