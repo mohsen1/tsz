@@ -170,6 +170,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // the union is callable
                 self.resolve_union_call(func_type, list_id, arg_types)
             }
+            TypeKey::Application(app_id) => {
+                // Handle Application types (e.g., GenericCallable<string>)
+                // Get the application and resolve the call on its base type
+                let app = self.interner.type_application(app_id);
+                // Resolve the call on the base type with type arguments applied
+                // The application's base should already be a callable type after type evaluation
+                self.resolve_call(app.base, arg_types)
+            }
+            TypeKey::Ref(_sym_ref) => {
+                // For Ref types, we need to look up the symbol's type
+                // However, in the CallEvaluator we don't have access to symbol resolution
+                // Return NotCallable - this case should be handled before calling resolve_call
+                // (e.g., by evaluate_application_type in the caller)
+                CallResult::NotCallable { type_id: func_type }
+            }
             _ => CallResult::NotCallable { type_id: func_type },
         }
     }
