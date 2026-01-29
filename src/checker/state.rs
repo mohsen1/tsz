@@ -4938,7 +4938,7 @@ impl<'a> CheckerState<'a> {
         let mut env = TypeEnvironment::new();
 
         // Collect all unique symbols from node_symbols map
-        let symbols: Vec<SymbolId> = self
+        let mut symbols: Vec<SymbolId> = self
             .ctx
             .binder
             .node_symbols
@@ -4947,6 +4947,28 @@ impl<'a> CheckerState<'a> {
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
+
+        // FIX: Also include lib symbols for proper property resolution
+        // This ensures Error, Math, JSON, etc. can be resolved when accessed
+        if !self.ctx.lib_contexts.is_empty() {
+            let lib_symbols_set: std::collections::HashSet<SymbolId> = self
+                .ctx
+                .lib_contexts
+                .iter()
+                .flat_map(|lib| {
+                    // Iterate over symbol IDs in lib binder
+                    (0..lib.binder.symbols.len())
+                        .map(|i| SymbolId(i as u32))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+
+            for sym_id in lib_symbols_set {
+                if !symbols.contains(&sym_id) {
+                    symbols.push(sym_id);
+                }
+            }
+        }
 
         // Resolve each symbol and add to the environment
         for sym_id in symbols {
@@ -5467,6 +5489,12 @@ impl<'a> CheckerState<'a> {
             // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
             // This enables primitive property access to use lib definitions instead of hardcoded lists
             self.register_boxed_types();
+
+            // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
+            // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
+            // Without this, TypeKey::Ref(Error) returns ERROR, causing TS2339 false positives
+            let populated_env = self.build_type_environment();
+            *self.ctx.type_env.borrow_mut() = populated_env;
 
             // Type check each top-level statement
             for &stmt_idx in &sf.statements.nodes {
