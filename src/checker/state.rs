@@ -6458,8 +6458,34 @@ impl<'a> CheckerState<'a> {
                 if let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) {
                     // Symbol was resolved - check if it represents a constructor type for extends clauses
                     if is_extends_clause {
+                        use crate::binder::symbol_flags;
                         let symbol_type = self.get_type_of_symbol(heritage_sym);
-                        if !self.is_constructor_type(symbol_type)
+
+                        // Check if this is an interface - emit TS2689 instead of TS2507
+                        let is_interface = self
+                            .ctx
+                            .binder
+                            .get_symbol(heritage_sym)
+                            .map(|s| (s.flags & symbol_flags::INTERFACE) != 0)
+                            .unwrap_or(false);
+
+                        if is_interface {
+                            // Emit TS2689: Cannot extend an interface
+                            if let Some(name) = self.heritage_name_text(expr_idx) {
+                                use crate::checker::types::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages, format_message,
+                                };
+                                let message = format_message(
+                                    diagnostic_messages::CANNOT_EXTEND_AN_INTERFACE,
+                                    &[&name],
+                                );
+                                self.error_at_node(
+                                    expr_idx,
+                                    &message,
+                                    diagnostic_codes::CANNOT_EXTEND_AN_INTERFACE,
+                                );
+                            }
+                        } else if !self.is_constructor_type(symbol_type)
                             && !self.is_class_symbol(heritage_sym)
                         {
                             // Resolved to a non-constructor type - emit TS2507

@@ -175,6 +175,8 @@ pub mod diagnostic_messages {
         "'super' cannot be referenced in a static property initializer.";
 
     // Interface errors
+    pub const CANNOT_EXTEND_AN_INTERFACE: &str =
+        "Cannot extend an interface '{0}'. Did you mean 'implements'?";
     pub const INTERFACE_INCORRECTLY_EXTENDS: &str =
         "Interface '{0}' incorrectly extends interface '{1}'.";
     pub const TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF: &str =
@@ -423,6 +425,7 @@ pub mod diagnostic_codes {
     pub const PROPERTY_IS_PRIVATE: u32 = 2341;
     pub const PROPERTY_IS_PROTECTED: u32 = 2445;
     pub const TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE: u32 = 2507; // Type 'X' is not a constructor function type.
+    pub const CANNOT_EXTEND_AN_INTERFACE: u32 = 2689; // Cannot extend an interface '{0}'. Did you mean 'implements'?
     pub const CANNOT_EXTEND_SEALED_CLASS: u32 = 2509;
     pub const GET_ACCESSOR_MUST_RETURN_VALUE: u32 = 2378; // A 'get' accessor must return a value.
     pub const CONSTRUCTOR_CANNOT_HAVE_RETURN_TYPE: u32 = 2380;
