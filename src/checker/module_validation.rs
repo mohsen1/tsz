@@ -236,7 +236,13 @@ impl<'a> CheckerState<'a> {
                 visited.iter().chain(std::iter::once(module_name)).collect();
             let cycle_str = cycle_path.join(" -> ");
             let message = format!("{}: {}", diagnostic_messages::CANNOT_FIND_MODULE, cycle_str);
-            self.error(0, 0, message, diagnostic_codes::CANNOT_FIND_MODULE);
+
+            // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+            let module_key = module_name.to_string();
+            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                self.ctx.modules_with_ts2307_emitted.insert(module_key);
+                self.error(0, 0, message, diagnostic_codes::CANNOT_FIND_MODULE);
+            }
             return;
         }
 

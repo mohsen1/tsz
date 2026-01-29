@@ -102,8 +102,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // Module not found - emit TS2307
-        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-        self.error_at_node(arg_idx, &message, diagnostic_codes::CANNOT_FIND_MODULE);
+        // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+        let module_key = module_name.to_string();
+        if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+            self.ctx
+                .modules_with_ts2307_emitted
+                .insert(module_key.clone());
+            let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
+            self.error_at_node(arg_idx, &message, diagnostic_codes::CANNOT_FIND_MODULE);
+        }
     }
 
     // =========================================================================
@@ -162,11 +169,17 @@ impl<'a> CheckerState<'a> {
                 .collect();
             let cycle_str = cycle_path.join(" -> ");
             let message = format!("Circular re-export detected: {}", cycle_str);
-            self.error_at_node(
-                export_decl.module_specifier,
-                &message,
-                diagnostic_codes::CANNOT_FIND_MODULE,
-            );
+
+            // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+            let module_key = module_name.to_string();
+            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                self.ctx.modules_with_ts2307_emitted.insert(module_key);
+                self.error_at_node(
+                    export_decl.module_specifier,
+                    &message,
+                    diagnostic_codes::CANNOT_FIND_MODULE,
+                );
+            }
             return;
         }
 
@@ -222,12 +235,19 @@ impl<'a> CheckerState<'a> {
         }
 
         // Emit TS2307 for unresolved export module specifiers
-        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-        self.error_at_node(
-            export_decl.module_specifier,
-            &message,
-            diagnostic_codes::CANNOT_FIND_MODULE,
-        );
+        // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+        let module_key = module_name.to_string();
+        if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+            self.ctx
+                .modules_with_ts2307_emitted
+                .insert(module_key.clone());
+            let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
+            self.error_at_node(
+                export_decl.module_specifier,
+                &message,
+                diagnostic_codes::CANNOT_FIND_MODULE,
+            );
+        }
 
         self.ctx.import_resolution_stack.pop();
     }

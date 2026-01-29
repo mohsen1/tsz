@@ -36,15 +36,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn error_at_node(&mut self, node_idx: NodeIndex, message: &str, code: u32) {
         if let Some((start, end)) = self.get_node_span(node_idx) {
             let length = end.saturating_sub(start);
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
-                start,
-                length,
-                message_text: message.to_string(),
-                category: DiagnosticCategory::Error,
-                code,
-                related_information: Vec::new(),
-            });
+            // Use the error() function which has deduplication by (start, code)
+            self.error(start, length, message.to_string(), code);
         }
     }
 
