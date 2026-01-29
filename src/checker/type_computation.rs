@@ -520,14 +520,10 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> TypeId {
-        use crate::solver::{PropertyAccessResult, QueryDatabase};
+        use crate::solver::PropertyAccessResult;
 
         let object_type = self.resolve_type_for_property_access(object_type);
-        let result_type = match self
-            .ctx
-            .types
-            .property_access_type(object_type, property_name)
-        {
+        let result_type = match self.resolve_property_access_with_env(object_type, property_name) {
             PropertyAccessResult::Success { type_id, .. } => type_id,
             PropertyAccessResult::PropertyNotFound { .. } => {
                 // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
@@ -898,7 +894,7 @@ impl<'a> CheckerState<'a> {
     /// Handles element access with optional chaining, index signatures,
     /// and nullish coalescing.
     pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::solver::{PropertyAccessResult, QueryDatabase};
+        use crate::solver::PropertyAccessResult;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -1063,10 +1059,7 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
             // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-            let result = self
-                .ctx
-                .types
-                .property_access_type(resolved_type, &property_name);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             result_type = Some(match result {
                 PropertyAccessResult::Success { type_id, .. } => type_id,
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
