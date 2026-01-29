@@ -186,9 +186,10 @@ impl ScannerState {
     }
 
     /// Get the current token's string value.
+    /// Note: Prefer get_token_value_ref() to avoid allocation when possible.
     #[wasm_bindgen(js_name = getTokenValue)]
     pub fn get_token_value(&self) -> String {
-        self.token_value.clone()
+        self.get_token_value_ref().to_string()
     }
 
     /// Get the current token's text from the source.
@@ -1161,8 +1162,9 @@ impl ScannerState {
         // Intern the identifier for O(1) comparison (reuses existing interned string)
         self.token_atom = self.interner.intern(text_slice);
 
-        // Store token value (still needed for compatibility, but could be lazy in future)
-        self.token_value = text_slice.to_string();
+        // ZERO-ALLOCATION: Don't store token_value for identifiers.
+        // get_token_value_ref() will resolve from token_atom or fall back to source slice.
+        self.token_value.clear();
     }
 
     // =========================================================================
@@ -1613,8 +1615,11 @@ impl ScannerState {
                     break;
                 }
             }
-            self.token_value = self.substring(self.token_start, self.pos);
-            self.token_atom = self.interner.intern(self.token_value.as_str());
+            // ZERO-ALLOCATION: Intern directly from source slice, clear token_value
+            self.token_atom = self
+                .interner
+                .intern(&self.source[self.token_start..self.pos]);
+            self.token_value.clear();
         }
         self.token
     }
@@ -2162,19 +2167,26 @@ impl ScannerState {
         &mut self.interner
     }
 
+    /// Take ownership of the interner, replacing it with a new empty one.
+    /// Used to transfer the interner to NodeArena after parsing.
+    pub fn take_interner(&mut self) -> Interner {
+        std::mem::take(&mut self.interner)
+    }
+
     /// ZERO-COPY: Get the current token value as a reference.
     /// For identifiers/keywords, returns the interned string.
-    /// For other tokens, returns a slice of the source text.
+    /// For other tokens, returns the token_value or raw source slice.
     /// This avoids allocation compared to get_token_value().
     #[inline]
     pub fn get_token_value_ref(&self) -> &str {
-        // For identifiers with an interned atom, return the interned string
+        // 1. Fast path: Interned atom (identifiers, keywords)
+        // When token_atom is set, we can always resolve from interner
         if self.token_atom != Atom::NONE {
             return self.interner.resolve(self.token_atom);
         }
-        // For other tokens, return the source slice
-        // Note: This won't work for tokens with escape processing,
-        // which is why we still keep token_value for now
+
+        // 2. For all other tokens (strings, numbers, operators, etc.),
+        // return token_value directly. Empty token_value is valid (e.g., "" or ``)
         &self.token_value
     }
 
