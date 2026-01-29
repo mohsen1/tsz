@@ -754,6 +754,29 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
           filesToCheck.push(file.name);
         }
 
+        // Handle symlinks for native mode (from harness options)
+        if (testCase.harness.symlinks) {
+          for (const { target, link } of testCase.harness.symlinks) {
+            const linkPath = path.join(tmpDir, link.replace(/^\.\//, ''));
+            const targetPath = path.join(tmpDir, target.replace(/^\.\//, ''));
+
+            const linkDir = path.dirname(linkPath);
+            if (!fs.existsSync(linkDir)) {
+              fs.mkdirSync(linkDir, { recursive: true });
+            }
+
+            try {
+              // Calculate relative target for portability
+              const relativeTarget = path.relative(linkDir, targetPath);
+              // Determine symlink type for Windows compatibility
+              const symlinkType = fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory() ? 'dir' : 'file';
+              fs.symlinkSync(relativeTarget, linkPath, symlinkType);
+            } catch {
+              // Ignore EEXIST or permission errors to prevent crash
+            }
+          }
+        }
+
         // Spawn native binary
         const { spawn } = require('child_process');
         const args: string[] = [];

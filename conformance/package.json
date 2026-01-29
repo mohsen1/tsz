@@ -20,6 +20,8 @@
     "update-readme": "node dist/update-readme.js"
   },
   "dependencies": {
+    "@types/semver": "^7.7.1",
+    "semver": "^7.7.3",
     "typescript": "^6.0.0-dev.20260116"
   },
   "devDependencies": {

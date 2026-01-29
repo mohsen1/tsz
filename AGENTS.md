@@ -86,6 +86,12 @@ For deep architecture questions: `./scripts/ask-gemini.mjs --solver "your questi
 
 Available presets: `--solver`, `--checker`, `--binder`, `--parser`, `--emitter`, `--lsp`, `--types`, `--modules`
 
+## Git
+
+- Only add files you touched 
+- There is a chance another AI session is working on the same codebase. do not revert/delete
+- Make semantic and short commit headers
+
 ## Additional References
 
 | Topic | Document |

@@ -138,9 +138,11 @@ function prepareTestFiles(
       try {
         // Create symlink (target must be relative to link location or absolute)
         const relativeTarget = path.relative(linkDir, targetPath);
-        fs.symlinkSync(relativeTarget, linkPath);
+        // Determine symlink type for Windows compatibility
+        const symlinkType = fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory() ? 'dir' : 'file';
+        fs.symlinkSync(relativeTarget, linkPath, symlinkType);
       } catch {
-        // Symlink creation may fail on some systems, ignore
+        // Symlink creation may fail on some systems (e.g., Windows without admin), ignore
       }
     }
   }
