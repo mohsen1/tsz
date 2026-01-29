@@ -46,7 +46,7 @@ This document outlines the critical issues causing conformance failures, priorit
 | **Path Resolution** | **Infrastructure** | 0 | ✅ **COMPLETED** - Improved lib dir finding for test runner |
 | **TS2336 Super in Arrow Functions** | **87 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, arrow function context capture |
 | **TS2507 Extends Null** | **43 → ~3** | 0 | ✅ **~95% COMPLETED** - extends null now allowed |
-| **TS2507 Extends Interface** | **69 → 62** | 0 | ✅ **~10% COMPLETED** - TS2689 now used for extends interface |
+| **TS2507 Extends Interface** | **69 → 36** | 0 | ✅ **~48% COMPLETED** - TS2689 now used for class extends interface (bug fixed) |
 | **TS2571 Wrong Error Code** | **22 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, now uses TS2339 |
 | **TS2349 Generic Callable** | **22 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, Application type resolution |
 | **Total Fixed** | **~32,863** | **~8,563** | **~41,426 errors + 4 timeouts** |
@@ -249,7 +249,22 @@ This document outlines the critical issues causing conformance failures, priorit
      class C extends I { }  // Was: TS2507, Now: TS2689 ✓
      ```
 
-16. **fix(checker): use TS2339 instead of TS2571 for property access on unknown** (6ddb06991)
+15. **fix(checker): only emit TS2689 when class extends interface** (9a144a87f)
+   - Files: src/checker/state.rs
+   - Impact: TS2507 reduced to 36x (from 62x), bug fix for false positives
+   - Bug fix: Initial TS2689 implementation incorrectly emitted error for interface extends interface
+   - Added `is_class_declaration` parameter to distinguish class vs interface heritage clauses
+   - Now correctly handles:
+     - `class C extends I` → TS2689 ✓
+     - `interface Foo extends Array<number>` → No error ✓
+   - Root cause: Interfaces can validly extend other interfaces, only classes have the restriction
+   - Example that now works:
+     ```typescript
+     interface Foo extends Array<number> {} // Was: TS2689/TS2507, Now: ✓
+     class C extends I {} // TS2689 ✓
+     ```
+
+17. **fix(checker): use TS2339 instead of TS2571 for property access on unknown** (6ddb06991)
    - Files: src/checker/state.rs, src/checker/function_type.rs, src/checker/type_computation.rs
    - Impact: 22 → 0 extra TS2571 errors (100% reduction)
    - Fixed incorrect error code for property access on unknown types
