@@ -902,8 +902,6 @@ impl<'a> CheckerState<'a> {
                 if !is_class_member && accept_type_symbol(sym_id) {
                     return TypeSymbolResolution::Type(sym_id);
                 }
-            } else {
-                return TypeSymbolResolution::Type(sym_id);
             }
         }
 
