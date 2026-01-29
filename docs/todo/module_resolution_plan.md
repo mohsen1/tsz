@@ -507,11 +507,19 @@ declare module 'express' {
 
 ---
 
-## Open Questions
+## Open Questions (Status)
 
 1. **Module caching strategy**: Should we cache parsed/bound modules globally or per-worker?
-   - Recommendation: Global cache with `Arc<BinderState>` for shared access
+   - ✅ **RESOLVED**: Implemented with `Arc<BinderState>` in Phase 1.1. `all_binders` in `CheckerContext` provides shared access across files.
+
 2. **Incremental resolution**: How to invalidate module resolution when dependencies change?
+   - ⏳ **FUTURE**: Requires integration with watch mode. Currently re-resolves on each compilation.
+
 3. **Circular module handling**: Use `TypeKey::Ref(SymbolRef)` for lazy evaluation
+   - ✅ **RESOLVED**: Implemented `TypeKey::ModuleNamespace(SymbolRef)` in Phase 2.2 for lazy evaluation.
+
 4. **Performance**: Lazy type computation is critical - never pre-compute entire module type environments
+   - ✅ **FOLLOWED**: `ModuleNamespace` uses `SymbolRef` for lazy property resolution. Types computed on demand.
+
 5. **esModuleInterop complexity**: How to handle synthetic default exports correctly?
+   - ⏳ **REMAINING**: Requires wiring `es_module_interop` from CLI args through to checker. See Gap 2 above.
