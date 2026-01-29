@@ -289,7 +289,12 @@ impl<'a> CheckerState<'a> {
             // type cannot be inferred (e.g., is 'any' or only returns undefined)
             // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
             // maybe_report_implicit_any_return handles the noImplicitAny check internally
-            if !is_function_declaration && !is_async {
+            //
+            // CRITICAL FIX: Skip TS7010 check if there's a contextual return type
+            // When a function is used as a callback (e.g., array.map(x => ...)), the
+            // contextual type provides the expected return type. TypeScript doesn't
+            // emit TS7010 in these cases because the contextual type guides inference.
+            if !is_function_declaration && !is_async && !has_contextual_return {
                 self.maybe_report_implicit_any_return(
                     name_for_error,
                     name_node,
