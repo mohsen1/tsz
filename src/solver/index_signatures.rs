@@ -147,12 +147,9 @@ impl<'a> IndexSignatureResolver<'a> {
     /// - `{ [x: string]: string }` with `IndexKind::String` → `false`
     pub fn is_readonly(&self, obj: TypeId, kind: IndexKind) -> bool {
         match self.db.lookup(obj) {
-            // Array/tuple types have readonly index
+            // Regular arrays/tuples are mutable (not readonly)
             Some(TypeKey::Array(_) | TypeKey::Tuple(_)) => {
-                match kind {
-                    IndexKind::Number => true,
-                    IndexKind::String => true, // Arrays support string indexing too
-                }
+                false // Arrays and tuples are mutable by default
             }
             Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = self.db.object_shape(shape_id);
@@ -194,17 +191,17 @@ impl<'a> IndexSignatureResolver<'a> {
                     number_index: shape.number_index.clone(),
                 }
             }
-            // Array/tuple have readonly numeric index
+            // Arrays have mutable numeric index
             Some(TypeKey::Array(elem)) => IndexInfo {
                 string_index: None,
                 number_index: Some(IndexSignature {
                     key_type: TypeId::NUMBER,
                     value_type: elem,
-                    readonly: true,
+                    readonly: false, // Arrays are mutable by default
                 }),
             },
             Some(TypeKey::Tuple(_)) => {
-                // Tuples have readonly numeric index
+                // Tuples have mutable numeric index
                 // The element type would be a union of all tuple elements
                 // For simplicity, return unknown
                 IndexInfo {
@@ -212,7 +209,7 @@ impl<'a> IndexSignatureResolver<'a> {
                     number_index: Some(IndexSignature {
                         key_type: TypeId::NUMBER,
                         value_type: TypeId::UNKNOWN,
-                        readonly: true,
+                        readonly: false, // Tuples are mutable by default
                     }),
                 }
             }
