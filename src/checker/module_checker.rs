@@ -407,6 +407,38 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                 });
             }
+
+            // Merge module augmentations
+            // Module augmentations add interfaces/types to existing modules
+            // e.g., declare module 'express' { interface Request { user?: User; } }
+            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(module_name) {
+                for (decl_name, decl_idx) in augmentations {
+                    // Get the type of the augmentation declaration
+                    let aug_type = self.get_type_of_node(*decl_idx);
+                    let name_atom = self.ctx.types.intern_string(decl_name);
+
+                    // Check if this augments an existing export
+                    if let Some(existing) = props.iter_mut().find(|p| p.name == name_atom) {
+                        // Merge types - for interfaces, this creates an intersection
+                        existing.type_id = self
+                            .ctx
+                            .types
+                            .intersection(vec![existing.type_id, aug_type]);
+                        existing.write_type = existing.type_id;
+                    } else {
+                        // New export from augmentation
+                        props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id: aug_type,
+                            write_type: aug_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                        });
+                    }
+                }
+            }
+
             let module_type = self.ctx.types.object(props);
             return self.create_promise_of(module_type);
         }

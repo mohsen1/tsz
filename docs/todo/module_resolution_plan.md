@@ -461,27 +461,30 @@ conformance/exportsAndImports/*
 
 ## Additional Gaps (from Gemini review)
 
-### Wildcard `export *` Ambiguity Detection
+### Wildcard `export *` Ambiguity Detection ✅ COMPLETED (2026-01-29)
 
 **Issue:** Current `resolve_import_with_reexports_inner` returns the **first** match found. TSC requires checking **all** wildcards to detect collisions.
 
 **TSC Behavior:** If two `export *` declarations export the same name, that name is considered **ambiguous** and is **not exported** (unless explicitly re-exported by name).
 
-**Task:** Update wildcard resolution to:
+**Implementation:** Updated `resolve_reexported_member_symbol_inner` in `symbol_resolver.rs` to:
 - Check ALL wildcards for the same export name
 - Return `None` (ambiguous) if multiple sources define the same name
 - Only return definitive result if exactly one source provides the name
 
-### `export =` vs `export default` with esModuleInterop
+### `export =` vs `export default` with esModuleInterop (Remaining)
 
 **Issue:** `ModuleNamespace` type needs to handle:
 - `import x = require('mod')` → resolves to value of `export =`
 - `import * as x from 'mod'` → may resolve differently based on `esModuleInterop`
 - `import x from 'mod'` with `esModuleInterop` → synthesized default export
 
-**Task:** Add `esModuleInterop` awareness to module type construction.
+**Status:** `esModuleInterop` is parsed from CLI but not wired to checker. Requires:
+1. Add `es_module_interop` to `ResolvedCompilerOptions`
+2. Wire through `CheckerContext`
+3. Use when resolving default imports from CommonJS modules
 
-### Module Augmentation Merging
+### Module Augmentation Merging ✅ COMPLETED (2026-01-29)
 
 **Issue:** `binder/state.rs` tracks `module_augmentations`. The `ModuleNamespace` type must merge these augmentations into the resolved type.
 
@@ -496,7 +499,11 @@ declare module 'express' {
 }
 ```
 
-**Task:** When constructing `TypeKey::ModuleNamespace`, merge declarations from `module_augmentations` into the base module type.
+**Implementation:** Updated `get_dynamic_import_type` in `module_checker.rs` to:
+- Check `module_augmentations` for the target module
+- Merge augmented declarations into module type
+- Create intersection types when augmenting existing exports
+- Add new properties for new augmentation declarations
 
 ---
 
