@@ -41,6 +41,12 @@ pub struct CheckerOptions {
     /// Controls which built-in types are available (e.g., Promise requires ES2015)
     /// Defaults to ES3 for maximum compatibility
     pub target: ScriptTarget,
+    /// Emit additional JavaScript to ease support for importing CommonJS modules.
+    /// When true, synthesizes default exports for CommonJS modules.
+    pub es_module_interop: bool,
+    /// Allow 'import x from y' when a module doesn't have a default export.
+    /// Implied by esModuleInterop.
+    pub allow_synthetic_default_imports: bool,
 }
 
 /// ECMAScript target version
@@ -1111,5 +1117,18 @@ impl<'a> CheckerContext<'a> {
     /// Used to determine whether to emit TS2304/TS2318/TS2583 for missing global types.
     pub fn has_lib_loaded(&self) -> bool {
         !self.compiler_options.no_lib && !self.lib_contexts.is_empty()
+    }
+
+    /// Check if esModuleInterop is enabled.
+    /// When enabled, synthesizes default exports for CommonJS modules.
+    pub fn es_module_interop(&self) -> bool {
+        self.compiler_options.es_module_interop
+    }
+
+    /// Check if allowSyntheticDefaultImports is enabled.
+    /// When enabled, allows `import x from 'y'` when module doesn't have default export.
+    /// This is implied by esModuleInterop.
+    pub fn allow_synthetic_default_imports(&self) -> bool {
+        self.compiler_options.allow_synthetic_default_imports
     }
 }

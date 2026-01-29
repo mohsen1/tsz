@@ -451,6 +451,8 @@ impl Server {
             isolated_modules: false,
             no_lib: options.no_lib,
             target,
+            es_module_interop: false,
+            allow_synthetic_default_imports: false,
         }
     }
 

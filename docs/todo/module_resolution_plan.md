@@ -472,17 +472,21 @@ conformance/exportsAndImports/*
 - Return `None` (ambiguous) if multiple sources define the same name
 - Only return definitive result if exactly one source provides the name
 
-### `export =` vs `export default` with esModuleInterop (Remaining)
+### `export =` vs `export default` with esModuleInterop ✅ COMPLETED (2026-01-29)
 
 **Issue:** `ModuleNamespace` type needs to handle:
 - `import x = require('mod')` → resolves to value of `export =`
 - `import * as x from 'mod'` → may resolve differently based on `esModuleInterop`
 - `import x from 'mod'` with `esModuleInterop` → synthesized default export
 
-**Status:** `esModuleInterop` is parsed from CLI but not wired to checker. Requires:
-1. Add `es_module_interop` to `ResolvedCompilerOptions`
-2. Wire through `CheckerContext`
-3. Use when resolving default imports from CommonJS modules
+**Implementation:**
+1. Added `es_module_interop` and `allow_synthetic_default_imports` to `CompilerOptions` (tsconfig parsing)
+2. Added fields to `ResolvedCompilerOptions`
+3. Wired through `resolve_compiler_options` with proper implication (esModuleInterop → allowSyntheticDefaultImports)
+4. Added to `CheckerOptions` and `CheckerContext` with accessor methods
+5. Updated all `CheckerOptions` constructors (wasm_api, lib.rs)
+
+**Note:** The flag wiring is complete. Actual default import synthesis for CommonJS modules can now use `ctx.es_module_interop()` and `ctx.allow_synthetic_default_imports()` in import resolution.
 
 ### Module Augmentation Merging ✅ COMPLETED (2026-01-29)
 
@@ -522,4 +526,4 @@ declare module 'express' {
    - ✅ **FOLLOWED**: `ModuleNamespace` uses `SymbolRef` for lazy property resolution. Types computed on demand.
 
 5. **esModuleInterop complexity**: How to handle synthetic default exports correctly?
-   - ⏳ **REMAINING**: Requires wiring `es_module_interop` from CLI args through to checker. See Gap 2 above.
+   - ✅ **RESOLVED**: Config wired through to checker. `ctx.es_module_interop()` and `ctx.allow_synthetic_default_imports()` available.

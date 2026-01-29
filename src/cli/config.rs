@@ -113,6 +113,12 @@ pub struct CompilerOptions {
     /// Custom conditions for package.json exports resolution
     #[serde(default)]
     pub custom_conditions: Option<Vec<String>>,
+    /// Emit additional JavaScript to ease support for importing CommonJS modules
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub es_module_interop: Option<bool>,
+    /// Allow 'import x from y' when a module doesn't have a default export
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub allow_synthetic_default_imports: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -144,6 +150,10 @@ pub struct ResolvedCompilerOptions {
     pub no_emit_on_error: bool,
     /// Custom conditions for package.json exports resolution
     pub custom_conditions: Vec<String>,
+    /// Emit additional JavaScript to ease support for importing CommonJS modules
+    pub es_module_interop: bool,
+    /// Allow 'import x from y' when a module doesn't have a default export
+    pub allow_synthetic_default_imports: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -389,6 +399,21 @@ pub fn resolve_compiler_options(
         resolved.custom_conditions = custom_conditions.clone();
     }
 
+    if let Some(es_module_interop) = options.es_module_interop {
+        resolved.es_module_interop = es_module_interop;
+        resolved.checker.es_module_interop = es_module_interop;
+        // esModuleInterop implies allowSyntheticDefaultImports
+        if es_module_interop {
+            resolved.allow_synthetic_default_imports = true;
+            resolved.checker.allow_synthetic_default_imports = true;
+        }
+    }
+
+    if let Some(allow_synthetic_default_imports) = options.allow_synthetic_default_imports {
+        resolved.allow_synthetic_default_imports = allow_synthetic_default_imports;
+        resolved.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
+    }
+
     Ok(resolved)
 }
 
@@ -488,6 +513,10 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         no_emit_on_error: child.no_emit_on_error.or(base.no_emit_on_error),
         isolated_modules: child.isolated_modules.or(base.isolated_modules),
         custom_conditions: child.custom_conditions.or(base.custom_conditions),
+        es_module_interop: child.es_module_interop.or(base.es_module_interop),
+        allow_synthetic_default_imports: child
+            .allow_synthetic_default_imports
+            .or(base.allow_synthetic_default_imports),
     }
 }
 

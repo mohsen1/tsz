@@ -81,6 +81,8 @@ impl TsCompilerOptions {
             exact_optional_property_types: false,
             no_lib: self.no_lib.unwrap_or(false),
             target: crate::checker::context::ScriptTarget::default(),
+            es_module_interop: false,
+            allow_synthetic_default_imports: false,
         }
     }
 }
