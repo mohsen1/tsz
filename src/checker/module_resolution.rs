@@ -22,6 +22,9 @@ pub fn build_module_resolution_maps(
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
     let mut resolved_modules: HashSet<String> = HashSet::new();
 
+    // Build a HashSet for fast file existence checks
+    let file_set: HashSet<String> = file_names.iter().cloned().collect();
+
     // For each source file, compute what modules it can import
     for (src_idx, src_name) in file_names.iter().enumerate() {
         let src_path = Path::new(src_name);
@@ -33,36 +36,73 @@ pub fn build_module_resolution_maps(
             }
 
             let tgt_path = Path::new(tgt_name);
+            let tgt_stem = tgt_path.file_stem().unwrap_or_default().to_string_lossy();
 
-            // Compute relative specifier from src to tgt
+            // Try Node.js-style resolution if we have a common directory
             if let Some(src_dir) = src_dir {
                 if let Ok(rel_path) = tgt_path.strip_prefix(src_dir) {
-                    // Convert to module specifier format (remove extension)
                     let rel_str = rel_path.to_string_lossy();
-                    let specifier = rel_str
-                        .trim_end_matches(".ts")
-                        .trim_end_matches(".tsx")
-                        .trim_end_matches(".d.ts")
-                        .trim_end_matches(".js")
-                        .trim_end_matches(".jsx");
 
-                    // Add with ./ prefix
-                    let full_specifier = format!("./{}", specifier);
-                    resolved_module_paths.insert((src_idx, full_specifier.clone()), tgt_idx);
-                    resolved_modules.insert(full_specifier);
+                    // Try extension resolution for the relative path
+                    // Order: .ts, .tsx, .d.ts, .js, .jsx (TypeScript preference order)
+                    let extensions = [".ts", ".tsx", ".d.ts", ".js", ".jsx"];
+                    for ext in &extensions {
+                        let with_ext = format!("{}{}", rel_str, ext);
+                        if file_set.contains(&format!("{}/{}", src_dir.display(), with_ext)) {
+                            // Found it! Add the specifier without extension
+                            let specifier = rel_str
+                                .trim_end_matches(".ts")
+                                .trim_end_matches(".tsx")
+                                .trim_end_matches(".d.ts")
+                                .trim_end_matches(".js")
+                                .trim_end_matches(".jsx")
+                                .to_string();
 
-                    // Also add without ./ prefix
-                    resolved_module_paths.insert((src_idx, specifier.to_string()), tgt_idx);
-                    resolved_modules.insert(specifier.to_string());
+                            // Add with ./ prefix
+                            let full_specifier = format!("./{}", specifier);
+                            resolved_module_paths
+                                .insert((src_idx, full_specifier.clone()), tgt_idx);
+                            resolved_modules.insert(full_specifier);
+
+                            // Also add without ./ prefix for compatibility
+                            resolved_module_paths.insert((src_idx, specifier.clone()), tgt_idx);
+                            resolved_modules.insert(specifier);
+
+                            break; // Found it, don't try other extensions
+                        }
+                    }
+
+                    // Also try directory resolution (directory/index.ts)
+                    let index_extensions = [
+                        "/index.ts",
+                        "/index.tsx",
+                        "/index.d.ts",
+                        "/index.js",
+                        "/index.jsx",
+                    ];
+                    for index_ext in &index_extensions {
+                        let with_index = format!("{}{}", rel_str, index_ext);
+                        if file_set.contains(&format!("{}/{}", src_dir.display(), with_index)) {
+                            // Found it! Add the specifier (without /index part)
+                            let specifier = rel_str.to_string();
+                            let full_specifier = format!("./{}", specifier);
+                            resolved_module_paths
+                                .insert((src_idx, full_specifier.clone()), tgt_idx);
+                            resolved_modules.insert(full_specifier);
+
+                            // Also add without ./ prefix
+                            resolved_module_paths.insert((src_idx, specifier.clone()), tgt_idx);
+                            resolved_modules.insert(specifier);
+
+                            break; // Found it, don't try other index extensions
+                        }
+                    }
                 }
             }
 
-            // Also add the bare file stem as a valid specifier
-            if let Some(tgt_stem) = tgt_path.file_stem() {
-                let tgt_name_str = tgt_stem.to_string_lossy().to_string();
-                resolved_module_paths.insert((src_idx, format!("./{}", tgt_name_str)), tgt_idx);
-                resolved_modules.insert(format!("./{}", tgt_name_str));
-            }
+            // Also add the bare file stem as a valid specifier (with ./ prefix)
+            resolved_module_paths.insert((src_idx, format!("./{}", tgt_stem)), tgt_idx);
+            resolved_modules.insert(format!("./{}", tgt_stem));
         }
     }
 

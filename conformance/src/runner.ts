@@ -69,6 +69,8 @@ interface TestResult {
   crashed: boolean;
   timedOut: boolean;
   oom: boolean;
+  skipped?: boolean;
+  skipReason?: string;
   category: string;
   error?: string;
   filePath?: string;
@@ -328,6 +330,8 @@ class WorkerPool {
             crashed: msg.crashed,
             timedOut: false,
             oom: msg.oom || false,
+            skipped: msg.skipped || false,
+            skipReason: msg.skipReason,
             category: msg.category,
             error: msg.error,
             filePath: pending.relPath,
@@ -644,6 +648,13 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
       if (!stats.byCategory[cat]) stats.byCategory[cat] = { total: 0, passed: 0 };
       stats.byCategory[cat].total++;
 
+      // Check if test was skipped due to harness options (@noCheck, @typeScriptVersion, etc.)
+      if (result.skipped) {
+        stats.skipped++;
+        if (cfg.verbose) log(`\n  ${result.filePath}: SKIPPED - ${result.skipReason || 'harness directive'}`, colors.dim);
+        return;
+      }
+
       if (result.timedOut) {
         stats.timedOut++;
         stats.failed++;
@@ -722,13 +733,19 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   log('CONFORMANCE TEST RESULTS', colors.bold);
   log('═'.repeat(60), colors.dim);
 
-  const passRate = stats.total > 0 ? ((stats.passed / stats.total) * 100).toFixed(1) : '0.0';
-  log(`\nPass Rate: ${passRate}% (${stats.passed}/${stats.total})`, stats.passed === stats.total ? colors.green : colors.yellow);
+  // Pass rate excludes skipped tests from denominator
+  const effectiveTotal = stats.total - stats.skipped;
+  const passRate = effectiveTotal > 0 ? ((stats.passed / effectiveTotal) * 100).toFixed(1) : '0.0';
+  log(`\nPass Rate: ${passRate}% (${stats.passed}/${effectiveTotal})`, stats.passed === effectiveTotal ? colors.green : colors.yellow);
+  if (stats.skipped > 0) {
+    log(`  (${stats.skipped} tests skipped due to harness directives)`, colors.dim);
+  }
   log(`Time: ${elapsed}s (${rate} tests/sec)`, colors.dim);
 
   log('\nSummary:', colors.bold);
   log(`  ✓ Passed:   ${stats.passed}`, colors.green);
   log(`  ✗ Failed:   ${stats.failed - stats.crashed - stats.timedOut}`, stats.failed > stats.crashed + stats.timedOut ? colors.red : colors.dim);
+  log(`  ⊘ Skipped:  ${stats.skipped}`, stats.skipped > 0 ? colors.dim : colors.dim);
   log(`  💥 Crashed:  ${stats.crashed - stats.oom}`, stats.crashed - stats.oom > 0 ? colors.red : colors.dim);
   log(`  💾 OOM:      ${stats.oom}`, stats.oom > 0 ? colors.magenta : colors.dim);
   log(`  ⏱ Timeout:  ${stats.timedOut}`, stats.timedOut > 0 ? colors.yellow : colors.dim);

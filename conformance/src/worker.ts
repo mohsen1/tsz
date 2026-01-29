@@ -929,6 +929,7 @@ async function processTest(job: TestJob): Promise<WorkerResult> {
       wasmCodes: [],
       crashed: true,
       oom: isOom,
+      skipped: false,
       category: 'unknown',
       error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
       memoryUsed: memAfter - memBefore,
