@@ -225,3 +225,82 @@ diff baseline.txt after.txt
 | TS2313 extra | 2,123 | 2,123 | <300 | <50 |
 | TS1005 extra | 3,635 | 3,635 | <500 | <100 |
 | TS2307 extra | 3,950 | 3,950 | <800 | <200 |
+
+### ✅ COMPLETED FIXES (Jan 29, 2026 - Continued)
+
+| Issue | Extra Errors | Missing Errors | Status |
+|-------|-------------|----------------|--------|
+| InheritanceGraph Infrastructure | 0 | 0 | ✅ COMPLETED - O(1) subtype checks |
+| Type vs Class Inheritance Architecture | 0 | 0 | ✅ COMPLETED - Clarified separation |
+
+### New Commit: feat(solver): add InheritanceGraph with O(1) subtype checks
+
+**File: src/solver/inheritance.rs**
+
+Complete implementation of inheritance graph system:
+- Lazy transitive closure using FixedBitSet for O(1) nominal subtype checks
+- Method Resolution Order (MRO) computation
+- Cycle detection via DFS path tracking
+- Support for multiple inheritance
+- Common ancestor (LUB) finding
+
+**Test Results:**
+- 7 new unit tests, all passing
+- 42 existing inheritance tests, all passing
+- Total: 49 inheritance tests passing
+
+**Architecture Clarification:**
+
+Type Inheritance (SubtypeChecker):
+- Domain: TypeIds (semantic types)
+- Logic: Structural (shape compatibility)  
+- Purpose: Assignability, function args, return types
+- Location: src/solver/subtype.rs
+
+Class Inheritance (InheritanceGraph):
+- Domain: SymbolIds (declarative symbols)
+- Logic: Nominal (explicit extends/implements)
+- Purpose: Member inheritance, super calls, cycle detection
+- Location: src/solver/inheritance.rs
+
+**Integration Points:**
+1. Added to CheckerContext as `inheritance_graph` field
+2. Initialized in all CheckerContext constructors
+3. Exported as public module from solver
+
+### Next Steps to Fix 82 Timeouts
+
+The stack overflow on circular inheritance still occurs because InheritanceGraph 
+is not yet being used for cycle detection. The graph infrastructure is complete 
+and tested, but needs to be wired up:
+
+**TODO: Wire up InheritanceGraph for cycle detection**
+
+1. **In check_class_declaration** (src/checker/state.rs):
+   - Resolve all parent class symbols from heritage clauses
+   - Call `inheritance_graph.add_inheritance(child, parents)`
+   - BEFORE registering, check if cycle would be created
+   - Use simple DFS traversal to detect cycles
+   - Emit error and skip type checking if cycle detected
+
+2. **Implementation Approach:**
+   - Add helper methods to CheckerState:
+     * `get_parent_symbols(sym_id: SymbolId) -> Option<Vec<SymbolId>>`
+     * `has_cycle_recursive(current, parents, visited) -> bool`
+   - Call these BEFORE adding edges to graph
+   - Prevent stack overflow by catching cycles early
+
+3. **Expected Result:**
+   - test: classExtendsItselfIndirectly.ts should emit TS2449 error
+   - No more stack overflow on circular inheritance
+   - 82 timeouts eliminated
+
+4. **Test Case:**
+```typescript
+class C extends E { foo: string; }
+class D extends C { bar: string; }
+class E extends D { baz: number; }  // Cycle detected here
+```
+
+Should emit: TS2449: "'E' is referenced directly or indirectly in its own base expression"
+
