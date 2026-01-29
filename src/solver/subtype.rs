@@ -494,37 +494,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =========================================================================
 
         match (&source_key, &target_key) {
-            // Intrinsic to intrinsic
-            (TypeKey::Intrinsic(s), TypeKey::Intrinsic(t)) => self.check_intrinsic_subtype(*s, *t),
-
-            // Rule #33: Primitive to boxed interface (e.g., number to Number)
-            // Primitives are subtypes of their boxed wrapper interfaces
-            (TypeKey::Intrinsic(s_kind), _) => {
-                if self.is_boxed_primitive_subtype(*s_kind, target) {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                }
-            }
-
-            // Literal to intrinsic
-            (TypeKey::Literal(lit), TypeKey::Intrinsic(t)) => {
-                self.check_literal_to_intrinsic(lit, *t)
-            }
-
-            // Literal to literal
-            (TypeKey::Literal(s), TypeKey::Literal(t)) => {
-                if s == t {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                }
-            }
-
-            // Literal string to template literal - check if literal matches pattern
-            (TypeKey::Literal(LiteralValue::String(s_lit)), TypeKey::TemplateLiteral(t_spans)) => {
-                self.check_literal_matches_template_literal(*s_lit, *t_spans)
-            }
+            // =========================================================================
+            // Union and intersection types (must come before intrinsic catch-all!)
+            // =========================================================================
 
             // Union source: all members must be subtypes of target
             (TypeKey::Union(members), _) => {
@@ -572,6 +544,46 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
                 SubtypeResult::True
+            }
+
+            // =========================================================================
+            // Intrinsic types
+            // =========================================================================
+
+            // Intrinsic to intrinsic
+            (TypeKey::Intrinsic(s), TypeKey::Intrinsic(t)) => self.check_intrinsic_subtype(*s, *t),
+
+            // Rule #33: Primitive to boxed interface (e.g., number to Number)
+            // Primitives are subtypes of their boxed wrapper interfaces
+            (TypeKey::Intrinsic(s_kind), _) => {
+                if self.is_boxed_primitive_subtype(*s_kind, target) {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                }
+            }
+
+            // =========================================================================
+            // Literal types
+            // =========================================================================
+
+            // Literal to intrinsic
+            (TypeKey::Literal(lit), TypeKey::Intrinsic(t)) => {
+                self.check_literal_to_intrinsic(lit, *t)
+            }
+
+            // Literal to literal
+            (TypeKey::Literal(s), TypeKey::Literal(t)) => {
+                if s == t {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                }
+            }
+
+            // Literal string to template literal - check if literal matches pattern
+            (TypeKey::Literal(LiteralValue::String(s_lit)), TypeKey::TemplateLiteral(t_spans)) => {
+                self.check_literal_matches_template_literal(*s_lit, *t_spans)
             }
 
             (TypeKey::TypeParameter(s_info), target_key) | (TypeKey::Infer(s_info), target_key) => {
