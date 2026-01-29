@@ -173,10 +173,8 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
         }
 
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch {
-                source_type: source,
-                target_type: target,
-            });
+            // Error types ARE compatible to suppress cascading errors
+            return true;
         }
 
         // Iteration limit
