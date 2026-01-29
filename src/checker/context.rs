@@ -273,6 +273,8 @@ pub struct CheckerContext<'a> {
     pub diagnostics: Vec<Diagnostic>,
     /// Set of already-emitted diagnostics (start, code) for deduplication.
     pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    /// Set of modules that have already had TS2307 emitted (prevents duplicate emissions).
+    pub modules_with_ts2307_emitted: FxHashSet<String>,
 
     // --- Recursion Guards ---
     /// Stack of symbols being resolved.
@@ -438,6 +440,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
+            modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
             symbol_resolution_depth: Cell::new(0),
@@ -511,6 +514,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
+            modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
             symbol_resolution_depth: Cell::new(0),
@@ -586,6 +590,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
+            modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
             symbol_resolution_depth: Cell::new(0),
@@ -660,6 +665,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
+            modules_with_ts2307_emitted: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
             symbol_resolution_depth: Cell::new(0),
