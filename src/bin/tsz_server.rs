@@ -151,26 +151,53 @@ impl Server {
     }
 
     fn find_lib_dir() -> Result<PathBuf> {
-        // TypeScript lib directory is always at TypeScript/src/lib relative to project root.
-        // This assumes tsz is run from the project root where TypeScript submodule exists.
+        let cwd = std::env::current_dir().context("Failed to get CWD")?;
 
         // Allow override via environment variable
         if let Ok(dir) = std::env::var("TSZ_LIB_DIR") {
-            let path = PathBuf::from(dir);
+            let path = PathBuf::from(&dir);
+
+            // If path is relative, resolve it from CWD
+            let path = if path.is_absolute() {
+                path
+            } else {
+                cwd.join(&path)
+            };
+
             if path.exists() {
                 return Ok(path);
             }
         }
 
-        // The canonical path: TypeScript/src/lib
-        let lib_path = PathBuf::from("TypeScript/src/lib");
+        // The canonical path: TypeScript/src/lib relative to CWD
+        let lib_path = cwd.join("TypeScript/src/lib");
         if lib_path.exists() {
             return Ok(lib_path);
         }
 
+        // Try walking up the directory tree to find project root
+        // This helps when running from subdirectories like target/release/ or conformance/
+        let mut current = cwd.clone();
+        for _ in 0..10 {
+            let candidate = current.join("TypeScript/src/lib");
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+
+            // Move up one directory
+            current = match current.parent() {
+                Some(p) => p.to_path_buf(),
+                None => break,
+            };
+        }
+
         anyhow::bail!(
-            "TypeScript lib directory not found at TypeScript/src/lib. \
-             Run from project root or set TSZ_LIB_DIR."
+            "TypeScript lib directory not found. \
+             CWD: {}. \
+             Checked: TypeScript/src/lib (relative to CWD), TSZ_LIB_DIR env var, \
+             and walked up 10 directories looking for TypeScript/src/lib. \
+             Run from project root or set TSZ_LIB_DIR to an absolute path.",
+            cwd.display()
         )
     }
 
