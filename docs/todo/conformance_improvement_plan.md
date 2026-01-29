@@ -1,8 +1,16 @@
-# Conformance Improvement Plan (Jan 2026)
+# Conformance Improvement Plan (Jan 29, 2026)
 
 ## Executive Summary
 
 **Current State:** 31.1% pass rate (3,746/12,054 tests)
+
+**Recent Progress:**
+- Integrated InheritanceGraph into SubtypeChecker for O(1) nominal class subtyping
+- Added ERROR caching to prevent repeated deep recursion
+- **Known Limitation:** 4 timeout tests remain for circular class inheritance (classExtendsItself*.ts)
+  - Root cause: Stack overflow from deep recursion before cycle detection
+  - Multiple caching layers added but issue persists
+  - May require architectural change (two-pass resolution or detection at binder time)
 
 This document outlines the critical issues causing conformance failures, prioritized by impact.
 
