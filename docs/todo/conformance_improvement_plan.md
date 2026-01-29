@@ -13,6 +13,7 @@
 - ✅ **NEW:** TS2571 Wrong error code bug fixed - 22x errors eliminated (100% reduction)
 - ✅ **NEW:** TS2349 Generic callable invocation bug fixed - 22x errors eliminated (100% reduction)
 - ✅ **NEW:** TS2507 Extends null bug fixed - ~40x of 43x errors eliminated (95% reduction)
+- ✅ **NEW:** TS2507 Extends interface bug fixed - TS2689 now used for extends interface (7x fewer TS2507)
 - ✅ **NEW:** TS2304 Namespace type position bug fixed - namespace-qualified types now work
 - ⚠️ **NEW:** TS2339 Architectural gap investigated - uses hardcoded lists instead of lib.d.ts lookup
 - Pass rate improved from 30.0% to 34.4% (+4.4 percentage points, +15% relative improvement)
@@ -45,6 +46,7 @@ This document outlines the critical issues causing conformance failures, priorit
 | **Path Resolution** | **Infrastructure** | 0 | ✅ **COMPLETED** - Improved lib dir finding for test runner |
 | **TS2336 Super in Arrow Functions** | **87 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, arrow function context capture |
 | **TS2507 Extends Null** | **43 → ~3** | 0 | ✅ **~95% COMPLETED** - extends null now allowed |
+| **TS2507 Extends Interface** | **69 → 62** | 0 | ✅ **~10% COMPLETED** - TS2689 now used for extends interface |
 | **TS2571 Wrong Error Code** | **22 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, now uses TS2339 |
 | **TS2349 Generic Callable** | **22 → 0** | 0 | ✅ **COMPLETED** - 100% reduction, Application type resolution |
 | **Total Fixed** | **~32,863** | **~8,563** | **~41,426 errors + 4 timeouts** |
@@ -235,7 +237,19 @@ This document outlines the critical issues causing conformance failures, priorit
      }
      ```
 
-15. **fix(checker): use TS2339 instead of TS2571 for property access on unknown** (6ddb06991)
+15. **fix(checker): emit TS2689 instead of TS2507 for extends interface** (65487a923)
+   - Files: src/checker/state.rs, src/checker/types/diagnostics.rs
+   - Impact: TS2507 reduced from 69x to 62x in 1000-test sample (7 fewer errors)
+   - Added TS2689 error code for "Cannot extend an interface"
+   - When a class extends an interface, TypeScript emits TS2689 not TS2507
+   - Check if heritage symbol has INTERFACE flag, emit TS2689 instead of TS2507
+   - Example case now correctly handled:
+     ```typescript
+     interface I { foo: string; }
+     class C extends I { }  // Was: TS2507, Now: TS2689 ✓
+     ```
+
+16. **fix(checker): use TS2339 instead of TS2571 for property access on unknown** (6ddb06991)
    - Files: src/checker/state.rs, src/checker/function_type.rs, src/checker/type_computation.rs
    - Impact: 22 → 0 extra TS2571 errors (100% reduction)
    - Fixed incorrect error code for property access on unknown types
