@@ -162,6 +162,7 @@ Removed hardcoded Promise detection:
 3. `2e3f0ac8f` - docs: update work summary with lib.d.ts resolution fix
 4. `19e0f83dc` - feat(solver): add lib.d.ts boxed type support for primitive properties
 5. `95d353d0d` - fix: use TypeEnvironment for property access in type computation
+6. `224b2d7de` - fix(promise): make is_promise_type strict for TS2705 checking
 
 ## Next Steps
 
@@ -170,12 +171,20 @@ Removed hardcoded Promise detection:
    - Verify boxed types are being found
    - Check which specific TS2339 errors remain
 
-2. **Consider alternative high-impact fixes**
-   - TS2705: 73x missing errors (async return type)
+2. **Investigate TS2705 type resolution issue**
+   - **Status**: Architectural fix committed but no conformance improvement
+   - **Root cause found**: Basic types like `string` resolving to `TypeId::ERROR` instead of `TypeId::STRING`
+   - **Impact**: TS2705 check skips ERROR types with condition `return_type != TypeId::ERROR`
+   - **Next action**: Debug why `StringKeyword` lowers to ERROR in some cases
+   - **Expected behavior**: `StringKeyword` should always lower to `TypeId::STRING` (ID 10)
+   - **Code location**: `src/checker/type_node.rs:88` correctly returns `TypeId::STRING`
+   - **Hypothesis**: Type resolution issue before reaching the lower, or caching problem
+
+3. **Consider alternative high-impact fixes**
    - TS2300: 67x missing errors (duplicate identifier)
    - TS2584: 47x missing errors (Cannot find name)
 
-3. **Verify with manual test cases**
+4. **Verify with manual test cases**
    - Create simple test for `string.length`
    - Create simple test for `Error.message`
    - Verify lib.d.ts properties are accessible
