@@ -31,9 +31,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use wasm::binder::BinderState;
-use wasm::checker::context::{CheckerOptions, LibContext, ScriptTarget};
+use wasm::checker::context::{CheckerOptions, LibContext};
 use wasm::checker::state::CheckerState;
 use wasm::checker::types::diagnostics::DiagnosticCategory;
+use wasm::cli::config::{checker_target_from_emitter, default_lib_name_for_target};
+use wasm::emitter::ScriptTarget;
 use wasm::lib_loader::LibFile;
 use wasm::parser::ParserState;
 use wasm::solver::TypeInterner;
@@ -120,8 +122,10 @@ struct ErrorResponse {
 
 /// Server state
 struct Server {
-    /// Directory containing lib.*.d.ts files
+    /// Directory containing lib.*.d.ts files (TypeScript/src/lib)
     lib_dir: PathBuf,
+    /// Fallback directory for tests (TypeScript/tests/lib)
+    tests_lib_dir: PathBuf,
     /// Cache of parsed+bound lib files
     lib_cache: FxHashMap<String, Arc<LibFile>>,
     /// Number of checks completed
@@ -131,18 +135,22 @@ struct Server {
 impl Server {
     fn new() -> Result<Self> {
         let lib_dir = Self::find_lib_dir()?;
+        let tests_lib_dir = PathBuf::from("TypeScript/tests/lib");
         eprintln!("Using lib directory: {}", lib_dir.display());
 
         Ok(Self {
             lib_dir,
+            tests_lib_dir,
             lib_cache: FxHashMap::default(),
             checks_completed: 0,
         })
     }
 
     fn find_lib_dir() -> Result<PathBuf> {
-        // Try to find TypeScript lib directory
-        // 1. TSZ_LIB_DIR environment variable
+        // TypeScript lib directory is always at TypeScript/src/lib relative to project root.
+        // This assumes tsz is run from the project root where TypeScript submodule exists.
+
+        // Allow override via environment variable
         if let Ok(dir) = std::env::var("TSZ_LIB_DIR") {
             let path = PathBuf::from(dir);
             if path.exists() {
@@ -150,28 +158,16 @@ impl Server {
             }
         }
 
-        // 2. node_modules/typescript/lib (for development)
-        let node_modules_path = PathBuf::from("node_modules/typescript/lib");
-        if node_modules_path.exists() {
-            return Ok(node_modules_path);
+        // The canonical path: TypeScript/src/lib
+        let lib_path = PathBuf::from("TypeScript/src/lib");
+        if lib_path.exists() {
+            return Ok(lib_path);
         }
 
-        // 3. TypeScript submodule lib (for development/testing)
-        let ts_submodule_path = PathBuf::from("TypeScript/built/local");
-        if ts_submodule_path.exists() {
-            return Ok(ts_submodule_path);
-        }
-
-        // 4. Relative to executable (for installed binary)
-        if let Ok(exe) = std::env::current_exe() {
-            let lib_path = exe.parent().unwrap_or(&exe).join("lib");
-            if lib_path.exists() {
-                return Ok(lib_path);
-            }
-        }
-
-        // Fallback: use current directory
-        Ok(PathBuf::from("."))
+        anyhow::bail!(
+            "TypeScript lib directory not found at TypeScript/src/lib. \
+             Run from project root or set TSZ_LIB_DIR."
+        )
     }
 
     fn handle_request(&mut self, request: Request) -> Response {
@@ -318,10 +314,13 @@ impl Server {
             return Ok(());
         }
 
-        // Try to load from disk
+        // Try to load from disk - check main lib dir first, then tests/lib fallback
         let candidates = [
-            self.lib_dir.join(format!("lib.{}.d.ts", normalized)),
+            // Main lib dir (TypeScript/src/lib)
             self.lib_dir.join(format!("{}.d.ts", normalized)),
+            self.lib_dir.join(format!("lib.{}.d.ts", normalized)),
+            // Tests lib dir fallback (TypeScript/tests/lib) - for "lib" fallback
+            self.tests_lib_dir.join(format!("{}.d.ts", normalized)),
         ];
 
         for candidate in &candidates {
@@ -337,7 +336,10 @@ impl Server {
                 }
 
                 // Now parse and bind this lib
-                let file_name = format!("lib.{}.d.ts", normalized);
+                let file_name = candidate
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| format!("lib.{}.d.ts", normalized));
                 let mut parser = ParserState::new(file_name.clone(), content);
                 let root_idx = parser.parse_source_file();
 
@@ -390,37 +392,31 @@ impl Server {
         refs
     }
 
+    /// Determine which lib files to load based on compiler options.
+    ///
+    /// Uses the shared `default_lib_name_for_target` from cli::config to ensure
+    /// CLI and server have identical lib/target resolution behavior.
     fn determine_libs(&self, options: &CheckOptions) -> Vec<String> {
+        if options.no_lib {
+            return vec![];
+        }
+
         if let Some(ref libs) = options.lib {
+            // Explicit lib option - use those libs exactly
             libs.iter().map(|s| s.trim().to_lowercase()).collect()
         } else {
-            // Default libs based on target
-            let target = options
-                .target
-                .as_ref()
-                .map(|t| t.to_lowercase())
-                .unwrap_or_else(|| "es5".to_string());
-
-            match target.as_str() {
-                "es3" | "es5" => vec!["es5".to_string()],
-                "es6" | "es2015" => vec!["es2015".to_string()],
-                "es2016" => vec!["es2016".to_string()],
-                "es2017" => vec!["es2017".to_string()],
-                "es2018" => vec!["es2018".to_string()],
-                "es2019" => vec!["es2019".to_string()],
-                "es2020" => vec!["es2020".to_string()],
-                "es2021" => vec!["es2021".to_string()],
-                "es2022" => vec!["es2022".to_string()],
-                "es2023" => vec!["es2023".to_string()],
-                "esnext" => vec!["esnext".to_string()],
-                _ => vec!["es5".to_string()],
-            }
+            // No explicit lib - use the default lib for the target
+            // This delegates to the shared core function to ensure CLI/server parity
+            let target = Self::parse_target(&options.target);
+            let default_lib = default_lib_name_for_target(target);
+            vec![default_lib.to_string()]
         }
     }
 
-    fn build_checker_options(&self, options: &CheckOptions) -> CheckerOptions {
-        let target = options
-            .target
+    /// Parse a target string to ScriptTarget enum.
+    /// Used by both determine_libs and build_checker_options.
+    fn parse_target(target: &Option<String>) -> ScriptTarget {
+        target
             .as_ref()
             .map(|t| match t.to_lowercase().as_str() {
                 "es3" => ScriptTarget::ES3,
@@ -431,10 +427,16 @@ impl Server {
                 "es2018" => ScriptTarget::ES2018,
                 "es2019" => ScriptTarget::ES2019,
                 "es2020" => ScriptTarget::ES2020,
-                "esnext" => ScriptTarget::ESNext,
-                _ => ScriptTarget::ES5,
+                "es2021" => ScriptTarget::ES2021,
+                "es2022" | "es2023" => ScriptTarget::ES2022,
+                _ => ScriptTarget::ESNext,
             })
-            .unwrap_or(ScriptTarget::ES5);
+            .unwrap_or(ScriptTarget::ES5)
+    }
+
+    fn build_checker_options(&self, options: &CheckOptions) -> CheckerOptions {
+        let emitter_target = Self::parse_target(&options.target);
+        let checker_target = checker_target_from_emitter(emitter_target);
 
         CheckerOptions {
             strict: options.strict,
@@ -450,7 +452,7 @@ impl Server {
             use_unknown_in_catch_variables: options.strict,
             isolated_modules: false,
             no_lib: options.no_lib,
-            target,
+            target: checker_target,
             es_module_interop: false,
             allow_synthetic_default_imports: false,
         }

@@ -632,7 +632,7 @@ run_server() {
     local target_dir
     target_dir=$(get_target_dir)
     export TSZ_SERVER_BINARY="$target_dir/release/tsz-server"
-    export TSZ_LIB_DIR="$ROOT_DIR/node_modules/typescript/lib"
+    export TSZ_LIB_DIR="$ROOT_DIR/TypeScript/src/lib"
 
     # Build runner args
     local runner_args="--max=$max_tests --workers=$workers --category=$categories --server"

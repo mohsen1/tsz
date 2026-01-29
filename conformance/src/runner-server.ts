@@ -131,7 +131,7 @@ export class TszServerClient {
   constructor(options: { serverPath?: string; libDir?: string; memoryLimitMB: number }) {
     // Default to release binary in target directory
     this.serverPath = options.serverPath || path.join(__dirname, '../../target/release/tsz-server');
-    this.libDir = options.libDir || path.join(__dirname, '../../node_modules/typescript/lib');
+    this.libDir = options.libDir || path.join(__dirname, '../../TypeScript/src/lib');
     this.memoryLimitMB = options.memoryLimitMB;
   }
 
@@ -730,7 +730,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
 
   const testsBasePath = path.resolve(ROOT_DIR, 'TypeScript/tests/cases');
   const serverPath = process.env.TSZ_SERVER_BINARY || path.resolve(ROOT_DIR, '.target/release/tsz-server');
-  const localLibDir = process.env.TSZ_LIB_DIR || path.resolve(ROOT_DIR, 'node_modules/typescript/lib');
+  const localLibDir = process.env.TSZ_LIB_DIR || path.resolve(ROOT_DIR, 'TypeScript/src/lib');
 
   // Set lib directories for universal resolver (used by directivesToCheckOptions)
   libDirs = [
