@@ -10,6 +10,7 @@ use crate::solver::types::*;
 
 use super::super::{SubtypeChecker, SubtypeFailureReason, SubtypeResult, TypeResolver};
 
+#[allow(dead_code)]
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a union type is a subtype of a target type.
     ///
