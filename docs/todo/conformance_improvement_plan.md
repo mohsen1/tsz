@@ -13,6 +13,7 @@
 - ✅ **NEW:** TS2571 Wrong error code bug fixed - 22x errors eliminated (100% reduction)
 - ✅ **NEW:** TS2349 Generic callable invocation bug fixed - 22x errors eliminated (100% reduction)
 - ✅ **NEW:** TS2507 Extends null bug fixed - ~40x of 43x errors eliminated (95% reduction)
+- ✅ **NEW:** TS2304 Namespace type position bug fixed - namespace-qualified types now work
 - Pass rate improved from 30.0% to 34.4% (+4.4 percentage points, +15% relative improvement)
 - ERROR propagation fix is highly effective
 - **Known Limitation:** 4 timeout tests remain for circular class inheritance (classExtendsItself*.ts)
@@ -50,7 +51,24 @@ This document outlines the critical issues causing conformance failures, priorit
 
 ### Completed Commits
 
-1. **feat(solver): fix ERROR type propagation to suppress cascading errors** (6883468b8)
+1. **fix(checker): allow namespaces in type position for qualified names** (d283b2a97)
+   - Files: src/checker/symbol_resolver.rs
+   - Impact: Reduces extra TS2304 errors (namespace discrimination)
+   - Fixed TS2304 errors for namespace-qualified types like `var obj: MyNamespace.ValueInterface;`
+   - Root cause: `resolve_identifier_symbol_in_type_position` filtered out namespaces as "value-only"
+   - Solution: Check for NAMESPACE_MODULE | VALUE_MODULE flags and allow these in type position
+   - Namespaces are special - they are values at runtime but can contain types
+   - Example that now works:
+     ```typescript
+     namespace MyNamespace {
+       export interface ValueInterface {
+         prop: string;
+       }
+     }
+     var obj1: MyNamespace.ValueInterface;  // No longer reports TS2304
+     ```
+
+2. **feat(solver): fix ERROR type propagation to suppress cascading errors** (6883468b8)
    - Files: src/solver/subtype.rs, src/solver/compat.rs, src/solver/tracer.rs
    - Impact: ~12,108 extra TS2322 errors fixed
    - Changed ERROR types to be compatible (like ANY) to prevent cascading errors
