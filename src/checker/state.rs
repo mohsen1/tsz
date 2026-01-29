@@ -6466,7 +6466,14 @@ impl<'a> CheckerState<'a> {
                     // Symbol was resolved - check if it represents a constructor type for extends clauses
                     if is_extends_clause {
                         use crate::binder::symbol_flags;
-                        let symbol_type = self.get_type_of_symbol(heritage_sym);
+
+                        // Note: Must resolve type aliases before checking flags and getting type
+                        let mut visited_aliases = Vec::new();
+                        let resolved_sym =
+                            self.resolve_alias_symbol(heritage_sym, &mut visited_aliases);
+                        let sym_to_check = resolved_sym.unwrap_or(heritage_sym);
+
+                        let symbol_type = self.get_type_of_symbol(sym_to_check);
 
                         // Check if this is an interface - emit TS2689 instead of TS2507
                         // BUT only for class declarations, not interface declarations
@@ -6474,7 +6481,7 @@ impl<'a> CheckerState<'a> {
                         let is_interface = self
                             .ctx
                             .binder
-                            .get_symbol(heritage_sym)
+                            .get_symbol(sym_to_check)
                             .map(|s| (s.flags & symbol_flags::INTERFACE) != 0)
                             .unwrap_or(false);
 
@@ -6497,7 +6504,7 @@ impl<'a> CheckerState<'a> {
                         } else if !is_interface
                             && is_class_declaration
                             && !self.is_constructor_type(symbol_type)
-                            && !self.is_class_symbol(heritage_sym)
+                            && !self.is_class_symbol(sym_to_check)
                         {
                             // For classes extending non-interfaces: emit TS2507 if not a constructor type
                             // For interfaces: don't check constructor types (interfaces can extend any interface)
