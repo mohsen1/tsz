@@ -26,7 +26,8 @@ This document outlines the critical issues causing conformance failures, priorit
 | Target Library (actual) | 0 | 88 (TS2583) | ✅ COMPLETED - 74% reduction |
 | Parser Keywords | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
 | Circular Constraints | 2,123 (TS2313) | 0 + 4 timeouts | ✅ COMPLETED - Recursive constraint fix |
-| Circular Inheritance | 0 + 4 timeouts | 0 | ⚠️ 95% COMPLETE - Cycle detection complete, 4 edge cases remain |
+| Circular Inheritance | 0 + 4 timeouts | 0 | ⚠️ 95% COMPLETE - 4 timeout edge cases remain, InheritanceGraph integrated |
+| InheritanceGraph Integration | 0 | 0 | ✅ COMPLETED - O(1) nominal class subtyping |
 | **Total Fixed** | **~28,354** | **~8,563** | **~36,917 errors + 4 timeouts** |
 | **Remaining** | | | **4 timeouts** |
 
@@ -57,19 +58,39 @@ This document outlines the critical issues causing conformance failures, priorit
      - `class D<T> extends D<T> {}`
      - `class E<T> extends E<string> {}`
 
+5. **feat(solver): integrate InheritanceGraph into SubtypeChecker** (414a97c3d)
+   - Files: src/solver/subtype.rs, src/solver/subtype_rules/generics.rs, src/checker/assignability_checker.rs
+   - Impact: O(1) nominal class subtyping, improves solver architecture
+   - Added inheritance_graph and is_class_symbol fields to SubtypeChecker
+   - Updated check_ref_ref_subtype to use InheritanceGraph::is_derived_from() for O(1) bitset checks
+   - Integrated into AssignabilityChecker with SymbolFlags::CLASS check
+
+6. **fix(checker): add ERROR caching and pre-caching** (a8cc27fc2)
+   - Files: src/checker/state.rs, src/checker/class_type.rs
+   - Impact: Prevents repeated deep recursion in circular references
+   - Added ERROR caching when fuel exhausted, circular reference detected, or depth exceeded
+   - Pre-cached ERROR placeholder when starting symbol resolution to break deep recursion chains
+   - Changed base class resolution to use get_type_of_symbol instead of recursive get_class_instance_type_inner
+
+7. **fix(checker): add ERROR caching to get_type_of_node** (2f9de2592)
+   - Files: src/checker/state.rs
+   - Impact: Same pattern as get_type_of_symbol for consistency
+   - Added ERROR caching and pre-caching to get_type_of_node
+   - Prevents repeated deep recursion through node resolution path
+
 ---
 
 ## Top Remaining Issues by Impact
 
 | Issue | Extra Errors | Missing Errors | Root Cause |
 |-------|-------------|----------------|------------|
-| Circular Constraints | 2,123 (TS2313) | 0 | Premature cycle detection |
-| Parser Errors | 3,635 (TS1005) | 0 | Strict mode keywords as identifiers |
+| Parser Errors | 3,635 (TS1005) | 0 | ✅ COMPLETED - Contextual keyword fix |
 | Name Resolution | 3,402 (TS2304) | 1,684 | Global suppression + namespace issues |
 | Module Resolution | 3,950 (TS2307) | 948 (TS2792) | Ambient modules not checked |
 | Arguments | 1,686 (TS2345) | 0 | Cascading from TS2322/TS2540 |
 | Iterators | 0 | 1,558 (TS2488) | Iterable checker incomplete |
 | Value/Type | 1,739 (TS2749) | 0 | Namespace discrimination |
+| Circular Inheritance Timeouts | 0 | 4 timeouts | ⚠️ KNOWN LIMITATION - Stack overflow before cycle detection |
 
 ---
 

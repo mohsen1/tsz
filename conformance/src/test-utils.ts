@@ -3,6 +3,12 @@
  *
  * This module provides common functionality used by both server-mode
  * and WASM-mode conformance runners to ensure consistent behavior.
+ *
+ * Handles TSC test directives including:
+ * - Compiler options (@target, @strict, @lib, etc.)
+ * - Test harness-specific directives (@filename, @noCheck, @typeScriptVersion, etc.)
+ *
+ * See docs/specs/TSC_DIRECTIVES.md for the full reference.
  */
 
 import * as path from 'path';
@@ -12,28 +18,188 @@ import { normalizeLibName } from './lib-manifest.js';
 // Test Directive Parsing
 // ============================================================================
 
+/**
+ * Test harness-specific options that control HOW the test runs,
+ * NOT passed to the compiler as options.
+ */
+export interface HarnessOptions {
+  // File handling
+  filename?: string;                    // Current file name in multi-file tests
+  allowNonTsExtensions?: boolean;       // Allow files without .ts/.tsx extensions
+  useCaseSensitiveFileNames?: boolean;  // Use case-sensitive file name matching
+
+  // Test control
+  noCheck?: boolean;                    // Disable semantic checking (parse only)
+  typeScriptVersion?: string;           // Minimum TypeScript version required
+
+  // Baseline/output options (not relevant for tsz but parsed for completeness)
+  baselineFile?: string;                // Custom baseline file name
+  noErrorTruncation?: boolean;          // Don't truncate error messages
+  suppressOutputPathCheck?: boolean;    // Skip output path validation
+  noTypesAndSymbols?: boolean;          // Skip type/symbol baselines
+  fullEmitPaths?: boolean;              // Show full paths in emit baselines
+  reportDiagnostics?: boolean;          // Enable diagnostics in transpile baselines
+  captureSuggestions?: boolean;         // Include suggestions in error baselines
+
+  // Module/reference handling
+  noImplicitReferences?: boolean;       // Don't auto-include referenced files
+
+  // Virtual filesystem
+  currentDirectory?: string;            // Set virtual current working directory
+  symlinks?: Array<{ target: string; link: string }>;  // Symlinks to create
+}
+
+/**
+ * Compiler options parsed from test directives.
+ * All keys are lowercase for case-insensitive matching.
+ */
 export interface ParsedDirectives {
+  // Target and Language
   target?: string;
   lib?: string[];
   nolib?: boolean;
+  jsx?: string;
+  jsxfactory?: string;
+  jsxfragmentfactory?: string;
+  jsximportsource?: string;
+  usedefineforclassfields?: boolean;
+  experimentaldecorators?: boolean;
+  emitdecoratormetadata?: boolean;
+  moduledetection?: string;
+
+  // Type Checking - Strict Family
   strict?: boolean;
   strictnullchecks?: boolean;
   strictfunctiontypes?: boolean;
+  strictbindcallapply?: boolean;
   strictpropertyinitialization?: boolean;
+  strictbuiltiniteratorreturn?: boolean;
   noimplicitany?: boolean;
   noimplicitthis?: boolean;
+  useunknownincatchvariables?: boolean;
+  alwaysstrict?: boolean;
+
+  // Additional Type Checking
+  nounusedlocals?: boolean;
+  nounusedparameters?: boolean;
+  exactoptionalpropertytypes?: boolean;
   noimplicitreturns?: boolean;
+  nofallthroughcasesinswitch?: boolean;
+  nouncheckedindexedaccess?: boolean;
+  noimplicitoverride?: boolean;
+  nopropertyaccessfromindexsignature?: boolean;
+  allowunusedlabels?: boolean;
+  allowunreachablecode?: boolean;
+
+  // Module Options
   module?: string;
   moduleresolution?: string;
-  jsx?: string;
+  baseurl?: string;
+  paths?: Record<string, string[]>;
+  rootdirs?: string[];
+  typeroots?: string[];
+  types?: string[];
+  allowsyntheticdefaultimports?: boolean;
+  esmoduleinterop?: boolean;
+  preservesymlinks?: boolean;
+  allowumdglobalaccess?: boolean;
+  modulesuffixes?: string[];
+  allowimportingtsextensions?: boolean;
+  rewriterelativeimportextensions?: boolean;
+  resolvepackagejsonexports?: boolean;
+  resolvepackagejsonimports?: boolean;
+  customconditions?: string[];
+  nouncheckedsideeffectimports?: boolean;
+  resolvejsonmodule?: boolean;
+  allowarbitraryextensions?: boolean;
+  noresolve?: boolean;
+
+  // JavaScript Support
   allowjs?: boolean;
   checkjs?: boolean;
+  maxnodemodulejsdepth?: number;
+
+  // Emit Options
+  noemit?: boolean;
   declaration?: boolean;
+  declarationmap?: boolean;
+  emitdeclarationonly?: boolean;
+  sourcemap?: boolean;
+  inlinesourcemap?: boolean;
+  inlinesources?: boolean;
+  outfile?: string;
+  outdir?: string;
+  rootdir?: string;
+  declarationdir?: string;
+  removecomments?: boolean;
+  importhelpers?: boolean;
+  downleveliteration?: boolean;
+  preserveconstenums?: boolean;
+  stripinternal?: boolean;
+  noemithelpers?: boolean;
+  noemitonerror?: boolean;
+  emitbom?: boolean;
+  newline?: string;
+  sourceroot?: string;
+  maproot?: string;
+
+  // Project Options
+  incremental?: boolean;
+  composite?: boolean;
+  tsbuildinfofile?: string;
+  disablesourceofprojectreferenceredirect?: boolean;
+  disablesolutionsearching?: boolean;
+  disablereferencedprojectload?: boolean;
+
+  // Interop Constraints
   isolatedmodules?: boolean;
-  experimentaldecorators?: boolean;
-  emitdecoratormetadata?: boolean;
+  verbatimmodulesyntax?: boolean;
+  isolateddeclarations?: boolean;
+  erasablesyntaxonly?: boolean;
+  forceconsistentcasinginfilenames?: boolean;
+
+  // Library and Completeness
+  skiplibcheck?: boolean;
+  skipdefaultlibcheck?: boolean;
+  libreplacement?: boolean;
+  disablesizelimit?: boolean;
+
+  // Backwards Compatibility
+  suppressexcesspropertyerrors?: boolean;
+  suppressimplicitanyindexerrors?: boolean;
+  noimplicitusestrict?: boolean;
+  nostrictgenericchecks?: boolean;
+  keyofstringsonly?: boolean;
+  preservevalueimports?: boolean;
+  importsnotusedasvalues?: string;
+  charset?: string;
+  out?: string;
+  reactnamespace?: string;
+
+  // Allow additional unknown options
   [key: string]: unknown;
 }
+
+/** List of harness-specific directive names (lowercase) */
+const HARNESS_DIRECTIVES = new Set([
+  'filename',
+  'allownontextensions',
+  'allownonttsextensions',   // alternate spelling
+  'usecasesensitivefilenames',
+  'nocheck',
+  'typescriptversion',
+  'baselinefile',
+  'noerrortruncation',
+  'suppressoutputpathcheck',
+  'notypesandsymbols',
+  'fullemitpaths',
+  'reportdiagnostics',
+  'capturesuggestions',
+  'noimplicitreferences',
+  'currentdirectory',
+  'symlink',
+  'link',
+]);
 
 export interface TestFile {
   name: string;
@@ -42,19 +208,41 @@ export interface TestFile {
 
 export interface ParsedTestCase {
   directives: ParsedDirectives;
+  harness: HarnessOptions;
   isMultiFile: boolean;
   files: TestFile[];
   category: string;
 }
 
 /**
+ * Parse a @link or @symlink directive value.
+ * Format: "target -> link" or "target=>link"
+ */
+function parseSymlinkDirective(value: string): { target: string; link: string } | null {
+  // Try -> first, then =>
+  let parts = value.split('->').map(s => s.trim());
+  if (parts.length !== 2) {
+    parts = value.split('=>').map(s => s.trim());
+  }
+  if (parts.length === 2 && parts[0] && parts[1]) {
+    return { target: parts[0], link: parts[1] };
+  }
+  return null;
+}
+
+/**
  * Parse test directives from TypeScript conformance test file.
  * Extracts @target, @lib, @strict, etc. from comment headers.
  * Also handles @filename directives for multi-file tests.
+ *
+ * Separates harness-specific directives from compiler options:
+ * - Harness directives control the test environment (e.g., @noCheck, @typeScriptVersion)
+ * - Compiler options are passed to tsz (e.g., @strict, @target, @lib)
  */
 export function parseTestCase(code: string, filePath: string): ParsedTestCase {
   const lines = code.split('\n');
   const directives: ParsedDirectives = {};
+  const harness: HarnessOptions = {};
   let isMultiFile = false;
   const files: TestFile[] = [];
   let currentFileName: string | null = null;
@@ -76,15 +264,79 @@ export function parseTestCase(code: string, filePath: string): ParsedTestCase {
       continue;
     }
 
+    // Handle @link / @symlink directives specially (format: target -> link)
+    const symlinkMatch = trimmed.match(/^\/\/\s*@(link|symlink):\s*(.+)$/i);
+    if (symlinkMatch) {
+      const parsed = parseSymlinkDirective(symlinkMatch[2]);
+      if (parsed) {
+        if (!harness.symlinks) harness.symlinks = [];
+        harness.symlinks.push(parsed);
+      }
+      continue;
+    }
+
     // Handle other @option directives
     const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
     if (optionMatch) {
       const [, key, value] = optionMatch;
       const lowKey = key.toLowerCase();
-      if (value.toLowerCase() === 'true') directives[lowKey] = true;
-      else if (value.toLowerCase() === 'false') directives[lowKey] = false;
-      else if (!isNaN(Number(value))) directives[lowKey] = Number(value);
-      else directives[lowKey] = value;
+
+      // Parse value
+      let parsedValue: unknown;
+      if (value.toLowerCase() === 'true') parsedValue = true;
+      else if (value.toLowerCase() === 'false') parsedValue = false;
+      else if (!isNaN(Number(value))) parsedValue = Number(value);
+      else parsedValue = value;
+
+      // Route to harness or directives based on directive type
+      if (HARNESS_DIRECTIVES.has(lowKey)) {
+        // Handle harness-specific directives
+        switch (lowKey) {
+          case 'nocheck':
+            harness.noCheck = parsedValue as boolean;
+            break;
+          case 'typescriptversion':
+            harness.typeScriptVersion = parsedValue as string;
+            break;
+          case 'currentdirectory':
+            harness.currentDirectory = parsedValue as string;
+            break;
+          case 'allownontextensions':
+          case 'allownonttsextensions':
+            harness.allowNonTsExtensions = parsedValue as boolean;
+            break;
+          case 'usecasesensitivefilenames':
+            harness.useCaseSensitiveFileNames = parsedValue as boolean;
+            break;
+          case 'noimplicitreferences':
+            harness.noImplicitReferences = parsedValue as boolean;
+            break;
+          case 'baselinefile':
+            harness.baselineFile = parsedValue as string;
+            break;
+          case 'noerrortruncation':
+            harness.noErrorTruncation = parsedValue as boolean;
+            break;
+          case 'suppressoutputpathcheck':
+            harness.suppressOutputPathCheck = parsedValue as boolean;
+            break;
+          case 'notypesandsymbols':
+            harness.noTypesAndSymbols = parsedValue as boolean;
+            break;
+          case 'fullemitpaths':
+            harness.fullEmitPaths = parsedValue as boolean;
+            break;
+          case 'reportdiagnostics':
+            harness.reportDiagnostics = parsedValue as boolean;
+            break;
+          case 'capturesuggestions':
+            harness.captureSuggestions = parsedValue as boolean;
+            break;
+        }
+      } else {
+        // Compiler option
+        directives[lowKey] = parsedValue;
+      }
       continue;
     }
 
@@ -106,14 +358,16 @@ export function parseTestCase(code: string, filePath: string): ParsedTestCase {
   const relativePath = filePath.replace(/.*tests\/cases\//, '');
   const category = relativePath.split(path.sep)[0] || 'unknown';
 
-  return { directives, isMultiFile, files, category };
+  return { directives, harness, isMultiFile, files, category };
 }
 
 /**
  * Parse just the directives (simpler version for server mode).
+ * Returns both compiler directives and harness options.
  */
-export function parseDirectivesOnly(content: string): ParsedDirectives {
+export function parseDirectivesOnly(content: string): { directives: ParsedDirectives; harness: HarnessOptions } {
   const directives: ParsedDirectives = {};
+  const harness: HarnessOptions = {};
   const lines = content.split('\n');
 
   for (const line of lines) {
@@ -123,18 +377,135 @@ export function parseDirectivesOnly(content: string): ParsedDirectives {
       break;
     }
 
+    // Handle @link / @symlink directives specially
+    const symlinkMatch = trimmed.match(/^\/\/\s*@(link|symlink):\s*(.+)$/i);
+    if (symlinkMatch) {
+      const parsed = parseSymlinkDirective(symlinkMatch[2]);
+      if (parsed) {
+        if (!harness.symlinks) harness.symlinks = [];
+        harness.symlinks.push(parsed);
+      }
+      continue;
+    }
+
     const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
     if (optionMatch) {
       const [, key, value] = optionMatch;
       const lowKey = key.toLowerCase();
-      if (value.toLowerCase() === 'true') directives[lowKey] = true;
-      else if (value.toLowerCase() === 'false') directives[lowKey] = false;
-      else if (!isNaN(Number(value))) directives[lowKey] = Number(value);
-      else directives[lowKey] = value;
+
+      // Parse value
+      let parsedValue: unknown;
+      if (value.toLowerCase() === 'true') parsedValue = true;
+      else if (value.toLowerCase() === 'false') parsedValue = false;
+      else if (!isNaN(Number(value))) parsedValue = Number(value);
+      else parsedValue = value;
+
+      // Route to harness or directives
+      if (HARNESS_DIRECTIVES.has(lowKey)) {
+        switch (lowKey) {
+          case 'nocheck':
+            harness.noCheck = parsedValue as boolean;
+            break;
+          case 'typescriptversion':
+            harness.typeScriptVersion = parsedValue as string;
+            break;
+          case 'currentdirectory':
+            harness.currentDirectory = parsedValue as string;
+            break;
+          case 'allownontextensions':
+          case 'allownonttsextensions':
+            harness.allowNonTsExtensions = parsedValue as boolean;
+            break;
+          case 'usecasesensitivefilenames':
+            harness.useCaseSensitiveFileNames = parsedValue as boolean;
+            break;
+          case 'noimplicitreferences':
+            harness.noImplicitReferences = parsedValue as boolean;
+            break;
+          default:
+            // Other harness directives (baseline-related) - store generically
+            (harness as any)[lowKey] = parsedValue;
+        }
+      } else {
+        directives[lowKey] = parsedValue;
+      }
     }
   }
 
-  return directives;
+  return { directives, harness };
+}
+
+// ============================================================================
+// Test Skip/Filter Logic
+// ============================================================================
+
+/**
+ * Current TypeScript version that tsz targets for compatibility.
+ * Used to skip tests requiring newer TS features.
+ */
+export const TSZ_TARGET_TS_VERSION = '5.5';
+
+/**
+ * Parse a TypeScript version string like "5.0", "4.7.2", ">=5.0"
+ */
+function parseVersionRequirement(versionStr: string): { operator: string; major: number; minor: number } | null {
+  const match = versionStr.match(/^(>=|>|<=|<|=)?\s*(\d+)\.(\d+)/);
+  if (!match) return null;
+  return {
+    operator: match[1] || '>=',
+    major: parseInt(match[2], 10),
+    minor: parseInt(match[3], 10),
+  };
+}
+
+/**
+ * Check if a test should be skipped based on @typeScriptVersion directive.
+ * Returns true if the test requires a newer TS version than we support.
+ */
+export function shouldSkipForVersion(harness: HarnessOptions): boolean {
+  if (!harness.typeScriptVersion) return false;
+
+  const req = parseVersionRequirement(harness.typeScriptVersion);
+  if (!req) return false;
+
+  const targetParts = TSZ_TARGET_TS_VERSION.split('.').map(Number);
+  const targetMajor = targetParts[0];
+  const targetMinor = targetParts[1] || 0;
+
+  // Compare versions based on operator
+  switch (req.operator) {
+    case '>=':
+      // Test requires >= X.Y, we support up to TARGET
+      // Skip if required version > target
+      return req.major > targetMajor || (req.major === targetMajor && req.minor > targetMinor);
+    case '>':
+      return req.major > targetMajor || (req.major === targetMajor && req.minor >= targetMinor);
+    case '<=':
+    case '<':
+    case '=':
+      // These would typically not cause skips (test requires older version)
+      return false;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Check if a test should be skipped based on harness options.
+ * Returns { skip: boolean, reason?: string }
+ */
+export function shouldSkipTest(harness: HarnessOptions): { skip: boolean; reason?: string } {
+  // Skip @noCheck tests (parse-only, no semantic checking)
+  if (harness.noCheck) {
+    return { skip: true, reason: 'noCheck' };
+  }
+
+  // Skip tests requiring newer TypeScript versions
+  if (shouldSkipForVersion(harness)) {
+    return { skip: true, reason: `requires TS ${harness.typeScriptVersion}` };
+  }
+
+  return { skip: false };
 }
 
 // ============================================================================

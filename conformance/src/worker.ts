@@ -25,7 +25,9 @@ import {
 import {
   parseTestCase,
   getLibNamesForDirectives,
+  shouldSkipTest,
   type ParsedTestCase as SharedParsedTestCase,
+  type HarnessOptions,
 } from './test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -46,6 +48,7 @@ interface TestFile {
 
 interface ParsedTestCase {
   options: Record<string, unknown>;
+  harness: HarnessOptions;
   isMultiFile: boolean;
   files: TestFile[];
   category: string;
@@ -58,6 +61,8 @@ interface WorkerResult {
   wasmCodes: number[];
   crashed: boolean;
   oom: boolean;
+  skipped: boolean;
+  skipReason?: string;
   category: string;
   error?: string;
   memoryUsed?: number;
@@ -271,6 +276,7 @@ function parseTestDirectives(code: string, filePath: string): ParsedTestCase {
   // Return in expected format (options field for compatibility)
   return {
     options: parsed.directives,
+    harness: parsed.harness,
     isMultiFile: parsed.isMultiFile,
     files: parsed.files,
     category: parsed.category,
@@ -845,6 +851,23 @@ async function processTest(job: TestJob): Promise<WorkerResult> {
     const code = fs.readFileSync(job.filePath, 'utf8');
     const testCase = parseTestDirectives(code, job.filePath);
 
+    // Check if test should be skipped based on harness options
+    const skipResult = shouldSkipTest(testCase.harness);
+    if (skipResult.skip) {
+      return {
+        type: 'result',
+        id: job.id,
+        tscCodes: [],
+        wasmCodes: [],
+        crashed: false,
+        oom: false,
+        skipped: true,
+        skipReason: skipResult.reason,
+        category: testCase.category,
+        memoryUsed: 0,
+      };
+    }
+
     // Try to use cached TSC result
     let tscCodes: number[];
     const relPath = job.filePath.replace(job.testsBasePath + path.sep, '');
@@ -881,6 +904,7 @@ async function processTest(job: TestJob): Promise<WorkerResult> {
       wasmCodes: compilerResult.codes,
       crashed: compilerResult.crashed,
       oom: compilerResult.oom,
+      skipped: false,
       category: testCase.category,
       error: compilerResult.error,
       memoryUsed: memAfter - memBefore,
