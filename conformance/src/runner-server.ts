@@ -20,7 +20,9 @@ import {
   parseDirectivesOnly,
   parseTestCase,
   directivesToCheckOptions,
+  shouldSkipTest,
   type CheckOptions,
+  type HarnessOptions,
 } from './test-utils.js';
 
 // Memory configuration
@@ -80,11 +82,15 @@ let tempDirCounter = 0;
  * For multi-file tests, write virtual files to a temp directory as real files.
  * Returns the temp directory path and a map of real file paths to content.
  * For single-file tests, returns null tempDir and original files.
+ *
+ * Also handles:
+ * - @link/@symlink directives for creating symlinks
+ * - @currentDirectory for setting the working directory
  */
 function prepareTestFiles(
-  parsed: { files: Array<{ name: string; content: string }>; isMultiFile: boolean },
+  parsed: { files: Array<{ name: string; content: string }>; isMultiFile: boolean; harness: HarnessOptions },
   testFile: string
-): { tempDir: string | null; files: Record<string, string> } {
+): { tempDir: string | null; files: Record<string, string>; currentDirectory?: string } {
   // Single file test - just return the original file
   if (!parsed.isMultiFile || parsed.files.length <= 1) {
     const files: Record<string, string> = {};
@@ -117,7 +123,34 @@ function prepareTestFiles(
     files[filePath] = file.content;
   }
 
-  return { tempDir, files };
+  // Handle symlinks from harness options
+  if (parsed.harness.symlinks) {
+    for (const { target, link } of parsed.harness.symlinks) {
+      const linkPath = path.join(tempDir, link.replace(/^\.\//, ''));
+      const targetPath = path.join(tempDir, target.replace(/^\.\//, ''));
+
+      // Create parent directory for the link if needed
+      const linkDir = path.dirname(linkPath);
+      if (!fs.existsSync(linkDir)) {
+        fs.mkdirSync(linkDir, { recursive: true });
+      }
+
+      try {
+        // Create symlink (target must be relative to link location or absolute)
+        const relativeTarget = path.relative(linkDir, targetPath);
+        fs.symlinkSync(relativeTarget, linkPath);
+      } catch {
+        // Symlink creation may fail on some systems, ignore
+      }
+    }
+  }
+
+  // Handle currentDirectory from harness options
+  const currentDirectory = parsed.harness.currentDirectory
+    ? path.join(tempDir, parsed.harness.currentDirectory.replace(/^\.\//, ''))
+    : undefined;
+
+  return { tempDir, files, currentDirectory };
 }
 
 /**
@@ -1045,6 +1078,14 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         // Parse test case to handle @Filename directives for multi-file tests
         const parsed = parseTestCase(content, testFile);
 
+        // Check if test should be skipped based on harness options
+        const skipResult = shouldSkipTest(parsed.harness);
+        if (skipResult.skip) {
+          stats.skipped++;
+          if (verbose) log(`⊘ ${relativePath}: ${skipResult.reason}`, colors.dim);
+          return;
+        }
+
         // For multi-file tests, write real files to temp directory
         const prepared = prepareTestFiles(parsed, testFile);
         tempDir = prepared.tempDir;
@@ -1052,6 +1093,11 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
 
         // Parse test directives (@target, @lib, @strict, etc.)
         const checkOptions = directivesToCheckOptions(parsed.directives, libDirs);
+
+        // If currentDirectory was specified, pass it to check options
+        if (prepared.currentDirectory) {
+          (checkOptions as any).currentDirectory = prepared.currentDirectory;
+        }
 
         // Get TSC baseline from cache or skip
         const cacheEntry = cacheEntries[relativePath];
@@ -1161,16 +1207,22 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     log('CONFORMANCE TEST RESULTS', colors.bold);
     log('═'.repeat(60), colors.dim);
 
-    // Calculate actual failed (failed includes oom and timedOut, but NOT crashed)
+    // Calculate actual failed (failed includes oom and timedOut, but NOT crashed or skipped)
     const actualFailed = stats.failed - stats.oom - stats.timedOut;
-    const passRate = stats.total > 0 ? ((stats.passed / stats.total) * 100).toFixed(1) : '0.0';
+    // Pass rate excludes skipped tests from denominator
+    const effectiveTotal = stats.total - stats.skipped;
+    const passRate = effectiveTotal > 0 ? ((stats.passed / effectiveTotal) * 100).toFixed(1) : '0.0';
 
-    log(`\nPass Rate: ${passRate}% (${formatNumber(stats.passed)}/${formatNumber(stats.total)})`, stats.passed === stats.total ? colors.green : colors.yellow);
-    log(`Time: ${elapsed.toFixed(1)}s (${(stats.total / elapsed).toFixed(0)} tests/sec)`, colors.dim);
+    log(`\nPass Rate: ${passRate}% (${formatNumber(stats.passed)}/${formatNumber(effectiveTotal)})`, stats.passed === effectiveTotal ? colors.green : colors.yellow);
+    if (stats.skipped > 0) {
+      log(`  (${formatNumber(stats.skipped)} tests skipped due to harness directives)`, colors.dim);
+    }
+    log(`Time: ${elapsed.toFixed(1)}s (${(effectiveTotal / elapsed).toFixed(0)} tests/sec)`, colors.dim);
 
     log('\nSummary:', colors.bold);
     log(`  ✓ Passed:   ${formatNumber(stats.passed)}`, colors.green);
     log(`  ✗ Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
+    log(`  ⊘ Skipped:  ${formatNumber(stats.skipped)}`, stats.skipped > 0 ? colors.dim : colors.dim);
     log(`  💥 Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
     log(`  💾 OOM:      ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.magenta : colors.dim);
     log(`  ⏱ Timeout:  ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
