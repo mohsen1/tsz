@@ -1,0 +1,15 @@
+{
+  "name": "zang-scripts",
+  "version": "1.0.0",
+  "description": "Testing and build scripts for Project Zang.",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "dotenv": "^17.2.3"
+  }
+}

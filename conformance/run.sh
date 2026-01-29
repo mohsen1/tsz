@@ -108,8 +108,8 @@ OPTIONS:
     --no-docker         Run directly on host (default with --server)
 
     Test Selection:
-    --all               Run all available tests (overrides --max)
-    --max=N             Maximum number of tests to run (default: 500)
+    --all               Run all available tests (same as default)
+    --max=N             Maximum number of tests to run (default: all)
     --category=CAT      Test categories to run, comma-separated
                         Options: conformance, compiler, projects
                         Default: conformance,compiler,projects
@@ -681,7 +681,7 @@ main() {
     # Defaults - server mode is now the default (fastest)
     local mode="server"  # server, wasm, native
     local use_docker=false
-    local max_tests=500
+    local max_tests=99999  # Default: run all tests
     local workers=""
     local timeout=600
     local categories="conformance,compiler"
