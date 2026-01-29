@@ -227,4 +227,107 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.import_resolution_stack.pop();
     }
+
+    // =========================================================================
+    // Dynamic Import Return Type
+    // =========================================================================
+
+    /// Get the return type for a dynamic import() call.
+    ///
+    /// Returns Promise<ModuleType> where ModuleType is an object containing
+    /// all the module's exports. Falls back to Promise<any> or just `any` when:
+    /// - The module cannot be resolved
+    /// - Promise is not available (ES5 target without lib)
+    ///
+    /// This method implements Phase 1.3 of the module resolution plan.
+    pub(crate) fn get_dynamic_import_type(
+        &mut self,
+        call: &crate::parser::node::CallExprData,
+    ) -> crate::solver::TypeId {
+        use crate::solver::PropertyInfo;
+
+        // Get the first argument (module specifier)
+        let args = call
+            .arguments
+            .as_ref()
+            .map(|a| &a.nodes)
+            .map(|n| n.as_slice())
+            .unwrap_or(&[]);
+
+        if args.is_empty() {
+            return self.create_promise_any();
+        }
+
+        let arg_idx = args[0];
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return self.create_promise_any();
+        };
+
+        // Only handle string literal module specifiers
+        let Some(literal) = self.ctx.arena.get_literal(arg_node) else {
+            return self.create_promise_any();
+        };
+
+        let module_name = &literal.text;
+
+        // Check for shorthand ambient modules - imports are typed as `any`
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
+            return self.create_promise_any();
+        }
+
+        // Try to get module exports for the namespace type
+        let exports_table = self
+            .ctx
+            .binder
+            .module_exports
+            .get(module_name)
+            .cloned()
+            .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
+
+        if let Some(exports_table) = exports_table {
+            // Create an object type with all module exports
+            let mut props: Vec<PropertyInfo> = Vec::new();
+            for (name, &export_sym_id) in exports_table.iter() {
+                let prop_type = self.get_type_of_symbol(export_sym_id);
+                let name_atom = self.ctx.types.intern_string(name);
+                props.push(PropertyInfo {
+                    name: name_atom,
+                    type_id: prop_type,
+                    write_type: prop_type,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                });
+            }
+            let module_type = self.ctx.types.object(props);
+            return self.create_promise_of(module_type);
+        }
+
+        // Module not found - return Promise<any>
+        self.create_promise_any()
+    }
+
+    /// Create a Promise<any> type.
+    fn create_promise_any(&self) -> crate::solver::TypeId {
+        self.create_promise_of(crate::solver::TypeId::ANY)
+    }
+
+    /// Create a Promise<T> type.
+    ///
+    /// Uses the synthetic PROMISE_BASE type to create Promise<T>.
+    /// This works even without lib files since PROMISE_BASE is a built-in type.
+    fn create_promise_of(&self, inner_type: crate::solver::TypeId) -> crate::solver::TypeId {
+        use crate::solver::TypeId;
+
+        // Use PROMISE_BASE as the Promise constructor
+        // This is a synthetic type that allows Promise<T> to work without lib files
+        self.ctx
+            .types
+            .application(TypeId::PROMISE_BASE, vec![inner_type])
+    }
 }

@@ -1661,6 +1661,65 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve an export from another file using cross-file resolution.
+    ///
+    /// This method uses `all_binders` and `resolved_module_paths` to look up an export
+    /// from a different file in multi-file mode. Returns the SymbolId of the export
+    /// if found, or None if cross-file resolution is not available or the export is not found.
+    ///
+    /// This is the core of Phase 1.1: ModuleResolver ↔ Checker Integration.
+    fn resolve_cross_file_export(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<crate::binder::SymbolId> {
+        // First, try to resolve the module specifier to a target file index
+        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
+
+        // Get the target file's binder
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+
+        // Look up the export in the target binder's module_exports
+        // The module_exports map is keyed by both file name and specifier,
+        // so we try the file name first (which is more reliable)
+        // Try to find the export in the target binder's module_exports
+        // The module_exports is keyed by file paths and specifiers
+        for (_file_key, exports_table) in target_binder.module_exports.iter() {
+            if let Some(sym_id) = exports_table.get(export_name) {
+                return Some(sym_id);
+            }
+            // Only check first entry which should be the file's exports
+            break;
+        }
+
+        // Fall back to checking file_locals in the target binder
+        target_binder.file_locals.get(export_name)
+    }
+
+    /// Resolve a namespace import (import * as ns) from another file using cross-file resolution.
+    ///
+    /// Returns a SymbolTable containing all exports from the target module.
+    pub(crate) fn resolve_cross_file_namespace_exports(
+        &self,
+        module_specifier: &str,
+    ) -> Option<crate::binder::SymbolTable> {
+        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+
+        // Try to find exports in the target binder's module_exports
+        // First, try the specifier itself
+        if let Some(exports) = target_binder.module_exports.get(module_specifier) {
+            return Some(exports.clone());
+        }
+
+        // Try iterating through module_exports to find matching file
+        if let Some((_, exports_table)) = target_binder.module_exports.iter().next() {
+            return Some(exports_table.clone());
+        }
+
+        None
+    }
+
     /// Emit TS2307 error for a module that cannot be found.
     ///
     /// This function emits a "Cannot find module" error with the module specifier
@@ -3426,7 +3485,18 @@ impl<'a> CheckerState<'a> {
                 if symbol.import_name.is_none() {
                     // This is a namespace import: import * as ns from 'module'
                     // Create an object type containing all module exports
-                    if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name) {
+
+                    // First, try local binder's module_exports
+                    let exports_table = self
+                        .ctx
+                        .binder
+                        .module_exports
+                        .get(module_name)
+                        .cloned()
+                        // Fall back to cross-file resolution if local lookup fails
+                        .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
+
+                    if let Some(exports_table) = exports_table {
                         use crate::solver::PropertyInfo;
                         let mut props: Vec<PropertyInfo> = Vec::new();
                         for (name, &export_sym_id) in exports_table.iter() {
@@ -3458,9 +3528,18 @@ impl<'a> CheckerState<'a> {
                 // This is a named import: import { X } from 'module'
                 // Use import_name if set (for renamed imports), otherwise use escaped_name
                 let export_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
-                if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name)
-                    && let Some(export_sym_id) = exports_table.get(export_name)
-                {
+
+                // First, try local binder's module_exports
+                let export_sym_id = self
+                    .ctx
+                    .binder
+                    .module_exports
+                    .get(module_name)
+                    .and_then(|exports_table| exports_table.get(export_name))
+                    // Fall back to cross-file resolution if local lookup fails
+                    .or_else(|| self.resolve_cross_file_export(module_name, export_name));
+
+                if let Some(export_sym_id) = export_sym_id {
                     let mut result = self.get_type_of_symbol(export_sym_id);
 
                     // Rule #44: Apply module augmentations to the imported type
