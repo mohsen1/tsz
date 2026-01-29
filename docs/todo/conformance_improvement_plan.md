@@ -51,7 +51,15 @@ This document outlines the critical issues causing conformance failures, priorit
 
 ### Completed Commits
 
-1. **fix(checker): allow namespaces in type position for qualified names** (d283b2a97)
+1. **Investigation: TS2339 Property Access Errors** (Jan 29, 2026)
+   - Promise await unwrapping verified working correctly
+   - Test case: `await po` where `po: Promise<{ fn: ... }>` works
+   - Infrastructure in place: `promise_like_return_type_argument` in promise_checker.rs
+   - Lib symbol resolution fix (commit 513807027) solved 121x TS2339 cases
+   - **Remaining**: 332x TS2339 errors from other property access scenarios
+   - **Next Steps**: Need to investigate specific TS2339 patterns in conformance failures
+
+2. **fix(checker): allow namespaces in type position for qualified names** (d283b2a97)
    - Files: src/checker/symbol_resolver.rs
    - Impact: Reduces extra TS2304 errors (namespace discrimination)
    - Fixed TS2304 errors for namespace-qualified types like `var obj: MyNamespace.ValueInterface;`
