@@ -706,14 +706,27 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
     // (even though they don't exist on disk). The loader will use embedded libs
     // as a fallback via get_lib_by_file_name().
     // This is critical for conformance tests where lib files aren't on disk.
+    //
+    // IMPORTANT: File names must match embedded lib file names exactly:
+    // - "lib" -> "lib.d.ts"
+    // - "es6" -> "lib.es6.d.ts"
+    // - "es2016.full" -> "lib.es2016.full.d.ts"
     let lib_dir = default_lib_dir().unwrap_or_else(|_| PathBuf::from("lib"));
-    let lib_file = lib_dir.join(format!("{}.d.ts", default_lib));
+    let lib_file = if default_lib == "lib" {
+        lib_dir.join("lib.d.ts")
+    } else {
+        lib_dir.join(format!("lib.{}.d.ts", default_lib))
+    };
 
     // Also include fallback lib files for better coverage
     let mut result = vec![lib_file];
 
     for fallback in &fallbacks {
-        let fallback_file = lib_dir.join(format!("{}.d.ts", fallback));
+        let fallback_file = if *fallback == "lib" {
+            lib_dir.join("lib.d.ts")
+        } else {
+            lib_dir.join(format!("lib.{}.d.ts", fallback))
+        };
         result.push(fallback_file);
     }
 
