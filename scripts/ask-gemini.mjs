@@ -194,6 +194,9 @@ General Options:
                       rate limits or when Vertex credentials aren't available)
   -h, --help          Show this help message
 
+Note: Test files (*_test.rs, tests/, benches/) are excluded by default.
+      To include tests, use --include with a path containing "test" or "bench".
+
 Environment:
   GCP_VERTEX_EXPRESS_API_KEY  Required for Vertex AI Express (default).
   GEMINI_API_KEY              Required for direct Gemini API (--no-use-vertex).
@@ -313,15 +316,54 @@ ${fileTree}
     encoding: 'utf-8',
   });
 
-  // Filter out TypeScript submodule files (yek bug: doesn't respect ignore patterns for submodules)
+  // Filter out TypeScript submodule files and test files
+  // Test files are only included if user explicitly specifies them via --include
+  const userExplicitlyIncludedTests = values.include && (
+    values.include.includes('test') ||
+    values.include.includes('spec') ||
+    values.include.includes('bench')
+  );
+
+  if (!userExplicitlyIncludedTests) {
+    console.log('  - Filtering out test files (use --include with test path to include them)');
+  }
+
   const sections = context.split(/^(?=>>>> )/m);
+  let testFilesFiltered = 0;
   const filteredSections = sections.filter(section => {
     const match = section.match(/^>>>> (.+)\n/);
     if (!match) return true;
     const filePath = match[1];
+
     // Skip TypeScript submodule files
-    return !filePath.startsWith('TypeScript/');
+    if (filePath.startsWith('TypeScript/')) {
+      return false;
+    }
+
+    // Skip test files unless user explicitly requested them via --include
+    if (!userExplicitlyIncludedTests) {
+      const isTestFile = (
+        // Test directory patterns
+        filePath.includes('/tests/') || filePath.includes('/test/') ||
+        // Test file naming patterns
+        filePath.match(/_tests?\.rs$/) || filePath.match(/_spec\.rs$/) ||
+        // Bench directory patterns
+        filePath.includes('/benches/') || filePath.includes('/bench/') ||
+        // Common test harness files
+        filePath.includes('test_harness') || filePath.includes('test_utils')
+      );
+      if (isTestFile) {
+        testFilesFiltered++;
+        return false;
+      }
+    }
+
+    return true;
   });
+
+  if (testFilesFiltered > 0) {
+    console.log(`  - Filtered out ${testFilesFiltered} test file(s)`);
+  }
   context = filteredSections.join('');
 
   // Prepend the file tree to context
