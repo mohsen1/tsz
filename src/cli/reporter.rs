@@ -141,11 +141,7 @@ impl Reporter {
 
         if diagnostic.code != 0 {
             if self.color {
-                out.push_str(
-                    &format!(" TS{}: ", diagnostic.code)
-                        .dimmed()
-                        .to_string(),
-                );
+                out.push_str(&format!(" TS{}: ", diagnostic.code).dimmed().to_string());
             } else {
                 out.push_str(&format!(" TS{}: ", diagnostic.code));
             }
@@ -440,10 +436,7 @@ impl Reporter {
 
         if unique_file_count == 1 {
             let (ref file, _count) = file_errors[0];
-            let first_line = first_error_lines
-                .get(file)
-                .copied()
-                .unwrap_or(1);
+            let first_line = first_error_lines.get(file).copied().unwrap_or(1);
 
             if error_count == 1 {
                 // "Found 1 error in file:line\n\n" (tsc adds trailing blank line)
@@ -487,10 +480,7 @@ impl Reporter {
             out.push_str("Errors  Files");
 
             for (file, count) in &file_errors {
-                let first_line = first_error_lines
-                    .get(file)
-                    .copied()
-                    .unwrap_or(1);
+                let first_line = first_error_lines.get(file).copied().unwrap_or(1);
                 out.push('\n');
                 out.push_str(&format!("{:>6}  {}:{}", count, file, first_line));
             }

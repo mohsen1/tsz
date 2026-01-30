@@ -18,8 +18,14 @@
 pub mod base;
 pub mod flags;
 pub mod node;
+mod node_access;
+mod node_arena;
 pub mod parse_rules;
 pub mod state;
+mod state_declarations;
+mod state_expressions;
+mod state_statements;
+mod state_types;
 
 #[cfg(test)]
 mod parser_improvement_tests;

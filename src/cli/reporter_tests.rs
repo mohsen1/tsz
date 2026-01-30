@@ -159,10 +159,7 @@ fn plain_mode_multiple_diagnostics() {
     // Should have exactly 2 lines, no snippets
     assert_eq!(output.lines().count(), 2, "expected 2 lines: {output}");
     for line in output.lines() {
-        assert!(
-            !line.contains('~'),
-            "non-pretty should not have underlines"
-        );
+        assert!(!line.contains('~'), "non-pretty should not have underlines");
     }
 }
 
@@ -224,10 +221,7 @@ fn pretty_mode_includes_source_snippet() {
         "missing source line: {output}"
     );
     // Should include underline
-    assert!(
-        output.contains("~~~~~~~~"),
-        "missing underline: {output}"
-    );
+    assert!(output.contains("~~~~~~~~"), "missing underline: {output}");
 }
 
 #[test]

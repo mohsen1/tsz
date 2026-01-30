@@ -175,15 +175,12 @@ fn tsc_compat_cannot_find_name_plain() {
     }
 
     let temp = TempDir::new("cannot_find_name_plain").expect("temp dir");
-    write_file(
-        &temp.path.join("test.ts"),
-        "const z = unknownVar;\n",
-    );
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\n");
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
 
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
@@ -201,15 +198,12 @@ fn tsc_compat_cannot_find_name_pretty() {
     }
 
     let temp = TempDir::new("cannot_find_name_pretty").expect("temp dir");
-    write_file(
-        &temp.path.join("test.ts"),
-        "const z = unknownVar;\n",
-    );
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\n");
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsz failed");
 
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
@@ -232,10 +226,10 @@ fn tsc_compat_multiple_cannot_find_name_plain() {
         "const a = foo;\nconst b = bar;\nconst c = baz;\n",
     );
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
 
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
@@ -258,10 +252,10 @@ fn tsc_compat_multiple_cannot_find_name_pretty() {
         "const a = foo;\nconst b = bar;\nconst c = baz;\n",
     );
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsz failed");
 
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
@@ -376,10 +370,10 @@ fn tsc_compat_structure_type_error_plain() {
         "let x: number = \"hello\";\nlet y: string = 42;\n",
     );
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
 
     // Structural comparison (both should have same number of error lines and format)
     let tsc_count = tsc_out.lines().filter(|l| l.contains("error TS")).count();
@@ -404,10 +398,10 @@ fn tsc_compat_structure_type_error_pretty() {
         "let x: number = \"hello\";\nlet y: string = 42;\n",
     );
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsz failed");
 
     if let Some(diff) = compare_output_structure(&tsc_out, &tsz_out) {
         panic!(
@@ -430,10 +424,10 @@ fn tsc_compat_no_errors_plain() {
         "const x: number = 42;\nconst y: string = \"hello\";\n",
     );
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
 
     // Both should produce empty output for valid code
     assert!(
@@ -456,10 +450,7 @@ fn tsc_compat_exit_code_no_errors() {
     }
 
     let temp = TempDir::new("exit_code_ok").expect("temp dir");
-    write_file(
-        &temp.path.join("test.ts"),
-        "const x: number = 42;\n",
-    );
+    write_file(&temp.path.join("test.ts"), "const x: number = 42;\n");
 
     let tsz_bin = find_tsz_binary().expect("tsz binary not found");
 
@@ -492,10 +483,7 @@ fn tsc_compat_exit_code_with_errors() {
     }
 
     let temp = TempDir::new("exit_code_err").expect("temp dir");
-    write_file(
-        &temp.path.join("test.ts"),
-        "const z = unknownVar;\n",
-    );
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\n");
 
     let tsz_bin = find_tsz_binary().expect("tsz binary not found");
 
@@ -533,15 +521,12 @@ fn tsc_compat_line_endings_normalized() {
 
     let temp = TempDir::new("line_endings").expect("temp dir");
     // Use \r\n line endings (Windows style) in the source
-    write_file(
-        &temp.path.join("test.ts"),
-        "const z = unknownVar;\r\n",
-    );
+    write_file(&temp.path.join("test.ts"), "const z = unknownVar;\r\n");
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
 
     // After normalization (replace \r\n → \n), outputs should match
     assert!(
@@ -591,8 +576,8 @@ fn tsc_compat_plain_format_structure() {
         "const a = foo;\nconst b = bar;\n",
     );
 
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"])
-        .expect("tsz failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "false", "test.ts"]).expect("tsz failed");
 
     // Non-pretty format: file(line,col): error TScode: message
     for line in tsz_out.lines() {
@@ -628,13 +613,10 @@ fn tsc_compat_pretty_format_structure() {
     }
 
     let temp = TempDir::new("pretty_format").expect("temp dir");
-    write_file(
-        &temp.path.join("test.ts"),
-        "const a = foo;\n",
-    );
+    write_file(&temp.path.join("test.ts"), "const a = foo;\n");
 
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsz failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsz failed");
 
     let lines: Vec<&str> = tsz_out.lines().collect();
 
@@ -686,7 +668,11 @@ fn tsc_compat_pretty_format_structure() {
 
     // Should have "Found" summary
     let has_found = lines.iter().any(|l| l.starts_with("Found "));
-    assert!(has_found, "Should have 'Found N error(s)' summary:\n{}", tsz_out);
+    assert!(
+        has_found,
+        "Should have 'Found N error(s)' summary:\n{}",
+        tsz_out
+    );
 }
 
 #[test]
@@ -704,10 +690,10 @@ fn tsc_compat_double_digit_line_number_pretty() {
     source.push_str("const a10 = unknownVar;\n");
     write_file(&temp.path.join("test.ts"), &source);
 
-    let tsc_out = run_tsc(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsc failed");
-    let tsz_out = run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"])
-        .expect("tsz failed");
+    let tsc_out =
+        run_tsc(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsc failed");
+    let tsz_out =
+        run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsz failed");
 
     // Exact match: TS2304 spans should agree for both compilers
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {

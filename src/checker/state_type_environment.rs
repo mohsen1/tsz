@@ -1,0 +1,1325 @@
+//! Type Environment Module
+//!
+//! Extracted from state.rs: Methods for building type environments, evaluating
+//! application types, resolving property access types, and type node resolution.
+
+use crate::binder::{SymbolId, symbol_flags};
+use crate::checker::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
+use crate::interner::Atom;
+use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
+use crate::solver::TypeId;
+
+impl<'a> CheckerState<'a> {
+    /// Get type of object literal.
+    // =========================================================================
+    // Type Relations (uses solver::CompatChecker for assignability)
+    // =========================================================================
+
+    // Note: enum_symbol_from_type and enum_symbol_from_value_type are defined in type_checking.rs
+
+    pub(crate) fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        use crate::solver::{IndexSignature, ObjectShape, PropertyInfo};
+        use rustc_hash::FxHashMap;
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::ENUM == 0 {
+            return None;
+        }
+
+        let member_type = match self.enum_kind(sym_id) {
+            Some(EnumKind::String) => TypeId::STRING,
+            Some(EnumKind::Numeric) => TypeId::NUMBER,
+            Some(EnumKind::Mixed) => {
+                // Mixed enums have both string and numeric members
+                // Fall back to NUMBER for type compatibility
+                TypeId::NUMBER
+            }
+            None => {
+                // Return UNKNOWN instead of ANY for enum without explicit kind
+                TypeId::UNKNOWN
+            }
+        };
+
+        let mut props: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(enum_decl) = self.ctx.arena.get_enum(node) else {
+                continue;
+            };
+            for &member_idx in &enum_decl.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_property_name(member.name) else {
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
+                props.entry(name_atom).or_insert(PropertyInfo {
+                    name: name_atom,
+                    type_id: member_type,
+                    write_type: member_type,
+                    optional: false,
+                    readonly: true,
+                    is_method: false,
+                });
+            }
+        }
+
+        let properties: Vec<PropertyInfo> = props.into_values().collect();
+        if self.enum_kind(sym_id) == Some(EnumKind::Numeric) {
+            let number_index = Some(IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: TypeId::STRING,
+                readonly: true,
+            });
+            return Some(self.ctx.types.object_with_index(ObjectShape {
+                properties,
+                string_index: None,
+                number_index,
+            }));
+        }
+
+        Some(self.ctx.types.object(properties))
+    }
+
+    // Note: enum_kind and enum_member_type_from_decl are defined in type_checking.rs
+
+    pub(crate) fn enum_assignability_override(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<bool> {
+        let source_enum = self.enum_symbol_from_type(source);
+        let target_enum = self.enum_symbol_from_type(target);
+
+        if let (Some(source_enum), Some(target_enum)) = (source_enum, target_enum) {
+            return Some(source_enum == target_enum);
+        }
+
+        if let Some(source_enum) = source_enum
+            && self.enum_kind(source_enum) == Some(EnumKind::Numeric)
+        {
+            if let Some(env) = env {
+                let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
+                checker.set_strict_function_types(self.ctx.strict_function_types());
+                checker.set_strict_null_checks(self.ctx.strict_null_checks());
+                checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
+                checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+                return Some(checker.is_assignable(TypeId::NUMBER, target));
+            }
+            let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            checker.set_strict_function_types(self.ctx.strict_function_types());
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
+            checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+            return Some(checker.is_assignable(TypeId::NUMBER, target));
+        }
+
+        if let Some(target_enum) = target_enum
+            && self.enum_kind(target_enum) == Some(EnumKind::Numeric)
+        {
+            if let Some(env) = env {
+                let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
+                checker.set_strict_function_types(self.ctx.strict_function_types());
+                checker.set_strict_null_checks(self.ctx.strict_null_checks());
+                checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
+                checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+                return Some(checker.is_assignable(source, TypeId::NUMBER));
+            }
+            let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            checker.set_strict_function_types(self.ctx.strict_function_types());
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
+            checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+            return Some(checker.is_assignable(source, TypeId::NUMBER));
+        }
+
+        // String enum opacity: string literals are NOT assignable to string enum types
+        // This makes string enums more opaque than numeric enums
+        if let Some(target_enum) = target_enum
+            && self.enum_kind(target_enum) == Some(EnumKind::String)
+        {
+            // Only enum members (via Ref) are assignable to string enum types
+            // Direct string literals are not assignable
+            if crate::solver::type_queries::is_literal_type(self.ctx.types, source) {
+                return Some(false);
+            }
+            // STRING is not assignable to string enum
+            if source == TypeId::STRING {
+                return Some(false);
+            }
+        }
+
+        // String enum is NOT assignable to string (different from numeric enum)
+        if let Some(source_enum) = source_enum
+            && self.enum_kind(source_enum) == Some(EnumKind::String)
+        {
+            if target == TypeId::STRING {
+                return Some(false);
+            }
+        }
+
+        None
+    }
+
+    // NOTE: abstract_constructor_assignability_override, constructor_access_level,
+    // constructor_access_level_for_type, constructor_accessibility_mismatch,
+    // constructor_accessibility_override, constructor_accessibility_mismatch_for_assignment,
+    // constructor_accessibility_mismatch_for_var_decl, resolve_type_env_symbol,
+    // is_abstract_constructor_type moved to constructor_checker.rs
+
+    /// Evaluate complex type constructs for assignability checking.
+    ///
+    /// This function pre-processes types before assignability checking to ensure
+    /// that complex type constructs are properly resolved. This is necessary because
+    /// some types need to be expanded or evaluated before compatibility can be determined.
+    ///
+    /// ## Type Constructs Evaluated:
+    /// - **Application** (`Map<string, number>`): Generic type instantiation
+    /// - **IndexAccess** (`Type["key"]`): Indexed access types
+    /// - **KeyOf** (`keyof Type`): Keyof operator types
+    /// - **Mapped** (`{ [K in Keys]: V }`): Mapped types
+    /// - **Conditional** (`T extends U ? X : Y`): Conditional types
+    ///
+    /// ## Evaluation Strategy:
+    /// - **Application types**: Full symbol resolution with type environment
+    /// - **Index/KeyOf/Mapped/Conditional**: Type environment evaluation
+    /// - **Other types**: No evaluation needed (already in simplest form)
+    ///
+    /// ## Why Evaluation is Needed:
+    /// - Generic types may be unevaluated applications (e.g., `Promise<T>`)
+    /// - Indexed access types need to compute the result type
+    /// - Mapped types need to expand the mapping
+    /// - Conditional types need to check the condition and select branch
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Application types
+    /// type App = Map<string, number>;
+    /// let x: App;
+    /// let y: Map<string, number>;
+    /// // evaluate_type_for_assignability expands App for comparison
+    ///
+    /// // Indexed access types
+    /// type User = { name: string; age: number };
+    /// type UserName = User["name"];  // string
+    /// // Evaluation needed to compute that UserName = string
+    ///
+    /// // Keyof types
+    /// type Keys = keyof { a: string; b: number };  // "a" | "b"
+    /// // Evaluation needed to compute the union of keys
+    ///
+    /// // Mapped types
+    /// type Readonly<T> = { readonly [P in keyof T]: T[P] };
+    /// type RO = Readonly<{ a: string }>;
+    /// // Evaluation needed to expand the mapping
+    ///
+    /// // Conditional types
+    /// type NonNull<T> = T extends null ? never : T;
+    /// Evaluate an Application type by resolving the base symbol and instantiating.
+    ///
+    /// This handles types like `Store<ExtractState<R>>` by:
+    /// 1. Resolving the base type reference to get its body
+    /// 2. Getting the type parameters
+    /// 3. Instantiating the body with the provided type arguments
+    /// 4. Recursively evaluating the result
+    pub(crate) fn evaluate_application_type(&mut self, type_id: TypeId) -> TypeId {
+        use crate::solver::type_queries;
+
+        if !type_queries::is_generic_type(self.ctx.types, type_id) {
+            return type_id;
+        }
+
+        // Clear cache to ensure fresh evaluation with current contextual type
+        self.ctx.application_eval_cache.clear();
+
+        if let Some(&cached) = self.ctx.application_eval_cache.get(&type_id) {
+            return cached;
+        }
+
+        if !self.ctx.application_eval_set.insert(type_id) {
+            // Recursion guard for self-referential mapped types.
+            return type_id;
+        }
+
+        if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH {
+            self.ctx.application_eval_set.remove(&type_id);
+            return type_id;
+        }
+        *self.ctx.instantiation_depth.borrow_mut() += 1;
+
+        let result = self.evaluate_application_type_inner(type_id);
+
+        *self.ctx.instantiation_depth.borrow_mut() -= 1;
+        self.ctx.application_eval_set.remove(&type_id);
+        self.ctx.application_eval_cache.insert(type_id, result);
+        result
+    }
+
+    pub(crate) fn evaluate_application_type_inner(&mut self, type_id: TypeId) -> TypeId {
+        use crate::binder::SymbolId;
+        use crate::solver::type_queries::{get_application_info, get_symbol_ref};
+        use crate::solver::{TypeSubstitution, instantiate_type};
+
+        let Some((base, args)) = get_application_info(self.ctx.types, type_id) else {
+            return type_id;
+        };
+
+        // Check if the base is a Ref
+        let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) else {
+            return type_id;
+        };
+        let sym_id = sym_ref.0;
+
+        // CRITICAL FIX: Get BOTH the body type AND the type parameters together
+        // to ensure the TypeIds in the body match the TypeIds in the substitution.
+        // Previously we called type_reference_symbol_type and get_type_params_for_symbol
+        // separately, which created DIFFERENT TypeIds for the same type parameters.
+        let (body_type, type_params) =
+            self.type_reference_symbol_type_with_params(SymbolId(sym_id));
+        if body_type == TypeId::ANY || body_type == TypeId::ERROR {
+            return type_id;
+        }
+
+        if type_params.is_empty() {
+            return body_type;
+        }
+
+        // Resolve type arguments so distributive conditionals can see unions.
+        let evaluated_args: Vec<TypeId> = args
+            .iter()
+            .map(|&arg| self.evaluate_type_with_env(arg))
+            .collect();
+
+        // Create substitution and instantiate
+        let substitution =
+            TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
+        let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
+
+        // Recursively evaluate in case the result contains more applications
+        let result = self.evaluate_application_type(instantiated);
+
+        // If the result is a Mapped type, try to evaluate it with symbol resolution
+        let result = self.evaluate_mapped_type_with_resolution(result);
+
+        // Evaluate meta-types (conditional, index access, keyof) with symbol resolution
+        self.evaluate_type_with_env(result)
+    }
+
+    /// Evaluate a mapped type with symbol resolution.
+    /// This handles cases like `{ [K in keyof Ref(sym)]: Template }` where the Ref
+    /// needs to be resolved to get concrete keys.
+    pub(crate) fn evaluate_mapped_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
+        // NOTE: Manual lookup preferred here - we need the mapped_id directly
+        // to call mapped_type(mapped_id) below. Using get_mapped_type would
+        // return the full Arc<MappedType>, which is more than needed.
+        let Some(mapped_id) =
+            crate::solver::type_queries::get_mapped_type_id(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+
+        if let Some(&cached) = self.ctx.mapped_eval_cache.get(&type_id) {
+            return cached;
+        }
+
+        if !self.ctx.mapped_eval_set.insert(type_id) {
+            return type_id;
+        }
+
+        if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH {
+            self.ctx.mapped_eval_set.remove(&type_id);
+            return type_id;
+        }
+        *self.ctx.instantiation_depth.borrow_mut() += 1;
+
+        let result = self.evaluate_mapped_type_with_resolution_inner(type_id, mapped_id);
+
+        *self.ctx.instantiation_depth.borrow_mut() -= 1;
+        self.ctx.mapped_eval_set.remove(&type_id);
+        self.ctx.mapped_eval_cache.insert(type_id, result);
+        result
+    }
+
+    pub(crate) fn evaluate_mapped_type_with_resolution_inner(
+        &mut self,
+        type_id: TypeId,
+        mapped_id: crate::solver::MappedTypeId,
+    ) -> TypeId {
+        use crate::solver::{
+            LiteralValue, PropertyInfo, TypeKey, TypeSubstitution, instantiate_type,
+        };
+
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+
+        // Evaluate the constraint to get concrete keys
+        let keys = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
+
+        // Extract string literal keys
+        let string_keys = self.extract_string_literal_keys(keys);
+        if string_keys.is_empty() {
+            // Can't evaluate - return original
+            return type_id;
+        }
+
+        // Build the resulting object properties
+        let mut properties = Vec::new();
+        for key_name in string_keys {
+            // Create the key literal type
+            let key_literal = self
+                .ctx
+                .types
+                .intern(TypeKey::Literal(LiteralValue::String(key_name)));
+
+            // Substitute the type parameter with the key
+            let mut subst = TypeSubstitution::new();
+            subst.insert(mapped.type_param.name, key_literal);
+
+            // Instantiate the template without recursively expanding nested applications.
+            let property_type = instantiate_type(self.ctx.types, mapped.template, &subst);
+
+            let optional = matches!(
+                mapped.optional_modifier,
+                Some(crate::solver::MappedModifier::Add)
+            );
+            let readonly = matches!(
+                mapped.readonly_modifier,
+                Some(crate::solver::MappedModifier::Add)
+            );
+
+            properties.push(PropertyInfo {
+                name: key_name,
+                type_id: property_type,
+                write_type: property_type,
+                optional,
+                readonly,
+                is_method: false,
+            });
+        }
+
+        self.ctx.types.object(properties)
+    }
+
+    /// Evaluate a mapped type constraint with symbol resolution.
+    /// Handles keyof Ref(sym) by resolving the Ref and getting its keys.
+    pub(crate) fn evaluate_mapped_constraint_with_resolution(
+        &mut self,
+        constraint: TypeId,
+    ) -> TypeId {
+        use crate::solver::type_queries::{MappedConstraintKind, classify_mapped_constraint};
+
+        match classify_mapped_constraint(self.ctx.types, constraint) {
+            MappedConstraintKind::KeyOf(operand) => {
+                // Evaluate the operand with symbol resolution
+                let evaluated = self.evaluate_type_with_resolution(operand);
+                self.get_keyof_type(evaluated)
+            }
+            MappedConstraintKind::Resolved => constraint,
+            MappedConstraintKind::Other => constraint,
+        }
+    }
+
+    /// Evaluate a type with symbol resolution (Refs resolved to their concrete types).
+    pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
+        use crate::binder::SymbolId;
+        use crate::solver::type_queries::{TypeResolutionKind, classify_for_type_resolution};
+
+        match classify_for_type_resolution(self.ctx.types, type_id) {
+            TypeResolutionKind::Ref(sym_ref) => {
+                self.type_reference_symbol_type(SymbolId(sym_ref.0))
+            }
+            TypeResolutionKind::Application => self.evaluate_application_type(type_id),
+            TypeResolutionKind::Resolved => type_id,
+        }
+    }
+
+    pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
+        use crate::solver::TypeEvaluator;
+
+        self.ensure_application_symbols_resolved(type_id);
+
+        let env = self.ctx.type_env.borrow();
+        let evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
+        evaluator.evaluate(type_id)
+    }
+
+    pub(crate) fn resolve_global_interface_type(&mut self, name: &str) -> Option<TypeId> {
+        // First try file_locals (includes user-defined globals and merged lib symbols)
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            return Some(self.type_reference_symbol_type(sym_id));
+        }
+        // Then try using get_global_type to check lib binders
+        let lib_binders = self.get_lib_binders();
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)
+        {
+            return Some(self.type_reference_symbol_type(sym_id));
+        }
+        // Fall back to resolve_lib_type_by_name for lowering types from lib contexts
+        self.resolve_lib_type_by_name(name)
+    }
+
+    pub(crate) fn apply_function_interface_for_property_access(
+        &mut self,
+        type_id: TypeId,
+    ) -> TypeId {
+        let Some(function_type) = self.resolve_global_interface_type("Function") else {
+            return type_id;
+        };
+        if function_type == TypeId::ANY
+            || function_type == TypeId::ERROR
+            || function_type == TypeId::UNKNOWN
+        {
+            return type_id;
+        }
+        self.ctx.types.intersection2(type_id, function_type)
+    }
+
+    pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
+        use rustc_hash::FxHashSet;
+
+        self.ensure_application_symbols_resolved(type_id);
+
+        let mut visited = FxHashSet::default();
+        self.resolve_type_for_property_access_inner(type_id, &mut visited)
+    }
+
+    pub(crate) fn resolve_type_for_property_access_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> TypeId {
+        use crate::binder::SymbolId;
+        use crate::solver::type_queries::{
+            PropertyAccessResolutionKind, classify_for_property_access_resolution,
+        };
+
+        if !visited.insert(type_id) {
+            return type_id;
+        }
+
+        match classify_for_property_access_resolution(self.ctx.types, type_id) {
+            PropertyAccessResolutionKind::Ref(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    // Handle merged class+namespace symbols - return constructor type
+                    if symbol.flags & symbol_flags::CLASS != 0
+                        && symbol.flags & symbol_flags::MODULE != 0
+                        && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+                        && let Some(class_node) = self.ctx.arena.get(class_idx)
+                        && let Some(class_data) = self.ctx.arena.get_class(class_node)
+                    {
+                        let ctor_type = self.get_class_constructor_type(class_idx, class_data);
+                        if ctor_type == type_id {
+                            return type_id;
+                        }
+                        return self.resolve_type_for_property_access_inner(ctor_type, visited);
+                    }
+
+                    // Handle aliases to namespaces/modules (e.g., export { Namespace } from './file')
+                    // When accessing Namespace.member, we need to resolve through the alias
+                    if symbol.flags & symbol_flags::ALIAS != 0
+                        && symbol.flags
+                            & (symbol_flags::NAMESPACE_MODULE
+                                | symbol_flags::VALUE_MODULE
+                                | symbol_flags::MODULE)
+                            != 0
+                    {
+                        let mut visited_aliases = Vec::new();
+                        if let Some(target_sym_id) =
+                            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                        {
+                            // Get the type of the target namespace/module
+                            let target_type = self.get_type_of_symbol(target_sym_id);
+                            if target_type != type_id {
+                                return self
+                                    .resolve_type_for_property_access_inner(target_type, visited);
+                            }
+                        }
+                    }
+
+                    // Handle plain namespace/module references
+                    if symbol.flags
+                        & (symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE
+                            | symbol_flags::MODULE)
+                        != 0
+                    {
+                        // For namespace references, we want to allow accessing its members
+                        // so we return the type as-is (it will be resolved in resolve_namespace_value_member)
+                        return type_id;
+                    }
+
+                    // Enums in value position behave like objects (runtime enum object).
+                    // For numeric enums, this includes a number index signature for reverse mapping.
+                    if symbol.flags & symbol_flags::ENUM != 0
+                        && let Some(enum_object) = self.enum_object_type(sym_id)
+                    {
+                        if enum_object != type_id {
+                            return self
+                                .resolve_type_for_property_access_inner(enum_object, visited);
+                        }
+                        return enum_object;
+                    }
+                }
+
+                let resolved = self.type_reference_symbol_type(sym_id);
+                if resolved == type_id {
+                    type_id
+                } else {
+                    self.resolve_type_for_property_access_inner(resolved, visited)
+                }
+            }
+            PropertyAccessResolutionKind::TypeQuery(sym_ref) => {
+                let resolved = self.get_type_of_symbol(SymbolId(sym_ref.0));
+                if resolved == type_id {
+                    type_id
+                } else {
+                    self.resolve_type_for_property_access_inner(resolved, visited)
+                }
+            }
+            PropertyAccessResolutionKind::Application(_) => {
+                let evaluated = self.evaluate_application_type(type_id);
+                if evaluated == type_id {
+                    type_id
+                } else {
+                    self.resolve_type_for_property_access_inner(evaluated, visited)
+                }
+            }
+            PropertyAccessResolutionKind::TypeParameter { constraint } => {
+                if let Some(constraint) = constraint {
+                    if constraint == type_id {
+                        type_id
+                    } else {
+                        self.resolve_type_for_property_access_inner(constraint, visited)
+                    }
+                } else {
+                    type_id
+                }
+            }
+            PropertyAccessResolutionKind::NeedsEvaluation => {
+                let evaluated = self.evaluate_type_with_env(type_id);
+                if evaluated == type_id {
+                    type_id
+                } else {
+                    self.resolve_type_for_property_access_inner(evaluated, visited)
+                }
+            }
+            PropertyAccessResolutionKind::Union(members) => {
+                let resolved_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
+                    .collect();
+                self.ctx.types.union_preserve_members(resolved_members)
+            }
+            PropertyAccessResolutionKind::Intersection(members) => {
+                let resolved_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
+                    .collect();
+                self.ctx.types.intersection(resolved_members)
+            }
+            PropertyAccessResolutionKind::Readonly(inner) => {
+                self.resolve_type_for_property_access_inner(inner, visited)
+            }
+            PropertyAccessResolutionKind::FunctionLike => {
+                let expanded = self.apply_function_interface_for_property_access(type_id);
+                if expanded == type_id {
+                    type_id
+                } else {
+                    self.resolve_type_for_property_access_inner(expanded, visited)
+                }
+            }
+            PropertyAccessResolutionKind::Resolved => type_id,
+        }
+    }
+
+    /// Get keyof a type - extract the keys of an object type.
+    /// Ensure all symbols referenced in Application types are resolved in the type_env.
+    /// This walks the type structure and calls get_type_of_symbol for any Application base symbols.
+    pub(crate) fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
+        use std::collections::HashSet;
+
+        let mut visited: HashSet<TypeId> = HashSet::new();
+        self.ensure_application_symbols_resolved_inner(type_id, &mut visited);
+    }
+
+    pub(crate) fn insert_type_env_symbol(
+        &mut self,
+        sym_id: crate::binder::SymbolId,
+        resolved: TypeId,
+    ) {
+        use crate::solver::SymbolRef;
+
+        if resolved == TypeId::ANY || resolved == TypeId::ERROR {
+            return;
+        }
+
+        let type_params = self.get_type_params_for_symbol(sym_id);
+        // Use try_borrow_mut to avoid panic if type_env is already borrowed.
+        // This can happen during recursive type resolution.
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            if type_params.is_empty() {
+                env.insert(SymbolRef(sym_id.0), resolved);
+            } else {
+                env.insert_with_params(SymbolRef(sym_id.0), resolved, type_params);
+            }
+        }
+    }
+
+    pub(crate) fn ensure_application_symbols_resolved_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut std::collections::HashSet<TypeId>,
+    ) {
+        use crate::binder::SymbolId;
+        use crate::solver::type_queries::{
+            SymbolResolutionTraversalKind, classify_for_symbol_resolution_traversal, get_symbol_ref,
+        };
+
+        if !visited.insert(type_id) {
+            return;
+        }
+
+        match classify_for_symbol_resolution_traversal(self.ctx.types, type_id) {
+            SymbolResolutionTraversalKind::Application { base, args, .. } => {
+                // If the base is a Ref, resolve the symbol
+                if let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) {
+                    let sym_id = SymbolId(sym_ref.0);
+                    let resolved = self.type_reference_symbol_type(sym_id);
+                    self.insert_type_env_symbol(sym_id, resolved);
+                }
+
+                // Recursively process base and args
+                self.ensure_application_symbols_resolved_inner(base, visited);
+                for arg in args {
+                    self.ensure_application_symbols_resolved_inner(arg, visited);
+                }
+            }
+            SymbolResolutionTraversalKind::Ref(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                let resolved = self.type_reference_symbol_type(sym_id);
+                self.insert_type_env_symbol(sym_id, resolved);
+            }
+            SymbolResolutionTraversalKind::TypeParameter {
+                constraint,
+                default,
+            } => {
+                if let Some(constraint) = constraint {
+                    self.ensure_application_symbols_resolved_inner(constraint, visited);
+                }
+                if let Some(default) = default {
+                    self.ensure_application_symbols_resolved_inner(default, visited);
+                }
+            }
+            SymbolResolutionTraversalKind::Members(members) => {
+                for member in members {
+                    self.ensure_application_symbols_resolved_inner(member, visited);
+                }
+            }
+            SymbolResolutionTraversalKind::Function(shape_id) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                for type_param in shape.type_params.iter() {
+                    if let Some(constraint) = type_param.constraint {
+                        self.ensure_application_symbols_resolved_inner(constraint, visited);
+                    }
+                    if let Some(default) = type_param.default {
+                        self.ensure_application_symbols_resolved_inner(default, visited);
+                    }
+                }
+                for param in shape.params.iter() {
+                    self.ensure_application_symbols_resolved_inner(param.type_id, visited);
+                }
+                if let Some(this_type) = shape.this_type {
+                    self.ensure_application_symbols_resolved_inner(this_type, visited);
+                }
+                self.ensure_application_symbols_resolved_inner(shape.return_type, visited);
+                if let Some(predicate) = &shape.type_predicate
+                    && let Some(pred_type_id) = predicate.type_id
+                {
+                    self.ensure_application_symbols_resolved_inner(pred_type_id, visited);
+                }
+            }
+            SymbolResolutionTraversalKind::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                for sig in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    for type_param in sig.type_params.iter() {
+                        if let Some(constraint) = type_param.constraint {
+                            self.ensure_application_symbols_resolved_inner(constraint, visited);
+                        }
+                        if let Some(default) = type_param.default {
+                            self.ensure_application_symbols_resolved_inner(default, visited);
+                        }
+                    }
+                    for param in sig.params.iter() {
+                        self.ensure_application_symbols_resolved_inner(param.type_id, visited);
+                    }
+                    if let Some(this_type) = sig.this_type {
+                        self.ensure_application_symbols_resolved_inner(this_type, visited);
+                    }
+                    self.ensure_application_symbols_resolved_inner(sig.return_type, visited);
+                    if let Some(predicate) = &sig.type_predicate
+                        && let Some(pred_type_id) = predicate.type_id
+                    {
+                        self.ensure_application_symbols_resolved_inner(pred_type_id, visited);
+                    }
+                }
+                for prop in shape.properties.iter() {
+                    self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
+                }
+            }
+            SymbolResolutionTraversalKind::Object(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                for prop in shape.properties.iter() {
+                    self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
+                }
+                if let Some(ref idx) = shape.string_index {
+                    self.ensure_application_symbols_resolved_inner(idx.value_type, visited);
+                }
+                if let Some(ref idx) = shape.number_index {
+                    self.ensure_application_symbols_resolved_inner(idx.value_type, visited);
+                }
+            }
+            SymbolResolutionTraversalKind::Array(elem) => {
+                self.ensure_application_symbols_resolved_inner(elem, visited);
+            }
+            SymbolResolutionTraversalKind::Tuple(elems_id) => {
+                let elems = self.ctx.types.tuple_list(elems_id);
+                for elem in elems.iter() {
+                    self.ensure_application_symbols_resolved_inner(elem.type_id, visited);
+                }
+            }
+            SymbolResolutionTraversalKind::Conditional(cond_id) => {
+                let cond = self.ctx.types.conditional_type(cond_id);
+                self.ensure_application_symbols_resolved_inner(cond.check_type, visited);
+                self.ensure_application_symbols_resolved_inner(cond.extends_type, visited);
+                self.ensure_application_symbols_resolved_inner(cond.true_type, visited);
+                self.ensure_application_symbols_resolved_inner(cond.false_type, visited);
+            }
+            SymbolResolutionTraversalKind::Mapped(mapped_id) => {
+                let mapped = self.ctx.types.mapped_type(mapped_id);
+                self.ensure_application_symbols_resolved_inner(mapped.constraint, visited);
+                self.ensure_application_symbols_resolved_inner(mapped.template, visited);
+                if let Some(name_type) = mapped.name_type {
+                    self.ensure_application_symbols_resolved_inner(name_type, visited);
+                }
+            }
+            SymbolResolutionTraversalKind::Readonly(inner) => {
+                self.ensure_application_symbols_resolved_inner(inner, visited);
+            }
+            SymbolResolutionTraversalKind::IndexAccess { object, index } => {
+                self.ensure_application_symbols_resolved_inner(object, visited);
+                self.ensure_application_symbols_resolved_inner(index, visited);
+            }
+            SymbolResolutionTraversalKind::KeyOf(inner) => {
+                self.ensure_application_symbols_resolved_inner(inner, visited);
+            }
+            SymbolResolutionTraversalKind::Terminal => {}
+        }
+    }
+
+    /// Create a TypeEnvironment populated with resolved symbol types.
+    ///
+    /// This can be passed to `is_assignable_to_with_env` for type checking
+    /// that needs to resolve type references.
+    pub fn build_type_environment(&mut self) -> crate::solver::TypeEnvironment {
+        use crate::solver::{SymbolRef, TypeEnvironment};
+
+        let mut env = TypeEnvironment::new();
+
+        // Collect all unique symbols from node_symbols map
+        let mut symbols: Vec<SymbolId> = self
+            .ctx
+            .binder
+            .node_symbols
+            .values()
+            .copied()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // FIX: Also include lib symbols for proper property resolution
+        // This ensures Error, Math, JSON, etc. can be resolved when accessed
+        if !self.ctx.lib_contexts.is_empty() {
+            let lib_symbols_set: std::collections::HashSet<SymbolId> = self
+                .ctx
+                .lib_contexts
+                .iter()
+                .flat_map(|lib| {
+                    // Iterate over symbol IDs in lib binder
+                    (0..lib.binder.symbols.len())
+                        .map(|i| SymbolId(i as u32))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+
+            for sym_id in lib_symbols_set {
+                if !symbols.contains(&sym_id) {
+                    symbols.push(sym_id);
+                }
+            }
+        }
+
+        // Resolve each symbol and add to the environment
+        for sym_id in symbols {
+            // Get the type for this symbol
+            let type_id = self.get_type_of_symbol(sym_id);
+            if type_id != TypeId::ANY && type_id != TypeId::ERROR {
+                // Get type parameters if this is a generic type
+                let type_params = self.get_type_params_for_symbol(sym_id);
+                if type_params.is_empty() {
+                    env.insert(SymbolRef(sym_id.0), type_id);
+                } else {
+                    env.insert_with_params(SymbolRef(sym_id.0), type_id, type_params);
+                }
+            }
+        }
+
+        env
+    }
+
+    /// Get type parameters for a symbol (generic types).
+    ///
+    /// Extracts type parameter information for generic types (classes, interfaces,
+    /// type aliases). Used for populating the type environment and for generic
+    /// type instantiation.
+    ///
+    /// ## Symbol Types Handled:
+    /// - **Type Alias**: Extracts type parameters from type alias declaration
+    /// - **Interface**: Extracts type parameters from interface declaration
+    /// - **Class**: Extracts type parameters from class declaration
+    /// - **Other**: Returns empty vector (no type parameters)
+    ///
+    /// ## Cross-Arena Resolution:
+    /// - Handles symbols defined in other arenas (e.g., imported symbols)
+    /// - Creates a temporary CheckerState for the other arena
+    /// - Delegates type parameter extraction to the temporary checker
+    ///
+    /// ## Type Parameter Information:
+    /// - Returns Vec<TypeParamInfo> with parameter names and constraints
+    /// - Includes default type arguments if present
+    /// - Used by TypeEnvironment for generic type expansion
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Type alias with type parameters
+    /// type Pair<T, U> = [T, U];
+    /// // get_type_params_for_symbol(Pair) → [T, U]
+    ///
+    /// // Interface with type parameters
+    /// interface Box<T> {
+    ///   value: T;
+    /// }
+    /// // get_type_params_for_symbol(Box) → [T]
+    ///
+    /// // Class with type parameters
+    /// class Container<T> {
+    ///   constructor(public item: T) {}
+    /// }
+    /// // get_type_params_for_symbol(Container) → [T]
+    ///
+    /// // Type parameters with constraints
+    /// interface SortedMap<K extends Comparable, V> {}
+    /// // get_type_params_for_symbol(SortedMap) → [K: Comparable, V]
+    /// ```
+    pub(crate) fn get_type_params_for_symbol(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Vec<crate::solver::TypeParamInfo> {
+        if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
+            && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
+        {
+            let mut checker = CheckerState::new(
+                symbol_arena.as_ref(),
+                self.ctx.binder,
+                self.ctx.types,
+                self.ctx.file_name.clone(),
+                self.ctx.compiler_options.clone(), // use current compiler options
+            );
+            return checker.get_type_params_for_symbol(sym_id);
+        }
+
+        // Use get_symbol_globally to find symbols in lib files and other files
+        // Extract needed data to avoid holding borrow
+        let (flags, value_decl, declarations) = match self.get_symbol_globally(sym_id) {
+            Some(symbol) => (
+                symbol.flags,
+                symbol.value_declaration,
+                symbol.declarations.clone(),
+            ),
+            None => return Vec::new(),
+        };
+
+        // Type alias - get type parameters from declaration
+        if flags & symbol_flags::TYPE_ALIAS != 0 {
+            let decl_idx = if !value_decl.is_none() {
+                value_decl
+            } else {
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
+            };
+            if !decl_idx.is_none()
+                && let Some(node) = self.ctx.arena.get(decl_idx)
+                && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+            {
+                let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                self.pop_type_parameters(updates);
+                return params;
+            }
+        }
+
+        // Class - get type parameters from declaration
+        if flags & symbol_flags::CLASS != 0 {
+            let decl_idx = if !value_decl.is_none() {
+                value_decl
+            } else {
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
+            };
+            if !decl_idx.is_none()
+                && let Some(node) = self.ctx.arena.get(decl_idx)
+                && let Some(class) = self.ctx.arena.get_class(node)
+            {
+                let (params, updates) = self.push_type_parameters(&class.type_parameters);
+                self.pop_type_parameters(updates);
+                return params;
+            }
+        }
+
+        // Interface - get type parameters from first declaration
+        if flags & symbol_flags::INTERFACE != 0 {
+            let decl_idx = if !value_decl.is_none() {
+                value_decl
+            } else {
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
+            };
+            if !decl_idx.is_none()
+                && let Some(node) = self.ctx.arena.get(decl_idx)
+                && let Some(iface) = self.ctx.arena.get_interface(node)
+            {
+                let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                self.pop_type_parameters(updates);
+                return params;
+            }
+        }
+
+        Vec::new()
+    }
+
+    /// Count the number of required type parameters for a symbol.
+    ///
+    /// A type parameter is "required" if it doesn't have a default value.
+    /// This is important for validating generic type usage and error messages.
+    ///
+    /// ## Required vs Optional:
+    /// - **Required**: Must be explicitly provided by the caller
+    /// - **Optional**: Has a default value, can be omitted
+    ///
+    /// ## Use Cases:
+    /// - Validating that enough type arguments are provided
+    /// - Error messages: "Expected X type arguments but got Y"
+    /// - Generic function/method overload resolution
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // All required
+    /// interface Pair<T, U> {}
+    /// // count_required_type_params(Pair) → 2
+    /// const x: Pair = {};  // ❌ Error: Expected 2 type arguments
+    /// const y: Pair<string, number> = {};  // ✅
+    ///
+    /// // One optional
+    /// interface Box<T = string> {}
+    /// // count_required_type_params(Box) → 0 (T has default)
+    /// const a: Box = {};  // ✅ T defaults to string
+    /// const b: Box<number> = {};  // ✅ Explicit number
+    ///
+    /// // Mixed required and optional
+    /// interface Map<K, V = any> {}
+    /// // count_required_type_params(Map) → 1 (K required, V optional)
+    /// const m1: Map<string> = {};  // ✅ K=string, V=any
+    /// const m2: Map<string, number> = {};  // ✅ Both specified
+    /// const m3: Map = {};  // ❌ K is required
+    /// ```
+    pub(crate) fn count_required_type_params(&mut self, sym_id: SymbolId) -> usize {
+        let type_params = self.get_type_params_for_symbol(sym_id);
+        type_params.iter().filter(|p| p.default.is_none()).count()
+    }
+
+    /// Create a union type from multiple types.
+    ///
+    /// Automatically normalizes: flattens nested unions, deduplicates, sorts.
+    pub fn get_union_type(&self, types: Vec<TypeId>) -> TypeId {
+        self.ctx.types.union(types)
+    }
+
+    /// Create an intersection type from multiple types.
+    ///
+    /// Automatically normalizes: flattens nested intersections, deduplicates, sorts.
+    pub fn get_intersection_type(&self, types: Vec<TypeId>) -> TypeId {
+        self.ctx.types.intersection(types)
+    }
+
+    // =========================================================================
+    // Type Node Resolution
+    // =========================================================================
+
+    /// Get type from a type node.
+    ///
+    /// Uses compile-time constant TypeIds for intrinsic types (O(1) lookup).
+    /// Get the type representation of a type annotation node.
+    ///
+    /// This is the main entry point for converting type annotation AST nodes into
+    /// TypeId representations. Handles all TypeScript type syntax.
+    ///
+    /// ## Special Node Handling:
+    /// - **TypeReference**: Validates existence before lowering (catches missing types)
+    /// - **TypeQuery** (`typeof X`): Resolves via binder for proper symbol resolution
+    /// - **UnionType**: Handles specially for nested typeof expression resolution
+    /// - **TypeLiteral**: Uses checker resolution for type parameter support
+    /// - **Other nodes**: Delegated to TypeLowering
+    ///
+    /// ## Type Parameter Bindings:
+    /// - Uses current type parameter bindings from scope
+    /// - Allows type parameters to resolve correctly in generic contexts
+    ///
+    /// ## Symbol Resolvers:
+    /// - Provides type/value symbol resolvers to TypeLowering
+    /// - Resolves type references and value references (for typeof)
+    ///
+    /// ## Error Reporting:
+    /// - Checks for missing names before lowering
+    /// - Emits appropriate errors for undefined types
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Primitive types
+    /// let x: string;           // → STRING
+    /// let y: number | boolean; // → Union(NUMBER, BOOLEAN)
+    ///
+    /// // Type references
+    /// interface Foo {}
+    /// let z: Foo;              // → Ref to Foo symbol
+    ///
+    /// // Generic types
+    /// let a: Array<string>;    // → Application(Array, [STRING])
+    ///
+    /// // Type queries
+    /// let value = 42;
+    /// let b: typeof value;     // → TypeQuery(value symbol)
+    ///
+    /// // Type literals
+    /// let c: { x: number };    // → Object type with property x: number
+    /// ```
+    pub fn get_type_from_type_node(&mut self, idx: NodeIndex) -> TypeId {
+        // Delegate to TypeNodeChecker for type node handling.
+        // TypeNodeChecker handles caching, type parameter scope, and recursion protection.
+        //
+        // Note: For types that need binder symbol resolution (TYPE_REFERENCE, TYPE_QUERY,
+        // UNION_TYPE containing typeof, TYPE_LITERAL), we still use CheckerState's
+        // specialized methods to ensure proper symbol resolution.
+        //
+        // See: docs/TS2304_SMART_CACHING_FIX.md
+
+        // First check if this is a type that needs special handling with binder resolution
+        if let Some(node) = self.ctx.arena.get(idx) {
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                // Validate the type reference exists before lowering
+                // Check cache first
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
+                let result = self.get_type_from_type_reference(idx);
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
+            }
+            if node.kind == syntax_kind_ext::TYPE_QUERY {
+                // Handle typeof X - need to resolve symbol properly via binder
+                // Check cache first
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
+                let result = self.get_type_from_type_query(idx);
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
+            }
+            if node.kind == syntax_kind_ext::UNION_TYPE {
+                // Handle union types specially to ensure nested typeof expressions
+                // are resolved via binder (for abstract class detection)
+                // Check cache first
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
+                let result = self.get_type_from_union_type(idx);
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
+            }
+            if node.kind == syntax_kind_ext::TYPE_LITERAL {
+                // Type literals should use checker resolution so type parameters resolve correctly.
+                // Check cache first
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
+                let result = self.get_type_from_type_literal(idx);
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
+            }
+        }
+
+        // For other type nodes, delegate to TypeNodeChecker
+        let mut checker = crate::checker::TypeNodeChecker::new(&mut self.ctx);
+        checker.check(idx)
+    }
+
+    // =========================================================================
+    // Source Location Tracking & Solver Diagnostics
+    // =========================================================================
+
+    /// Get a source location for a node.
+    pub fn get_source_location(&self, idx: NodeIndex) -> Option<crate::solver::SourceLocation> {
+        let node = self.ctx.arena.get(idx)?;
+        Some(crate::solver::SourceLocation::new(
+            self.ctx.file_name.as_str(),
+            node.pos,
+            node.end,
+        ))
+    }
+
+    /// Report a type not assignable error using solver diagnostics with source tracking.
+    ///
+    /// This is the basic error that just says "Type X is not assignable to Y".
+    /// For detailed errors with elaboration (e.g., "property 'x' is missing"),
+    /// use `error_type_not_assignable_with_reason_at` instead.
+
+    /// Report a cannot find name error using solver diagnostics with source tracking.
+    /// Enhanced to provide suggestions for similar names, import suggestions, and
+    /// library change suggestions for ES2015+ types.
+
+    // Note: can_merge_symbols is in type_checking.rs
+
+    /// Check if a type name is a built-in mapped type utility.
+    /// These are standard TypeScript utility types that transform other types.
+    /// When used with type arguments, they should not cause "cannot find type" errors.
+    pub(crate) fn resolve_global_this_property_type(
+        &mut self,
+        name: &str,
+        error_node: NodeIndex,
+    ) -> TypeId {
+        if let Some(sym_id) = self.resolve_global_value_symbol(name) {
+            if self.alias_resolves_to_type_only(sym_id) {
+                self.error_type_only_value_at(name, error_node);
+                return TypeId::ERROR;
+            }
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & symbol_flags::VALUE) == 0
+            {
+                self.error_type_only_value_at(name, error_node);
+                return TypeId::ERROR;
+            }
+            return self.get_type_of_symbol(sym_id);
+        }
+
+        if self.is_known_global_value_name(name) {
+            // Emit TS2318/TS2583 for missing global type in property access context
+            // TS2583 for ES2015+ types, TS2318 for other global types
+            use crate::lib_loader;
+            if lib_loader::is_es2015_plus_type(name) {
+                self.error_cannot_find_global_type(name, error_node);
+            } else {
+                // For pre-ES2015 globals, emit TS2318 (global type missing) instead of TS2304
+                self.error_cannot_find_global_type(name, error_node);
+            }
+            return TypeId::ERROR;
+        }
+
+        self.error_property_not_exist_at(name, TypeId::ANY, error_node);
+        TypeId::ERROR
+    }
+
+    /// Format a type as a human-readable string for error messages and diagnostics.
+    ///
+    /// This is the main entry point for converting TypeId representations into
+    /// human-readable type strings. Used throughout the type checker for error
+    /// messages, quick info, and IDE features.
+    ///
+    /// ## Formatting Strategy:
+    /// - Delegates to the solver's TypeFormatter
+    /// - Provides symbol table for resolving symbol names
+    /// - Handles all type constructs (primitives, generics, unions, etc.)
+    ///
+    /// ## Type Formatting Rules:
+    /// - Primitives: Display as intrinsic names (string, number, etc.)
+    /// - Literals: Display as literal values ("hello", 42, true)
+    /// - Arrays: Display as T[] or Array<T>
+    /// - Tuples: Display as [T, U, V]
+    /// - Unions: Display as T | U | V (with parentheses when needed)
+    /// - Intersections: Display as T & U & V (with parentheses when needed)
+    /// - Functions: Display as (args) => return
+    /// - Objects: Display as { prop: Type; ... }
+    /// - Type Parameters: Display as T, U, V (short names)
+    /// - Type References: Display as RefName<Args>
+    ///
+    /// ## Use Cases:
+    /// - Error messages: "Type X is not assignable to Y"
+    /// - Quick info (hover): Type information for IDE
+    /// - Completion: Type hints in autocomplete
+    /// - Diagnostics: All type-related error messages
+    ///
+    /// ## TypeScript Examples (Formatted Output):
+    /// ```typescript
+    /// // Primitives
+    /// let x: string;           // format_type → "string"
+    /// let y: number;           // format_type → "number"
+    ///
+    /// // Literals
+    /// let a: "hello";          // format_type → "\"hello\""
+    /// let b: 42;               // format_type → "42"
+    ///
+    /// // Composed types
+    /// type Pair = [string, number];
+    /// // format_type(Pair) → "[string, number]"
+    ///
+    /// type Union = string | number | boolean;
+    /// // format_type(Union) → "string | number | boolean"
+    ///
+    /// // Generics
+    /// type Map<K, V> = Record<K, V>;
+    /// // format_type(Map<string, number>) → "Record<string, number>"
+    ///
+    /// // Functions
+    /// type Handler = (data: string) => void;
+    /// // format_type(Handler) → "(data: string) => void"
+    ///
+    /// // Objects
+    /// type User = { name: string; age: number };
+    /// // format_type(User) → "{ name: string; age: number }"
+    ///
+    /// // Complex
+    /// type Complex = Array<{ id: number } | null>;
+    /// // format_type(Complex) → "Array<{ id: number } | null>"
+    /// ```
+    pub fn format_type(&self, type_id: TypeId) -> String {
+        let mut formatter =
+            crate::solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        formatter.format(type_id)
+    }
+}
