@@ -148,6 +148,8 @@ pub struct ResolvedCompilerOptions {
     pub incremental: bool,
     pub no_emit: bool,
     pub no_emit_on_error: bool,
+    /// Disable full type checking (only parse and emit errors reported).
+    pub no_check: bool,
     /// Custom conditions for package.json exports resolution
     pub custom_conditions: Vec<String>,
     /// Emit additional JavaScript to ease support for importing CommonJS modules

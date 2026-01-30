@@ -2793,8 +2793,11 @@ fn collect_diagnostics(
                 diagnostic_codes::CANNOT_FIND_MODULE,
             ));
         }
-        checker.check_source_file(file.source_file);
-        file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
+        // Skip full type checking when --noCheck is set; only parse/emit diagnostics are reported.
+        if !options.no_check {
+            checker.check_source_file(file.source_file);
+            file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
+        }
         diagnostics.extend(file_diagnostics.clone());
         let export_hash = compute_export_hash(program, file, file_idx, &mut checker);
 
@@ -3711,6 +3714,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.no_emit {
         options.no_emit = true;
+    }
+    if args.no_check {
+        options.no_check = true;
     }
     if let Some(version) = args.types_versions_compiler_version.as_ref() {
         options.types_versions_compiler_version = Some(version.clone());

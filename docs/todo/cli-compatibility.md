@@ -38,20 +38,20 @@ This document tracks the CLI compatibility status between tsz/tsz-server and tsc
 | `--listFiles` / `--listEmittedFiles` | Done | File listing |
 | `--explainFiles` | Partial | Lists files but not full inclusion reasons |
 | `--traceResolution` | Done | Module resolution tracing |
+| `--generateCpuProfile <path>` | Done (N/A) | V8-specific; flag accepted for compat, prints explanatory message |
+| `--noCheck` | Done | Flag skips type checking; only parse/emit diagnostics reported |
+| `--diagnostics` / `--extendedDiagnostics` format | Done | Matches tsc output: Files, Lines by category, Errors, Total time, Memory used |
+| `--showConfig` full output | Done | Outputs full JSON with all resolved compiler options via serde_json |
+| `--paths` on CLI | Done | Accepted (hidden); path mappings normally set in tsconfig.json |
+| `--plugins` on CLI | Done | Accepted (hidden); language service plugins normally set in tsconfig.json |
 
 ### Not Yet Implemented (tsz)
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | `--generateTrace <dir>` | Medium | Event trace for performance analysis; prints warning but doesn't generate |
-| `--generateCpuProfile <path>` | Low | V8 CPU profile; not applicable to Rust (would need Rust profiling equivalent) |
 | `--explainFiles` full reasons | Medium | Currently just lists files; needs inclusion reason tracking (e.g., "Matched by include pattern", "Imported via...") |
-| `--paths` on CLI | Low | Path mappings; usually set in tsconfig.json only; tsc technically accepts it |
-| `--plugins` on CLI | Low | Language service plugins; usually tsconfig-only |
 | Full `--build` project references | High | Build mode currently does basic compilation; full multi-project build graph, dependency ordering, and incremental builds across references are not yet implemented |
-| `--noCheck` full integration | Medium | Flag is accepted but may not fully skip type checking in all code paths |
-| `--diagnostics` format match | Low | Output format differs slightly from tsc (timing categories, memory stats) |
-| `--showConfig` full output | Medium | Currently outputs a subset of options; should match tsc's full JSON output |
 | `--init` template variations | Low | tsc's --init can be customized; tsz uses a fixed template |
 | Error message format | Medium | Diagnostic messages may differ in wording/formatting from tsc |
 | `--locale` i18n message loading | Low | Flag is accepted but messages are always in English |
