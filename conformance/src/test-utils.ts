@@ -580,6 +580,17 @@ export interface CheckOptions {
   isolatedModules?: boolean;
   experimentalDecorators?: boolean;
   emitDecoratorMetadata?: boolean;
+  // Additional checks
+  noPropertyAccessFromIndexSignature?: boolean;
+  noUncheckedIndexedAccess?: boolean;
+  exactOptionalPropertyTypes?: boolean;
+  noFallthroughCasesInSwitch?: boolean;
+  noUnusedLocals?: boolean;
+  noUnusedParameters?: boolean;
+  allowUnusedLabels?: boolean;
+  allowUnreachableCode?: boolean;
+  // Allow any other properties
+  [key: string]: unknown;
 }
 
 /**
@@ -673,6 +684,32 @@ export function directivesToCheckOptions(
   }
   if (directives.emitdecoratormetadata !== undefined) {
     options.emitDecoratorMetadata = Boolean(directives.emitdecoratormetadata);
+  }
+
+  // Additional checks
+  if (directives.nopropertyaccessfromindexsignature !== undefined) {
+    options.noPropertyAccessFromIndexSignature = Boolean(directives.nopropertyaccessfromindexsignature);
+  }
+  if (directives.nouncheckedindexedaccess !== undefined) {
+    options.noUncheckedIndexedAccess = Boolean(directives.nouncheckedindexedaccess);
+  }
+  if (directives.exactoptionalpropertytypes !== undefined) {
+    options.exactOptionalPropertyTypes = Boolean(directives.exactoptionalpropertytypes);
+  }
+  if (directives.nofallthroughcasesinswitch !== undefined) {
+    options.noFallthroughCasesInSwitch = Boolean(directives.nofallthroughcasesinswitch);
+  }
+  if (directives.nounusedlocals !== undefined) {
+    options.noUnusedLocals = Boolean(directives.nounusedlocals);
+  }
+  if (directives.nounusedparameters !== undefined) {
+    options.noUnusedParameters = Boolean(directives.nounusedparameters);
+  }
+  if (directives.allowunusedlabels !== undefined) {
+    options.allowUnusedLabels = Boolean(directives.allowunusedlabels);
+  }
+  if (directives.allowunreachablecode !== undefined) {
+    options.allowUnreachableCode = Boolean(directives.allowunreachablecode);
   }
 
   return options;

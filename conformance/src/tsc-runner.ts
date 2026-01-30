@@ -455,19 +455,18 @@ export function runTsc(
  */
 export function runTscOnFiles(
   files: Record<string, string>,
-  options: { target?: string; strict?: boolean; strictNullChecks?: boolean; noLib?: boolean; lib?: string[] },
+  options: Record<string, unknown>,
   libDir: string,
   includeMessages: boolean = false
 ): TscResult {
   // Convert to ParsedTestCase format
   const testFiles: TestFile[] = Object.entries(files).map(([name, content]) => ({ name, content }));
-  const testOptions: Record<string, unknown> = {};
   
-  if (options.target) testOptions.target = options.target;
-  if (options.strict) testOptions.strict = options.strict;
-  if (options.strictNullChecks !== undefined) testOptions.strictnullchecks = options.strictNullChecks;
-  if (options.noLib) testOptions.nolib = options.noLib;
-  if (options.lib) testOptions.lib = options.lib;
+  // Normalize option keys to lowercase for toCompilerOptions
+  const testOptions: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(options)) {
+    testOptions[key.toLowerCase()] = value;
+  }
 
   const testCase: ParsedTestCase = {
     options: testOptions,
