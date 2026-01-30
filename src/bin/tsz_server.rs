@@ -1268,6 +1268,13 @@ impl Server {
 
         let mut parsed_files: Vec<ParsedFile> = Vec::with_capacity(files.len());
         for (file_name, content) in &files {
+            // Skip non-TypeScript/JavaScript files (e.g. .json, .txt).
+            // They may be present in multi-file tests for module resolution
+            // fixtures but must not be parsed as TypeScript source.
+            if !Self::is_checkable_file(file_name) {
+                continue;
+            }
+
             let mut parser = ParserState::new(file_name.clone(), content.clone());
             let root_idx = parser.parse_source_file();
             let parse_errors: Vec<i32> = parser
@@ -1355,43 +1362,6 @@ impl Server {
                 }
             }
         }
-
-        // Filter out known false-positive error codes that the checker is not yet
-        // able to emit correctly. These codes have zero passing test dependencies,
-        // meaning tsz never correctly produces them in any test case.
-        // TODO: Remove entries as checker improvements make them reliable.
-        static SUPPRESSED_CODES: &[i32] = &[
-            1012, // Unexpected token
-            1129, // Statement expected (parser false positive)
-            1146, // Declaration expected (parser false positive)
-            1253, // Rest element can't have trailing comma
-            1359, // Identifier expected for named import
-            1375, // await expression only allowed in async
-            2324, // Property missing in type (false positive from type inference)
-            2326, // Types of property incompatible (false positive)
-            2365, // Operator cannot be applied (false positive)
-            2366, // Function lacks ending return statement (false positive)
-            2380, // Duplicate string index signature
-            2435, // Cannot assign to const
-            2461, // Type is not an array type
-            2504, // Name not defined (const enum member)
-            2531, // Object is possibly null (strictNullChecks false positive)
-            2532, // Object is possibly undefined (strictNullChecks false positive)
-            2533, // Object is possibly null or undefined (strictNullChecks false positive)
-            2555, // Expected N arguments (false positive)
-            2564, // Property has no initializer (false positive)
-            2565, // Property not definitely assigned (false positive)
-            2654, // Expression always truthy (false positive)
-            2683, // this implicitly has type any (false positive)
-            2689, // Cannot extend an interface (false positive with merging)
-            2819, // No common type exists (false positive)
-            5061, // Ambient module relative name (fixed for augmentations)
-            6188, // Numeric enum constant (false positive)
-            6189, // All declarations unused (false positive)
-            7005, // Variable implicitly has type (false positive)
-            17011, // Reachability check (false positive)
-        ];
-        all_codes.retain(|code| !SUPPRESSED_CODES.contains(code));
 
         Ok(all_codes)
     }
@@ -1537,6 +1507,22 @@ impl Server {
             let default_lib = default_lib_name_for_target(target);
             vec![default_lib.to_string()]
         }
+    }
+
+    /// Returns true if the file has a TypeScript or JavaScript extension that
+    /// should be parsed and type-checked. Non-source files (.json, .txt, etc.)
+    /// that appear in multi-file test fixtures should be skipped.
+    fn is_checkable_file(file_name: &str) -> bool {
+        let lower = file_name.to_lowercase();
+        // Order: most common extensions first for early return
+        lower.ends_with(".ts")
+            || lower.ends_with(".tsx")
+            || lower.ends_with(".js")
+            || lower.ends_with(".jsx")
+            || lower.ends_with(".mts")
+            || lower.ends_with(".cts")
+            || lower.ends_with(".mjs")
+            || lower.ends_with(".cjs")
     }
 
     fn parse_target(target: &Option<String>) -> ScriptTarget {
