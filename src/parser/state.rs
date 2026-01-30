@@ -527,6 +527,35 @@ impl ParserState {
         );
     }
 
+    /// Check if a statement is a using/await using declaration not inside a block (TS1156)
+    fn check_using_outside_block(&mut self, statement: NodeIndex) {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::parser::node_flags;
+
+        if statement.is_none() {
+            return;
+        }
+
+        // Get the node and check if it's a variable statement with using flags
+        if let Some(node) = self.arena.get(statement) {
+            // Check if it's a variable statement (not a block)
+            if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                // Check if it has using or await using flags
+                let is_using =
+                    (node.flags & (node_flags::USING as u16 | node_flags::AWAIT_USING as u16)) != 0;
+                if is_using {
+                    // Emit TS1156 error at the statement position
+                    self.parse_error_at(
+                        node.pos,
+                        node.end.saturating_sub(node.pos).max(1),
+                        diagnostic_messages::USING_DECLARATION_ONLY_IN_BLOCK,
+                        diagnostic_codes::USING_DECLARATION_ONLY_IN_BLOCK,
+                    );
+                }
+            }
+        }
+    }
+
     /// Error: Unexpected token (TS1012)
     fn error_unexpected_token(&mut self) {
         use crate::checker::types::diagnostics::diagnostic_codes;
@@ -1701,10 +1730,18 @@ impl ParserState {
     ) -> NodeIndex {
         let start_pos = override_start_pos.unwrap_or_else(|| self.token_pos());
         let declaration_list = self.parse_variable_declaration_list();
+
+        // Get flags from declaration list to propagate to variable statement
+        let flags = if let Some(list_node) = self.arena.get(declaration_list) {
+            list_node.flags
+        } else {
+            0
+        };
+
         self.parse_semicolon();
         let end_pos = self.token_end();
 
-        self.arena.add_variable(
+        self.arena.add_variable_with_flags(
             syntax_kind_ext::VARIABLE_STATEMENT,
             start_pos,
             end_pos,
@@ -1712,6 +1749,7 @@ impl ParserState {
                 modifiers,
                 declarations: self.make_node_list(vec![declaration_list]),
             },
+            flags,
         )
     }
 
@@ -1771,7 +1809,7 @@ impl ParserState {
                 break;
             }
 
-            let decl = self.parse_variable_declaration();
+            let decl = self.parse_variable_declaration_with_flags(flags);
             declarations.push(decl);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
@@ -1816,7 +1854,28 @@ impl ParserState {
 
     /// Parse variable declaration
     fn parse_variable_declaration(&mut self) -> NodeIndex {
+        self.parse_variable_declaration_with_flags(0)
+    }
+
+    /// Parse variable declaration with declaration flags (for using/await using checks)
+    fn parse_variable_declaration_with_flags(&mut self, flags: u16) -> NodeIndex {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::parser::node_flags;
+
         let start_pos = self.token_pos();
+        let is_using = (flags & (node_flags::USING as u16 | node_flags::AWAIT_USING as u16)) != 0;
+
+        // Check TS1375: 'using' declarations do not support destructuring patterns
+        if is_using {
+            if self.is_token(SyntaxKind::OpenBraceToken)
+                || self.is_token(SyntaxKind::OpenBracketToken)
+            {
+                self.parse_error_at_current_token(
+                    diagnostic_messages::USING_DECLARATIONS_DO_NOT_SUPPORT_DESTRUCTURING,
+                    diagnostic_codes::USING_DECLARATIONS_DO_NOT_SUPPORT_DESTRUCTURING,
+                );
+            }
+        }
 
         // Parse name - can be identifier, keyword as identifier, or binding pattern
         // Check for illegal binding identifiers (e.g., 'await' in static blocks)
@@ -1860,6 +1919,14 @@ impl ParserState {
             }
         } else {
             NodeIndex::NONE
+        };
+
+        // Check TS1155: 'using' declarations must be initialized
+        if is_using && initializer.is_none() {
+            self.parse_error_at_current_token(
+                diagnostic_messages::CONST_DECLARATIONS_MUST_BE_INITIALIZED,
+                diagnostic_codes::CONST_DECLARATIONS_MUST_BE_INITIALIZED,
+            );
         };
 
         // Calculate end position from the last component present (child node, not token)
@@ -5294,9 +5361,12 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         let then_statement = self.parse_statement();
+        self.check_using_outside_block(then_statement);
 
         let else_statement = if self.parse_optional(SyntaxKind::ElseKeyword) {
-            self.parse_statement()
+            let stmt = self.parse_statement();
+            self.check_using_outside_block(stmt);
+            stmt
         } else {
             NodeIndex::NONE
         };
@@ -5359,6 +5429,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         let statement = self.parse_statement();
+        self.check_using_outside_block(statement);
 
         let end_pos = self.token_end();
         self.arena.add_loop(
@@ -5468,6 +5539,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         let statement = self.parse_statement();
+        self.check_using_outside_block(statement);
 
         let end_pos = self.token_end();
         self.arena.add_loop(
@@ -5573,6 +5645,7 @@ impl ParserState {
         let expression = self.parse_expression();
         self.parse_expected(SyntaxKind::CloseParenToken);
         let statement = self.parse_statement();
+        self.check_using_outside_block(statement);
 
         let end_pos = self.token_end();
         self.arena.add_for_in_of(
@@ -5599,6 +5672,7 @@ impl ParserState {
         let expression = self.parse_assignment_expression();
         self.parse_expected(SyntaxKind::CloseParenToken);
         let statement = self.parse_statement();
+        self.check_using_outside_block(statement);
 
         let end_pos = self.token_end();
         self.arena.add_for_in_of(
@@ -5716,6 +5790,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::DoKeyword);
 
         let statement = self.parse_statement();
+        self.check_using_outside_block(statement);
 
         self.parse_expected(SyntaxKind::WhileKeyword);
         self.parse_expected(SyntaxKind::OpenParenToken);
