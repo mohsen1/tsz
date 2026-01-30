@@ -920,8 +920,7 @@ impl<'a> CheckerState<'a> {
                 .map(|s| s.flags)
                 .unwrap_or(0);
             if flags
-                & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                    | symbol_flags::BLOCK_SCOPED_VARIABLE)
+                & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
                 != 0
                 && flags
                     & (symbol_flags::CLASS
