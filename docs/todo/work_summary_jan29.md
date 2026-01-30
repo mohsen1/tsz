@@ -526,3 +526,36 @@ Top Extra Errors:
 2. **Document investigations thoroughly** for future reference
 3. **Use conformance results to guide priority** - the numbers don't lie
 4. **Ask Gemini strategically** when rate-limited - save it for complex architectural questions
+
+## Session: Jan 30, 2026 (PM)
+
+### TS2694 False Positives Fix - Class Static Members in Typeof
+
+**Problem:** tsz was emitting false-positive TS2694 errors for `typeof C.staticMember` where C is a class.
+
+**Root Cause:** The `resolve_qualified_name` function only checked the `exports` field when resolving qualified names in type positions. Class static members are stored in the `members` field, not `exports`.
+
+**Fix:** Modified two code paths in `src/checker/state.rs`:
+1. First code path (line 2672): Added check for class members when resolving as identifier
+2. Second code path (line 2728): Added check for class members in type-based lookup
+
+**Files Modified:**
+- `src/checker/state.rs`: Added member checks for CLASS symbols
+- `src/checker/symbol_resolver.rs`: Added member checks for CLASS symbols (in report_type_query_missing_member)
+
+**Results:**
+In 500-test sample:
+- TS2304: 1309x → 22x (98% reduction)
+- TS2339: 824x → 15x (98% reduction)
+- TS1005: No longer in top extra errors for some categories
+
+**Commit:** `dfd4825ce`
+
+**Status:** Partial fix - helps with class static member access, but TS2304/TS2339/TS1005 still high in full test run (1299x/827x/1511x).
+
+**Next Steps:**
+- Investigate remaining TS2304/TS2339/TS1005 causes
+- Focus on patterns NOT involving class static members
+- Check for parser/tokenization issues (TS1005)
+- Check for property access patterns (TS2339)
+- Check for symbol resolution edge cases (TS2304)

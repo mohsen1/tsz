@@ -1245,7 +1245,9 @@ impl ParserState {
     pub fn parse_statement(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::OpenBraceToken => self.parse_block(),
-            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => self.parse_variable_statement(),
+            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword | SyntaxKind::UsingKeyword => {
+                self.parse_variable_statement()
+            }
             SyntaxKind::ConstKeyword => {
                 // const enum or const variable
                 if self.look_ahead_is_const_enum() {
@@ -1703,7 +1705,7 @@ impl ParserState {
 
         let start_pos = self.token_pos();
 
-        // Consume var/let/const and get flags
+        // Consume var/let/const/using and get flags
         let flags: u16 = match self.token() {
             SyntaxKind::LetKeyword => {
                 self.next_token();
@@ -1712,6 +1714,10 @@ impl ParserState {
             SyntaxKind::ConstKeyword => {
                 self.next_token();
                 node_flags::CONST as u16
+            }
+            SyntaxKind::UsingKeyword => {
+                self.next_token();
+                node_flags::USING as u16
             }
             _ => {
                 self.next_token();
@@ -5186,7 +5192,9 @@ impl ParserState {
                 // export declare function/class/namespace/var/etc.
                 self.parse_ambient_declaration()
             }
-            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => self.parse_variable_statement(),
+            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword | SyntaxKind::UsingKeyword => {
+                self.parse_variable_statement()
+            }
             SyntaxKind::ConstKeyword => {
                 // export const enum or export const variable
                 if self.look_ahead_is_const_enum() {

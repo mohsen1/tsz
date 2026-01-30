@@ -658,19 +658,28 @@ run_server() {
     fi
 
     # Run with timeout
+    local exit_code=0
     if command -v timeout &>/dev/null; then
         timeout "${timeout}s" node --expose-gc dist/runner.js $runner_args || {
-            local exit_code=$?
+            exit_code=$?
             if [[ $exit_code -eq 124 ]]; then
                 echo ""
                 log_warning "Tests timed out after ${timeout}s"
             fi
-            return $exit_code
         }
     else
         # macOS doesn't have timeout by default
-        node --expose-gc dist/runner.js $runner_args
+        node --expose-gc dist/runner.js $runner_args || exit_code=$?
     fi
+
+    # Show tip about --filter and --print-test if not already using --print-test
+    if [[ "$print_test" != "true" ]]; then
+        echo ""
+        echo -e "${DIM}Tip: Use --filter=PATTERN --print-test to see detailed info for specific test failures${RESET}"
+        echo -e "${DIM}     Example: ./run.sh --filter=inferTypes --print-test${RESET}"
+    fi
+
+    return $exit_code
 }
 
 # ==============================================================================

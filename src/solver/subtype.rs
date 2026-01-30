@@ -316,14 +316,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Internal subtype check with cycle detection
     pub fn check_subtype(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
-        // DEBUG: Log the types being compared
-        let source_key = self.interner.lookup(source);
-        let target_key = self.interner.lookup(target);
-        eprintln!(
-            "DEBUG check_subtype: source={:?} ({:?}), target={:?} ({:?})",
-            source, source_key, target, target_key
-        );
-
         // =========================================================================
         // Fast paths
         // =========================================================================
