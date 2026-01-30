@@ -1,11 +1,14 @@
 #!/bin/bash
 #
-# Update README with conformance test results
+# Update README with conformance and/or fourslash test results
 #
 # Usage:
-#   ./scripts/update-readme.sh              # Run tests and update README
-#   ./scripts/update-readme.sh --commit     # Also commit and push
-#   ./scripts/update-readme.sh --max=500    # Run only 500 tests (faster)
+#   ./scripts/update-readme.sh                    # Run both and update README
+#   ./scripts/update-readme.sh --commit           # Also commit and push
+#   ./scripts/update-readme.sh --conformance-only # Only run conformance tests
+#   ./scripts/update-readme.sh --fourslash-only   # Only run fourslash tests
+#   ./scripts/update-readme.sh --max=500          # Limit conformance tests
+#   ./scripts/update-readme.sh --fourslash-max=100 # Limit fourslash tests
 #
 
 set -e
@@ -16,24 +19,33 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Defaults
 COMMIT=false
 MAX_TESTS="--all"
+FOURSLASH_MAX=""
 WORKERS=8
+RUN_CONFORMANCE=true
+RUN_FOURSLASH=true
 
 # Parse arguments
 for arg in "$@"; do
     case $arg in
         --commit) COMMIT=true ;;
         --max=*) MAX_TESTS="--max=${arg#*=}" ;;
+        --fourslash-max=*) FOURSLASH_MAX="--max=${arg#*=}" ;;
         --workers=*) WORKERS="${arg#*=}" ;;
+        --conformance-only) RUN_FOURSLASH=false ;;
+        --fourslash-only) RUN_CONFORMANCE=false ;;
         --help|-h)
-            echo "Update README with conformance test results"
+            echo "Update README with conformance and fourslash test results"
             echo ""
             echo "Usage: ./scripts/update-readme.sh [options]"
             echo ""
             echo "Options:"
-            echo "  --commit      Commit and push changes to git"
-            echo "  --max=N       Run only N tests (default: all)"
-            echo "  --workers=N   Number of workers (default: 8)"
-            echo "  --help        Show this help"
+            echo "  --commit            Commit and push changes to git"
+            echo "  --max=N             Limit conformance tests (default: all)"
+            echo "  --fourslash-max=N   Limit fourslash tests (default: all)"
+            echo "  --workers=N         Number of conformance workers (default: 8)"
+            echo "  --conformance-only  Only run conformance tests"
+            echo "  --fourslash-only    Only run fourslash tests"
+            echo "  --help              Show this help"
             exit 0
             ;;
     esac
@@ -41,68 +53,133 @@ done
 
 cd "$ROOT_DIR"
 
-echo "============================================================"
-echo "         Update README Conformance Progress"
-echo "============================================================"
-echo ""
-
-# Run conformance tests (server mode)
-echo "Running conformance tests..."
-OUTPUT=$(./conformance/run.sh $MAX_TESTS --workers=$WORKERS 2>&1) || true
-echo "$OUTPUT"
-
-# Parse results (Pass Rate is at the end of output)
-if echo "$OUTPUT" | grep -q "Pass Rate:"; then
-    # Get the last Pass Rate line (it's at the end now)
-    PASS_RATE=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
-    # Parse passed/total - handle comma-separated numbers
-    PASSED=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\1/' | tr -d ',')
-    TOTAL=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\2/' | tr -d ',')
-
-    echo ""
-    echo "Results: $PASSED/$TOTAL tests passed ($PASS_RATE%)"
-else
-    echo "Failed to parse conformance test output"
-    exit 1
-fi
-
 # Get TypeScript version
 TS_VERSION=$(node -e "const v = require('./conformance/typescript-versions.json'); const m = Object.values(v.mappings)[0]; console.log(m?.npm || v.default?.npm || 'unknown')")
 echo "TypeScript version: $TS_VERSION"
-
-# Update README
 echo ""
-echo "Updating README.md..."
+
+# Build update-readme tool
+echo "Building update-readme tool..."
 cd conformance
 npm run build --silent 2>/dev/null || npm run build
-node dist/update-readme.js \
-    --passed="$PASSED" \
-    --total="$TOTAL" \
-    --pass-rate="$PASS_RATE" \
-    --ts-version="$TS_VERSION"
-
 cd "$ROOT_DIR"
 
-# Check if there are changes
+# Track what was updated for commit message
+CONF_PASSED=""
+CONF_TOTAL=""
+CONF_PASS_RATE=""
+FS_PASSED=""
+FS_TOTAL=""
+FS_PASS_RATE=""
+
+# ── Conformance tests ─────────────────────────────────────────────
+if [ "$RUN_CONFORMANCE" = true ]; then
+    echo "============================================================"
+    echo "         Conformance Tests"
+    echo "============================================================"
+    echo ""
+
+    echo "Running conformance tests..."
+    OUTPUT=$(./conformance/run.sh $MAX_TESTS --workers=$WORKERS 2>&1) || true
+    echo "$OUTPUT"
+
+    if echo "$OUTPUT" | grep -q "Pass Rate:"; then
+        CONF_PASS_RATE=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
+        CONF_PASSED=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\1/' | tr -d ',')
+        CONF_TOTAL=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\2/' | tr -d ',')
+
+        echo ""
+        echo "Conformance: $CONF_PASSED/$CONF_TOTAL tests passed ($CONF_PASS_RATE%)"
+
+        cd conformance
+        node dist/update-readme.js \
+            --passed="$CONF_PASSED" \
+            --total="$CONF_TOTAL" \
+            --pass-rate="$CONF_PASS_RATE" \
+            --ts-version="$TS_VERSION"
+        cd "$ROOT_DIR"
+    else
+        echo "Failed to parse conformance test output"
+        if [ "$RUN_FOURSLASH" = false ]; then
+            exit 1
+        fi
+    fi
+    echo ""
+fi
+
+# ── Fourslash / LSP tests ─────────────────────────────────────────
+if [ "$RUN_FOURSLASH" = true ]; then
+    echo "============================================================"
+    echo "         Fourslash / Language Service Tests"
+    echo "============================================================"
+    echo ""
+
+    echo "Running fourslash tests..."
+    FS_OUTPUT=$(./scripts/run-fourslash.sh --skip-build $FOURSLASH_MAX 2>&1) || true
+    echo "$FS_OUTPUT"
+
+    # Parse: "Results: N passed, N failed out of N (Ns)"
+    if echo "$FS_OUTPUT" | grep -q "^Results:"; then
+        FS_PASSED=$(echo "$FS_OUTPUT" | grep "^Results:" | tail -1 | sed -E 's/Results:[[:space:]]*([0-9]+) passed.*/\1/')
+        FS_RAN=$(echo "$FS_OUTPUT" | grep "^Results:" | tail -1 | sed -E 's/.*out of ([0-9]+).*/\1/')
+        # Use total available if reported, otherwise use tests run
+        if echo "$FS_OUTPUT" | grep -q "total available"; then
+            FS_TOTAL=$(echo "$FS_OUTPUT" | grep "total available" | tail -1 | sed -E 's/.*([0-9]+) total available.*/\1/')
+        else
+            FS_TOTAL="$FS_RAN"
+        fi
+        FS_PASS_RATE=$(echo "$FS_OUTPUT" | grep "Pass rate:" | tail -1 | sed -E 's/.*Pass rate:[[:space:]]*([0-9.]+)%.*/\1/')
+
+        echo ""
+        echo "Fourslash: $FS_PASSED/$FS_TOTAL tests ($FS_PASS_RATE%)"
+
+        cd conformance
+        node dist/update-readme.js \
+            --fourslash \
+            --passed="$FS_PASSED" \
+            --total="$FS_TOTAL" \
+            --pass-rate="$FS_PASS_RATE" \
+            --ts-version="$TS_VERSION"
+        cd "$ROOT_DIR"
+    else
+        echo "Failed to parse fourslash test output"
+        if [ "$RUN_CONFORMANCE" = false ]; then
+            exit 1
+        fi
+    fi
+    echo ""
+fi
+
+# ── Commit ─────────────────────────────────────────────────────────
 if git diff --quiet README.md; then
     echo "README.md is already up to date"
 else
     echo "README.md updated"
 
     if [ "$COMMIT" = true ]; then
+        # Build commit message
+        MSG="docs: update README progress"
+        DETAILS=""
+        if [ -n "$CONF_PASSED" ]; then
+            DETAILS="${DETAILS}Conformance: ${CONF_PASS_RATE}% (${CONF_PASSED}/${CONF_TOTAL})\n"
+        fi
+        if [ -n "$FS_PASSED" ]; then
+            DETAILS="${DETAILS}Fourslash: ${FS_PASS_RATE}% (${FS_PASSED}/${FS_TOTAL})\n"
+        fi
+        DETAILS="${DETAILS}TypeScript: ${TS_VERSION}"
+
         echo ""
         echo "Committing and pushing..."
         git add README.md
-        git commit -m "docs: update conformance progress ($PASSED/$TOTAL tests passing)
+        git commit -m "$MSG
 
-Pass rate: $PASS_RATE%
-TypeScript version: $TS_VERSION"
+$(echo -e "$DETAILS")"
         git push
         echo "Pushed to remote"
     else
         echo ""
         echo "Run with --commit to commit and push changes"
-        echo "Or manually: git add README.md && git commit -m 'docs: update conformance'"
+        echo "Or manually: git add README.md && git commit -m 'docs: update progress'"
     fi
 fi
 
