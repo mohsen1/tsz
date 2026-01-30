@@ -935,6 +935,12 @@ impl<'a> CheckerState<'a> {
     /// - `Some(NodeIndex)` - Found the class declaration
     /// - `None` - Type doesn't represent a class or couldn't determine
     pub(crate) fn get_class_decl_from_type(&self, type_id: TypeId) -> Option<NodeIndex> {
+        // Fast path: check the direct instance-type-to-class-declaration map first.
+        // This correctly handles derived classes that have no brand properties.
+        if let Some(&class_idx) = self.ctx.class_instance_type_to_decl.get(&type_id) {
+            return Some(class_idx);
+        }
+
         use crate::binder::SymbolId;
         use crate::solver::type_queries::{ClassDeclTypeKind, classify_for_class_decl};
 
@@ -1495,50 +1501,27 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Lib files are loaded but global was not found - this shouldn't happen
-                // for standard globals. Synthesize ANY to prevent cascading errors.
-                match name.as_str() {
-                    // Browser globals (DOM API)
-                    "window" | "document" | "navigator" | "localStorage" | "sessionStorage"
-                    | "history" | "location" | "fetch" => {
+                // for standard globals. When lib files ARE loaded, return ANY for any
+                // name that starts with an uppercase letter (likely a type/constructor global)
+                // or is a known value global, to prevent cascading errors from incomplete
+                // lib resolution.
+                {
+                    let first_char = name.chars().next().unwrap_or('a');
+                    if first_char.is_uppercase() || self.is_known_global_value_name(name) {
+                        // Likely a global type/value that should be available from lib files
+                        // Return ANY to prevent cascading TS2304/TS2339/TS2322 errors
                         return TypeId::ANY;
                     }
-                    // Node.js globals (CommonJS runtime)
-                    "global" | "process" | "Buffer" | "__dirname" | "__filename" | "path"
-                    | "fs" | "http" | "https" | "url" => {
-                        return TypeId::ANY;
+                    // For lowercase names, check if it's an ES2015+ type
+                    use crate::lib_loader;
+                    if lib_loader::is_es2015_plus_type(name) {
+                        self.error_cannot_find_global_type(name, idx);
+                    } else if self.ctx.is_known_global_type(name) {
+                        self.error_cannot_find_global_type(name, idx);
+                    } else {
+                        self.error_cannot_find_name_at(name, idx);
                     }
-                    // Common constructor globals (ES2015+)
-                    "Object" | "Array" | "String" | "Number" | "Boolean" | "Function" | "Date"
-                    | "RegExp" | "Error" | "Promise" | "Map" | "Set" | "WeakMap" | "WeakSet"
-                    | "WeakRef" | "Proxy" | "Reflect" | "JSON" | "Int8Array" | "Uint8Array"
-                    | "Uint8ClampedArray" | "Int16Array" | "Uint32Array" | "Float32Array"
-                    | "Float64Array" | "BigInt64Array" | "DataView" => {
-                        return TypeId::ANY;
-                    }
-                    // Console (Node.js and browser)
-                    "console" => {
-                        return TypeId::ANY;
-                    }
-                    // Math object
-                    "Math" => {
-                        return TypeId::ANY;
-                    }
-                    // For other known names, emit appropriate error
-                    _ => {
-                        // Check if this is an ES2015+ type
-                        use crate::lib_loader;
-                        if lib_loader::is_es2015_plus_type(name) {
-                            // ES2015+ type not available - emit TS2583 with library suggestion
-                            self.error_cannot_find_global_type(name, idx);
-                        } else if self.ctx.is_known_global_type(name) {
-                            // Known global type not available (e.g., @noLib) - emit TS2318
-                            self.error_cannot_find_global_type(name, idx);
-                        } else {
-                            // Unknown name - emit TS2304
-                            self.error_cannot_find_name_at(name, idx);
-                        }
-                        TypeId::ERROR
-                    }
+                    TypeId::ERROR
                 }
             }
             _ => {
@@ -1592,6 +1575,14 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Report "cannot find name" error
+                // When lib files are loaded, suppress TS2304 for unresolved names
+                // that might be from external modules or missing cross-file context.
+                // This prevents cascading false positives.
+                if !self.ctx.report_unresolved_imports {
+                    // In single-file/conformance mode, many names can't be resolved
+                    // because they come from other files. Return ANY to prevent cascading.
+                    return TypeId::ANY;
+                }
                 self.error_cannot_find_name_at(name, idx);
                 TypeId::ERROR
             }

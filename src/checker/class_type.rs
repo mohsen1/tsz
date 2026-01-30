@@ -896,6 +896,13 @@ impl<'a> CheckerState<'a> {
                 self.ctx.class_instance_resolution_set.remove(&sym_id);
             }
         }
+        // Register the mapping from instance type to class declaration.
+        // This allows get_class_decl_from_type to correctly identify the class
+        // for derived classes that have no private/protected members (and thus no brand).
+        self.ctx
+            .class_instance_type_to_decl
+            .insert(instance_type, class_idx);
+
         instance_type
     }
 

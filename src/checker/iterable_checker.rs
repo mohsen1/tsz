@@ -226,6 +226,11 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         is_async: bool,
     ) -> bool {
+        // Skip error/any/unknown types to prevent false positives
+        if expr_type == TypeId::ANY || expr_type == TypeId::UNKNOWN || expr_type == TypeId::ERROR {
+            return true;
+        }
+
         // For async for-of, first check async iterable, then fall back to sync iterable
         if is_async {
             if self.is_async_iterable_type(expr_type) || self.is_iterable_type(expr_type) {
