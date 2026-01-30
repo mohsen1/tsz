@@ -269,12 +269,42 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Apply this substitution to call return type (stub implementation).
+    /// Apply `this` type substitution to a method call's return type.
+    ///
+    /// When a method returns `this`, the return type should be the type of the receiver.
+    /// For `obj.method()` where method returns `this`, we substitute ThisType with typeof obj.
     pub(crate) fn apply_this_substitution_to_call_return(
         &mut self,
         return_type: crate::solver::TypeId,
-        _call_expression: crate::parser::NodeIndex,
+        call_expression: crate::parser::NodeIndex,
     ) -> crate::solver::TypeId {
+        use crate::solver::TypeId;
+
+        // Fast path: intrinsic types can't contain ThisType
+        if return_type.is_intrinsic() {
+            return return_type;
+        }
+
+        // Try to extract the receiver from the call expression.
+        // The call_expression parameter is actually the callee expression (call.expression),
+        // which for method calls is a PropertyAccessExpression.
+        // For `obj.method()`, this is `obj.method`, whose `.expression` is `obj`.
+        let node = match self.ctx.arena.get(call_expression) {
+            Some(n) => n,
+            None => return return_type,
+        };
+
+        if let Some(access) = self.ctx.arena.get_access_expr(node) {
+            let receiver_type = self.get_type_of_node(access.expression);
+            if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
+                return crate::solver::substitute_this_type(
+                    &*self.ctx.types,
+                    return_type,
+                    receiver_type,
+                );
+            }
+        }
+
         return_type
     }
 

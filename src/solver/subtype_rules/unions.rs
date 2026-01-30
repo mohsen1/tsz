@@ -345,10 +345,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     None => continue, // Union member has extra property - that's OK
                 };
 
-                // Check readonly compatibility
-                if union_prop.readonly && !t_prop.readonly {
-                    return SubtypeResult::False;
-                }
+                // NOTE: TypeScript allows readonly source to satisfy mutable target
+                // (readonly is a constraint on the reference, not structural compatibility)
 
                 // Check if the union member's property is compatible with the target's property
                 // Get the effective type (adding undefined for optional properties if needed)

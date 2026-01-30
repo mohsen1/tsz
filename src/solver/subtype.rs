@@ -522,15 +522,90 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::False
             }
 
-            // Intersection source: source is subtype if any constituent is
+            // Intersection source: source is subtype if any constituent is,
+            // OR if the merged object properties satisfy the target.
             (TypeKey::Intersection(members), _) => {
-                // Check if ANY intersection member is a subtype of the target
                 let member_list = self.interner.type_list(*members);
+
+                // First: check if ANY single intersection member is a subtype of the target
                 for &member in member_list.iter() {
                     if self.check_subtype(member, target).is_true() {
                         return SubtypeResult::True;
                     }
                 }
+
+                // Second: if the target is an object type, try merging all object-typed
+                // intersection members into a single object and check that.
+                // This handles: { a: string } & { b: number } <: { a: string, b: number }
+                let is_object_target = matches!(
+                    &target_key,
+                    TypeKey::Object(_) | TypeKey::ObjectWithIndex(_)
+                );
+                if is_object_target {
+                    let mut merged_properties: Vec<PropertyInfo> = Vec::new();
+                    let mut merged_string_index: Option<IndexSignature> = None;
+                    let mut merged_number_index: Option<IndexSignature> = None;
+                    let mut has_object_members = false;
+                    let mut non_object_members: Vec<TypeId> = Vec::new();
+
+                    for &member in member_list.iter() {
+                        match self.interner.lookup(member) {
+                            Some(TypeKey::Object(shape_id)) => {
+                                has_object_members = true;
+                                let shape = self.interner.object_shape(shape_id);
+                                for prop in &shape.properties {
+                                    // Later properties override earlier ones (last-write-wins)
+                                    if let Some(existing) =
+                                        merged_properties.iter_mut().find(|p| p.name == prop.name)
+                                    {
+                                        *existing = prop.clone();
+                                    } else {
+                                        merged_properties.push(prop.clone());
+                                    }
+                                }
+                            }
+                            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                                has_object_members = true;
+                                let shape = self.interner.object_shape(shape_id);
+                                for prop in &shape.properties {
+                                    if let Some(existing) =
+                                        merged_properties.iter_mut().find(|p| p.name == prop.name)
+                                    {
+                                        *existing = prop.clone();
+                                    } else {
+                                        merged_properties.push(prop.clone());
+                                    }
+                                }
+                                if let Some(ref idx) = shape.string_index {
+                                    merged_string_index = Some(idx.clone());
+                                }
+                                if let Some(ref idx) = shape.number_index {
+                                    merged_number_index = Some(idx.clone());
+                                }
+                            }
+                            _ => {
+                                non_object_members.push(member);
+                            }
+                        }
+                    }
+
+                    if has_object_members && !merged_properties.is_empty() {
+                        let merged_type =
+                            if merged_string_index.is_some() || merged_number_index.is_some() {
+                                self.interner.object_with_index(ObjectShape {
+                                    properties: merged_properties,
+                                    string_index: merged_string_index,
+                                    number_index: merged_number_index,
+                                })
+                            } else {
+                                self.interner.object(merged_properties)
+                            };
+                        if self.check_subtype(merged_type, target).is_true() {
+                            return SubtypeResult::True;
+                        }
+                    }
+                }
+
                 SubtypeResult::False
             }
 
@@ -808,12 +883,127 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if s_spans == t_spans {
                     SubtypeResult::True
                 } else {
-                    SubtypeResult::False
+                    // Compare spans pairwise - each source span must be a subtype of
+                    // the corresponding target span. e.g., `foo-${number}` <: `foo-${string}`
+                    let s_list = self.interner.template_list(*s_spans);
+                    let t_list = self.interner.template_list(*t_spans);
+                    if s_list.len() != t_list.len() {
+                        SubtypeResult::False
+                    } else {
+                        let mut all_ok = true;
+                        for (s_span, t_span) in s_list.iter().zip(t_list.iter()) {
+                            match (s_span, t_span) {
+                                (TemplateSpan::Text(s_text), TemplateSpan::Text(t_text)) => {
+                                    if s_text != t_text {
+                                        all_ok = false;
+                                        break;
+                                    }
+                                }
+                                (TemplateSpan::Type(s_type), TemplateSpan::Type(t_type)) => {
+                                    if !self.check_subtype(*s_type, *t_type).is_true() {
+                                        all_ok = false;
+                                        break;
+                                    }
+                                }
+                                _ => {
+                                    // Mismatched span kinds (text vs type)
+                                    all_ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if all_ok {
+                            SubtypeResult::True
+                        } else {
+                            SubtypeResult::False
+                        }
+                    }
                 }
             }
             // Template literal is a subtype of string
             (TypeKey::TemplateLiteral(_), TypeKey::Intrinsic(IntrinsicKind::String)) => {
                 SubtypeResult::True
+            }
+
+            // =========================================================================
+            // Cross-kind structural fallbacks
+            // =========================================================================
+            // Functions, arrays, tuples, and callables are objects in TypeScript.
+            // They should be assignable to compatible object shapes (e.g., {} or { length: number }).
+
+            // Function/Callable to Object: functions are objects with properties like
+            // name, length, bind, call, apply, etc.
+            (TypeKey::Function(_) | TypeKey::Callable(_), TypeKey::Object(t_shape_id)) => {
+                let t_shape = self.interner.object_shape(*t_shape_id);
+                // Empty object {} accepts any non-nullable type
+                if t_shape.properties.is_empty() {
+                    SubtypeResult::True
+                } else {
+                    // Could check apparent function shape here, but for now return false
+                    // since we don't have the Function.prototype shape built in
+                    SubtypeResult::False
+                }
+            }
+            (
+                TypeKey::Function(_) | TypeKey::Callable(_),
+                TypeKey::ObjectWithIndex(t_shape_id),
+            ) => {
+                let t_shape = self.interner.object_shape(*t_shape_id);
+                if t_shape.properties.is_empty() {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                }
+            }
+
+            // Array/Tuple to Object: arrays and tuples have length, numeric indices, etc.
+            (TypeKey::Array(_) | TypeKey::Tuple(_), TypeKey::Object(t_shape_id)) => {
+                let t_shape = self.interner.object_shape(*t_shape_id);
+                // Empty object {} accepts arrays and tuples
+                if t_shape.properties.is_empty() {
+                    SubtypeResult::True
+                } else {
+                    // Check if target only has properties that exist on arrays (e.g., length)
+                    let mut all_ok = true;
+                    for t_prop in &t_shape.properties {
+                        let prop_name = self.interner.resolve_atom(t_prop.name);
+                        if prop_name == "length" {
+                            // Arrays/tuples have length: number
+                            if !self.check_subtype(TypeId::NUMBER, t_prop.type_id).is_true() {
+                                all_ok = false;
+                                break;
+                            }
+                        } else {
+                            // For other properties, we can't satisfy them from array shape
+                            all_ok = false;
+                            break;
+                        }
+                    }
+                    if all_ok {
+                        SubtypeResult::True
+                    } else {
+                        SubtypeResult::False
+                    }
+                }
+            }
+            (TypeKey::Array(_) | TypeKey::Tuple(_), TypeKey::ObjectWithIndex(t_shape_id)) => {
+                let t_shape = self.interner.object_shape(*t_shape_id);
+                if t_shape.properties.is_empty() {
+                    // Check index signatures only
+                    if let Some(ref num_idx) = t_shape.number_index {
+                        // Array element type must be compatible with number index
+                        let elem_type = match &source_key {
+                            TypeKey::Array(elem) => *elem,
+                            _ => TypeId::ANY, // Tuple - simplified
+                        };
+                        if !self.check_subtype(elem_type, num_idx.value_type).is_true() {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                }
             }
 
             // Default: not a subtype
@@ -1080,12 +1270,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             property_name: t_prop.name,
                         });
                     }
-                    // Check readonly mismatch
-                    if sp.readonly && !t_prop.readonly {
-                        return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
-                            property_name: t_prop.name,
-                        });
-                    }
+                    // NOTE: TypeScript allows readonly source to satisfy mutable target
+                    // (readonly is a constraint on the reference, not structural compatibility)
 
                     // Check property type compatibility
                     let source_type = self.optional_property_type(sp);
@@ -1262,11 +1448,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         property_name: t_prop.name,
                     });
                 }
-                if sp.readonly && !t_prop.readonly {
-                    return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
-                        property_name: t_prop.name,
-                    });
-                }
+                // NOTE: TypeScript allows readonly source to satisfy mutable target
+                // (readonly is a constraint on the reference, not structural compatibility)
 
                 let source_type = self.optional_property_type(sp);
                 let target_type = self.optional_property_type(t_prop);
