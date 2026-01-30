@@ -259,12 +259,19 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         let name = path.to_string_lossy();
         if name.contains("lib.") && name.ends_with(".d.ts") {
             lines_of_library += count;
-        } else if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
-        {
+        } else if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts") {
             lines_of_definitions += count;
-        } else if name.ends_with(".ts") || name.ends_with(".tsx") || name.ends_with(".mts") || name.ends_with(".cts") {
+        } else if name.ends_with(".ts")
+            || name.ends_with(".tsx")
+            || name.ends_with(".mts")
+            || name.ends_with(".cts")
+        {
             lines_of_typescript += count;
-        } else if name.ends_with(".js") || name.ends_with(".jsx") || name.ends_with(".mjs") || name.ends_with(".cjs") {
+        } else if name.ends_with(".js")
+            || name.ends_with(".jsx")
+            || name.ends_with(".mjs")
+            || name.ends_with(".cjs")
+        {
             lines_of_javascript += count;
         } else if name.ends_with(".json") {
             lines_of_json += count;
@@ -288,13 +295,22 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
     println!("Lines of JSON:                 {}", lines_of_json);
     println!("Lines of Other:                {}", lines_of_other);
     println!("Errors:                        {}", errors);
-    println!("Total time:                    {:.2}s", elapsed.as_secs_f64());
+    println!(
+        "Total time:                    {:.2}s",
+        elapsed.as_secs_f64()
+    );
 
     if extended {
         // Use process memory info if available
         let memory_used = get_memory_usage_kb();
-        println!("Emitted files:                 {}", result.emitted_files.len());
-        println!("Total diagnostics:             {}", result.diagnostics.len());
+        println!(
+            "Emitted files:                 {}",
+            result.emitted_files.len()
+        );
+        println!(
+            "Total diagnostics:             {}",
+            result.diagnostics.len()
+        );
         if memory_used > 0 {
             println!("Memory used:                   {}K", memory_used);
         }
@@ -627,10 +643,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     // Build top-level JSON object
     let mut top = serde_json::Map::new();
-    top.insert(
-        "compilerOptions".into(),
-        serde_json::Value::Object(opts),
-    );
+    top.insert("compilerOptions".into(), serde_json::Value::Object(opts));
 
     // Include files/include/exclude from tsconfig
     if let Some(ref cfg) = config {
@@ -638,7 +651,10 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             top.insert(
                 "files".into(),
                 serde_json::Value::Array(
-                    files.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
+                    files
+                        .iter()
+                        .map(|f| serde_json::Value::String(f.clone()))
+                        .collect(),
                 ),
             );
         }
@@ -646,7 +662,10 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             top.insert(
                 "include".into(),
                 serde_json::Value::Array(
-                    include.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
+                    include
+                        .iter()
+                        .map(|f| serde_json::Value::String(f.clone()))
+                        .collect(),
                 ),
             );
         }
@@ -654,7 +673,10 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             top.insert(
                 "exclude".into(),
                 serde_json::Value::Array(
-                    exclude.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
+                    exclude
+                        .iter()
+                        .map(|f| serde_json::Value::String(f.clone()))
+                        .collect(),
                 ),
             );
         }
