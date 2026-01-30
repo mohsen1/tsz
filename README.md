@@ -6,7 +6,13 @@ The goal is a correct, fast, drop-in replacement for `tsc`, with both native and
 TypeScript is intentionally unsound. Zang keeps a sound core solver and layers a compatibility
 engine on top to match TypeScript behavior while preserving correctness where possible.
 
-## Conformance Progress
+## Status
+
+Work in progress.
+
+This project is not ready for general use yet.
+
+### Type Checker Progress
 
 To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript conformance
 test suite against it.
@@ -19,7 +25,7 @@ Progress: [████████░░░░░░░░░░░░] 41.5% (
 ```
 <!-- CONFORMANCE_END -->
 
-## Language Service Progress
+### Language Service Progress
 
 We run TypeScript's fourslash language service tests against `tsz-server` to measure
 language service feature coverage (completions, quickinfo, go-to-definition, etc.).
@@ -32,11 +38,6 @@ Progress: [█░░░░░░░░░░░░░░░░░░░] 6.0% (3
 ```
 <!-- FOURSLASH_END -->
 
-## Status
-
-Work in progress.
-
-This project is not ready for general use yet.
 
 ## Documentation
 
