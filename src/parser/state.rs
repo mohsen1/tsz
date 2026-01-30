@@ -1297,6 +1297,15 @@ impl ParserState {
                     self.parse_expression_statement()
                 }
             }
+            SyntaxKind::AwaitKeyword => {
+                // await using declaration (ES2022)
+                // Look ahead to see if it's "await using"
+                if self.look_ahead_is_await_using() {
+                    self.parse_variable_statement()
+                } else {
+                    self.parse_expression_statement()
+                }
+            }
             SyntaxKind::AtToken => {
                 // Decorator: @decorator class/function
                 self.parse_decorated_declaration()
@@ -1460,6 +1469,13 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_decl
+    }
+
+    /// Look ahead to see if we have "await using"
+    fn look_ahead_is_await_using(&mut self) -> bool {
+        look_ahead_is(&mut self.scanner, self.current_token, |token| {
+            token == SyntaxKind::UsingKeyword
+        })
     }
 
     /// Look ahead to see if we have "import identifier ="
@@ -1705,7 +1721,7 @@ impl ParserState {
 
         let start_pos = self.token_pos();
 
-        // Consume var/let/const/using and get flags
+        // Consume var/let/const/using/await using and get flags
         let flags: u16 = match self.token() {
             SyntaxKind::LetKeyword => {
                 self.next_token();
@@ -1718,6 +1734,12 @@ impl ParserState {
             SyntaxKind::UsingKeyword => {
                 self.next_token();
                 node_flags::USING as u16
+            }
+            SyntaxKind::AwaitKeyword => {
+                // await using declaration
+                self.next_token(); // consume 'await'
+                self.parse_expected(SyntaxKind::UsingKeyword); // consume 'using'
+                node_flags::AWAIT_USING as u16
             }
             _ => {
                 self.next_token();
@@ -5192,9 +5214,10 @@ impl ParserState {
                 // export declare function/class/namespace/var/etc.
                 self.parse_ambient_declaration()
             }
-            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword | SyntaxKind::UsingKeyword => {
-                self.parse_variable_statement()
-            }
+            SyntaxKind::VarKeyword
+            | SyntaxKind::LetKeyword
+            | SyntaxKind::UsingKeyword
+            | SyntaxKind::AwaitKeyword => self.parse_variable_statement(),
             SyntaxKind::ConstKeyword => {
                 // export const enum or export const variable
                 if self.look_ahead_is_const_enum() {
