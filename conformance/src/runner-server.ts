@@ -832,16 +832,20 @@ interface TestStats {
   skipped: number;
   timedOut: number;
   oom: number;
-  /** Tests where TSC also crashed (not counted against tsz) */
-  tscAlsoFailed: number;
+  /** Tests where TSC crashed but tsz ran successfully */
+  tszHandlesBetter: number;
+  /** Tests where both TSC and tsz crashed */
+  bothCrashed: number;
   byCategory: Record<string, { total: number; passed: number }>;
   missingCodes: Map<number, number>;
   extraCodes: Map<number, number>;
   crashedTests: { path: string; error: string }[];
   oomTests: string[];
   timedOutTests: string[];
-  /** Tests where TSC crashed (stack overflow, undefined, etc.) */
-  tscCrashedTests: string[];
+  /** Tests where TSC crashed but tsz succeeded */
+  tscCrashedTszSucceeded: { path: string; tscError: string }[];
+  /** Tests where both crashed */
+  bothCrashedTests: string[];
   workerStats: {
     spawned: number;
     crashed: number;
@@ -1103,14 +1107,16 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     skipped: 0,
     timedOut: 0,
     oom: 0,
-    tscAlsoFailed: 0,
+    tszHandlesBetter: 0,
+    bothCrashed: 0,
     byCategory: {},
     missingCodes: new Map(),
     extraCodes: new Map(),
     crashedTests: [],
     oomTests: [],
     timedOutTests: [],
-    tscCrashedTests: [],
+    tscCrashedTszSucceeded: [],
+    bothCrashedTests: [],
     workerStats: { spawned: workerCount, crashed: 0, respawned: 0 },
   };
 
@@ -1279,17 +1285,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         const cacheEntry = cacheEntries[relativePath];
         const tscCodes = cacheEntry?.codes || [];
         const tscCrashed = cacheEntry?.tscCrashed ?? false;
-
-        // Check if TSC also crashed on this test
-        if (tscCrashed) {
-          stats.tscAlsoFailed++;
-          stats.tscCrashedTests.push(relativePath);
-          // Count as passed since TSC also fails
-          stats.passed++;
-          stats.byCategory[category].passed++;
-          if (verbose) log(`[tsc-crash] ${relativePath}: TSC also crashes`, colors.magenta);
-          return;
-        }
+        const tscError = cacheEntry?.tscError;
 
         // Run check via server with dynamic timeout
         const { result, timedOut } = await pool.withClientTimeout(
@@ -1299,19 +1295,33 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
 
         // Check for timeout
         if (timedOut) {
-          stats.timedOut++;
-          stats.failed++;
-          stats.timedOutTests.push(relativePath);
-          if (verbose) log(`[timeout] ${relativePath}`, colors.yellow);
+          if (tscCrashed) {
+            // Both crashed
+            stats.bothCrashed++;
+            stats.bothCrashedTests.push(relativePath);
+            if (verbose) log(`[both-crash] ${relativePath}: Both TSC and tsz fail (tsz timeout)`, colors.dim);
+          } else {
+            stats.timedOut++;
+            stats.failed++;
+            stats.timedOutTests.push(relativePath);
+            if (verbose) log(`[timeout] ${relativePath}`, colors.yellow);
+          }
           return;
         }
 
         // Check for OOM
         if (result!.oom) {
-          stats.oom++;
-          stats.failed++;
-          stats.oomTests.push(relativePath);
-          if (verbose) log(`[oom] ${relativePath}`, colors.yellow);
+          if (tscCrashed) {
+            // Both crashed
+            stats.bothCrashed++;
+            stats.bothCrashedTests.push(relativePath);
+            if (verbose) log(`[both-crash] ${relativePath}: Both TSC and tsz fail (tsz OOM)`, colors.dim);
+          } else {
+            stats.oom++;
+            stats.failed++;
+            stats.oomTests.push(relativePath);
+            if (verbose) log(`[oom] ${relativePath}`, colors.yellow);
+          }
           return;
         }
 
@@ -1321,6 +1331,20 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         }
 
         const wasmCodes = result!.codes;
+
+        // Check if TSC crashed on this test
+        if (tscCrashed) {
+          // tsz succeeded where TSC crashed - this is a win!
+          stats.tszHandlesBetter++;
+          stats.tscCrashedTszSucceeded.push({
+            path: relativePath,
+            tscError: tscError || 'unknown error'
+          });
+          stats.passed++;
+          stats.byCategory[category].passed++;
+          if (verbose) log(`[tsc-crash] ${relativePath}: TSC crashes but tsz succeeds!`, colors.cyan);
+          return;
+        }
 
         // Compare results
         const tscSet = new Set(tscCodes);
@@ -1403,7 +1427,14 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     const effectiveTotal = stats.total - stats.skipped;
     const passRate = effectiveTotal > 0 ? ((stats.passed / effectiveTotal) * 100).toFixed(1) : '0.0';
 
-    // Top errors first
+    // By Category first
+    log('\nBy Category:', colors.bold);
+    for (const [cat, s] of Object.entries(stats.byCategory)) {
+      const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
+      log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
+    }
+
+    // Top errors
     log('\nTop Extra Errors:', colors.bold);
     for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
       log(`  TS${c}: ${n}x`, colors.yellow);
@@ -1446,21 +1477,25 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       }
     }
 
-    if (stats.tscCrashedTests.length > 0) {
-      log('\nTSC Also Crashes (not counted against tsz):', colors.magenta);
-      for (const t of stats.tscCrashedTests.slice(0, 5)) {
-        log(`  ${t}`, colors.dim);
+    if (stats.tscCrashedTszSucceeded.length > 0) {
+      log('\nTSC Crashes But tsz Succeeds:', colors.cyan);
+      for (const t of stats.tscCrashedTszSucceeded.slice(0, 5)) {
+        log(`  ${t.path}`, colors.green);
+        log(`    TSC error: ${t.tscError.slice(0, 60)}`, colors.dim);
       }
-      if (stats.tscCrashedTests.length > 5) {
-        log(`  ... and ${stats.tscCrashedTests.length - 5} more`, colors.dim);
+      if (stats.tscCrashedTszSucceeded.length > 5) {
+        log(`  ... and ${stats.tscCrashedTszSucceeded.length - 5} more`, colors.dim);
       }
     }
 
-    // By Category
-    log('\nBy Category:', colors.bold);
-    for (const [cat, s] of Object.entries(stats.byCategory)) {
-      const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
-      log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
+    if (stats.bothCrashedTests.length > 0) {
+      log('\nBoth TSC and tsz Crash:', colors.dim);
+      for (const t of stats.bothCrashedTests.slice(0, 3)) {
+        log(`  ${t}`, colors.dim);
+      }
+      if (stats.bothCrashedTests.length > 3) {
+        log(`  ... and ${stats.bothCrashedTests.length - 3} more`, colors.dim);
+      }
     }
 
     // Worker stats
@@ -1472,14 +1507,17 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     // Summary
     log('\nSummary:', colors.bold);
     log(`  Passed:   ${formatNumber(stats.passed)}`, colors.green);
-    if (stats.tscAlsoFailed > 0) {
-      log(`    (includes ${formatNumber(stats.tscAlsoFailed)} where TSC also fails)`, colors.magenta);
+    if (stats.tszHandlesBetter > 0) {
+      log(`    (includes ${formatNumber(stats.tszHandlesBetter)} where TSC crashes but tsz succeeds)`, colors.cyan);
     }
     log(`  Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
     log(`  Skipped:  ${formatNumber(stats.skipped)}`, stats.skipped > 0 ? colors.dim : colors.dim);
     log(`  Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
     log(`  OOM:      ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.magenta : colors.dim);
     log(`  Timeout:  ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
+    if (stats.bothCrashed > 0) {
+      log(`  Both crash: ${formatNumber(stats.bothCrashed)}`, colors.dim);
+    }
 
     // Time and Pass Rate last
     log(`\nTime: ${elapsed.toFixed(1)}s (${(effectiveTotal / elapsed).toFixed(0)} tests/sec)`, colors.dim);
