@@ -59,6 +59,8 @@ use wasm::lsp::position::{LineMap, Position, Range};
 use wasm::lsp::references::FindReferences;
 use wasm::lsp::rename::RenameProvider;
 use wasm::lsp::selection_range::SelectionRangeProvider;
+use wasm::lsp::semantic_tokens::SemanticTokensProvider;
+use wasm::lsp::signature_help::SignatureHelpProvider;
 use wasm::parser::ParserState;
 use wasm::parser::base::NodeIndex;
 use wasm::parser::node::{NodeAccess, NodeArena};
@@ -763,10 +765,12 @@ impl Server {
         match request.command.as_str() {
             "open" => self.handle_open(seq, &request),
             "close" => self.handle_close(seq, &request),
+            "change" => self.handle_change(seq, &request),
             "configure" => self.handle_configure(seq, &request),
             "quickinfo" => self.handle_quickinfo(seq, &request),
             "definition" | "typeDefinition" => self.handle_definition(seq, &request),
             "references" => self.handle_references(seq, &request),
+            "references-full" => self.handle_references_full(seq, &request),
             "completions" | "completionInfo" => self.handle_completions(seq, &request),
             "completionEntryDetails" => self.handle_completion_details(seq, &request),
             "signatureHelp" => self.handle_signature_help(seq, &request),
@@ -776,10 +780,12 @@ impl Server {
             "geterr" => self.handle_geterr(seq, &request),
             "geterrForProject" => self.handle_geterr_for_project(seq, &request),
             "navtree" | "navbar" => self.handle_navtree(seq, &request),
+            "navto" | "navTo" => self.handle_navto(seq, &request),
             "documentHighlights" => self.handle_document_highlights(seq, &request),
             "rename" => self.handle_rename(seq, &request),
             "getCodeFixes" => self.handle_get_code_fixes(seq, &request),
             "getCombinedCodeFix" => self.handle_get_combined_code_fix(seq, &request),
+            "getSupportedCodeFixes" => self.handle_get_supported_code_fixes(seq, &request),
             "getApplicableRefactors" => self.handle_get_applicable_refactors(seq, &request),
             "getEditsForRefactor" => self.handle_get_edits_for_refactor(seq, &request),
             "organizeImports" => self.handle_organize_imports(seq, &request),
@@ -794,6 +800,9 @@ impl Server {
                 self.handle_external_project(seq, &request)
             }
             "updateOpen" => self.handle_update_open(seq, &request),
+            "encodedSemanticClassifications-full" => {
+                self.handle_encoded_semantic_classifications_full(seq, &request)
+            }
             "inlayHints" => self.handle_inlay_hints(seq, &request),
             "selectionRange" => self.handle_selection_range(seq, &request),
             "linkedEditingRange" => self.handle_linked_editing_range(seq, &request),
@@ -867,6 +876,113 @@ impl Server {
             success: true,
             message: None,
             body: None,
+        }
+    }
+
+    fn handle_change(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let args = &request.arguments;
+        let file = args.get("file").and_then(|v| v.as_str());
+
+        if let Some(file_path) = file {
+            let line = args.get("line").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+            let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+            let end_line = args
+                .get("endLine")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(line as u64) as u32;
+            let end_offset = args
+                .get("endOffset")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(offset as u64) as u32;
+            let insert_string = args
+                .get("insertString")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if let Some(content) = self.open_files.get(file_path).cloned() {
+                let new_content =
+                    Self::apply_change(&content, line, offset, end_line, end_offset, insert_string);
+                self.open_files.insert(file_path.to_string(), new_content);
+            }
+        }
+
+        TsServerResponse {
+            seq,
+            msg_type: "response".to_string(),
+            command: "change".to_string(),
+            request_seq: request.seq,
+            success: true,
+            message: None,
+            body: None,
+        }
+    }
+
+    /// Apply a text change to file content.
+    fn apply_change(
+        content: &str,
+        line: u32,
+        offset: u32,
+        end_line: u32,
+        end_offset: u32,
+        insert_string: &str,
+    ) -> String {
+        let start_byte = Self::line_offset_to_byte(content, line, offset);
+        let end_byte = Self::line_offset_to_byte(content, end_line, end_offset);
+        let mut result =
+        let mut result = String::with_capacity(
+            content.len().saturating_sub(end_byte.saturating_sub(start_byte)).saturating_add(insert_string.len())
+        );
+        result.push_str(&content[..start_byte]);
+        result.push_str(insert_string);
+        result.push_str(&content[end_byte..]);
+        result
+    }
+
+    /// Convert 1-based line/offset to a byte offset in the content string.
+    fn line_offset_to_byte(content: &str, line: u32, offset: u32) -> usize {
+        let target_line = (line as usize).saturating_sub(1);
+        let target_col = (offset as usize).saturating_sub(1);
+        let mut current_line = 0usize;
+        let mut line_start = 0usize;
+        if target_line > 0 {
+            for (i, ch) in content.char_indices() {
+                if ch == '\n' {
+                    current_line += 1;
+                    if current_line == target_line {
+                        line_start = i + 1;
+                        break;
+                    }
+                }
+            }
+            if current_line < target_line {
+                return content.len();
+            }
+        }
+        let mut byte_pos = line_start;
+        for _ in 0..target_col {
+            match content[byte_pos..].chars().next() {
+                Some(c) if c != '\n' => byte_pos += c.len_utf8(),
+                _ => break,
+            }
+        }
+        byte_pos.min(content.len())
+    }
+
+    fn completion_kind_to_str(kind: wasm::lsp::completions::CompletionItemKind) -> &'static str {
+        match kind {
+            wasm::lsp::completions::CompletionItemKind::Variable => "var",
+            wasm::lsp::completions::CompletionItemKind::Function => "function",
+            wasm::lsp::completions::CompletionItemKind::Class => "class",
+            wasm::lsp::completions::CompletionItemKind::Method => "method",
+            wasm::lsp::completions::CompletionItemKind::Parameter => "parameter",
+            wasm::lsp::completions::CompletionItemKind::Property => "property",
+            wasm::lsp::completions::CompletionItemKind::Keyword => "keyword",
+            wasm::lsp::completions::CompletionItemKind::Interface => "interface",
+            wasm::lsp::completions::CompletionItemKind::Enum => "enum",
+            wasm::lsp::completions::CompletionItemKind::TypeAlias => "type",
+            wasm::lsp::completions::CompletionItemKind::Module => "module",
+            wasm::lsp::completions::CompletionItemKind::TypeParameter => "type parameter",
+            wasm::lsp::completions::CompletionItemKind::Constructor => "constructor",
         }
     }
 
@@ -1134,15 +1250,7 @@ impl Server {
             let entries: Vec<serde_json::Value> = items
                 .iter()
                 .map(|item| {
-                    let kind = match item.kind {
-                        wasm::lsp::completions::CompletionItemKind::Variable => "var",
-                        wasm::lsp::completions::CompletionItemKind::Function => "function",
-                        wasm::lsp::completions::CompletionItemKind::Class => "class",
-                        wasm::lsp::completions::CompletionItemKind::Method => "method",
-                        wasm::lsp::completions::CompletionItemKind::Parameter => "parameter",
-                        wasm::lsp::completions::CompletionItemKind::Property => "property",
-                        wasm::lsp::completions::CompletionItemKind::Keyword => "keyword",
-                    };
+                    let kind = Self::completion_kind_to_str(item.kind);
                     let mut entry = serde_json::json!({
                         "name": item.label,
                         "kind": kind,
@@ -1194,11 +1302,125 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let entry_names = request.arguments.get("entryNames")?.as_array()?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let interner = TypeInterner::new();
+            let provider = Completions::new_with_types(
+                &arena,
+                &binder,
+                &line_map,
+                &interner,
+                &source_text,
+                file.to_string(),
+            );
+            let line = request.arguments.get("line")?.as_u64()? as u32;
+            let offset = request.arguments.get("offset")?.as_u64()? as u32;
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let items = provider.get_completions(root, position)?;
+            let details: Vec<serde_json::Value> = entry_names
+                .iter()
+                .filter_map(|entry_name| {
+                    let name = if let Some(s) = entry_name.as_str() {
+                        s.to_string()
+                    } else if let Some(obj) = entry_name.as_object() {
+                        obj.get("name")?.as_str()?.to_string()
+                    } else {
+                        return None;
+                    };
+                    let item = items.iter().find(|i| i.label == name)?;
+                    let kind = Self::completion_kind_to_str(item.kind);
+                    let display_parts = if let Some(ref detail) = item.detail {
+                        serde_json::json!([{"text": detail, "kind": "text"}])
+                    } else {
+                        serde_json::json!([{"text": &name, "kind": "text"}])
+                    };
+                    let documentation = if let Some(ref doc) = item.documentation {
+                        serde_json::json!([{"text": doc, "kind": "text"}])
+                    } else {
+                        serde_json::json!([])
+                    };
+                    Some(serde_json::json!({
+                        "name": name,
+                        "kind": kind,
+                        "kindModifiers": "",
+                        "displayParts": display_parts,
+                        "documentation": documentation,
+                        "tags": [],
+                        "codeActions": [],
+                        "source": [],
+                    }))
+                })
+                .collect();
+            Some(serde_json::json!(details))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_signature_help(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, None)
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let interner = TypeInterner::new();
+            let provider = SignatureHelpProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                &interner,
+                &source_text,
+                file.clone(),
+            );
+            let mut type_cache = None;
+            let sig_help = provider.get_signature_help(root, position, &mut type_cache)?;
+            let items: Vec<serde_json::Value> = sig_help
+                .signatures
+                .iter()
+                .map(|sig| {
+                    let params: Vec<serde_json::Value> = sig
+                        .parameters
+                        .iter()
+                        .map(|p| {
+                            let mut param = serde_json::json!({
+                                "name": p.label,
+                                "display": [{"text": &p.label, "kind": "text"}],
+                                "isOptional": false,
+                            });
+                            if let Some(ref doc) = p.documentation {
+                                param["documentation"] =
+                                    serde_json::json!([{"text": doc, "kind": "text"}]);
+                            }
+                            param
+                        })
+                        .collect();
+                    let mut item = serde_json::json!({
+                        "isVariadic": false,
+                        "prefixDisplayParts": [{"text": "", "kind": "text"}],
+                        "suffixDisplayParts": [{"text": "", "kind": "text"}],
+                        "separatorDisplayParts": [{"text": ", ", "kind": "punctuation"}],
+                        "parameters": params,
+                    });
+                    if let Some(ref doc) = sig.documentation {
+                        item["documentation"] = serde_json::json!([{"text": doc, "kind": "text"}]);
+                    }
+                    item
+                })
+                .collect();
+            Some(serde_json::json!({
+                "items": items,
+                "applicableSpan": {
+                    "start": Self::lsp_to_tsserver_position(&position),
+                    "end": Self::lsp_to_tsserver_position(&position),
+                },
+                "selectedItemIndex": sig_help.active_signature,
+                "argumentIndex": sig_help.active_parameter,
+                "argumentCount": sig_help.active_parameter + 1,
+            }))
+        })();
+        self.stub_response(seq, request, result)
     }
 
     fn handle_suggestion_diagnostics_sync(
@@ -1451,6 +1673,174 @@ impl Server {
         )
     }
 
+    fn handle_references_full(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider =
+                FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let locations = provider.find_references(root, position)?;
+            let symbol_name = {
+                let ref_offset = line_map.position_to_offset(position, &source_text)?;
+                let node_idx = wasm::lsp::utils::find_node_at_offset(&arena, ref_offset);
+                if !node_idx.is_none() {
+                    arena.get_identifier_text(node_idx).map(|s| s.to_string())
+                } else {
+                    None
+                }
+            }
+            .unwrap_or_default();
+            let refs: Vec<serde_json::Value> = locations
+                .iter()
+                .map(|loc| {
+                    let line_text = source_text
+                        .lines()
+                        .nth(loc.range.start.line as usize)
+                        .unwrap_or("")
+                        .to_string();
+                    serde_json::json!({
+                        "file": loc.file_path,
+                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
+                        "lineText": line_text,
+                        "isWriteAccess": false,
+                        "isDefinition": false,
+                    })
+                })
+                .collect();
+            Some(serde_json::json!({
+                "refs": refs,
+                "symbolName": symbol_name,
+                "symbolStartOffset": offset,
+                "symbolDisplayString": symbol_name,
+            }))
+        })();
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({
+                "refs": [],
+                "symbolName": "",
+                "symbolStartOffset": 0,
+                "symbolDisplayString": ""
+            }))),
+        )
+    }
+
+    fn handle_navto(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let search_value = request
+                .arguments
+                .get("searchValue")
+                .and_then(|v| v.as_str())?;
+            if search_value.is_empty() {
+                return Some(serde_json::json!([]));
+            }
+            let search_lower = search_value.to_lowercase();
+            let mut nav_items: Vec<serde_json::Value> = Vec::new();
+            let file_paths: Vec<String> = self.open_files.keys().cloned().collect();
+            for file_path in &file_paths {
+                if let Some((arena, _binder, root, source_text)) =
+                    self.parse_and_bind_file(file_path)
+                {
+                    let line_map = LineMap::build(&source_text);
+                    let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
+                    let symbols = provider.get_document_symbols(root);
+                    Self::collect_navto_items(&symbols, &search_lower, file_path, &mut nav_items);
+                }
+            }
+            Some(serde_json::json!(nav_items))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn collect_navto_items(
+        symbols: &[wasm::lsp::document_symbols::DocumentSymbol],
+        search_lower: &str,
+        file_path: &str,
+        result: &mut Vec<serde_json::Value>,
+    ) {
+        for sym in symbols {
+            let name_lower = sym.name.to_lowercase();
+            if name_lower.contains(search_lower) {
+                let kind = match sym.kind {
+                    wasm::lsp::document_symbols::SymbolKind::Module => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Class => "class",
+                    wasm::lsp::document_symbols::SymbolKind::Method => "method",
+                    wasm::lsp::document_symbols::SymbolKind::Property => "property",
+                    wasm::lsp::document_symbols::SymbolKind::Field => "property",
+                    wasm::lsp::document_symbols::SymbolKind::Constructor => "constructor",
+                    wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
+                    wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
+                    wasm::lsp::document_symbols::SymbolKind::Function => "function",
+                    wasm::lsp::document_symbols::SymbolKind::Variable => "var",
+                    wasm::lsp::document_symbols::SymbolKind::Constant => "const",
+                    wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                    wasm::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
+                    _ => "unknown",
+                };
+                let match_kind = if name_lower == *search_lower {
+                    "exact"
+                } else if name_lower.starts_with(search_lower) {
+                    "prefix"
+                } else {
+                    "substring"
+                };
+                result.push(serde_json::json!({
+                    "name": sym.name,
+                    "kind": kind,
+                    "kindModifiers": "",
+                    "matchKind": match_kind,
+                    "isCaseSensitive": false,
+                    "file": file_path,
+                    "start": {
+                        "line": sym.range.start.line + 1,
+                        "offset": sym.range.start.character + 1,
+                    },
+                    "end": {
+                        "line": sym.range.end.line + 1,
+                        "offset": sym.range.end.character + 1,
+                    },
+                }));
+            }
+            Self::collect_navto_items(&sym.children, search_lower, file_path, result);
+        }
+    }
+
+    fn handle_get_supported_code_fixes(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.stub_response(seq, request, Some(serde_json::json!([])))
+    }
+
+    fn handle_encoded_semantic_classifications_full(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let mut provider =
+                SemanticTokensProvider::new(&arena, &binder, &line_map, &source_text);
+            let tokens = provider.get_semantic_tokens(root);
+            Some(serde_json::json!({
+                "spans": tokens,
+                "endOfLineState": 0,
+            }))
+        })();
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({"spans": [], "endOfLineState": 0}))),
+        )
+    }
+
     fn handle_get_applicable_refactors(
         &mut self,
         seq: u64,
@@ -1585,7 +1975,15 @@ impl Server {
             let file = request.arguments.get("file")?.as_str()?;
             let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&source_text);
-            let provider = InlayHintsProvider::new(&arena, &binder, &line_map, &source_text);
+            let interner = TypeInterner::new();
+            let provider = InlayHintsProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                &source_text,
+                &interner,
+                file.to_string(),
+            );
 
             // Extract the range from arguments, default to entire file
             let start = request
@@ -2476,4 +2874,136 @@ fn run_legacy_protocol(server: &mut Server) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_server() -> Server {
+        Server {
+            lib_dir: PathBuf::from("/nonexistent"),
+            tests_lib_dir: PathBuf::from("/nonexistent"),
+            lib_cache: FxHashMap::default(),
+            checks_completed: 0,
+            response_seq: 0,
+            open_files: HashMap::new(),
+            _server_mode: ServerMode::Semantic,
+            _log_config: LogConfig {
+                level: LogLevel::Off,
+                file: None,
+                trace_to_console: false,
+            },
+        }
+    }
+
+    fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest {
+        TsServerRequest {
+            seq: 1,
+            msg_type: "request".to_string(),
+            command: command.to_string(),
+            arguments,
+        }
+    }
+
+    #[test]
+    fn test_line_offset_to_byte_first_char() {
+        assert_eq!(Server::line_offset_to_byte("hello\nworld\n", 1, 1), 0);
+    }
+
+    #[test]
+    fn test_line_offset_to_byte_second_line() {
+        assert_eq!(Server::line_offset_to_byte("hello\nworld\n", 2, 1), 6);
+    }
+
+    #[test]
+    fn test_apply_change_insert() {
+        assert_eq!(
+            Server::apply_change("hello world", 1, 7, 1, 7, "beautiful "),
+            "hello beautiful world"
+        );
+    }
+
+    #[test]
+    fn test_apply_change_replace() {
+        assert_eq!(
+            Server::apply_change("hello world", 1, 7, 1, 12, "Rust"),
+            "hello Rust"
+        );
+    }
+
+    #[test]
+    fn test_apply_change_delete() {
+        assert_eq!(
+            Server::apply_change("hello world", 1, 7, 1, 12, ""),
+            "hello "
+        );
+    }
+
+    #[test]
+    fn test_handle_change_updates_file() {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert("/test.ts".to_string(), "const x = 1;".to_string());
+        let req = make_request(
+            "change",
+            serde_json::json!({
+                "file": "/test.ts",
+                "line": 1, "offset": 11,
+                "endLine": 1, "endOffset": 12,
+                "insertString": "2"
+            }),
+        );
+        let resp = server.handle_tsserver_request(req);
+        assert!(resp.success);
+        assert_eq!(server.open_files.get("/test.ts").unwrap(), "const x = 2;");
+    }
+
+    #[test]
+    fn test_new_commands_are_recognized() {
+        let mut server = make_server();
+        let commands = vec![
+            "change",
+            "configure",
+            "references-full",
+            "navto",
+            "signatureHelp",
+            "completionEntryDetails",
+            "getSupportedCodeFixes",
+            "getApplicableRefactors",
+            "getEditsForRefactor",
+            "encodedSemanticClassifications-full",
+        ];
+        for cmd in commands {
+            let req = make_request(
+                cmd,
+                serde_json::json!({"file": "/test.ts", "line": 1, "offset": 1}),
+            );
+            let resp = server.handle_tsserver_request(req);
+            assert!(
+                resp.success
+                    || !resp
+                        .message
+                        .as_deref()
+                        .unwrap_or("")
+                        .contains("Unrecognized"),
+                "Command '{}' was not recognized",
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn test_unrecognized_command() {
+        let mut server = make_server();
+        let req = make_request("nonExistentCommand", serde_json::json!({}));
+        let resp = server.handle_tsserver_request(req);
+        assert!(!resp.success);
+        assert!(
+            resp.message
+                .unwrap()
+                .contains("Unrecognized command: nonExistentCommand")
+        );
+    }
 }

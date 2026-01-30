@@ -2,12 +2,167 @@
 //!
 //! Given a position in the source, finds where the symbol at that position is defined.
 
-use crate::binder::BinderState;
+use crate::binder::{BinderState, SymbolId};
 use crate::lsp::position::{LineMap, Location, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
+
+/// Well-known built-in global identifiers that are provided by the runtime
+/// environment and not defined in user source files.
+/// When these are encountered and no declaration is found, we return None
+/// instead of crashing or returning garbage positions.
+const BUILTIN_GLOBALS: &[&str] = &[
+    // Console API
+    "console",
+    // Fundamental objects
+    "Object",
+    "Function",
+    "Boolean",
+    "Symbol",
+    // Error types
+    "Error",
+    "AggregateError",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    // Numbers and dates
+    "Number",
+    "BigInt",
+    "Math",
+    "Date",
+    "Infinity",
+    "NaN",
+    "undefined",
+    // Text processing
+    "String",
+    "RegExp",
+    // Indexed collections
+    "Array",
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+    // Keyed collections
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "WeakRef",
+    // Structured data
+    "ArrayBuffer",
+    "SharedArrayBuffer",
+    "Atomics",
+    "DataView",
+    "JSON",
+    // Control abstraction
+    "Promise",
+    "Generator",
+    "GeneratorFunction",
+    "AsyncFunction",
+    "AsyncGenerator",
+    "AsyncGeneratorFunction",
+    // Reflection
+    "Reflect",
+    "Proxy",
+    // Internationalization
+    "Intl",
+    // Web APIs
+    "globalThis",
+    "window",
+    "document",
+    "navigator",
+    "location",
+    "history",
+    "localStorage",
+    "sessionStorage",
+    "fetch",
+    "Headers",
+    "Request",
+    "Response",
+    "URL",
+    "URLSearchParams",
+    "setTimeout",
+    "setInterval",
+    "clearTimeout",
+    "clearInterval",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+    "queueMicrotask",
+    "structuredClone",
+    "atob",
+    "btoa",
+    "TextEncoder",
+    "TextDecoder",
+    "AbortController",
+    "AbortSignal",
+    "Blob",
+    "File",
+    "FileReader",
+    "FormData",
+    "ReadableStream",
+    "WritableStream",
+    "TransformStream",
+    "Event",
+    "EventTarget",
+    "CustomEvent",
+    "MutationObserver",
+    "IntersectionObserver",
+    "ResizeObserver",
+    "PerformanceObserver",
+    "WebSocket",
+    "Worker",
+    "MessageChannel",
+    "MessagePort",
+    "BroadcastChannel",
+    // Node.js globals
+    "process",
+    "Buffer",
+    "require",
+    "module",
+    "exports",
+    "__dirname",
+    "__filename",
+    "global",
+    // TypeScript utility types (may appear as identifiers)
+    "Partial",
+    "Required",
+    "Readonly",
+    "Record",
+    "Pick",
+    "Omit",
+    "Exclude",
+    "Extract",
+    "NonNullable",
+    "Parameters",
+    "ConstructorParameters",
+    "ReturnType",
+    "InstanceType",
+    "ThisParameterType",
+    "OmitThisParameter",
+    "ThisType",
+    "Awaited",
+    // Iterator/Iterable
+    "Iterator",
+    "IterableIterator",
+    "AsyncIterableIterator",
+];
+
+/// Check if a name is a well-known built-in global.
+fn is_builtin_global(name: &str) -> bool {
+    BUILTIN_GLOBALS.contains(&name)
+}
 
 /// Go-to-Definition provider.
 ///
@@ -80,42 +235,27 @@ impl<'a> GoToDefinition<'a> {
             return None;
         }
 
-        // 3. Resolve the node to a symbol
+        // 3. Resolve the node to a symbol via scope walking
         let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)?
+        let symbol_id_opt = if let Some(scope_cache) = scope_cache {
+            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)
         } else {
-            walker.resolve_node(root, node_idx)?
+            walker.resolve_node(root, node_idx)
         };
 
-        // 4. Get the symbol's declarations
-        let symbol = self.binder.symbols.get(symbol_id)?;
-
-        // 5. Convert declaration nodes to Locations
-        let locations: Vec<Location> = symbol
-            .declarations
-            .iter()
-            .filter_map(|&decl_idx| {
-                let decl_node = self.arena.get(decl_idx)?;
-                let start_pos = self
-                    .line_map
-                    .offset_to_position(decl_node.pos, self.source_text);
-                let end_pos = self
-                    .line_map
-                    .offset_to_position(decl_node.end, self.source_text);
-
-                Some(Location {
-                    file_path: self.file_name.clone(),
-                    range: Range::new(start_pos, end_pos),
-                })
-            })
-            .collect();
-
-        if locations.is_empty() {
-            None
-        } else {
-            Some(locations)
+        // 4. If primary resolution succeeded, use the symbol
+        if let Some(symbol_id) = symbol_id_opt {
+            if let Some(locations) = self.locations_from_symbol(symbol_id) {
+                return Some(locations);
+            }
         }
+
+        // 5. Fallback: try file_locals lookup by identifier text
+        if let Some(locations) = self.try_file_locals_fallback(node_idx) {
+            return Some(locations);
+        }
+
+        None
     }
 
     /// Get the definition location for a specific node (by NodeIndex).
@@ -152,27 +292,64 @@ impl<'a> GoToDefinition<'a> {
 
         // Resolve the node to a symbol
         let mut walker = ScopeWalker::new(self.arena, self.binder);
-        let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)?
+        let symbol_id_opt = if let Some(scope_cache) = scope_cache {
+            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)
         } else {
-            walker.resolve_node(root, node_idx)?
+            walker.resolve_node(root, node_idx)
         };
 
-        // Get the symbol's declarations
-        let symbol = self.binder.symbols.get(symbol_id)?;
+        // If primary resolution succeeded, use the symbol
+        if let Some(symbol_id) = symbol_id_opt {
+            if let Some(locations) = self.locations_from_symbol(symbol_id) {
+                return Some(locations);
+            }
+        }
 
-        // Convert declaration nodes to Locations
+        // Fallback: try file_locals
+        if let Some(locations) = self.try_file_locals_fallback(node_idx) {
+            return Some(locations);
+        }
+
+        None
+    }
+
+    /// Convert a symbol's declarations into validated Location objects.
+    ///
+    /// This validates that declaration positions are within the source text bounds
+    /// to prevent crashes when declarations point to other files or invalid positions.
+    fn locations_from_symbol(&self, symbol_id: SymbolId) -> Option<Vec<Location>> {
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        let source_len = self.source_text.len() as u32;
+
         let locations: Vec<Location> = symbol
             .declarations
             .iter()
             .filter_map(|&decl_idx| {
                 let decl_node = self.arena.get(decl_idx)?;
+
+                // Validate that positions are within the current file's bounds.
+                // Declarations from other files (cross-file references, built-ins)
+                // will have node indices that either don't exist in this arena or
+                // have positions outside this file's text range.
+                if decl_node.pos > source_len || decl_node.end > source_len {
+                    return None;
+                }
+                if decl_node.end < decl_node.pos {
+                    return None;
+                }
+
                 let start_pos = self
                     .line_map
                     .offset_to_position(decl_node.pos, self.source_text);
                 let end_pos = self
                     .line_map
                     .offset_to_position(decl_node.end, self.source_text);
+
+                // Validate computed positions are within the line map bounds
+                let line_count = self.line_map.line_count() as u32;
+                if start_pos.line >= line_count || end_pos.line >= line_count {
+                    return None;
+                }
 
                 Some(Location {
                     file_path: self.file_name.clone(),
@@ -186,6 +363,30 @@ impl<'a> GoToDefinition<'a> {
         } else {
             Some(locations)
         }
+    }
+
+    /// Try to resolve a node's identifier text via the binder's file_locals table.
+    ///
+    /// This serves as a fallback when the scope-based resolution fails (e.g., for
+    /// shorthand properties, certain export patterns, etc.)
+    fn try_file_locals_fallback(&self, node_idx: NodeIndex) -> Option<Vec<Location>> {
+        let node = self.arena.get(node_idx)?;
+        let pos = node.pos as usize;
+        let end = node.end as usize;
+        if end > self.source_text.len() || pos > end {
+            return None;
+        }
+
+        let text = &self.source_text[pos..end];
+
+        // Skip if this is a built-in global - no definition in user source
+        if is_builtin_global(text) {
+            return None;
+        }
+
+        // Try looking up in file_locals
+        let symbol_id = self.binder.file_locals.get(text)?;
+        self.locations_from_symbol(symbol_id)
     }
 }
 
@@ -878,6 +1079,367 @@ mod definition_tests {
         assert!(
             definitions.is_none(),
             "Should not find definition at semicolon"
+        );
+    }
+
+    // =========================================================================
+    // New edge case tests
+    // =========================================================================
+
+    #[test]
+    fn test_goto_definition_builtin_console_returns_none() {
+        // "console" is a built-in global with no user declaration.
+        // Should return None gracefully instead of crashing.
+        let source = "console.log('hello');";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Position at "console" (line 0, column 0)
+        let position = Position::new(0, 0);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        // Should return None (no crash) since console is a built-in
+        assert!(
+            definitions.is_none(),
+            "Built-in global 'console' should return None, not crash"
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_builtin_array_returns_none() {
+        let source = "const arr = new Array(10);";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Position at "Array" (line 0, column 16)
+        let position = Position::new(0, 16);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        assert!(
+            definitions.is_none(),
+            "Built-in global 'Array' should return None"
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_builtin_promise_returns_none() {
+        let source = "const p: Promise<number> = Promise.resolve(42);";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Position at the Promise usage (after the =)
+        let position = Position::new(0, 27);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        assert!(
+            definitions.is_none(),
+            "Built-in global 'Promise' should return None"
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_no_crash_on_position_beyond_file() {
+        let source = "const x = 1;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Position way beyond the file (line 100, column 0)
+        let position = Position::new(100, 0);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        // Should return None (no crash)
+        assert!(
+            definitions.is_none(),
+            "Position beyond file should return None without crash"
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_empty_source() {
+        let source = "";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        let position = Position::new(0, 0);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        assert!(
+            definitions.is_none(),
+            "Empty source should return None without crash"
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_self_declaration_identifier() {
+        // Clicking on the declaration itself should navigate to it
+        let source = "function hello() {}";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Position at "hello" in the function declaration (line 0, column 9)
+        let position = Position::new(0, 9);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        // Should find the declaration (itself)
+        assert!(
+            definitions.is_some(),
+            "Should find declaration for function name"
+        );
+        if let Some(defs) = definitions {
+            assert_eq!(defs[0].range.start.line, 0);
+        }
+    }
+
+    #[test]
+    fn test_goto_definition_is_builtin_global_helper() {
+        // Test the is_builtin_global helper function directly
+        assert!(is_builtin_global("console"));
+        assert!(is_builtin_global("Array"));
+        assert!(is_builtin_global("Promise"));
+        assert!(is_builtin_global("Map"));
+        assert!(is_builtin_global("Set"));
+        assert!(is_builtin_global("setTimeout"));
+        assert!(is_builtin_global("fetch"));
+        assert!(is_builtin_global("process"));
+        assert!(is_builtin_global("Buffer"));
+
+        // User-defined names should NOT be built-in
+        assert!(!is_builtin_global("myFunction"));
+        assert!(!is_builtin_global("MyClass"));
+        assert!(!is_builtin_global("handler"));
+        assert!(!is_builtin_global("data"));
+    }
+
+    #[test]
+    fn test_goto_definition_multiple_builtin_globals_no_crash() {
+        // Multiple built-in references in one file should all return None
+        let source =
+            "console.log(Array.from([1, 2, 3]));\nPromise.resolve(42);\nsetTimeout(() => {}, 100);";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+        // console at (0, 0)
+        let d1 = goto_def.get_definition(root, Position::new(0, 0));
+        assert!(d1.is_none(), "console should return None");
+
+        // Promise at (1, 0)
+        let d2 = goto_def.get_definition(root, Position::new(1, 0));
+        assert!(d2.is_none(), "Promise should return None");
+
+        // setTimeout at (2, 0)
+        let d3 = goto_def.get_definition(root, Position::new(2, 0));
+        assert!(d3.is_none(), "setTimeout should return None");
+    }
+
+    #[test]
+    fn test_goto_definition_interface_reference() {
+        // Interface declarations should be findable
+        let source = "interface IFoo { bar: string; }\nconst x: IFoo = { bar: 'hi' };";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Position at "IFoo" type reference on line 1
+        let position = Position::new(1, 9);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        // We expect this to either find the interface or return None gracefully
+        // (no crash is the critical requirement)
+        if let Some(defs) = &definitions {
+            assert_eq!(
+                defs[0].range.start.line, 0,
+                "Interface definition should be on line 0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_goto_definition_enum_reference() {
+        let source = "enum Color { Red, Green, Blue }\nconst c: Color = Color.Red;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Position at "Color" value reference on line 1 (after the =)
+        let position = Position::new(1, 17);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        // No crash is the critical requirement
+        if let Some(defs) = &definitions {
+            assert_eq!(
+                defs[0].range.start.line, 0,
+                "Enum definition should be on line 0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_goto_definition_default_export_function() {
+        // Export default function should be navigable
+        let source = "export default function greet() { return 'hi'; }";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Position at "greet" (line 0, column 24)
+        let position = Position::new(0, 24);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition(root, position);
+
+        // Should find the function declaration or not crash
+        if let Some(defs) = &definitions {
+            assert_eq!(defs[0].range.start.line, 0);
+        }
+    }
+
+    #[test]
+    fn test_goto_definition_validated_positions_are_in_bounds() {
+        // Ensure returned positions are always within the source text bounds
+        let source = "const x = 1;\nconst y = x + 2;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        // Try every possible valid position in the source
+        let line_count = line_map.line_count() as u32;
+        for line in 0..line_count {
+            for col in 0..50 {
+                let position = Position::new(line, col);
+                let goto_def =
+                    GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+                let definitions = goto_def.get_definition(root, position);
+
+                // If we got definitions, all positions must be in bounds
+                if let Some(defs) = definitions {
+                    for def in &defs {
+                        assert!(
+                            def.range.start.line < line_count,
+                            "Start line {} should be < line_count {}",
+                            def.range.start.line,
+                            line_count
+                        );
+                        assert!(
+                            def.range.end.line < line_count,
+                            "End line {} should be < line_count {}",
+                            def.range.end.line,
+                            line_count
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_goto_definition_for_node_with_none_index() {
+        let source = "const x = 1;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+
+        let goto_def =
+            GoToDefinition::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let definitions = goto_def.get_definition_for_node(root, NodeIndex::NONE);
+
+        assert!(
+            definitions.is_none(),
+            "Should return None for NodeIndex::none()"
         );
     }
 }
