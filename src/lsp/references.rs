@@ -1,6 +1,10 @@
 //! Find References implementation for LSP.
 //!
 //! Given a position in the source, finds all references to the symbol at that position.
+//! Returns detailed reference information including:
+//! - `isWriteAccess`: whether the reference writes to the symbol (assignment, declaration, etc.)
+//! - `isDefinition`: whether the reference is a definition site (declaration, import, etc.)
+//! - `lineText`: the full text of the line containing the reference
 
 use crate::binder::BinderState;
 use crate::binder::SymbolId;
@@ -11,6 +15,53 @@ use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
+/// Detailed information about a single reference to a symbol.
+///
+/// Matches the tsserver references response format, including flags for
+/// write access and definition detection, plus the line text for previews.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceInfo {
+    /// The location (file + range) of this reference.
+    #[serde(flatten)]
+    pub location: Location,
+    /// Whether this reference is a write access (assignment target, declaration, etc.).
+    pub is_write_access: bool,
+    /// Whether this reference is a definition site (declaration, import binding, etc.).
+    pub is_definition: bool,
+    /// The full text of the line containing this reference.
+    pub line_text: String,
+}
+
+impl ReferenceInfo {
+    /// Create a new ReferenceInfo.
+    pub fn new(
+        location: Location,
+        is_write_access: bool,
+        is_definition: bool,
+        line_text: String,
+    ) -> Self {
+        Self {
+            location,
+            is_write_access,
+            is_definition,
+            line_text,
+        }
+    }
+}
+
+/// A rename location entry for findRenameLocations.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameLocation {
+    /// The file path containing this rename location.
+    pub file_path: String,
+    /// The range of text to rename.
+    pub range: Range,
+    /// The full text of the line containing this rename location.
+    pub line_text: String,
+}
+
 /// Find References provider.
 ///
 /// This struct provides LSP "Find References" functionality by:
@@ -18,7 +69,7 @@ use crate::scanner::SyntaxKind;
 /// 2. Finding the AST node at that offset
 /// 3. Resolving the node to a symbol
 /// 4. Finding all references to that symbol in the AST
-/// 5. Returning their locations
+/// 5. Returning their locations with isWriteAccess / isDefinition flags
 pub struct FindReferences<'a> {
     arena: &'a NodeArena,
     binder: &'a BinderState,
@@ -251,6 +302,389 @@ impl<'a> FindReferences<'a> {
         } else {
             Some(locations)
         }
+    }
+
+    /// Find all references with detailed information (isWriteAccess, isDefinition, lineText).
+    ///
+    /// This is the rich version of `find_references` that returns `ReferenceInfo` structs
+    /// matching the tsserver response format.
+    pub fn find_references_detailed(
+        &self,
+        root: NodeIndex,
+        position: Position,
+    ) -> Option<Vec<ReferenceInfo>> {
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        let symbol_id = self.resolve_symbol_internal(root, node_idx, None, None)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        let declaration_set: std::collections::HashSet<u32> =
+            symbol.declarations.iter().map(|n| n.0).collect();
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let ref_nodes = walker.find_references(root, symbol_id);
+
+        let mut all_nodes = ref_nodes;
+        all_nodes.extend(symbol.declarations.iter().copied());
+        all_nodes.sort_by_key(|n| n.0);
+        all_nodes.dedup();
+
+        let results: Vec<ReferenceInfo> = all_nodes
+            .iter()
+            .filter_map(|&idx| {
+                let target_idx = self.name_node_for(idx).unwrap_or(idx);
+                let location = self.location_for_node(idx)?;
+                let is_def = self.is_definition_node(idx, &declaration_set);
+                let is_write = is_def || self.is_write_access_node(target_idx);
+                let line_text = self.get_line_text(location.range.start.line);
+                Some(ReferenceInfo::new(location, is_write, is_def, line_text))
+            })
+            .collect();
+
+        if results.is_empty() {
+            None
+        } else {
+            Some(results)
+        }
+    }
+
+    /// Find rename locations for the symbol at the given position.
+    ///
+    /// Returns all locations where the symbol name appears and should be renamed.
+    /// This is similar to find_references but returns `RenameLocation` entries
+    /// suitable for the `findRenameLocations` protocol.
+    pub fn find_rename_locations(
+        &self,
+        root: NodeIndex,
+        position: Position,
+    ) -> Option<Vec<RenameLocation>> {
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        let symbol_id = self.resolve_symbol_internal(root, node_idx, None, None)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let ref_nodes = walker.find_references(root, symbol_id);
+
+        let mut all_nodes = ref_nodes;
+        all_nodes.extend(symbol.declarations.iter().copied());
+        all_nodes.sort_by_key(|n| n.0);
+        all_nodes.dedup();
+
+        let results: Vec<RenameLocation> = all_nodes
+            .iter()
+            .filter_map(|&idx| {
+                let location = self.location_for_node(idx)?;
+                let line_text = self.get_line_text(location.range.start.line);
+                Some(RenameLocation {
+                    file_path: location.file_path,
+                    range: location.range,
+                    line_text,
+                })
+            })
+            .collect();
+
+        if results.is_empty() {
+            None
+        } else {
+            Some(results)
+        }
+    }
+
+    /// Determine whether a node represents a write access to a symbol.
+    ///
+    /// A reference is considered a write access if it is:
+    /// - The left-hand side of an assignment expression (`x = 1`, `x += 1`)
+    /// - A variable declaration name (`let x = 1`, `const x = 1`, `var x`)
+    /// - A function/class/interface/enum/type alias declaration name
+    /// - A parameter declaration name (`function foo(x)`)
+    /// - An import binding (`import { x }`, `import x from ...`)
+    /// - A for-in/for-of loop variable
+    /// - A catch clause variable
+    /// - A binding element in destructuring patterns
+    ///
+    /// Uses AST parent-walking for accurate detection, reusing the same
+    /// approach as the highlighting module.
+    pub fn is_write_access_node(&self, node_idx: NodeIndex) -> bool {
+        if node_idx.is_none() {
+            return false;
+        }
+
+        // Walk up to the parent to determine context
+        let parent_idx = self
+            .arena
+            .get_extended(node_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+
+        if parent_idx.is_none() {
+            return false;
+        }
+
+        let parent_node = match self.arena.get(parent_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        let pk = parent_node.kind;
+
+        // Variable declaration: `let x = 1` / `const x = 1` / `var x`
+        if pk == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(decl) = self.arena.get_variable_declaration(parent_node) {
+                if decl.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Parameter declaration: `function foo(x)`
+        if pk == syntax_kind_ext::PARAMETER {
+            if let Some(param) = self.arena.get_parameter(parent_node) {
+                if param.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Function declaration: `function foo() {}`
+        if pk == syntax_kind_ext::FUNCTION_DECLARATION
+            || pk == syntax_kind_ext::FUNCTION_EXPRESSION
+            || pk == syntax_kind_ext::ARROW_FUNCTION
+        {
+            if let Some(func) = self.arena.get_function(parent_node) {
+                if func.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Class declaration/expression: `class Foo {}`
+        if pk == syntax_kind_ext::CLASS_DECLARATION || pk == syntax_kind_ext::CLASS_EXPRESSION {
+            if let Some(class) = self.arena.get_class(parent_node) {
+                if class.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Interface declaration: `interface Foo {}`
+        if pk == syntax_kind_ext::INTERFACE_DECLARATION {
+            if let Some(iface) = self.arena.get_interface(parent_node) {
+                if iface.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Type alias declaration: `type Foo = ...`
+        if pk == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            if let Some(alias) = self.arena.get_type_alias(parent_node) {
+                if alias.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Enum declaration: `enum Foo {}`
+        if pk == syntax_kind_ext::ENUM_DECLARATION {
+            if let Some(enm) = self.arena.get_enum(parent_node) {
+                if enm.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Enum member: `enum Foo { Bar }`
+        if pk == syntax_kind_ext::ENUM_MEMBER {
+            if let Some(member) = self.arena.get_enum_member(parent_node) {
+                if member.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Module/namespace declaration: `namespace Foo {}`
+        if pk == syntax_kind_ext::MODULE_DECLARATION {
+            if let Some(module) = self.arena.get_module(parent_node) {
+                if module.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Import specifier: `import { x } from ...`
+        if pk == syntax_kind_ext::IMPORT_SPECIFIER {
+            if let Some(spec) = self.arena.get_specifier(parent_node) {
+                // The local name of the import is a write
+                if spec.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Import clause (default import): `import x from ...`
+        if pk == syntax_kind_ext::IMPORT_CLAUSE {
+            if let Some(clause) = self.arena.get_import_clause(parent_node) {
+                if clause.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Namespace import: `import * as ns from ...`
+        if pk == syntax_kind_ext::NAMESPACE_IMPORT {
+            return true;
+        }
+
+        // Binding element: `const { x } = obj` or `const [x] = arr`
+        if pk == syntax_kind_ext::BINDING_ELEMENT {
+            return true;
+        }
+
+        // For-in/for-of: `for (const x of arr)` - the initializer's variable is a write
+        if pk == syntax_kind_ext::FOR_IN_STATEMENT || pk == syntax_kind_ext::FOR_OF_STATEMENT {
+            if let Some(for_data) = self.arena.get_for_in_of(parent_node) {
+                if for_data.initializer == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Catch clause variable: `catch (e)`
+        if pk == syntax_kind_ext::CATCH_CLAUSE {
+            return true;
+        }
+
+        // Binary expression: check if this is the LHS of an assignment
+        if pk == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(binary) = self.arena.get_binary_expr(parent_node) {
+                let op = binary.operator_token;
+                let is_assignment = op >= SyntaxKind::EqualsToken as u16
+                    && op <= SyntaxKind::CaretEqualsToken as u16;
+                if is_assignment && binary.left == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Prefix unary: `++x` or `--x`
+        if pk == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            if let Some(unary) = self.arena.get_unary_expr(parent_node) {
+                if unary.operator == SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == SyntaxKind::MinusMinusToken as u16
+                {
+                    return true;
+                }
+            }
+        }
+
+        // Postfix unary: `x++` or `x--`
+        if pk == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION {
+            if let Some(unary) = self.arena.get_unary_expr(parent_node) {
+                if unary.operator == SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == SyntaxKind::MinusMinusToken as u16
+                {
+                    return true;
+                }
+            }
+        }
+
+        // Property declaration in class: `class Foo { x = 1; }`
+        if pk == syntax_kind_ext::PROPERTY_DECLARATION {
+            if let Some(prop) = self.arena.get_property_decl(parent_node) {
+                if prop.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Method declaration
+        if pk == syntax_kind_ext::METHOD_DECLARATION {
+            if let Some(method) = self.arena.get_method_decl(parent_node) {
+                if method.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Get/Set accessor
+        if pk == syntax_kind_ext::GET_ACCESSOR || pk == syntax_kind_ext::SET_ACCESSOR {
+            if let Some(accessor) = self.arena.get_accessor(parent_node) {
+                if accessor.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        // Type parameter: `function foo<T>()`
+        if pk == syntax_kind_ext::TYPE_PARAMETER {
+            if let Some(tp) = self.arena.get_type_parameter(parent_node) {
+                if tp.name == node_idx {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Determine whether a node is a definition site for the symbol.
+    ///
+    /// A reference is considered a definition if it is one of the symbol's
+    /// declaration nodes. This covers:
+    /// - Variable declarations (`let x`, `const x`, `var x`)
+    /// - Function declarations
+    /// - Class declarations
+    /// - Interface declarations
+    /// - Type alias declarations
+    /// - Enum declarations
+    /// - Import bindings
+    /// - Parameter declarations
+    /// - Export declarations (but not re-exports of other modules)
+    fn is_definition_node(
+        &self,
+        node_idx: NodeIndex,
+        declaration_set: &std::collections::HashSet<u32>,
+    ) -> bool {
+        if node_idx.is_none() {
+            return false;
+        }
+        // A node is a definition if it (or its name-bearing parent) is in the
+        // symbol's declaration list.
+        if declaration_set.contains(&node_idx.0) {
+            return true;
+        }
+
+        // The node itself might be the name child of a declaration.
+        // Check if its parent is in the declaration set.
+        if let Some(ext) = self.arena.get_extended(node_idx) {
+            if !ext.parent.is_none() && declaration_set.contains(&ext.parent.0) {
+                // Make sure this node is actually the "name" of the parent declaration
+                return self.name_node_for(ext.parent) == Some(node_idx);
+            }
+        }
+
+        false
+    }
+
+    /// Get the full text of the line at the given 0-indexed line number.
+    fn get_line_text(&self, line: u32) -> String {
+        self.source_text
+            .lines()
+            .nth(line as usize)
+            .unwrap_or("")
+            .to_string()
     }
 
     fn location_for_node(&self, idx: NodeIndex) -> Option<Location> {
@@ -1132,5 +1566,404 @@ mod references_tests {
         );
         let refs = references.unwrap();
         assert!(refs.len() >= 2, "Should find declaration and usage");
+    }
+
+    // =========================================================================
+    // Tests for ReferenceInfo: isWriteAccess, isDefinition, lineText
+    // =========================================================================
+
+    /// Helper to get detailed references for a symbol at a given position.
+    fn get_detailed_refs(source: &str, file_name: &str, line: u32, col: u32) -> Vec<ReferenceInfo> {
+        let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(line, col);
+
+        let find_refs =
+            FindReferences::new(arena, &binder, &line_map, file_name.to_string(), source);
+        find_refs
+            .find_references_detailed(root, position)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_detailed_refs_const_declaration_is_write_and_definition() {
+        // `const x = 1; x + x;`
+        // The declaration of x should be isWriteAccess=true, isDefinition=true
+        // The usages of x should be isWriteAccess=false, isDefinition=false
+        let source = "const x = 1;\nx + x;";
+        let refs = get_detailed_refs(source, "test.ts", 1, 0);
+
+        assert!(
+            refs.len() >= 2,
+            "Should find at least 2 references, got {}",
+            refs.len()
+        );
+
+        // Find the declaration ref (on line 0, which is "const x = 1;")
+        let decl_ref = refs.iter().find(|r| r.location.range.start.line == 0);
+        assert!(
+            decl_ref.is_some(),
+            "Should have a ref on line 0 (declaration)"
+        );
+        let decl_ref = decl_ref.unwrap();
+        assert!(
+            decl_ref.is_write_access,
+            "Declaration should be a write access"
+        );
+        assert!(decl_ref.is_definition, "Declaration should be a definition");
+
+        // Find a usage ref (on line 1, which is "x + x;")
+        let usage_refs: Vec<_> = refs
+            .iter()
+            .filter(|r| r.location.range.start.line == 1)
+            .collect();
+        assert!(
+            !usage_refs.is_empty(),
+            "Should have at least one usage ref on line 1"
+        );
+        for ur in &usage_refs {
+            assert!(
+                !ur.is_write_access,
+                "Read-only usage should not be a write access"
+            );
+            assert!(!ur.is_definition, "Usage should not be a definition");
+        }
+    }
+
+    #[test]
+    fn test_detailed_refs_assignment_is_write_access() {
+        // `let x = 1; x = 2;`
+        // The assignment `x = 2` should be isWriteAccess=true, isDefinition=false
+        let source = "let x = 1;\nx = 2;";
+        let refs = get_detailed_refs(source, "test.ts", 0, 4);
+
+        assert!(
+            refs.len() >= 2,
+            "Should find at least 2 references, got {}",
+            refs.len()
+        );
+
+        // The ref on line 1 ("x = 2;") is an assignment - should be write
+        let assign_ref = refs.iter().find(|r| r.location.range.start.line == 1);
+        assert!(
+            assign_ref.is_some(),
+            "Should have a ref on line 1 (assignment)"
+        );
+        let assign_ref = assign_ref.unwrap();
+        assert!(
+            assign_ref.is_write_access,
+            "Assignment target should be a write access"
+        );
+        assert!(!assign_ref.is_definition, "Assignment is not a definition");
+    }
+
+    #[test]
+    fn test_detailed_refs_compound_assignment_is_write_access() {
+        // `let x = 0; x += 1;`
+        // The compound assignment `x += 1` should be isWriteAccess=true
+        let source = "let x = 0;\nx += 1;";
+        let refs = get_detailed_refs(source, "test.ts", 0, 4);
+
+        assert!(
+            refs.len() >= 2,
+            "Should find at least 2 references, got {}",
+            refs.len()
+        );
+
+        let compound_ref = refs.iter().find(|r| r.location.range.start.line == 1);
+        assert!(
+            compound_ref.is_some(),
+            "Should have a ref on line 1 (compound assignment)"
+        );
+        let compound_ref = compound_ref.unwrap();
+        assert!(
+            compound_ref.is_write_access,
+            "Compound assignment target should be a write access"
+        );
+        assert!(
+            !compound_ref.is_definition,
+            "Compound assignment is not a definition"
+        );
+    }
+
+    #[test]
+    fn test_detailed_refs_function_declaration_is_definition() {
+        // `function foo() {} foo();`
+        // The function name at declaration is isDefinition=true, isWriteAccess=true
+        // The call site is isDefinition=false, isWriteAccess=false
+        let source = "function foo() {}\nfoo();";
+        let refs = get_detailed_refs(source, "test.ts", 1, 0);
+
+        assert!(
+            refs.len() >= 2,
+            "Should find at least 2 references, got {}",
+            refs.len()
+        );
+
+        // The declaration on line 0
+        let decl_ref = refs.iter().find(|r| r.location.range.start.line == 0);
+        assert!(
+            decl_ref.is_some(),
+            "Should have a ref on line 0 (declaration)"
+        );
+        let decl_ref = decl_ref.unwrap();
+        assert!(
+            decl_ref.is_definition,
+            "Function declaration name should be a definition"
+        );
+        assert!(
+            decl_ref.is_write_access,
+            "Function declaration name should be a write access"
+        );
+
+        // The call on line 1
+        let call_ref = refs.iter().find(|r| r.location.range.start.line == 1);
+        assert!(call_ref.is_some(), "Should have a ref on line 1 (call)");
+        let call_ref = call_ref.unwrap();
+        assert!(
+            !call_ref.is_definition,
+            "Function call should not be a definition"
+        );
+        assert!(
+            !call_ref.is_write_access,
+            "Function call should not be a write access"
+        );
+    }
+
+    #[test]
+    fn test_detailed_refs_class_declaration_is_definition() {
+        // `class Foo {} new Foo();`
+        let source = "class Foo {}\nnew Foo();";
+        let refs = get_detailed_refs(source, "test.ts", 0, 6);
+
+        assert!(
+            refs.len() >= 2,
+            "Should find at least 2 references, got {}",
+            refs.len()
+        );
+
+        let decl_ref = refs.iter().find(|r| r.location.range.start.line == 0);
+        assert!(decl_ref.is_some(), "Should have declaration ref");
+        let decl_ref = decl_ref.unwrap();
+        assert!(
+            decl_ref.is_definition,
+            "Class declaration should be a definition"
+        );
+        assert!(
+            decl_ref.is_write_access,
+            "Class declaration should be a write access"
+        );
+
+        let usage_ref = refs.iter().find(|r| r.location.range.start.line == 1);
+        assert!(usage_ref.is_some(), "Should have usage ref");
+        let usage_ref = usage_ref.unwrap();
+        assert!(
+            !usage_ref.is_definition,
+            "new Foo() should not be a definition"
+        );
+        assert!(
+            !usage_ref.is_write_access,
+            "new Foo() should not be a write access"
+        );
+    }
+
+    #[test]
+    fn test_detailed_refs_parameter_is_write_and_definition() {
+        // `function foo(x: number) { return x; }`
+        // Parameter x declaration is isWriteAccess=true, isDefinition=true
+        // Usage of x in body is isWriteAccess=false, isDefinition=false
+        let source = "function foo(x: number) {\n  return x;\n}";
+        let refs = get_detailed_refs(source, "test.ts", 1, 9);
+
+        assert!(
+            refs.len() >= 2,
+            "Should find at least 2 references, got {}",
+            refs.len()
+        );
+
+        // The parameter declaration (line 0)
+        let param_ref = refs.iter().find(|r| r.location.range.start.line == 0);
+        assert!(param_ref.is_some(), "Should have param ref on line 0");
+        let param_ref = param_ref.unwrap();
+        assert!(
+            param_ref.is_definition,
+            "Parameter declaration should be a definition"
+        );
+        assert!(
+            param_ref.is_write_access,
+            "Parameter declaration should be a write access"
+        );
+
+        // The usage in the body (line 1)
+        let body_ref = refs.iter().find(|r| r.location.range.start.line == 1);
+        assert!(body_ref.is_some(), "Should have body ref on line 1");
+        let body_ref = body_ref.unwrap();
+        assert!(
+            !body_ref.is_definition,
+            "Parameter usage should not be a definition"
+        );
+        assert!(
+            !body_ref.is_write_access,
+            "Parameter read should not be a write access"
+        );
+    }
+
+    #[test]
+    fn test_detailed_refs_line_text_is_correct() {
+        // Verify lineText contains the correct line content
+        let source = "const x = 1;\nconsole.log(x);";
+        let refs = get_detailed_refs(source, "test.ts", 0, 6);
+
+        assert!(
+            refs.len() >= 2,
+            "Should find at least 2 references, got {}",
+            refs.len()
+        );
+
+        let decl_ref = refs.iter().find(|r| r.location.range.start.line == 0);
+        assert!(decl_ref.is_some(), "Should have ref on line 0");
+        assert_eq!(
+            decl_ref.unwrap().line_text,
+            "const x = 1;",
+            "lineText should be the full line content"
+        );
+
+        let usage_ref = refs.iter().find(|r| r.location.range.start.line == 1);
+        assert!(usage_ref.is_some(), "Should have ref on line 1");
+        assert_eq!(
+            usage_ref.unwrap().line_text,
+            "console.log(x);",
+            "lineText should be the full line content"
+        );
+    }
+
+    #[test]
+    fn test_detailed_refs_interface_declaration_is_definition() {
+        // `interface Foo { x: number; } let a: Foo;`
+        let source = "interface Foo {\n  x: number;\n}\nlet a: Foo;";
+        let refs = get_detailed_refs(source, "test.ts", 0, 10);
+
+        assert!(!refs.is_empty(), "Should find at least 1 reference");
+
+        let decl_ref = refs.iter().find(|r| r.location.range.start.line == 0);
+        assert!(decl_ref.is_some(), "Should have declaration ref");
+        let decl_ref = decl_ref.unwrap();
+        assert!(
+            decl_ref.is_definition,
+            "Interface declaration should be a definition"
+        );
+        assert!(
+            decl_ref.is_write_access,
+            "Interface declaration should be a write access"
+        );
+    }
+
+    #[test]
+    fn test_detailed_refs_enum_declaration_is_definition() {
+        // `enum Color { Red } let c = Color.Red;`
+        let source = "enum Color {\n  Red\n}\nlet c = Color.Red;";
+        let refs = get_detailed_refs(source, "test.ts", 0, 5);
+
+        assert!(!refs.is_empty(), "Should find at least 1 reference");
+
+        let decl_ref = refs.iter().find(|r| r.location.range.start.line == 0);
+        assert!(decl_ref.is_some(), "Should have declaration ref on line 0");
+        let decl_ref = decl_ref.unwrap();
+        assert!(
+            decl_ref.is_definition,
+            "Enum declaration should be a definition"
+        );
+        assert!(
+            decl_ref.is_write_access,
+            "Enum declaration should be a write access"
+        );
+    }
+
+    #[test]
+    fn test_detailed_refs_type_alias_is_definition() {
+        // `type Foo = number; let x: Foo;`
+        let source = "type Foo = number;\nlet x: Foo;";
+        let refs = get_detailed_refs(source, "test.ts", 0, 5);
+
+        assert!(!refs.is_empty(), "Should find at least 1 reference");
+
+        let decl_ref = refs.iter().find(|r| r.location.range.start.line == 0);
+        assert!(decl_ref.is_some(), "Should have declaration ref on line 0");
+        let decl_ref = decl_ref.unwrap();
+        assert!(
+            decl_ref.is_definition,
+            "Type alias declaration should be a definition"
+        );
+        assert!(
+            decl_ref.is_write_access,
+            "Type alias declaration should be a write access"
+        );
+    }
+
+    #[test]
+    fn test_detailed_refs_read_in_expression_not_write() {
+        // `let x = 1; let y = x + 2;`
+        // x in the expression `x + 2` should be isWriteAccess=false
+        let source = "let x = 1;\nlet y = x + 2;";
+        let refs = get_detailed_refs(source, "test.ts", 0, 4);
+
+        assert!(
+            refs.len() >= 2,
+            "Should find at least 2 references, got {}",
+            refs.len()
+        );
+
+        let expr_ref = refs
+            .iter()
+            .find(|r| r.location.range.start.line == 1 && !r.is_definition);
+        assert!(expr_ref.is_some(), "Should have a read usage ref on line 1");
+        let expr_ref = expr_ref.unwrap();
+        assert!(
+            !expr_ref.is_write_access,
+            "Read in expression should not be write access"
+        );
+    }
+
+    // =========================================================================
+    // Tests for find_rename_locations
+    // =========================================================================
+
+    #[test]
+    fn test_rename_locations_simple() {
+        let source = "const x = 1;\nx + x;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let find_refs =
+            FindReferences::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+        let locations = find_refs.find_rename_locations(root, position);
+
+        assert!(locations.is_some(), "Should find rename locations for x");
+        let locs = locations.unwrap();
+        assert!(
+            locs.len() >= 2,
+            "Should find at least 2 rename locations (declaration + usages)"
+        );
+
+        // Each location should have a line_text
+        for loc in &locs {
+            assert!(
+                !loc.line_text.is_empty(),
+                "Rename location should have non-empty line_text"
+            );
+        }
     }
 }

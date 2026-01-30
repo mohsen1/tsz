@@ -2248,6 +2248,8 @@ fn test_project_code_actions_missing_import_named() {
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let actions = project
@@ -2291,6 +2293,8 @@ fn test_project_code_actions_missing_import_default_export() {
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let actions = project
@@ -2331,6 +2335,8 @@ fn test_project_code_actions_missing_import_tsx() {
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let actions = project
@@ -2378,6 +2384,8 @@ fn test_project_code_actions_missing_import_default_reexport() {
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let actions = project
@@ -2422,6 +2430,8 @@ fn test_project_code_actions_missing_import_reexport() {
         source: None,
         message: "Cannot find name 'bar'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let actions = project

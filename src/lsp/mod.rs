@@ -83,7 +83,7 @@ pub use position::{Location, Position, Range, SourceLocation};
 pub use project::{
     Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
 };
-pub use references::FindReferences;
+pub use references::{FindReferences, ReferenceInfo, RenameLocation};
 pub use rename::{RenameProvider, TextEdit, WorkspaceEdit};
 pub use semantic_tokens::{SemanticTokenType, SemanticTokensProvider, semantic_token_modifiers};
 pub use signature_help::{

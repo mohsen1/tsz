@@ -681,6 +681,8 @@ fn test_quickfix_remove_unused_named_import() {
         source: None,
         message: "unused import".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -723,6 +725,8 @@ fn test_quickfix_remove_unused_named_import_entire_decl() {
         source: None,
         message: "unused import".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -765,6 +769,8 @@ fn test_quickfix_remove_unused_default_import() {
         source: None,
         message: "unused import".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -807,6 +813,8 @@ fn test_quickfix_preserves_type_only_named_import() {
         source: None,
         message: "unused import".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -852,6 +860,8 @@ fn test_quickfix_add_missing_property_object_literal_single_line() {
         source: None,
         message: "missing property".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -897,6 +907,8 @@ fn test_quickfix_add_missing_property_object_literal_single_line_trailing_comma(
         source: None,
         message: "missing property".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -940,6 +952,8 @@ fn test_quickfix_add_missing_property_object_literal_element_access() {
         source: None,
         message: "missing property".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -988,6 +1002,8 @@ fn test_quickfix_add_missing_property_object_literal_multiline() {
         source: None,
         message: "missing property".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1036,6 +1052,8 @@ fn test_quickfix_add_missing_property_to_class() {
         source: None,
         message: "missing property".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1082,6 +1100,8 @@ fn test_quickfix_add_missing_property_to_class_element_access() {
         source: None,
         message: "missing property".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1128,6 +1148,8 @@ fn test_quickfix_add_missing_import_named() {
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1175,6 +1197,8 @@ fn test_quickfix_add_missing_import_after_existing_import() {
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1225,6 +1249,8 @@ fn test_quickfix_add_missing_import_merge_named_same_module() {
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1272,6 +1298,8 @@ fn test_quickfix_add_missing_import_merge_named_multiline() {
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1322,6 +1350,8 @@ fn test_quickfix_add_missing_import_merge_named_with_default() {
         source: None,
         message: "Cannot find name 'bar'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1369,6 +1399,8 @@ fn test_quickfix_add_missing_import_merge_default_with_named() {
         source: None,
         message: "Cannot find name 'Foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1415,6 +1447,8 @@ fn test_quickfix_add_missing_import_merge_default_with_namespace() {
         source: None,
         message: "Cannot find name 'Foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1461,6 +1495,8 @@ fn test_quickfix_add_missing_import_default() {
         source: None,
         message: "Cannot find name 'Foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1507,6 +1543,8 @@ fn test_quickfix_add_missing_import_namespace() {
         source: None,
         message: "Cannot find name 'ns'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1553,6 +1591,8 @@ fn test_quickfix_add_missing_import_type_position_uses_import_type() {
         source: None,
         message: "Cannot find name 'Foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1603,6 +1643,8 @@ fn test_quickfix_add_missing_import_value_skips_type_only_candidate() {
         source: None,
         message: "Cannot find name 'Foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let mut candidate =
@@ -1646,6 +1688,8 @@ fn test_quickfix_add_missing_import_type_query_uses_value_import() {
         source: None,
         message: "Cannot find name 'Foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1696,6 +1740,8 @@ fn test_quickfix_add_missing_import_class_extends_uses_value_import() {
         source: None,
         message: "Cannot find name 'Foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1746,6 +1792,8 @@ fn test_quickfix_add_missing_import_class_implements_uses_import_type() {
         source: None,
         message: "Cannot find name 'Foo'.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1795,6 +1843,8 @@ fn test_quickfix_remove_unused_variable_let() {
         source: None,
         message: "'x' is declared but its value is never read.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1837,6 +1887,8 @@ fn test_quickfix_remove_unused_variable_const() {
         source: None,
         message: "'unused' is declared but its value is never read.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1879,6 +1931,8 @@ fn test_quickfix_remove_unused_function() {
         source: None,
         message: "'unused' is declared but its value is never read.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
@@ -1922,6 +1976,8 @@ fn test_quickfix_remove_unused_class() {
         source: None,
         message: "'Unused' is declared but its value is never read.".to_string(),
         related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
     };
 
     let provider =
