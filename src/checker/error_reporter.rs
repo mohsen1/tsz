@@ -189,9 +189,12 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         // Suppress cascade errors from unresolved types
-        if source == TypeId::ERROR || target == TypeId::ERROR
-            || source == TypeId::ANY || target == TypeId::ANY
-            || source == TypeId::UNKNOWN || target == TypeId::UNKNOWN
+        if source == TypeId::ERROR
+            || target == TypeId::ERROR
+            || source == TypeId::ANY
+            || target == TypeId::ANY
+            || source == TypeId::UNKNOWN
+            || target == TypeId::UNKNOWN
         {
             return;
         }
@@ -572,9 +575,12 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         // Suppress cascade errors from unresolved types
-        if source == TypeId::ERROR || target == TypeId::ERROR
-            || source == TypeId::ANY || target == TypeId::ANY
-            || source == TypeId::UNKNOWN || target == TypeId::UNKNOWN
+        if source == TypeId::ERROR
+            || target == TypeId::ERROR
+            || source == TypeId::ANY
+            || target == TypeId::ANY
+            || source == TypeId::UNKNOWN
+            || target == TypeId::UNKNOWN
         {
             return;
         }
@@ -1306,8 +1312,10 @@ impl<'a> CheckerState<'a> {
         op: &str,
     ) {
         // Suppress cascade errors from unresolved types
-        if left_type == TypeId::ERROR || right_type == TypeId::ERROR
-            || left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN
+        if left_type == TypeId::ERROR
+            || right_type == TypeId::ERROR
+            || left_type == TypeId::UNKNOWN
+            || right_type == TypeId::UNKNOWN
         {
             return;
         }
@@ -1711,9 +1719,12 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         // Suppress cascade errors from unresolved types
-        if type_arg == TypeId::ERROR || constraint == TypeId::ERROR
-            || type_arg == TypeId::UNKNOWN || constraint == TypeId::UNKNOWN
-            || type_arg == TypeId::ANY || constraint == TypeId::ANY
+        if type_arg == TypeId::ERROR
+            || constraint == TypeId::ERROR
+            || type_arg == TypeId::UNKNOWN
+            || constraint == TypeId::UNKNOWN
+            || type_arg == TypeId::ANY
+            || constraint == TypeId::ANY
         {
             return;
         }
