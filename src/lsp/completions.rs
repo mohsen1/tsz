@@ -21,7 +21,7 @@ use crate::solver::{
     ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, TypeKey, apparent_primitive_members,
 };
 
-/// The kind of completion item.
+/// The kind of completion item, matching tsserver's ScriptElementKind values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CompletionItemKind {
     /// A variable or constant
@@ -38,29 +38,103 @@ pub enum CompletionItemKind {
     Property,
     /// A keyword
     Keyword,
+    /// An interface
+    Interface,
+    /// An enum
+    Enum,
+    /// A type alias
+    TypeAlias,
+    /// A module or namespace
+    Module,
+    /// A type parameter
+    TypeParameter,
+    /// A constructor
+    Constructor,
+}
+
+/// Sort priority categories matching tsserver's sort text conventions.
+/// Lower numbers appear first in the completion list.
+pub mod sort_priority {
+    /// Local variables, parameters, and function-scoped identifiers.
+    pub const LOCAL_DECLARATION: &str = "0";
+    /// Properties and methods on a member completion.
+    pub const MEMBER: &str = "1";
+    /// Type-level completions (interfaces, type aliases, enums).
+    pub const TYPE_DECLARATION: &str = "2";
+    /// Completions from auto-import candidates.
+    pub const AUTO_IMPORT: &str = "3";
+    /// Keywords -- shown after identifiers.
+    pub const KEYWORD: &str = "5";
 }
 
 /// A completion item to be suggested to the user.
+///
+/// Fields align with tsserver's `CompletionEntry` protocol:
+///   name, kind, kindModifiers, sortText, insertText, replacementSpan,
+///   hasAction, source, sourceDisplay, data
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompletionItem {
-    /// The label to display in the completion list
+    /// The label to display in the completion list (tsserver: `name`)
     pub label: String,
-    /// The kind of completion item
+    /// The kind of completion item (tsserver: `kind`)
     pub kind: CompletionItemKind,
     /// Optional detail text (e.g., type information)
     pub detail: Option<String>,
     /// Optional documentation
     pub documentation: Option<String>,
+    /// Sort text controls ordering in the completion list (tsserver: `sortText`).
+    /// Lower strings appear first. See [`sort_priority`] for categories.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_text: Option<String>,
+    /// Text to insert when the completion is accepted, if different from `label`
+    /// (tsserver: `insertText`). For snippets this may contain tab stops like `$1`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insert_text: Option<String>,
+    /// Whether the completion is a snippet (contains tab-stop placeholders).
+    #[serde(skip_serializing_if = "is_false")]
+    pub is_snippet: bool,
+    /// Whether selecting this completion triggers an additional action such as
+    /// an auto-import (tsserver: `hasAction`).
+    #[serde(skip_serializing_if = "is_false")]
+    pub has_action: bool,
+    /// Module specifier for auto-import completions (tsserver: `source`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Display label for the source module (tsserver: `sourceDisplay`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_display: Option<String>,
+    /// Comma-separated modifier flags such as `export`, `declare`, `abstract`,
+    /// `static`, `private`, `protected` (tsserver: `kindModifiers`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind_modifiers: Option<String>,
+    /// The byte range in the source text that this completion replaces
+    /// (tsserver: `replacementSpan`). `None` means the editor should use its
+    /// default replacement behaviour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement_span: Option<(u32, u32)>,
+}
+
+/// Helper for serde `skip_serializing_if`.
+fn is_false(v: &bool) -> bool {
+    !v
 }
 
 impl CompletionItem {
-    /// Create a new completion item.
+    /// Create a new completion item with only the required fields.
     pub fn new(label: String, kind: CompletionItemKind) -> Self {
         Self {
             label,
             kind,
             detail: None,
             documentation: None,
+            sort_text: None,
+            insert_text: None,
+            is_snippet: false,
+            has_action: false,
+            source: None,
+            source_display: None,
+            kind_modifiers: None,
+            replacement_span: None,
         }
     }
 
@@ -74,6 +148,83 @@ impl CompletionItem {
     pub fn with_documentation(mut self, documentation: String) -> Self {
         self.documentation = Some(documentation);
         self
+    }
+
+    /// Set the sort text (controls ordering in the list).
+    pub fn with_sort_text(mut self, sort_text: impl Into<String>) -> Self {
+        self.sort_text = Some(sort_text.into());
+        self
+    }
+
+    /// Set the insert text (text inserted on accept).
+    pub fn with_insert_text(mut self, insert_text: String) -> Self {
+        self.insert_text = Some(insert_text);
+        self
+    }
+
+    /// Mark this completion as a snippet (insert text contains tab-stop placeholders).
+    pub fn as_snippet(mut self) -> Self {
+        self.is_snippet = true;
+        self
+    }
+
+    /// Mark this completion as requiring an additional action (e.g. auto-import).
+    pub fn with_has_action(mut self) -> Self {
+        self.has_action = true;
+        self
+    }
+
+    /// Set the module source path for auto-import completions.
+    pub fn with_source(mut self, source: String) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    /// Set the display label for the source module.
+    pub fn with_source_display(mut self, display: String) -> Self {
+        self.source_display = Some(display);
+        self
+    }
+
+    /// Set the kind modifiers string.
+    pub fn with_kind_modifiers(mut self, modifiers: String) -> Self {
+        self.kind_modifiers = Some(modifiers);
+        self
+    }
+
+    /// Set the replacement span (byte offsets).
+    pub fn with_replacement_span(mut self, start: u32, end: u32) -> Self {
+        self.replacement_span = Some((start, end));
+        self
+    }
+
+    /// Return the effective sort text: the explicitly set value, or a default
+    /// derived from the completion kind.
+    pub fn effective_sort_text(&self) -> &str {
+        if let Some(ref s) = self.sort_text {
+            s.as_str()
+        } else {
+            default_sort_text(self.kind)
+        }
+    }
+}
+
+/// Derive a default sort text from the completion kind, following tsserver
+/// conventions where identifiers sort before keywords.
+pub fn default_sort_text(kind: CompletionItemKind) -> &'static str {
+    match kind {
+        CompletionItemKind::Variable
+        | CompletionItemKind::Function
+        | CompletionItemKind::Parameter
+        | CompletionItemKind::Constructor => sort_priority::LOCAL_DECLARATION,
+        CompletionItemKind::Property | CompletionItemKind::Method => sort_priority::MEMBER,
+        CompletionItemKind::Class
+        | CompletionItemKind::Interface
+        | CompletionItemKind::Enum
+        | CompletionItemKind::TypeAlias
+        | CompletionItemKind::Module
+        | CompletionItemKind::TypeParameter => sort_priority::TYPE_DECLARATION,
+        CompletionItemKind::Keyword => sort_priority::KEYWORD,
     }
 }
 
@@ -309,9 +460,23 @@ impl<'a> Completions<'a> {
                     let kind = self.determine_completion_kind(symbol);
                     let mut item = CompletionItem::new(name.clone(), kind);
 
+                    // Set sort text based on kind
+                    item.sort_text = Some(default_sort_text(kind).to_string());
+
                     // Add detail information if available
                     if let Some(detail) = self.get_symbol_detail(symbol) {
                         item = item.with_detail(detail);
+                    }
+
+                    // Add kind modifiers
+                    if let Some(modifiers) = self.build_kind_modifiers(symbol) {
+                        item.kind_modifiers = Some(modifiers);
+                    }
+
+                    // For function completions, add snippet insert text
+                    if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
+                        item.insert_text = Some(format!("{}($1)", name));
+                        item.is_snippet = true;
                     }
 
                     // Add JSDoc documentation if available
@@ -341,18 +506,22 @@ impl<'a> Completions<'a> {
         for &kw in KEYWORDS {
             // Skip if keyword is already in completions (e.g., if user defined a variable named 'function')
             if !seen_names.contains(kw) {
-                completions.push(CompletionItem::new(
-                    kw.to_string(),
-                    CompletionItemKind::Keyword,
-                ));
+                let mut kw_item = CompletionItem::new(kw.to_string(), CompletionItemKind::Keyword);
+                kw_item.sort_text = Some(sort_priority::KEYWORD.to_string());
+                completions.push(kw_item);
             }
         }
 
         if completions.is_empty() {
             None
         } else {
-            // Sort completions alphabetically for better UX
-            completions.sort_by(|a, b| a.label.cmp(&b.label));
+            // Sort by (sort_text, label) so that higher-priority items appear first
+            // and items within the same priority are ordered alphabetically.
+            completions.sort_by(|a, b| {
+                let sa = a.effective_sort_text();
+                let sb = b.effective_sort_text();
+                sa.cmp(sb).then_with(|| a.label.cmp(&b.label))
+            });
             Some(completions)
         }
     }
@@ -361,19 +530,32 @@ impl<'a> Completions<'a> {
     fn determine_completion_kind(&self, symbol: &crate::binder::Symbol) -> CompletionItemKind {
         use crate::binder::symbol_flags;
 
-        if symbol.flags & symbol_flags::FUNCTION != 0 {
+        if symbol.flags & symbol_flags::CONSTRUCTOR != 0 {
+            CompletionItemKind::Constructor
+        } else if symbol.flags & symbol_flags::FUNCTION != 0 {
             CompletionItemKind::Function
         } else if symbol.flags & symbol_flags::CLASS != 0 {
             CompletionItemKind::Class
+        } else if symbol.flags & symbol_flags::INTERFACE != 0 {
+            CompletionItemKind::Interface
+        } else if symbol.flags & symbol_flags::REGULAR_ENUM != 0
+            || symbol.flags & symbol_flags::CONST_ENUM != 0
+        {
+            CompletionItemKind::Enum
+        } else if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+            CompletionItemKind::TypeAlias
+        } else if symbol.flags & symbol_flags::TYPE_PARAMETER != 0 {
+            CompletionItemKind::TypeParameter
         } else if symbol.flags & symbol_flags::METHOD != 0 {
             CompletionItemKind::Method
         } else if symbol.flags & symbol_flags::PROPERTY != 0 {
             CompletionItemKind::Property
-        } else if symbol.flags & symbol_flags::VALUE_MODULE != 0 {
-            // Parameters are value modules in the binder
-            CompletionItemKind::Parameter
+        } else if symbol.flags & symbol_flags::VALUE_MODULE != 0
+            || symbol.flags & symbol_flags::NAMESPACE_MODULE != 0
+        {
+            CompletionItemKind::Module
         } else {
-            // Default to variable for const, let, var
+            // Default to variable for const, let, var, and parameters
             CompletionItemKind::Variable
         }
     }
@@ -388,10 +570,14 @@ impl<'a> Completions<'a> {
             Some("class".to_string())
         } else if symbol.flags & symbol_flags::INTERFACE != 0 {
             Some("interface".to_string())
-        } else if symbol.flags & symbol_flags::REGULAR_ENUM != 0 {
+        } else if symbol.flags & symbol_flags::REGULAR_ENUM != 0
+            || symbol.flags & symbol_flags::CONST_ENUM != 0
+        {
             Some("enum".to_string())
         } else if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
             Some("type".to_string())
+        } else if symbol.flags & symbol_flags::TYPE_PARAMETER != 0 {
+            Some("type parameter".to_string())
         } else if symbol.flags & symbol_flags::METHOD != 0 {
             Some("method".to_string())
         } else if symbol.flags & symbol_flags::PROPERTY != 0 {
@@ -400,8 +586,44 @@ impl<'a> Completions<'a> {
             Some("let/const".to_string())
         } else if symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             Some("var".to_string())
+        } else if symbol.flags & symbol_flags::VALUE_MODULE != 0
+            || symbol.flags & symbol_flags::NAMESPACE_MODULE != 0
+        {
+            Some("module".to_string())
         } else {
             None
+        }
+    }
+
+    /// Build a comma-separated `kindModifiers` string for a symbol, matching
+    /// tsserver's convention: `"export"`, `"declare"`, `"abstract"`, `"static"`,
+    /// `"private"`, `"protected"`.
+    fn build_kind_modifiers(&self, symbol: &crate::binder::Symbol) -> Option<String> {
+        use crate::binder::symbol_flags;
+
+        let mut mods = Vec::new();
+        if symbol.flags & symbol_flags::EXPORT_VALUE != 0 {
+            mods.push("export");
+        }
+        if symbol.flags & symbol_flags::ABSTRACT != 0 {
+            mods.push("abstract");
+        }
+        if symbol.flags & symbol_flags::STATIC != 0 {
+            mods.push("static");
+        }
+        if symbol.flags & symbol_flags::PRIVATE != 0 {
+            mods.push("private");
+        }
+        if symbol.flags & symbol_flags::PROTECTED != 0 {
+            mods.push("protected");
+        }
+        if symbol.flags & symbol_flags::OPTIONAL != 0 {
+            mods.push("optional");
+        }
+        if mods.is_empty() {
+            None
+        } else {
+            Some(mods.join(","))
         }
     }
 
@@ -487,8 +709,16 @@ impl<'a> Completions<'a> {
             } else {
                 CompletionItemKind::Property
             };
-            let mut item = CompletionItem::new(name, kind);
+            let mut item = CompletionItem::new(name.clone(), kind);
             item = item.with_detail(checker.format_type(info.type_id));
+            item.sort_text = Some(sort_priority::MEMBER.to_string());
+
+            // Add snippet insert text for method completions
+            if info.is_method {
+                item.insert_text = Some(format!("{}($1)", name));
+                item.is_snippet = true;
+            }
+
             items.push(item);
         }
 
@@ -708,8 +938,16 @@ impl<'a> Completions<'a> {
                     CompletionItemKind::Property
                 };
 
-                let mut item = CompletionItem::new(name, kind);
+                let mut item = CompletionItem::new(name.clone(), kind);
                 item = item.with_detail(checker.format_type(info.type_id));
+                item.sort_text = Some(sort_priority::MEMBER.to_string());
+
+                // Add snippet insert text for method completions in object literals
+                if info.is_method {
+                    item.insert_text = Some(format!("{}($1)", name));
+                    item.is_snippet = true;
+                }
+
                 items.push(item);
             }
         }
@@ -1184,6 +1422,536 @@ mod completions_tests {
                     "Should include JSDoc documentation"
                 );
             }
+        }
+    }
+
+    // =========================================================================
+    // New tests for improved tsserver-compatible completion entry format
+    // =========================================================================
+
+    #[test]
+    fn test_completions_sort_text_keywords_after_identifiers() {
+        // Keywords should have higher sort_text than identifiers so they
+        // appear later in the completion list, matching tsserver behaviour.
+        let source = "const abc = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        let abc_item = items.iter().find(|i| i.label == "abc").unwrap();
+        let kw_item = items.iter().find(|i| i.label == "function").unwrap();
+
+        assert!(
+            abc_item.effective_sort_text() < kw_item.effective_sort_text(),
+            "Identifiers (sort_text={:?}) should sort before keywords (sort_text={:?})",
+            abc_item.effective_sort_text(),
+            kw_item.effective_sort_text(),
+        );
+    }
+
+    #[test]
+    fn test_completions_sort_text_present_on_all_items() {
+        // Every completion item should have an explicit sort_text value set.
+        let source = "const x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        for item in &items {
+            assert!(
+                item.sort_text.is_some(),
+                "Item '{}' (kind={:?}) should have explicit sort_text",
+                item.label,
+                item.kind,
+            );
+        }
+    }
+
+    #[test]
+    fn test_completions_function_has_snippet_insert_text() {
+        // Function completions should have insert_text with snippet tab-stops
+        // e.g. "foo($1)" so the cursor lands inside the parens.
+        let source = "function greet(name: string) {}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        let greet_item = items.iter().find(|i| i.label == "greet").unwrap();
+
+        assert_eq!(
+            greet_item.kind,
+            CompletionItemKind::Function,
+            "greet should be a Function"
+        );
+        assert_eq!(
+            greet_item.insert_text.as_deref(),
+            Some("greet($1)"),
+            "Function completion should have snippet insert text"
+        );
+        assert!(
+            greet_item.is_snippet,
+            "Function completion should be marked as snippet"
+        );
+    }
+
+    #[test]
+    fn test_completions_variable_no_snippet() {
+        // Variable completions should NOT have snippet insert_text.
+        let source = "const value = 42;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        let var_item = items.iter().find(|i| i.label == "value").unwrap();
+
+        assert_eq!(
+            var_item.kind,
+            CompletionItemKind::Variable,
+            "value should be a Variable"
+        );
+        assert!(
+            var_item.insert_text.is_none(),
+            "Variable completion should not have insert_text"
+        );
+        assert!(
+            !var_item.is_snippet,
+            "Variable completion should not be a snippet"
+        );
+    }
+
+    #[test]
+    fn test_completions_keyword_sort_text_value() {
+        // All keyword completions should have sort_text == sort_priority::KEYWORD.
+        let source = "const x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        let keyword_items: Vec<_> = items
+            .iter()
+            .filter(|i| i.kind == CompletionItemKind::Keyword)
+            .collect();
+
+        assert!(!keyword_items.is_empty(), "Should have keyword completions");
+
+        for kw in &keyword_items {
+            assert_eq!(
+                kw.sort_text.as_deref(),
+                Some(sort_priority::KEYWORD),
+                "Keyword '{}' should have sort_text='{}'",
+                kw.label,
+                sort_priority::KEYWORD,
+            );
+        }
+    }
+
+    #[test]
+    fn test_completions_interface_kind() {
+        // Interfaces should be reported as CompletionItemKind::Interface.
+        let source = "interface Foo { x: number }\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        let foo_item = items.iter().find(|i| i.label == "Foo").unwrap();
+
+        assert_eq!(
+            foo_item.kind,
+            CompletionItemKind::Interface,
+            "Foo should be reported as Interface kind"
+        );
+        assert_eq!(
+            foo_item.detail.as_deref(),
+            Some("interface"),
+            "Interface detail should be 'interface'"
+        );
+    }
+
+    #[test]
+    fn test_completions_enum_kind() {
+        // Enums should be reported as CompletionItemKind::Enum.
+        let source = "enum Color { Red, Green, Blue }\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        let color_item = items.iter().find(|i| i.label == "Color").unwrap();
+
+        assert_eq!(
+            color_item.kind,
+            CompletionItemKind::Enum,
+            "Color should be reported as Enum kind"
+        );
+        assert_eq!(
+            color_item.detail.as_deref(),
+            Some("enum"),
+            "Enum detail should be 'enum'"
+        );
+    }
+
+    #[test]
+    fn test_completions_type_alias_kind() {
+        // Type aliases should be reported as CompletionItemKind::TypeAlias.
+        let source = "type MyStr = string;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        let mystr_item = items.iter().find(|i| i.label == "MyStr").unwrap();
+
+        assert_eq!(
+            mystr_item.kind,
+            CompletionItemKind::TypeAlias,
+            "MyStr should be reported as TypeAlias kind"
+        );
+        assert_eq!(
+            mystr_item.detail.as_deref(),
+            Some("type"),
+            "Type alias detail should be 'type'"
+        );
+    }
+
+    #[test]
+    fn test_completions_class_kind_preserved() {
+        // Classes should still be reported as CompletionItemKind::Class.
+        let source = "class Animal {}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        let animal_item = items.iter().find(|i| i.label == "Animal").unwrap();
+
+        assert_eq!(
+            animal_item.kind,
+            CompletionItemKind::Class,
+            "Animal should be reported as Class kind"
+        );
+        assert_eq!(
+            animal_item.detail.as_deref(),
+            Some("class"),
+            "Class detail should be 'class'"
+        );
+    }
+
+    #[test]
+    fn test_completions_member_sort_text() {
+        // Member completions should all have sort_text set to the member priority.
+        let source = "const obj = { foo: 1, bar: \"hi\" };\nobj.";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let interner = TypeInterner::new();
+        let completions = Completions::new_with_types(
+            arena,
+            &binder,
+            &line_map,
+            &interner,
+            source,
+            "test.ts".to_string(),
+        );
+
+        let position = Position::new(1, 4);
+        let mut cache = None;
+        let items = completions
+            .get_completions_with_cache(root, position, &mut cache)
+            .unwrap();
+
+        for item in &items {
+            assert_eq!(
+                item.sort_text.as_deref(),
+                Some(sort_priority::MEMBER),
+                "Member completion '{}' should have MEMBER sort priority",
+                item.label,
+            );
+        }
+    }
+
+    #[test]
+    fn test_completions_default_sort_text_function() {
+        // default_sort_text should return correct categories for each kind.
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Variable),
+            sort_priority::LOCAL_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Function),
+            sort_priority::LOCAL_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Parameter),
+            sort_priority::LOCAL_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Property),
+            sort_priority::MEMBER
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Method),
+            sort_priority::MEMBER
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Class),
+            sort_priority::TYPE_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Interface),
+            sort_priority::TYPE_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Enum),
+            sort_priority::TYPE_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::TypeAlias),
+            sort_priority::TYPE_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Module),
+            sort_priority::TYPE_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::TypeParameter),
+            sort_priority::TYPE_DECLARATION
+        );
+        assert_eq!(
+            default_sort_text(CompletionItemKind::Keyword),
+            sort_priority::KEYWORD
+        );
+    }
+
+    #[test]
+    fn test_completions_has_action_default_false() {
+        // By default, completions should have has_action = false.
+        let source = "const x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        for item in &items {
+            assert!(
+                !item.has_action,
+                "Item '{}' should not have has_action set (reserved for auto-imports)",
+                item.label,
+            );
+        }
+    }
+
+    #[test]
+    fn test_completions_source_default_none() {
+        // By default, source and source_display should be None
+        // (they are only set for auto-import completions from the Project layer).
+        let source = "const x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(1, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        for item in &items {
+            assert!(
+                item.source.is_none(),
+                "Item '{}' should not have source set (only for auto-imports)",
+                item.label,
+            );
+            assert!(
+                item.source_display.is_none(),
+                "Item '{}' should not have source_display set",
+                item.label,
+            );
+        }
+    }
+
+    #[test]
+    fn test_completions_effective_sort_text_uses_explicit() {
+        // When sort_text is explicitly set, effective_sort_text returns it.
+        let mut item = CompletionItem::new("test".to_string(), CompletionItemKind::Variable);
+        item.sort_text = Some("99".to_string());
+        assert_eq!(item.effective_sort_text(), "99");
+    }
+
+    #[test]
+    fn test_completions_effective_sort_text_uses_default() {
+        // When sort_text is None, effective_sort_text returns the default.
+        let item = CompletionItem::new("test".to_string(), CompletionItemKind::Keyword);
+        assert_eq!(
+            item.effective_sort_text(),
+            sort_priority::KEYWORD,
+            "Default sort text for keyword should be KEYWORD priority"
+        );
+    }
+
+    #[test]
+    fn test_completions_builder_methods() {
+        // Test all the new builder methods on CompletionItem.
+        let item = CompletionItem::new("foo".to_string(), CompletionItemKind::Function)
+            .with_detail("function".to_string())
+            .with_documentation("A foo function".to_string())
+            .with_sort_text("0")
+            .with_insert_text("foo($1)".to_string())
+            .as_snippet()
+            .with_has_action()
+            .with_source("./module".to_string())
+            .with_source_display("module".to_string())
+            .with_kind_modifiers("export".to_string())
+            .with_replacement_span(10, 13);
+
+        assert_eq!(item.label, "foo");
+        assert_eq!(item.kind, CompletionItemKind::Function);
+        assert_eq!(item.detail.as_deref(), Some("function"));
+        assert_eq!(item.documentation.as_deref(), Some("A foo function"));
+        assert_eq!(item.sort_text.as_deref(), Some("0"));
+        assert_eq!(item.insert_text.as_deref(), Some("foo($1)"));
+        assert!(item.is_snippet);
+        assert!(item.has_action);
+        assert_eq!(item.source.as_deref(), Some("./module"));
+        assert_eq!(item.source_display.as_deref(), Some("module"));
+        assert_eq!(item.kind_modifiers.as_deref(), Some("export"));
+        assert_eq!(item.replacement_span, Some((10, 13)));
+    }
+
+    #[test]
+    fn test_completions_items_sorted_by_sort_text_then_label() {
+        // Items should be ordered first by sort_text, then alphabetically
+        // by label within each sort_text group.
+        let source = "const banana = 1;\nfunction apple() {}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let position = Position::new(2, 0);
+
+        let completions = Completions::new(arena, &binder, &line_map, source);
+        let items = completions.get_completions(root, position).unwrap();
+
+        // Identifiers (apple, banana) should appear before keywords
+        let ident_items: Vec<_> = items
+            .iter()
+            .filter(|i| i.kind != CompletionItemKind::Keyword)
+            .collect();
+        let kw_items: Vec<_> = items
+            .iter()
+            .filter(|i| i.kind == CompletionItemKind::Keyword)
+            .collect();
+
+        if let (Some(last_ident), Some(first_kw)) = (ident_items.last(), kw_items.first()) {
+            let last_ident_pos = items
+                .iter()
+                .position(|i| i.label == last_ident.label)
+                .unwrap();
+            let first_kw_pos = items
+                .iter()
+                .position(|i| i.label == first_kw.label)
+                .unwrap();
+            assert!(
+                last_ident_pos < first_kw_pos,
+                "All identifiers should appear before all keywords in the sorted list"
+            );
         }
     }
 }
