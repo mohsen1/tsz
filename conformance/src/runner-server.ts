@@ -327,7 +327,7 @@ export class TszServerClient {
         TSZ_LIB_DIR: this.libDir,
       };
 
-      this.proc = spawn(this.serverPath, [], {
+      this.proc = spawn(this.serverPath, ['--protocol', 'legacy'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env,
       });
