@@ -6,6 +6,7 @@
 use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MemberAccessLevel};
 use crate::parser::NodeIndex;
+use crate::parser::node::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeId, TypePredicateTarget};
@@ -42,6 +43,23 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    /// Find the `async` modifier NodeIndex in a modifier list, if present.
+    pub(crate) fn find_async_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                {
+                    return Some(mod_idx);
+                }
+            }
+        }
+        None
     }
 
     /// Check if a node has the `abstract` modifier.
@@ -1045,21 +1063,65 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    /// Check if an initializer expression directly references a name.
+    /// Collect all nodes within an initializer expression that reference a given name.
     /// Used for TS2372: parameter cannot reference itself.
-    pub(crate) fn initializer_references_name(&self, init_idx: NodeIndex, name: &str) -> bool {
-        let Some(node) = self.ctx.arena.get(init_idx) else {
-            return false;
+    ///
+    /// Recursively walks the initializer AST and collects every identifier node
+    /// that matches `name`. Stops recursion at scope boundaries (function expressions,
+    /// arrow functions, class expressions) since those introduce new scopes where
+    /// the identifier would not be a self-reference of the outer parameter.
+    ///
+    /// Returns a list of NodeIndex values, one for each self-referencing identifier.
+    /// TSC emits a separate TS2372 error for each occurrence.
+    pub(crate) fn collect_self_references(
+        &self,
+        init_idx: NodeIndex,
+        name: &str,
+    ) -> Vec<NodeIndex> {
+        let mut refs = Vec::new();
+        self.collect_self_references_recursive(init_idx, name, &mut refs);
+        refs
+    }
+
+    /// Recursive helper for collect_self_references.
+    fn collect_self_references_recursive(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+        refs: &mut Vec<NodeIndex>,
+    ) {
+        if node_idx.is_none() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
         };
 
-        // Check if this is a direct identifier reference
+        // If this node is an identifier matching the parameter name, record it
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            return ident.escaped_text == name;
+            if ident.escaped_text == name {
+                refs.push(node_idx);
+            }
+            return;
         }
 
-        // For more complex cases, we'd need to recursively check
-        // but for the simple case of `function f(x = x)`, this suffices
-        false
+        // Stop at scope boundaries: function expressions, arrow functions,
+        // and class expressions introduce new scopes where the name would
+        // refer to something different (not the outer parameter).
+        match node.kind {
+            syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION
+            | syntax_kind_ext::CLASS_EXPRESSION => {
+                return;
+            }
+            _ => {}
+        }
+
+        // Recurse into all children of this node
+        let children = self.ctx.arena.get_children(node_idx);
+        for child_idx in children {
+            self.collect_self_references_recursive(child_idx, name, refs);
+        }
     }
 
     // Section 41: Function Implementation Checking

@@ -233,6 +233,12 @@ impl ParserState {
         (self.context_flags & CONTEXT_FLAG_ASYNC) != 0
     }
 
+    /// Check if we're inside a generator function/method
+    #[inline]
+    pub(crate) fn in_generator_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_GENERATOR) != 0
+    }
+
     /// Check if we're inside a static block
     #[inline]
     pub(crate) fn in_static_block_context(&self) -> bool {
@@ -544,15 +550,6 @@ impl ParserState {
     pub(crate) fn error_unexpected_token(&mut self) {
         use crate::checker::types::diagnostics::diagnostic_codes;
         self.parse_error_at_current_token("Unexpected token", diagnostic_codes::UNEXPECTED_TOKEN);
-    }
-
-    /// Error: 'async' modifier cannot be used here. (TS1042)
-    pub(crate) fn error_async_modifier_cannot_be_used_here(&mut self) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-        self.parse_error_at_current_token(
-            "'async' modifier cannot be used here.",
-            diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
-        );
     }
 
     /// Parse semicolon (or recover from missing)

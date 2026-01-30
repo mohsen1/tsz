@@ -198,7 +198,7 @@ impl ParserState {
                     self.parse_async_function_declaration()
                 } else if self.look_ahead_is_async_declaration() {
                     let start_pos = self.token_pos();
-                    self.error_async_modifier_cannot_be_used_here();
+                    // TS1042 is reported by the checker (checkGrammarModifiers), not the parser
                     let async_start = self.token_pos();
                     self.parse_expected(SyntaxKind::AsyncKeyword);
                     let async_end = self.token_end();

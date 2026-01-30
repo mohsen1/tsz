@@ -1493,6 +1493,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1042: async modifier cannot be used on class declarations
+        self.check_async_modifier_on_declaration(&class.modifiers);
+
         // CRITICAL: Check for circular inheritance using InheritanceGraph
         // This prevents stack overflow from infinite recursion in get_class_instance_type
         // Must be done BEFORE any type checking to catch cycles early

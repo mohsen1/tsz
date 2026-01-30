@@ -253,16 +253,25 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS2372: Check if the initializer references the parameter itself
-            // e.g., function f(x = x) { } or function f(await = await) { }
-            if let Some(param_name) = self.get_parameter_name(param.name)
-                && self.initializer_references_name(param.initializer, &param_name)
-            {
-                use crate::checker::types::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    param.initializer,
-                    &format!("Parameter '{}' cannot reference itself.", param_name),
-                    diagnostic_codes::PARAMETER_CANNOT_REFERENCE_ITSELF,
-                );
+            // e.g., function f(x = x) { }, function f(x = x + 1) { }, or
+            //        function f(b = b.toString()) { }
+            // TSC emits one TS2372 error per self-referencing identifier in the
+            // initializer expression tree (recursively, but stopping at scope
+            // boundaries like function expressions, arrow functions, and class
+            // expressions).
+            if let Some(param_name) = self.get_parameter_name(param.name) {
+                let self_refs = self.collect_self_references(param.initializer, &param_name);
+                if !self_refs.is_empty() {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    let msg = format!("Parameter '{}' cannot reference itself.", param_name);
+                    for ref_node in self_refs {
+                        self.error_at_node(
+                            ref_node,
+                            &msg,
+                            diagnostic_codes::PARAMETER_CANNOT_REFERENCE_ITSELF,
+                        );
+                    }
+                }
             }
 
             // IMPORTANT: Always resolve the initializer expression to check for undefined identifiers (TS2304)
