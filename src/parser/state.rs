@@ -1863,7 +1863,11 @@ impl ParserState {
         use crate::parser::node_flags;
 
         let start_pos = self.token_pos();
-        let is_using = (flags & (node_flags::USING as u16 | node_flags::AWAIT_USING as u16)) != 0;
+        // Check if this is a 'using' or 'await using' declaration.
+        // Only check the USING bit (bit 2). AWAIT_USING = CONST | USING = 6,
+        // so checking USING bit matches both USING (4) and AWAIT_USING (6)
+        // but NOT CONST (2) which only has bit 1 set.
+        let is_using = (flags & node_flags::USING as u16) != 0;
 
         // Check TS1375: 'using' declarations do not support destructuring patterns
         if is_using {
@@ -4759,6 +4763,9 @@ impl ParserState {
             self.parse_string_literal()
         };
 
+        // Parse optional import attributes: with { ... } or assert { ... }
+        let attributes = self.parse_import_attributes();
+
         self.parse_semicolon();
         let end_pos = self.token_end();
 
@@ -4770,7 +4777,73 @@ impl ParserState {
                 modifiers: None,
                 import_clause,
                 module_specifier,
-                attributes: NodeIndex::NONE,
+                attributes,
+            },
+        )
+    }
+
+    /// Parse optional import attributes: `with { type: "json" }` or `assert { type: "json" }`
+    /// Returns NodeIndex::NONE if no attributes are present.
+    fn parse_import_attributes(&mut self) -> NodeIndex {
+        // Check for 'with' or 'assert' keyword (not on a new line to avoid ASI issues)
+        if !self.is_token(SyntaxKind::WithKeyword) && !self.is_token(SyntaxKind::AssertKeyword) {
+            return NodeIndex::NONE;
+        }
+
+        let start_pos = self.token_pos();
+        let token = self.current_token as u16;
+        self.next_token(); // consume 'with' or 'assert'
+
+        if !self.is_token(SyntaxKind::OpenBraceToken) {
+            return NodeIndex::NONE;
+        }
+
+        self.parse_expected(SyntaxKind::OpenBraceToken);
+
+        let mut elements = Vec::new();
+        while !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            let attr_start = self.token_pos();
+            // Name can be identifier or string literal
+            let name = if self.is_token(SyntaxKind::StringLiteral) {
+                self.parse_string_literal()
+            } else {
+                self.parse_identifier_name()
+            };
+            self.parse_expected(SyntaxKind::ColonToken);
+            let value = self.parse_assignment_expression();
+            let attr_end = self
+                .arena
+                .get(value)
+                .map(|n| n.end)
+                .unwrap_or(self.token_end());
+
+            let attr_node = self.arena.add_import_attribute(
+                syntax_kind_ext::IMPORT_ATTRIBUTE,
+                attr_start,
+                attr_end,
+                crate::parser::node::ImportAttributeData { name, value },
+            );
+            elements.push(attr_node);
+
+            if !self.parse_optional(SyntaxKind::CommaToken) {
+                break;
+            }
+        }
+
+        self.parse_expected(SyntaxKind::CloseBraceToken);
+        let end_pos = self.token_end();
+
+        let node_list = self.make_node_list(elements);
+        self.arena.add_import_attributes(
+            syntax_kind_ext::IMPORT_ATTRIBUTES,
+            start_pos,
+            end_pos,
+            crate::parser::node::ImportAttributesData {
+                token,
+                elements: node_list,
+                multi_line: false,
             },
         )
     }
@@ -5099,6 +5172,10 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::FromKeyword);
         let module_specifier = self.parse_string_literal();
+
+        // Parse optional import attributes: with { ... } or assert { ... }
+        let attributes = self.parse_import_attributes();
+
         self.parse_semicolon();
 
         let end_pos = self.token_end();
@@ -5112,7 +5189,7 @@ impl ParserState {
                 is_default_export: false,
                 export_clause,
                 module_specifier,
-                attributes: NodeIndex::NONE,
+                attributes,
             },
         )
     }
@@ -5123,6 +5200,13 @@ impl ParserState {
 
         let module_specifier = if self.parse_optional(SyntaxKind::FromKeyword) {
             self.parse_string_literal()
+        } else {
+            NodeIndex::NONE
+        };
+
+        // Parse optional import attributes: with { ... } or assert { ... }
+        let attributes = if !module_specifier.is_none() {
+            self.parse_import_attributes()
         } else {
             NodeIndex::NONE
         };
@@ -5140,7 +5224,7 @@ impl ParserState {
                 is_default_export: false,
                 export_clause,
                 module_specifier,
-                attributes: NodeIndex::NONE,
+                attributes,
             },
         )
     }
@@ -8631,6 +8715,30 @@ impl ParserState {
     fn parse_new_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::NewKeyword);
+
+        // Handle new.target meta-property
+        if self.is_token(SyntaxKind::DotToken) {
+            self.next_token(); // consume '.'
+            let new_node =
+                self.arena
+                    .add_token(SyntaxKind::NewKeyword as u16, start_pos, start_pos + 3);
+            let name = self.parse_identifier_name();
+            let end_pos = self
+                .arena
+                .get(name)
+                .map(|n| n.end)
+                .unwrap_or(self.token_end());
+            return self.arena.add_access_expr(
+                syntax_kind_ext::META_PROPERTY,
+                start_pos,
+                end_pos,
+                crate::parser::node::AccessExprData {
+                    expression: new_node,
+                    question_dot_token: false,
+                    name_or_argument: name,
+                },
+            );
+        }
 
         // Type assertion syntax (<T>expr) is not valid in new expressions
         // Check if the next token is '<' and report TS1109 if so
