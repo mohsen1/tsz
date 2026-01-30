@@ -67,12 +67,11 @@ fn main() -> Result<()> {
         );
     }
 
-    // Handle --generateCpuProfile: generate CPU profile
-    if let Some(ref profile_path) = args.generate_cpu_profile {
-        // TODO: Implement CPU profiling (requires pprof or similar)
+    // Handle --generateCpuProfile: this is a V8-specific feature not applicable to a native
+    // Rust compiler. The flag is accepted for CLI compatibility with tsc but has no effect.
+    if let Some(ref _profile_path) = args.generate_cpu_profile {
         eprintln!(
-            "--generateCpuProfile not yet fully implemented, would write to: {}",
-            profile_path.display()
+            "The --generateCpuProfile flag is a V8/Node.js feature and is not applicable to tsz (a native Rust compiler). The flag is accepted for compatibility but has no effect."
         );
     }
 
@@ -243,39 +242,82 @@ fn split_response_line(line: &str) -> Vec<String> {
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
     let files_count = result.files_read.len();
-    let lines_of_code = result
-        .files_read
-        .iter()
-        .try_fold(0u64, |acc, path| {
-            std::fs::read_to_string(path)
-                .ok()
-                .map(|text| acc + text.lines().count() as u64)
-                .or(Some(acc))
-        })
-        .unwrap_or(0);
+
+    // Count lines by file category, matching tsc's --diagnostics output
+    let mut lines_of_library: u64 = 0;
+    let mut lines_of_definitions: u64 = 0;
+    let mut lines_of_typescript: u64 = 0;
+    let mut lines_of_javascript: u64 = 0;
+    let mut lines_of_json: u64 = 0;
+    let mut lines_of_other: u64 = 0;
+
+    for path in &result.files_read {
+        let count = std::fs::read_to_string(path)
+            .ok()
+            .map(|text| text.lines().count() as u64)
+            .unwrap_or(0);
+        let name = path.to_string_lossy();
+        if name.contains("lib.") && name.ends_with(".d.ts") {
+            lines_of_library += count;
+        } else if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
+        {
+            lines_of_definitions += count;
+        } else if name.ends_with(".ts") || name.ends_with(".tsx") || name.ends_with(".mts") || name.ends_with(".cts") {
+            lines_of_typescript += count;
+        } else if name.ends_with(".js") || name.ends_with(".jsx") || name.ends_with(".mjs") || name.ends_with(".cjs") {
+            lines_of_javascript += count;
+        } else if name.ends_with(".json") {
+            lines_of_json += count;
+        } else {
+            lines_of_other += count;
+        }
+    }
+
     let errors = result
         .diagnostics
         .iter()
         .filter(|d| d.category == wasm::checker::types::diagnostics::DiagnosticCategory::Error)
         .count();
-    let warnings = result
-        .diagnostics
-        .iter()
-        .filter(|d| d.category == wasm::checker::types::diagnostics::DiagnosticCategory::Warning)
-        .count();
 
-    println!("\nCompilation statistics:");
-    println!("  Files:           {}", files_count);
-    println!("  Lines of code:   {}", lines_of_code);
-    println!("  Errors:          {}", errors);
-    println!("  Warnings:        {}", warnings);
-    println!("  Time:            {:.2}s", elapsed.as_secs_f64());
+    println!();
+    println!("Files:                         {}", files_count);
+    println!("Lines of Library:              {}", lines_of_library);
+    println!("Lines of Definitions:          {}", lines_of_definitions);
+    println!("Lines of TypeScript:           {}", lines_of_typescript);
+    println!("Lines of JavaScript:           {}", lines_of_javascript);
+    println!("Lines of JSON:                 {}", lines_of_json);
+    println!("Lines of Other:                {}", lines_of_other);
+    println!("Errors:                        {}", errors);
+    println!("Total time:                    {:.2}s", elapsed.as_secs_f64());
 
     if extended {
-        println!("\nExtended diagnostics:");
-        println!("  Emitted files:   {}", result.emitted_files.len());
-        println!("  Diagnostics:     {}", result.diagnostics.len());
+        // Use process memory info if available
+        let memory_used = get_memory_usage_kb();
+        println!("Emitted files:                 {}", result.emitted_files.len());
+        println!("Total diagnostics:             {}", result.diagnostics.len());
+        if memory_used > 0 {
+            println!("Memory used:                   {}K", memory_used);
+        }
     }
+}
+
+/// Get current process memory usage in KB (Linux only, returns 0 on other platforms).
+fn get_memory_usage_kb() -> u64 {
+    // Read from /proc/self/status for RSS on Linux
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            for line in status.lines() {
+                if line.starts_with("VmRSS:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        return parts[1].parse::<u64>().ok();
+                    }
+                }
+            }
+            None
+        })
+        .unwrap_or(0)
 }
 
 fn handle_init(cwd: &std::path::Path) -> Result<()> {
@@ -458,56 +500,168 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     )?;
     apply_cli_overrides(&mut resolved, args)?;
 
-    // Output the resolved config as JSON
-    println!("{{");
-    println!("  \"compilerOptions\": {{");
-    println!("    \"target\": \"{:?}\",", resolved.printer.target);
-    println!("    \"module\": \"{:?}\",", resolved.printer.module);
-    if let Some(out_dir) = &resolved.out_dir {
-        println!("    \"outDir\": \"{}\",", out_dir.display());
-    }
-    if let Some(root_dir) = &resolved.root_dir {
-        println!("    \"rootDir\": \"{}\",", root_dir.display());
-    }
-    println!("    \"strict\": {},", resolved.checker.strict);
-    println!(
-        "    \"noImplicitAny\": {},",
-        resolved.checker.no_implicit_any
-    );
-    println!(
-        "    \"strictNullChecks\": {},",
-        resolved.checker.strict_null_checks
-    );
-    println!(
-        "    \"strictFunctionTypes\": {},",
-        resolved.checker.strict_function_types
-    );
-    println!(
-        "    \"noImplicitThis\": {},",
-        resolved.checker.no_implicit_this
-    );
-    println!(
-        "    \"noImplicitReturns\": {},",
-        resolved.checker.no_implicit_returns
-    );
-    println!("    \"declaration\": {},", resolved.emit_declarations);
-    println!("    \"sourceMap\": {},", resolved.source_map);
-    println!("    \"noEmit\": {}", resolved.no_emit);
-    println!("  }},");
+    // Build compilerOptions as a serde_json::Map for proper JSON output (matching tsc)
+    let mut opts = serde_json::Map::new();
 
-    // Include files if specified
+    // Language and Environment
+    opts.insert(
+        "target".into(),
+        serde_json::Value::String(format!("{:?}", resolved.printer.target).to_lowercase()),
+    );
+    opts.insert(
+        "module".into(),
+        serde_json::Value::String(format!("{:?}", resolved.printer.module).to_lowercase()),
+    );
+
+    // Modules
+    if let Some(ref module_resolution) = resolved.module_resolution {
+        opts.insert(
+            "moduleResolution".into(),
+            serde_json::Value::String(format!("{:?}", module_resolution).to_lowercase()),
+        );
+    }
+    if let Some(ref out_dir) = resolved.out_dir {
+        opts.insert(
+            "outDir".into(),
+            serde_json::Value::String(out_dir.display().to_string()),
+        );
+    }
+    if let Some(ref root_dir) = resolved.root_dir {
+        opts.insert(
+            "rootDir".into(),
+            serde_json::Value::String(root_dir.display().to_string()),
+        );
+    }
+    if let Some(ref out_file) = resolved.out_file {
+        opts.insert(
+            "outFile".into(),
+            serde_json::Value::String(out_file.display().to_string()),
+        );
+    }
+    if let Some(ref base_url) = resolved.base_url {
+        opts.insert(
+            "baseUrl".into(),
+            serde_json::Value::String(base_url.display().to_string()),
+        );
+    }
+    if let Some(ref declaration_dir) = resolved.declaration_dir {
+        opts.insert(
+            "declarationDir".into(),
+            serde_json::Value::String(declaration_dir.display().to_string()),
+        );
+    }
+
+    // Strict checks
+    opts.insert("strict".into(), resolved.checker.strict.into());
+    opts.insert(
+        "noImplicitAny".into(),
+        resolved.checker.no_implicit_any.into(),
+    );
+    opts.insert(
+        "strictNullChecks".into(),
+        resolved.checker.strict_null_checks.into(),
+    );
+    opts.insert(
+        "strictFunctionTypes".into(),
+        resolved.checker.strict_function_types.into(),
+    );
+    opts.insert(
+        "strictPropertyInitialization".into(),
+        resolved.checker.strict_property_initialization.into(),
+    );
+    opts.insert(
+        "strictBindCallApply".into(),
+        resolved.checker.strict_bind_call_apply.into(),
+    );
+    opts.insert(
+        "noImplicitThis".into(),
+        resolved.checker.no_implicit_this.into(),
+    );
+    opts.insert(
+        "noImplicitReturns".into(),
+        resolved.checker.no_implicit_returns.into(),
+    );
+    opts.insert(
+        "useUnknownInCatchVariables".into(),
+        resolved.checker.use_unknown_in_catch_variables.into(),
+    );
+    opts.insert(
+        "noUncheckedIndexedAccess".into(),
+        resolved.checker.no_unchecked_indexed_access.into(),
+    );
+    opts.insert(
+        "exactOptionalPropertyTypes".into(),
+        resolved.checker.exact_optional_property_types.into(),
+    );
+    opts.insert(
+        "isolatedModules".into(),
+        resolved.checker.isolated_modules.into(),
+    );
+    opts.insert(
+        "esModuleInterop".into(),
+        resolved.checker.es_module_interop.into(),
+    );
+    opts.insert(
+        "allowSyntheticDefaultImports".into(),
+        resolved.checker.allow_synthetic_default_imports.into(),
+    );
+
+    // Emit
+    opts.insert("declaration".into(), resolved.emit_declarations.into());
+    opts.insert("declarationMap".into(), resolved.declaration_map.into());
+    opts.insert("sourceMap".into(), resolved.source_map.into());
+    opts.insert("noEmit".into(), resolved.no_emit.into());
+    opts.insert("noEmitOnError".into(), resolved.no_emit_on_error.into());
+    opts.insert(
+        "removeComments".into(),
+        resolved.printer.remove_comments.into(),
+    );
+    opts.insert(
+        "noEmitHelpers".into(),
+        resolved.printer.no_emit_helpers.into(),
+    );
+
+    // Other
+    opts.insert("incremental".into(), resolved.incremental.into());
+    opts.insert("noCheck".into(), resolved.no_check.into());
+
+    // Build top-level JSON object
+    let mut top = serde_json::Map::new();
+    top.insert(
+        "compilerOptions".into(),
+        serde_json::Value::Object(opts),
+    );
+
+    // Include files/include/exclude from tsconfig
     if let Some(ref cfg) = config {
         if let Some(ref files) = cfg.files {
-            println!("  \"files\": {:?},", files);
+            top.insert(
+                "files".into(),
+                serde_json::Value::Array(
+                    files.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
+                ),
+            );
         }
         if let Some(ref include) = cfg.include {
-            println!("  \"include\": {:?},", include);
+            top.insert(
+                "include".into(),
+                serde_json::Value::Array(
+                    include.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
+                ),
+            );
         }
         if let Some(ref exclude) = cfg.exclude {
-            println!("  \"exclude\": {:?}", exclude);
+            top.insert(
+                "exclude".into(),
+                serde_json::Value::Array(
+                    exclude.iter().map(|f| serde_json::Value::String(f.clone())).collect(),
+                ),
+            );
         }
     }
-    println!("}}");
+
+    let json = serde_json::Value::Object(top);
+    println!("{}", serde_json::to_string_pretty(&json).unwrap());
 
     Ok(())
 }
