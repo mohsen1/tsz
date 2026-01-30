@@ -578,6 +578,7 @@ impl CompilerOptions {
             target: self.resolve_target(),
             es_module_interop: false,
             allow_synthetic_default_imports: false,
+            allow_unreachable_code: false,
         }
     }
 }

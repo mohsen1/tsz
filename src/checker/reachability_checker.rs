@@ -43,6 +43,11 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_unreachable_code_in_block(&mut self, statements: &[NodeIndex]) {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        // TS7027 is suppressed when allowUnreachableCode is enabled
+        if self.ctx.compiler_options.allow_unreachable_code {
+            return;
+        }
+
         let mut unreachable = false;
         for &stmt_idx in statements {
             if unreachable {

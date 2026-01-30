@@ -1548,6 +1548,7 @@ impl Server {
             allow_synthetic_default_imports: options
                 .allow_synthetic_default_imports
                 .unwrap_or(options.es_module_interop),
+            allow_unreachable_code: options.allow_unreachable_code.unwrap_or(false),
         }
     }
 }

@@ -47,6 +47,8 @@ pub struct CheckerOptions {
     /// Allow 'import x from y' when a module doesn't have a default export.
     /// Implied by esModuleInterop.
     pub allow_synthetic_default_imports: bool,
+    /// When true, disable error reporting for unreachable code (TS7027).
+    pub allow_unreachable_code: bool,
 }
 
 /// ECMAScript target version
@@ -262,6 +264,12 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for element access type computation.
     pub element_access_type_set: FxHashSet<(TypeId, TypeId, Option<usize>)>,
 
+    /// Maps class instance TypeIds to their class declaration NodeIndex.
+    /// Used by `get_class_decl_from_type` to correctly identify the class
+    /// for derived classes that have no private/protected members (and thus no brand).
+    /// Populated by `get_class_instance_type_inner` when creating class instance types.
+    pub class_instance_type_to_decl: FxHashMap<TypeId, NodeIndex>,
+
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 
@@ -422,7 +430,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
-            report_unresolved_imports: true,
+            report_unresolved_imports: false,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
@@ -436,6 +444,7 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: FxHashSet::default(),
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
+            class_instance_type_to_decl: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -496,7 +505,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
-            report_unresolved_imports: true,
+            report_unresolved_imports: false,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
@@ -510,6 +519,7 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: FxHashSet::default(),
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
+            class_instance_type_to_decl: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -572,7 +582,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
-            report_unresolved_imports: true,
+            report_unresolved_imports: false,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
@@ -586,6 +596,7 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: FxHashSet::default(),
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
+            class_instance_type_to_decl: FxHashMap::default(),
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -647,7 +658,7 @@ impl<'a> CheckerContext<'a> {
             types,
             file_name,
             compiler_options,
-            report_unresolved_imports: true,
+            report_unresolved_imports: false,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
@@ -661,6 +672,7 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: FxHashSet::default(),
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
+            class_instance_type_to_decl: FxHashMap::default(),
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),

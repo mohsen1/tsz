@@ -93,15 +93,13 @@ impl<'a> CheckerState<'a> {
 
         // ANY TYPE SUPPRESSION
         if source == TypeId::ANY || target == TypeId::ANY {
-            if tracing::enabled!(Level::TRACE) {
-                trace!(
-                    source = source.0,
-                    target = target.0,
-                    node_idx = idx.0,
-                    file = %self.ctx.file_name,
-                    "suppressing TS2322 for any type"
-                );
-            }
+            return;
+        }
+
+        // UNKNOWN TYPE SUPPRESSION - when types couldn't be fully resolved
+        // (e.g., from unresolved imports, incomplete lib loading), suppress
+        // to prevent false positive cascading errors
+        if source == TypeId::UNKNOWN || target == TypeId::UNKNOWN {
             return;
         }
 
@@ -589,9 +587,9 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress error if type is ERROR - prevents cascading errors
+        // Suppress error if type is ERROR/UNKNOWN/ANY - prevents cascading errors
         // e.g., if Promise is undefined (TS2583), don't also emit TS2339 for Promise.then
-        if type_id == TypeId::ERROR {
+        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
             return;
         }
 
@@ -667,6 +665,18 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::solver::TypeFormatter;
 
+        // TS7053 is a noImplicitAny error - suppress without it
+        if !self.ctx.no_implicit_any() {
+            return;
+        }
+        // Suppress when types are unresolved
+        if index_type == TypeId::ANY || index_type == TypeId::ERROR || index_type == TypeId::UNKNOWN {
+            return;
+        }
+        if object_type == TypeId::ANY || object_type == TypeId::ERROR || object_type == TypeId::UNKNOWN {
+            return;
+        }
+
         let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
         let index_str = formatter.format(index_type);
         let object_str = formatter.format(object_type);
@@ -706,19 +716,6 @@ impl<'a> CheckerState<'a> {
 
         // Fall back to standard error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
-            use std::fs::OpenOptions;
-            use std::io::Write;
-            if let Ok(mut file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/tsz_debug.txt")
-            {
-                let _ = writeln!(
-                    file,
-                    "error_cannot_find_name_at: name={}, idx={:?}, start={}, code=2304",
-                    name, idx, loc.start
-                );
-            }
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
                 self.ctx.file_name.as_str(),
@@ -1044,6 +1041,16 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         idx: NodeIndex,
     ) {
+        // Suppress cascading errors when either type is ERROR, ANY, or UNKNOWN
+        if arg_type == TypeId::ERROR || param_type == TypeId::ERROR {
+            return;
+        }
+        if arg_type == TypeId::ANY || param_type == TypeId::ANY {
+            return;
+        }
+        if arg_type == TypeId::UNKNOWN || param_type == TypeId::UNKNOWN {
+            return;
+        }
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -1242,8 +1249,8 @@ impl<'a> CheckerState<'a> {
     pub fn error_not_a_constructor_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         use crate::solver::TypeFormatter;
 
-        // Suppress error if type is ERROR - prevents cascading errors
-        if type_id == TypeId::ERROR {
+        // Suppress error if type is ERROR/ANY/UNKNOWN - prevents cascading errors
+        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
             return;
         }
 
@@ -1455,6 +1462,13 @@ impl<'a> CheckerState<'a> {
         current_type: TypeId,
         idx: NodeIndex,
     ) {
+        // Suppress when types are unresolved (ANY/ERROR/UNKNOWN)
+        if prev_type == TypeId::ANY || prev_type == TypeId::ERROR || prev_type == TypeId::UNKNOWN {
+            return;
+        }
+        if current_type == TypeId::ANY || current_type == TypeId::ERROR || current_type == TypeId::UNKNOWN {
+            return;
+        }
         if let Some(loc) = self.get_source_location(idx) {
             let prev_type_str = self.format_type(prev_type);
             let current_type_str = self.format_type(current_type);
@@ -1596,6 +1610,12 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2749: Symbol refers to a value, but is used as a type.
     pub fn error_value_only_type_at(&mut self, name: &str, idx: NodeIndex) {
+        // In single-file mode, type/value classification can be incomplete
+        // (e.g., class from another file resolves as value-only).
+        // Suppress to prevent false positives.
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
                 diagnostic_messages::ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE,

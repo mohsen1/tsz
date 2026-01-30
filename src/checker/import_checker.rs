@@ -228,7 +228,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.binder.is_external_module() {
+        // TS1202: Only emit when we're in full module resolution mode.
+        // In single-file/conformance mode (report_unresolved_imports=false),
+        // we don't have enough context to determine ESM vs CJS module type.
+        if self.ctx.report_unresolved_imports && self.ctx.binder.is_external_module() {
             self.error_at_node(
                 stmt_idx,
                 "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",
@@ -448,4 +451,5 @@ impl<'a> CheckerState<'a> {
             .import_resolution_stack
             .contains(&module.to_string())
     }
+
 }

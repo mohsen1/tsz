@@ -559,7 +559,9 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_parameter_properties(sig.type_annotation);
                 }
                 // Property signature without type annotation implicitly has 'any' type
-                if sig.type_annotation.is_none()
+                // Only emit TS7008 when noImplicitAny is enabled
+                if self.ctx.no_implicit_any()
+                    && sig.type_annotation.is_none()
                     && let Some(member_name) = self.get_property_name(sig.name)
                 {
                     use crate::checker::types::diagnostics::{

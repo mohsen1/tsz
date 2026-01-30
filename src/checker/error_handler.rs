@@ -312,6 +312,10 @@ impl<'a> ErrorHandler for CheckerState<'a> {
         if source == TypeId::ANY || target == TypeId::ANY {
             return;
         }
+        // UNKNOWN type suppression: prevents cascade errors from unresolved types
+        if source == TypeId::UNKNOWN || target == TypeId::UNKNOWN {
+            return;
+        }
 
         self.error_type_not_assignable_at(source, target, idx);
     }
@@ -329,6 +333,10 @@ impl<'a> ErrorHandler for CheckerState<'a> {
         }
         // ANY type suppression
         if source == TypeId::ANY || target == TypeId::ANY {
+            return;
+        }
+        // UNKNOWN type suppression: prevents cascade errors from unresolved types
+        if source == TypeId::UNKNOWN || target == TypeId::UNKNOWN {
             return;
         }
 

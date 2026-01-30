@@ -722,7 +722,16 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Report error based on the cause (TS2531/TS2532/TS2533)
+                    // These errors only apply with strictNullChecks enabled
                     use crate::checker::types::diagnostics::diagnostic_codes;
+
+                    // Suppress cascade errors when cause is ERROR/ANY/UNKNOWN
+                    if cause == TypeId::ERROR
+                        || cause == TypeId::ANY
+                        || cause == TypeId::UNKNOWN
+                    {
+                        return property_type.unwrap_or(TypeId::ERROR);
+                    }
 
                     let (code, message) = if cause == TypeId::NULL {
                         (

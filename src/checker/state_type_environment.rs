@@ -900,8 +900,42 @@ impl<'a> CheckerState<'a> {
             if is_type_defining { 0u8 } else { 1u8 }
         });
 
-        // Resolve each symbol and add to the environment
+        // Resolve each symbol and add to the environment.
+        // IMPORTANT: Skip variable/parameter symbols to avoid premature type computation.
+        // Computing types for local variables inside class method bodies triggers property
+        // access type checks (check_property_accessibility) before check_class_declaration
+        // has set the enclosing_class context. This causes false positive TS2445 errors
+        // (protected member access denied) because the checker doesn't know we're inside
+        // a class method. Variable types are computed lazily during statement checking
+        // when the proper enclosing_class context is available.
+        // The type environment is only needed for Application type expansion (generic
+        // type instantiation) which applies to type aliases, interfaces, classes, etc.
         for sym_id in symbols {
+            // Skip variable and parameter symbols - their types will be computed
+            // lazily during statement checking with proper class context
+            let flags = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .map(|s| s.flags)
+                .unwrap_or(0);
+            if flags
+                & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                    | symbol_flags::BLOCK_SCOPED_VARIABLE)
+                != 0
+                && flags
+                    & (symbol_flags::CLASS
+                        | symbol_flags::FUNCTION
+                        | symbol_flags::INTERFACE
+                        | symbol_flags::TYPE_ALIAS
+                        | symbol_flags::ENUM
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE)
+                    == 0
+            {
+                continue;
+            }
+
             // Get the type for this symbol
             let type_id = self.get_type_of_symbol(sym_id);
             if type_id != TypeId::ANY && type_id != TypeId::ERROR {

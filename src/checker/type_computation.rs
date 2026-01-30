@@ -731,7 +731,11 @@ impl<'a> CheckerState<'a> {
             let right_type = type_stack.pop().unwrap_or(TypeId::UNKNOWN);
             let left_type = type_stack.pop().unwrap_or(TypeId::UNKNOWN);
             if op_kind == SyntaxKind::CommaToken as u16 {
-                if self.is_side_effect_free(left_idx)
+                // TS2695: Only emit when neither side is ERROR/ANY/UNKNOWN (cascade prevention)
+                if left_type != TypeId::ERROR
+                    && left_type != TypeId::ANY
+                    && left_type != TypeId::UNKNOWN
+                    && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)
                 {
                     use crate::checker::types::diagnostics::{
