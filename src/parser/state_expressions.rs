@@ -704,6 +704,7 @@ impl ParserState {
                             | SyntaxKind::CommaToken
                             | SyntaxKind::ColonToken
                             | SyntaxKind::EqualsGreaterThanToken
+                            | SyntaxKind::CloseParenToken
                             | SyntaxKind::EndOfFileToken
                     );
 
@@ -745,6 +746,28 @@ impl ParserState {
                 )
             }
             SyntaxKind::YieldKeyword => {
+                // Outside a generator context, 'yield' is a regular identifier,
+                // not a yield expression. This mirrors how 'await' is handled
+                // outside async contexts.
+                // e.g., function f(yield = yield) {} -- 'yield' is an identifier here
+                if !self.in_generator_context() {
+                    let start_pos = self.token_pos();
+                    let end_pos = self.token_end();
+                    let atom = self.scanner.get_token_atom();
+                    self.next_token();
+                    return self.arena.add_identifier(
+                        SyntaxKind::Identifier as u16,
+                        start_pos,
+                        end_pos,
+                        IdentifierData {
+                            atom,
+                            escaped_text: String::from("yield"),
+                            original_text: None,
+                            type_arguments: None,
+                        },
+                    );
+                }
+
                 let start_pos = self.token_pos();
                 self.next_token();
 

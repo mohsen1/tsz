@@ -836,25 +836,29 @@ impl<'a> CheckerState<'a> {
     /// This can be passed to `is_assignable_to_with_env` for type checking
     /// that needs to resolve type references.
     pub fn build_type_environment(&mut self) -> crate::solver::TypeEnvironment {
+        use crate::binder::symbol_flags;
         use crate::solver::{SymbolRef, TypeEnvironment};
 
         let mut env = TypeEnvironment::new();
 
-        // Collect all unique symbols from node_symbols map
+        // Collect all unique symbols from node_symbols map using BTreeSet for
+        // deterministic ordering. Non-deterministic HashSet caused type parameter
+        // resolution failures: parameter symbols processed before their parent
+        // function would fail to resolve type params like T, causing spurious TS2304.
         let mut symbols: Vec<SymbolId> = self
             .ctx
             .binder
             .node_symbols
             .values()
             .copied()
-            .collect::<std::collections::HashSet<_>>()
+            .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
 
         // FIX: Also include lib symbols for proper property resolution
         // This ensures Error, Math, JSON, etc. can be resolved when accessed
         if !self.ctx.lib_contexts.is_empty() {
-            let lib_symbols_set: std::collections::HashSet<SymbolId> = self
+            let lib_symbols_set: std::collections::BTreeSet<SymbolId> = self
                 .ctx
                 .lib_contexts
                 .iter()
@@ -872,6 +876,29 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
+        // Sort symbols so type-defining symbols (functions, classes, interfaces, type aliases)
+        // are processed BEFORE variable/parameter symbols. This ensures type parameters
+        // are properly scoped when parameter types reference them.
+        // Priority: 0 = type-defining (processed first), 1 = variables/parameters (processed last)
+        symbols.sort_by_key(|&sym_id| {
+            let flags = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .map(|s| s.flags)
+                .unwrap_or(0);
+            let is_type_defining = flags
+                & (symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::INTERFACE
+                    | symbol_flags::TYPE_ALIAS
+                    | symbol_flags::ENUM
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE)
+                != 0;
+            if is_type_defining { 0u8 } else { 1u8 }
+        });
 
         // Resolve each symbol and add to the environment
         for sym_id in symbols {
@@ -1136,11 +1163,18 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx) {
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
                 // Validate the type reference exists before lowering
-                // Check cache first
+                // Check cache first - but allow re-resolution of ERROR when type params
+                // are in scope, since the ERROR may have been cached when type params
+                // weren't available yet (non-deterministic symbol processing order).
                 if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                    if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
                         return cached;
                     }
+                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                    // cached == ERROR but type_parameter_scope is non-empty: re-resolve
+                    // cached != ERROR and type_parameter_scope non-empty: re-resolve (type params may differ)
                 }
                 let result = self.get_type_from_type_reference(idx);
                 self.ctx.node_types.insert(idx.0, result);
@@ -1148,9 +1182,12 @@ impl<'a> CheckerState<'a> {
             }
             if node.kind == syntax_kind_ext::TYPE_QUERY {
                 // Handle typeof X - need to resolve symbol properly via binder
-                // Check cache first
+                // Check cache first - allow re-resolution of ERROR when type params in scope
                 if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                    if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
                         return cached;
                     }
                 }
@@ -1161,9 +1198,12 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::UNION_TYPE {
                 // Handle union types specially to ensure nested typeof expressions
                 // are resolved via binder (for abstract class detection)
-                // Check cache first
+                // Check cache first - allow re-resolution of ERROR when type params in scope
                 if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                    if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
                         return cached;
                     }
                 }
@@ -1173,9 +1213,12 @@ impl<'a> CheckerState<'a> {
             }
             if node.kind == syntax_kind_ext::TYPE_LITERAL {
                 // Type literals should use checker resolution so type parameters resolve correctly.
-                // Check cache first
+                // Check cache first - allow re-resolution of ERROR when type params in scope
                 if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-                    if cached == TypeId::ERROR || self.ctx.type_parameter_scope.is_empty() {
+                    if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
                         return cached;
                     }
                 }

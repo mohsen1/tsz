@@ -173,15 +173,43 @@ async enum E { Value }
 "#;
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
-    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    let root = parser.parse_source_file();
+    // Parser should NOT emit TS1042 — that is the checker's job
+    let parser_1042_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE)
+        .count();
+    assert_eq!(
+        parser_1042_count, 0,
+        "Parser should not emit TS1042; the checker handles it. Got: {:?}",
+        parser.get_diagnostics()
+    );
+
+    // Run the checker — it should produce TS1042 for both declarations
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let async_modifier_count = codes
         .iter()
         .filter(|&&code| code == diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE)
         .count();
     assert_eq!(
         async_modifier_count, 2,
-        "Expected two TS1042 errors for async class/enum, got: {:?}",
+        "Expected two TS1042 errors from checker for async class/enum, got: {:?}",
         codes
     );
 }
