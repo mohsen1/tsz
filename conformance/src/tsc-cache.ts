@@ -17,10 +17,6 @@ const __dirname = path.dirname(__filename);
 export interface CacheEntry {
   codes: number[];
   hash: string;
-  /** TSC crashed on this test (stack overflow, undefined access, etc.) */
-  tscCrashed?: boolean;
-  /** Error message when TSC crashed */
-  tscError?: string;
 }
 
 export interface TscCacheData {
@@ -31,7 +27,7 @@ export interface TscCacheData {
   entries: Record<string, CacheEntry>;
 }
 
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 
 function getCacheDir(): string {
   return path.resolve(__dirname, '../.tsc-cache');
