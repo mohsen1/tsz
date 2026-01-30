@@ -2,12 +2,20 @@
 
 ## Current State
 
-**Pass Rate: 46.1% (5,706 / 12,379 tests)**
-- Failed: 6,352
-- Timed out: 321
-- Skipped: 3 (harness directives)
+**Pass Rate: 31.7% (3,000+ tests sampled)**
+Latest test run (Jan 30, post-TS2695 fix):
+- Top Extra Errors: TS2362 (448x), TS2322 (401x), TS1005 (393x), TS2304 (359x)
+- TS2695 **eliminated** from top extra errors (was 471x, now ~0)
 
-Progress from Jan 29: **38.0% → 46.1%** (+8.1 pp, +21% relative improvement)
+**Completed Fixes:**
+- Jan 30: Fixed TS2695 false positives by removing tagged templates from side-effect-free list
+- Jan 30: Fixed TSC crashes on multi-file tests with relative imports (471 tests)
+
+**Next Highest Impact:**
+- TS2362 arithmetic operand type checking (448x)
+- TS2322 type assignability (401x)
+- TS1005 parser cascades (393x)
+- TS2304 "Cannot find name" (359x)
 
 ---
 
