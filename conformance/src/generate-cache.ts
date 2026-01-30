@@ -130,6 +130,7 @@ async function generateCache(workerCount: number): Promise<void> {
   const entries: Record<string, CacheEntry> = {};
   let completed = 0;
   let errors = 0;
+  let tscCrashes = 0;
 
   // Create a pool of workers
   const workerPath = path.join(__dirname, 'cache-worker.js');
@@ -146,17 +147,24 @@ async function generateCache(workerCount: number): Promise<void> {
     const pct = ((completed / allFiles.length) * 100).toFixed(1);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const rate = completed > 0 ? (completed / ((Date.now() - startTime) / 1000)).toFixed(0) : '0';
-    process.stdout.write('\r  Progress: ' + completed + '/' + allFiles.length + ' (' + pct + '%) | ' + rate + '/s | ' + elapsed + 's    ');
+    const crashInfo = tscCrashes > 0 ? ' | tsc crashes: ' + tscCrashes : '';
+    process.stdout.write('\r  Progress: ' + completed + '/' + allFiles.length + ' (' + pct + '%) | ' + rate + '/s | ' + elapsed + 's' + crashInfo + '    ');
   };
 
   // Process file and store result
-  const processResult = (filePath: string, codes: number[]) => {
+  const processResult = (filePath: string, codes: number[], tscCrashed?: boolean, tscError?: string) => {
     const relPath = filePath.replace(TESTS_BASE_PATH + path.sep, '');
     const content = fs.readFileSync(filePath, 'utf8');
-    entries[relPath] = {
+    const entry: CacheEntry = {
       codes,
       hash: hashContent(content),
     };
+    if (tscCrashed) {
+      entry.tscCrashed = true;
+      entry.tscError = tscError;
+      tscCrashes++;
+    }
+    entries[relPath] = entry;
     completed++;
     updateProgress();
   };
@@ -167,13 +175,16 @@ async function generateCache(workerCount: number): Promise<void> {
       workerData: { libSource, libDir, testsBasePath: TESTS_BASE_PATH },
     });
 
-    worker.on('message', (msg: { id: number; codes: number[]; error?: string; type?: string }) => {
+    worker.on('message', (msg: { id: number; codes: number[]; error?: string; type?: string; tscCrashed?: boolean; tscError?: string }) => {
       if (msg.type === 'ready') return;
 
       const p = pending.get(msg.id);
       if (p) {
         pending.delete(msg.id);
-        if (msg.error) {
+        if (msg.tscCrashed) {
+          // TSC crashed on this test (stack overflow, undefined access, etc.)
+          processResult(p.filePath, [], true, msg.tscError);
+        } else if (msg.error) {
           errors++;
           processResult(p.filePath, []);
         } else {
@@ -240,7 +251,8 @@ async function generateCache(workerCount: number): Promise<void> {
   if (saved) {
     log('Cache generated successfully!', colors.green);
     log('  Tests: ' + Object.keys(entries).length, colors.dim);
-    log('  Errors: ' + errors, errors > 0 ? colors.yellow : colors.dim);
+    log('  TSC crashes: ' + tscCrashes, tscCrashes > 0 ? colors.yellow : colors.dim);
+    log('  Other errors: ' + errors, errors > 0 ? colors.yellow : colors.dim);
     log('  Time: ' + elapsed + 's (' + rate + ' tests/s)', colors.dim);
     log('  SHA: ' + tsSha?.slice(0, 12), colors.dim);
   } else {
