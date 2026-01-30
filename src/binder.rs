@@ -111,7 +111,7 @@ pub mod symbol_flags {
 // =============================================================================
 
 /// Unique identifier for a symbol in the symbol table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SymbolId(pub u32);
 
 impl SymbolId {
