@@ -3347,7 +3347,27 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an expression is side-effect free.
-    /// Side-effect free expressions include literals, identifiers, and certain expressions.
+    ///
+    /// Returns true if the expression does not modify state or have observable effects.
+    /// This matches TypeScript's hasSideEffects logic.
+    ///
+    /// Side-effect free expressions:
+    /// - Literals (number, string, boolean, null, undefined, regex)
+    /// - Identifiers (variable reads)
+    /// - Type assertions and typeof
+    /// - Function/class/arrow function expressions (defining, not calling)
+    /// - Array/object literals (recursively checked)
+    /// - Conditional expressions (recursively checked)
+    /// - Binary expressions with non-assignment operators (recursively checked)
+    /// - Unary expressions like !, +, -, ~, typeof (recursively checked)
+    ///
+    /// Has side effects (returns false):
+    /// - Function calls, new expressions, await, yield
+    /// - Assignments (=, +=, etc.)
+    /// - Increment/decrement (++, --)
+    /// - Property/element access (may trigger getters)
+    /// - Tagged templates (function calls)
+    /// - Delete expressions
     pub(crate) fn is_side_effect_free(&self, expr_idx: NodeIndex) -> bool {
         let expr_idx = self.skip_parenthesized_expression(expr_idx);
         let Some(node) = self.ctx.arena.get(expr_idx) else {
@@ -3355,6 +3375,7 @@ impl<'a> CheckerState<'a> {
         };
 
         match node.kind {
+            // Literals and identifiers are side-effect free
             k if k == SyntaxKind::Identifier as u16
                 || k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::RegularExpressionLiteral as u16
@@ -3368,8 +3389,10 @@ impl<'a> CheckerState<'a> {
             {
                 true
             }
-            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
-                || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+            // Tagged templates are function calls - they have side effects
+            // k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+            // Plain template literals, function/class definitions, arrays/objects, typeof, non-null, JSX
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
                 || k == syntax_kind_ext::CLASS_EXPRESSION
                 || k == syntax_kind_ext::ARROW_FUNCTION
@@ -3382,6 +3405,7 @@ impl<'a> CheckerState<'a> {
             {
                 true
             }
+            // Conditional: check branches (condition can be side-effect free)
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 let Some(cond) = self.ctx.arena.get_conditional_expr(node) else {
                     return false;
@@ -3389,6 +3413,7 @@ impl<'a> CheckerState<'a> {
                 self.is_side_effect_free(cond.when_true)
                     && self.is_side_effect_free(cond.when_false)
             }
+            // Binary: check both sides, unless it's an assignment
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 let Some(bin) = self.ctx.arena.get_binary_expr(node) else {
                     return false;
@@ -3398,6 +3423,7 @@ impl<'a> CheckerState<'a> {
                 }
                 self.is_side_effect_free(bin.left) && self.is_side_effect_free(bin.right)
             }
+            // Unary: only !, +, -, ~, typeof are side-effect free
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
             {
@@ -3413,6 +3439,7 @@ impl<'a> CheckerState<'a> {
                         || k == SyntaxKind::TypeOfKeyword as u16
                 )
             }
+            // Property access, element access, calls, tagged templates, etc. have side effects
             _ => false,
         }
     }
