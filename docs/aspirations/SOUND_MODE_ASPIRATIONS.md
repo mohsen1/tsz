@@ -300,7 +300,7 @@ TypeScript already does excellent CFA for narrowing. Sound Mode wouldn't change 
 // tsconfig.json
 {
   "compilerOptions": {
-    "soundMode": true,           // Enable all sound checks
+    "sound": true,           // Enable all sound checks
     // Or granular control:
     "soundArrayVariance": true,  // Invariant mutable arrays
     "soundMethodVariance": true, // Contravariant method params
