@@ -346,6 +346,14 @@ impl SymbolIndex {
         }
     }
 
+    /// Iterate over all definition names in the index.
+    ///
+    /// Returns an iterator of symbol names that have at least one definition.
+    /// Useful for workspace symbol search across the entire project.
+    pub fn all_definition_names(&self) -> impl Iterator<Item = &str> {
+        self.definitions.keys().map(|s| s.as_str())
+    }
+
     /// Clear all data from the index.
     pub fn clear(&mut self) {
         self.name_to_files.clear();
