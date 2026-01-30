@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as ts from 'typescript';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+import { parseTestCase, type ParsedTestCase as SharedParsedTestCase } from './test-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -41,74 +42,21 @@ const missingErrors: Map<number, number> = new Map();
 const extraErrors: Map<number, number> = new Map();
 
 /**
- * Parse test directives from TypeScript test files
+ * Parse test directives from TypeScript test files.
+ * Converts from shared ParsedTestCase to local ParsedTestCase format.
  */
 function parseTestDirectives(source: string, filePath: string): ParsedTestCase {
-  const options: Record<string, unknown> = {};
-  const files: TestFile[] = [];
-  let isMultiFile = false;
+  const parsed: SharedParsedTestCase = parseTestCase(source, filePath);
 
-  // Extract compiler options from @comments
-  const lines = source.split('\n');
-  const cleanLines: string[] = [];
-
-  let currentFileName: string | null = null;
-  const currentFileLines: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/i);
-    if (filenameMatch) {
-      isMultiFile = true;
-      if (currentFileName) {
-        files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-      }
-      currentFileName = filenameMatch[1].trim();
-      currentFileLines.length = 0;
-      continue;
-    }
-
-    const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
-    if (optionMatch) {
-      const [, key, value] = optionMatch;
-      const lowKey = key.toLowerCase();
-      if (value.toLowerCase() === 'true') options[lowKey] = true;
-      else if (value.toLowerCase() === 'false') options[lowKey] = false;
-      else if (!isNaN(Number(value))) options[lowKey] = Number(value);
-      else options[lowKey] = value;
-      continue;
-    }
-
-    if (isMultiFile && currentFileName) {
-      currentFileLines.push(line);
-    } else {
-      cleanLines.push(line);
-    }
-  }
-
-  // Save last file
-  if (isMultiFile && currentFileName) {
-    files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-  }
-
-  // For multi-file tests, also include the main test file if it's not already included
-  // This is needed so TypeScript can use the main file path as the root for resolution
-  if (isMultiFile) {
-    const mainFileName = path.basename(filePath);
-    if (!files.some(f => f.name === mainFileName)) {
-      files.push({ name: mainFileName, content: cleanLines.join('\n') });
-    }
-  } else {
-    // Single file test
-    files.push({ name: path.basename(filePath), content: cleanLines.join('\n') });
-  }
-
-  // Determine category from file path
-  let category = 'unknown';
-  if (filePath.includes('/conformance/')) category = 'conformance';
-  else if (filePath.includes('/compiler/')) category = 'compiler';
-
-  return { options, isMultiFile, files, category };
+  // Convert from shared format to local format
+  // Shared: { directives, harness, isMultiFile, files, category }
+  // Local:  { options, isMultiFile, files, category }
+  return {
+    options: parsed.directives,
+    isMultiFile: parsed.isMultiFile,
+    files: parsed.files,
+    category: parsed.category,
+  };
 }
 
 /**

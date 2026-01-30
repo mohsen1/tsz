@@ -25,6 +25,7 @@ import {
 import {
   parseTestCase,
   getLibNamesForDirectives,
+  parseLibOption,
   shouldSkipTest,
   type ParsedTestCase as SharedParsedTestCase,
   type HarnessOptions,
@@ -211,19 +212,6 @@ function defaultLibNamesForTarget(targetName: string): string[] {
   const coreLibName = defaultCoreLibNameForTarget(targetName);
   // Return just the core lib name - collectLibFiles will recursively resolve dependencies
   return [coreLibName];
-}
-
-function parseLibOption(libOpt: unknown): string[] {
-  if (typeof libOpt === 'string') {
-    return libOpt
-      .split(',')
-      .map(s => s.trim().toLowerCase())
-      .filter(Boolean);
-  }
-  if (Array.isArray(libOpt)) {
-    return libOpt.map(v => String(v).trim().toLowerCase()).filter(Boolean);
-  }
-  return [];
 }
 
 function getLibNamesForTestCase(
