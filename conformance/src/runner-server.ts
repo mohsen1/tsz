@@ -10,7 +10,7 @@
  * Protocol: JSON lines over stdin/stdout (similar to tsserver)
  */
 
-import { spawn, ChildProcess, execSync } from 'child_process';
+import { spawn, ChildProcess, execSync, spawnSync } from 'child_process';
 import { createInterface, Interface } from 'readline';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -24,6 +24,70 @@ import {
   type CheckOptions,
   type HarnessOptions,
 } from './test-utils.js';
+import { runTscOnFiles, type DiagnosticInfo } from './tsc-runner.js';
+
+// ============================================================================
+// tsz Binary Runner (for --print-test mode)
+// ============================================================================
+
+/**
+ * Run tsz binary on test files and capture full output.
+ */
+function runTszWithFullOutput(
+  files: Record<string, string>,
+  tszBinaryPath: string,
+  libDir: string,
+  options: CheckOptions
+): { stdout: string; stderr: string; codes: number[] } {
+  const fileEntries = Object.entries(files);
+  if (fileEntries.length === 0) {
+    return { stdout: '', stderr: '', codes: [] };
+  }
+
+  // Get the first (or only) file
+  const [filePath, content] = fileEntries[0];
+
+  // Build args
+  const args: string[] = [];
+  if (options.strict) args.push('--strict');
+  if (options.target) args.push(`--target=${options.target}`);
+  if (options.noLib) args.push('--noLib');
+
+  // If the file exists on disk, use it directly; otherwise write to temp file
+  let tempFile: string | null = null;
+  let actualFilePath = filePath;
+
+  if (!fs.existsSync(filePath)) {
+    tempFile = path.join(os.tmpdir(), `tsz-print-test-${Date.now()}.ts`);
+    fs.writeFileSync(tempFile, content);
+    actualFilePath = tempFile;
+  }
+
+  args.push(actualFilePath);
+
+  try {
+    const result = spawnSync(tszBinaryPath, args, {
+      encoding: 'utf-8',
+      env: { ...process.env, TSZ_LIB_DIR: libDir },
+      timeout: 30000,
+    });
+
+    const stdout = result.stdout || '';
+    const stderr = result.stderr || '';
+
+    // Parse error codes from output (look for TS#### patterns)
+    const codes: number[] = [];
+    for (const match of stderr.matchAll(/TS(\d{4,5})/g)) {
+      codes.push(parseInt(match[1], 10));
+    }
+
+    return { stdout, stderr, codes };
+  } finally {
+    if (tempFile && fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
+    }
+  }
+}
 
 // Memory configuration
 const MEMORY_USAGE_PERCENT = 0.80; // Use 80% of available memory
@@ -811,13 +875,16 @@ function formatMemory(mb: number): string {
 /**
  * Print detailed information about a specific test.
  * Used with --print-test --filter=<pattern> for debugging.
+ * 
+ * Shows FULL error output from both TSC and tsz (not just codes).
  */
 async function printTestDetails(
   testFile: string,
   relativePath: string,
-  cacheEntries: Record<string, CacheEntry>,
-  pool: TszServerPool,
-  libDirs: string[]
+  _cacheEntries: Record<string, CacheEntry>,
+  _pool: TszServerPool,
+  libDirs: string[],
+  tszBinaryPath: string
 ): Promise<void> {
   const content = fs.readFileSync(testFile, 'utf-8');
   // Parse test case to handle @Filename directives for multi-file tests
@@ -829,25 +896,23 @@ async function printTestDetails(
   const files = prepared.files;
 
   const checkOptions = directivesToCheckOptions(parsed.directives, libDirs);
-  const cacheEntry = cacheEntries[relativePath];
-  const tscCodes = cacheEntry?.codes || [];
 
-  log('\n' + '═'.repeat(70), colors.cyan);
+  log('\n' + '='.repeat(80), colors.cyan);
   log(`  TEST: ${relativePath}`, colors.bold);
-  log('═'.repeat(70), colors.cyan);
+  log('='.repeat(80), colors.cyan);
 
   // Print file content with line numbers
-  log('\n📄 File Content:', colors.bold);
-  log('─'.repeat(50), colors.dim);
+  log('\n[File Content]', colors.bold);
+  log('-'.repeat(60), colors.dim);
   const lines = content.split('\n');
   lines.forEach((line, i) => {
     const lineNum = String(i + 1).padStart(3, ' ');
-    log(`${colors.dim}${lineNum}│${colors.reset} ${line}`);
+    log(`${colors.dim}${lineNum}|${colors.reset} ${line}`);
   });
-  log('─'.repeat(50), colors.dim);
+  log('-'.repeat(60), colors.dim);
 
   // Print harness options (test control)
-  log('\n🎛️  Harness Options:', colors.bold);
+  log('\n[Harness Options]', colors.bold);
   const harnessEntries = Object.entries(parsed.harness).filter(([, v]) => v !== undefined);
   if (harnessEntries.length === 0) {
     log('  (none)', colors.dim);
@@ -858,7 +923,7 @@ async function printTestDetails(
   }
 
   // Print parsed compiler directives
-  log('\n⚙️  Compiler Directives:', colors.bold);
+  log('\n[Compiler Directives]', colors.bold);
   for (const [key, value] of Object.entries(parsed.directives)) {
     if (value !== undefined) {
       log(`  ${key}: ${JSON.stringify(value)}`, colors.yellow);
@@ -868,71 +933,83 @@ async function printTestDetails(
   // Check if test would be skipped
   const skipResult = shouldSkipTest(parsed.harness);
   if (skipResult.skip) {
-    log(`\n⚠️  Test would be SKIPPED: ${skipResult.reason}`, colors.yellow);
+    log(`\n[!] Test would be SKIPPED: ${skipResult.reason}`, colors.yellow);
   }
 
-  // Print check options sent to server
-  log('\n📤 Options sent to tsz-server:', colors.bold);
+  // Print check options sent to compilers
+  log('\n[Compiler Options]', colors.bold);
   log(`  ${JSON.stringify(checkOptions, null, 2).split('\n').join('\n  ')}`, colors.dim);
 
-  // Run the check
-  log('\n🔍 Running tsz check...', colors.bold);
-  const { result, timedOut } = await pool.withClientTimeout(
-    (client) => client.check(files, checkOptions),
-    10000
-  );
+  // =========================================================================
+  // Run TSC with full diagnostic output (using shared tsc-runner)
+  // =========================================================================
+  log('\n' + '-'.repeat(80), colors.dim);
+  log('[TSC Output] (running TypeScript compiler)', colors.bold);
+  log('-'.repeat(80), colors.dim);
 
-  if (timedOut) {
-    log('  TIMEOUT', colors.red);
-    return;
-  }
+  const libDir = libDirs[0] || '';
+  const tscResult = runTscOnFiles(files, checkOptions, libDir, true);
+  const tscDiagnostics = tscResult.diagnostics;
 
-  if (result?.oom) {
-    log('  OOM', colors.red);
-    return;
-  }
-
-  const tszCodes = result?.codes || [];
-
-  // Print TSC expected errors
-  log('\n📋 TSC Expected Errors (from cache):', colors.bold);
-  if (tscCodes.length === 0) {
-    log('  (none)', colors.green);
+  if (tscDiagnostics.length === 0) {
+    log('  (no errors)', colors.green);
   } else {
-    const grouped = tscCodes.reduce((acc, code) => {
-      acc[code] = (acc[code] || 0) + 1;
-      return acc;
-    }, {} as Record<number, number>);
-    for (const [code, count] of Object.entries(grouped)) {
-      log(`  TS${code}: ${count}x`, colors.yellow);
+    for (const diag of tscDiagnostics) {
+      const location = diag.file && diag.line
+        ? `${colors.dim}${path.basename(diag.file)}(${diag.line},${diag.column})${colors.reset}: `
+        : '';
+      log(`  ${location}${colors.red}error${colors.reset} ${colors.cyan}TS${diag.code}${colors.reset}: ${diag.message}`);
     }
   }
 
-  // Print tsz actual errors
-  log('\n🔧 tsz Actual Errors:', colors.bold);
-  if (tszCodes.length === 0) {
-    log('  (none)', colors.green);
-  } else {
-    const grouped = tszCodes.reduce((acc, code) => {
-      acc[code] = (acc[code] || 0) + 1;
-      return acc;
-    }, {} as Record<number, number>);
-    for (const [code, count] of Object.entries(grouped)) {
-      log(`  TS${code}: ${count}x`, colors.yellow);
+  // =========================================================================
+  // Run tsz with full diagnostic output
+  // =========================================================================
+  log('\n' + '-'.repeat(80), colors.dim);
+  log('[tsz Output] (running tsz compiler)', colors.bold);
+  log('-'.repeat(80), colors.dim);
+
+  const tszResult = runTszWithFullOutput(files, tszBinaryPath, libDir, checkOptions);
+
+  if (tszResult.stderr.trim()) {
+    for (const line of tszResult.stderr.split('\n')) {
+      if (line.trim()) {
+        log(`  ${line}`);
+      }
     }
+  } else if (tszResult.stdout.trim()) {
+    for (const line of tszResult.stdout.split('\n')) {
+      if (line.trim()) {
+        log(`  ${line}`);
+      }
+    }
+  } else {
+    log('  (no errors)', colors.green);
   }
 
-  // Compare
+  // =========================================================================
+  // Compare error codes
+  // =========================================================================
+  log('\n' + '-'.repeat(80), colors.dim);
+  log('[Comparison]', colors.bold);
+  log('-'.repeat(80), colors.dim);
+
+  const tscCodes = tscDiagnostics.map(d => d.code);
+  const tszCodes = tszResult.codes;
+
   const tscSet = new Set(tscCodes);
   const tszSet = new Set(tszCodes);
   const missing = tscCodes.filter(c => !tszSet.has(c));
   const extra = tszCodes.filter(c => !tscSet.has(c));
 
-  log('\n📊 Comparison:', colors.bold);
+  // Show code summary
+  log(`\n  TSC codes: [${[...new Set(tscCodes)].sort((a, b) => a - b).map(c => `TS${c}`).join(', ')}]`, colors.dim);
+  log(`  tsz codes: [${[...new Set(tszCodes)].sort((a, b) => a - b).map(c => `TS${c}`).join(', ')}]`, colors.dim);
+
   if (missing.length === 0 && extra.length === 0) {
-    log('  PASS - Exact match!', colors.green);
+    log('\n  [PASS] Error codes match!', colors.green);
   } else {
-    log('  FAIL', colors.red);
+    log('\n  [FAIL] Error codes differ', colors.red);
     if (missing.length > 0) {
       const grouped = missing.reduce((acc, code) => {
         acc[code] = (acc[code] || 0) + 1;
@@ -940,7 +1017,11 @@ async function printTestDetails(
       }, {} as Record<number, number>);
       log('\n  Missing (tsz should emit but doesn\'t):', colors.yellow);
       for (const [code, count] of Object.entries(grouped)) {
+        const diag = tscDiagnostics.find(d => d.code === Number(code));
         log(`    TS${code}: ${count}x`, colors.yellow);
+        if (diag) {
+          log(`      -> ${diag.message.slice(0, 100)}${diag.message.length > 100 ? '...' : ''}`, colors.dim);
+        }
       }
     }
     if (extra.length > 0) {
@@ -958,7 +1039,7 @@ async function printTestDetails(
   // Clean up temp directory for multi-file tests
   cleanupTempDir(tempDir);
 
-  log('\n' + '═'.repeat(70) + '\n', colors.cyan);
+  log('\n' + '='.repeat(80) + '\n', colors.cyan);
 }
 
 /**
@@ -986,6 +1067,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
 
   const testsBasePath = path.resolve(ROOT_DIR, 'TypeScript/tests/cases');
   const serverPath = process.env.TSZ_SERVER_BINARY || path.resolve(ROOT_DIR, '.target/release/tsz-server');
+  const tszBinaryPath = process.env.TSZ_BINARY || path.resolve(ROOT_DIR, '.target/release/tsz');
   const localLibDir = process.env.TSZ_LIB_DIR || path.resolve(ROOT_DIR, 'TypeScript/src/lib');
 
   // Set lib directories for universal resolver (used by directivesToCheckOptions)
@@ -1058,7 +1140,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       
       for (const testFile of testFiles.slice(0, 10)) { // Limit to 10 for safety
         const relativePath = path.relative(testsBasePath, testFile);
-        await printTestDetails(testFile, relativePath, cacheEntries, pool, libDirs);
+        await printTestDetails(testFile, relativePath, cacheEntries, pool, libDirs, tszBinaryPath);
       }
       
       if (testFiles.length > 10) {
@@ -1232,11 +1314,11 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         if (missing.length === 0 && extra.length === 0) {
           stats.passed++;
           stats.byCategory[category].passed++;
-          if (verbose) log(`✓ ${relativePath}`, colors.green);
+          if (verbose) log(`[pass] ${relativePath}`, colors.green);
         } else {
           stats.failed++;
           if (verbose) {
-            log(`✗ ${relativePath}`, colors.red);
+            log(`[fail] ${relativePath}`, colors.red);
             if (missing.length > 0) log(`  Missing: ${missing.join(', ')}`, colors.yellow);
             if (extra.length > 0) log(`  Extra: ${extra.join(', ')}`, colors.yellow);
           }
@@ -1250,7 +1332,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       } catch (err: any) {
         stats.crashed++;
         stats.crashedTests.push({ path: relativePath, error: err.message });
-        if (verbose) log(`💥 ${relativePath}: ${err.message}`, colors.red);
+        if (verbose) log(`[crash] ${relativePath}: ${err.message}`, colors.red);
       } finally {
         // Clean up temp directory for multi-file tests
         cleanupTempDir(tempDir);
