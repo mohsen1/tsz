@@ -60,8 +60,13 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// If a type couldn't be resolved (TS2304, etc.), we don't want to add noise
     /// with arithmetic errors - the primary error is more useful.
     pub fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
-        // Don't emit arithmetic errors for error/unknown types - prevents cascading errors
-        if type_id == TypeId::ANY || type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
+        // Don't emit arithmetic errors for error/unknown/never types - prevents cascading errors.
+        // NEVER (bottom type) is assignable to all types, so it's valid everywhere.
+        if type_id == TypeId::ANY
+            || type_id == TypeId::ERROR
+            || type_id == TypeId::UNKNOWN
+            || type_id == TypeId::NEVER
+        {
             return true;
         }
         self.is_number_like(type_id) || self.is_bigint_like(type_id)
@@ -81,6 +86,8 @@ impl<'a> BinaryOpEvaluator<'a> {
             }
             "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right),
             "&&" | "||" => self.evaluate_logical(left, right),
+            // Bitwise operators behave like arithmetic operators
+            "&" | "|" | "^" | "<<" | ">>" | ">>>" => self.evaluate_arithmetic(left, right, op),
             _ => BinaryOpResult::TypeError { left, right, op },
         }
     }

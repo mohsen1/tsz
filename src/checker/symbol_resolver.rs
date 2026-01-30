@@ -287,12 +287,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Only fall back to ScopeId(0) if it's a valid module scope
-        // This prevents using an invalid fallback scope that could cause
-        // symbols to be incorrectly found or not found
+        // Fall back to ScopeId(0) if it's the global/file scope.
+        // Both SourceFile (non-module scripts) and Module (files with imports/exports)
+        // are valid root scopes for name resolution fallback.
         if let Some(scope) = self.ctx.binder.scopes.first() {
-            // Only return ScopeId(0) if it's a module scope (the global/file scope)
-            if scope.kind == ContainerKind::Module {
+            if scope.kind == ContainerKind::Module || scope.kind == ContainerKind::SourceFile {
                 return Some(ScopeId(0));
             }
         }
