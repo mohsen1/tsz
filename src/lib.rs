@@ -78,19 +78,15 @@ pub use common::{ModuleKind, NewLineKind, ScriptTarget};
 // Centralized limits and thresholds
 pub mod limits;
 
-// Character code constants
-pub mod char_codes;
-
-// Scanner types and token definitions
+// Scanner module - token definitions, scanning implementation, and character codes
 pub mod scanner;
 pub use scanner::*;
+pub use scanner::scanner_impl;
+pub use scanner::scanner_impl::*;
+pub use scanner::char_codes;
 #[cfg(test)]
 #[path = "tests/scanner_tests.rs"]
 mod scanner_tests;
-
-// Scanner implementation
-pub mod scanner_impl;
-pub use scanner_impl::*;
 #[cfg(test)]
 #[path = "tests/scanner_impl_tests.rs"]
 mod scanner_impl_tests;

@@ -1,7 +1,13 @@
 //! Scanner types and utilities for TypeScript lexical analysis.
 //!
-//! This module contains the SyntaxKind enum and related token types
-//! that mirror TypeScript's scanner output.
+//! This module contains the SyntaxKind enum, scanner implementation,
+//! and character code constants for TypeScript lexical analysis.
+
+// Scanner implementation - tokenization logic
+pub mod scanner_impl;
+
+// Character code constants used by the scanner
+pub mod char_codes;
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
