@@ -76,10 +76,13 @@ pub use enum_es5::EnumES5Emitter;
 pub use namespace_es5::NamespaceES5Emitter;
 
 #[cfg(test)]
+#[path = "tests/module_commonjs_tests.rs"]
 mod module_commonjs_tests;
 
 #[cfg(test)]
+#[path = "tests/ir_tests.rs"]
 mod ir_tests;
 
 #[cfg(test)]
+#[path = "tests/ir_transforms_tests.rs"]
 mod ir_transforms_tests;

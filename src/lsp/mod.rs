@@ -49,10 +49,13 @@ pub mod type_definition;
 pub mod utils;
 
 #[cfg(test)]
+#[path = "tests/code_actions_tests.rs"]
 mod code_actions_tests;
 #[cfg(test)]
+#[path = "tests/project_tests.rs"]
 mod project_tests;
 #[cfg(test)]
+#[path = "tests/tests.rs"]
 mod tests;
 
 pub use code_actions::{

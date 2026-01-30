@@ -351,5 +351,5 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "block_scoping_es5_tests.rs"]
+#[path = "tests/block_scoping_es5_tests.rs"]
 mod block_scoping_es5_tests;

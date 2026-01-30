@@ -2063,5 +2063,5 @@ pub use crate::solver::operations_property::*;
 // more maintainable by separating concerns.
 
 #[cfg(test)]
-#[path = "operations_tests.rs"]
+#[path = "tests/operations_tests.rs"]
 mod tests;

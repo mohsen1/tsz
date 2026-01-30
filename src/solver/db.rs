@@ -710,5 +710,5 @@ impl QueryDatabase for QueryCache<'_> {
 }
 
 #[cfg(test)]
-#[path = "db_tests.rs"]
+#[path = "tests/db_tests.rs"]
 mod tests;

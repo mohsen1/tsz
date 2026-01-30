@@ -797,5 +797,5 @@ pub fn is_compiler_managed_type(name: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "types_tests.rs"]
+#[path = "tests/types_tests.rs"]
 mod tests;

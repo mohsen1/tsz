@@ -93,24 +93,37 @@ pub mod types;
 pub mod union_type;
 
 #[cfg(test)]
+#[path = "tests/contextual_typing_tests.rs"]
 mod contextual_typing_tests;
 #[cfg(test)]
+#[path = "tests/control_flow_tests.rs"]
 mod control_flow_tests;
+// error_cascade_tests: orphaned (stale API, not yet updated)
+// generic_tests: orphaned (stale API, not yet updated)
 #[cfg(test)]
+#[path = "tests/global_type_tests.rs"]
 mod global_type_tests;
 #[cfg(test)]
+#[path = "tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
+#[path = "tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
 #[cfg(test)]
+#[path = "tests/stability_validation_tests.rs"]
 mod stability_validation_tests;
 #[cfg(test)]
+#[path = "tests/string_literal_arithmetic_tests.rs"]
 mod string_literal_arithmetic_tests;
 #[cfg(test)]
+#[path = "tests/symbol_resolver_stability_tests.rs"]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
+#[path = "tests/ts2304_tests.rs"]
 mod ts2304_tests;
+// ts2322_tests: orphaned (stale API, not yet updated)
 #[cfg(test)]
+#[path = "tests/value_usage_tests.rs"]
 mod value_usage_tests;
 
 // Re-export key types
