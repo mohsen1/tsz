@@ -739,12 +739,22 @@ export function getLibNamesForDirectives(
     return [];
   }
 
-  const libVal = directives.lib;
-  if (typeof libVal === 'string') {
-    return (libVal as string).split(',').map(s => normalizeLibName(s)).filter(Boolean);
-  } else if (Array.isArray(libVal)) {
-    return libVal.map(s => normalizeLibName(String(s))).filter(Boolean);
-  }
+  return parseLibOption(directives.lib);
+}
 
+/**
+ * Parse lib option value (string, array, or unknown) into array of lib names.
+ * Shared utility for test runners.
+ */
+export function parseLibOption(libOpt: unknown): string[] {
+  if (typeof libOpt === 'string') {
+    return libOpt
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean);
+  }
+  if (Array.isArray(libOpt)) {
+    return libOpt.map(v => String(v).trim().toLowerCase()).filter(Boolean);
+  }
   return [];
 }

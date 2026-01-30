@@ -1,6 +1,6 @@
 /**
  * Shared TSC runner for conformance testing.
- * 
+ *
  * Extracted from cache-worker.ts for reuse in:
  * - cache-worker.ts (generates TSC cache)
  * - runner-server.ts (--print-test mode)
@@ -9,6 +9,7 @@
 import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseLibOption } from './test-utils.js';
 
 // ============================================================================
 // Types
@@ -103,19 +104,6 @@ function loadLibRecursive(
   for (const ref of parseLibReferences(content)) {
     loadLibRecursive(ref, libDir, out, seen);
   }
-}
-
-function parseLibOption(libOpt: unknown): string[] {
-  if (typeof libOpt === 'string') {
-    return libOpt
-      .split(',')
-      .map(s => s.trim().toLowerCase())
-      .filter(Boolean);
-  }
-  if (Array.isArray(libOpt)) {
-    return libOpt.map(v => String(v).trim().toLowerCase()).filter(Boolean);
-  }
-  return [];
 }
 
 function normalizeTargetName(target: unknown): string {
