@@ -108,6 +108,8 @@ pub struct TypeInstantiator<'a> {
     /// Type parameter names that are shadowed in the current scope.
     shadowed: Vec<Atom>,
     substitute_infer: bool,
+    /// When set, substitutes `ThisType` with this concrete type.
+    pub this_type: Option<TypeId>,
     depth: u32,
     max_depth: u32,
     depth_exceeded: bool,
@@ -122,6 +124,7 @@ impl<'a> TypeInstantiator<'a> {
             visiting: FxHashMap::default(),
             shadowed: Vec::new(),
             substitute_infer: false,
+            this_type: None,
             depth: 0,
             max_depth: MAX_INSTANTIATION_DEPTH,
             depth_exceeded: false,
@@ -264,8 +267,14 @@ impl<'a> TypeInstantiator<'a> {
                 self.interner.application(base, args)
             }
 
-            // This type doesn't substitute
-            TypeKey::ThisType => self.interner.intern(key.clone()),
+            // This type: substitute with concrete this_type if provided
+            TypeKey::ThisType => {
+                if let Some(this_type) = self.this_type {
+                    this_type
+                } else {
+                    self.interner.intern(key.clone())
+                }
+            }
 
             // Union: instantiate all members
             TypeKey::Union(members) => {
@@ -679,6 +688,34 @@ pub fn instantiate_generic(
     }
     let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
     instantiate_type(interner, type_id, &substitution)
+}
+
+/// Substitute `ThisType` with a concrete type throughout a type.
+///
+/// Used for method call return types where `this` refers to the receiver's type.
+/// For example, in a fluent builder pattern:
+/// ```typescript
+/// class Builder { setName(n: string): this { ... } }
+/// const b: Builder = new Builder().setName("foo"); // this → Builder
+/// ```
+pub fn substitute_this_type(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    // Quick check: if the type is intrinsic, no substitution needed
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    let empty_subst = TypeSubstitution::new();
+    let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
+    instantiator.this_type = Some(this_type);
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
 }
 
 #[cfg(test)]

@@ -1562,9 +1562,8 @@ impl<'a> InferenceContext<'a> {
                     if sp.optional && !t_prop.optional {
                         return false;
                     }
-                    if sp.readonly && !t_prop.readonly {
-                        return false;
-                    }
+                    // NOTE: TypeScript allows readonly source to satisfy mutable target
+                    // (readonly is a constraint on the reference, not structural compatibility)
                     let source_type = self.optional_property_type(sp);
                     let target_type = self.optional_property_type(t_prop);
                     if !self.is_subtype_with_method_variance(
