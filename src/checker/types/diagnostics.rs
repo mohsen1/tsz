@@ -191,6 +191,9 @@ pub mod diagnostic_messages {
     pub const CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE: &str =
         "Cannot redeclare block-scoped variable '{0}'.";
     pub const VARIABLE_USED_BEFORE_ASSIGNED: &str = "Variable '{0}' is used before being assigned.";
+    /// TS1155: 'using' declarations must be initialized
+    pub const CONST_DECLARATIONS_MUST_BE_INITIALIZED: &str =
+        "'using' declarations must be initialized.";
 
     // Definite assignment errors
     pub const PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT: &str =
@@ -270,6 +273,20 @@ pub mod diagnostic_messages {
     // In operator errors
     pub const LEFT_SIDE_OF_IN_NOT_STRING: &str = "The left-hand side of an 'in' expression must be of type 'any', 'string', 'number', or 'symbol'.";
     pub const RIGHT_SIDE_OF_IN_NOT_OBJECT: &str = "The right-hand side of an 'in' expression must be of type 'any', an object type or a type parameter.";
+
+    // Using declaration errors
+    /// TS1156: 'using' declarations can only be declared inside a block
+    pub const USING_DECLARATION_ONLY_IN_BLOCK: &str =
+        "'using' declarations can only be declared inside a block.";
+    /// TS1375: 'using' declarations do not support destructuring patterns
+    pub const USING_DECLARATIONS_DO_NOT_SUPPORT_DESTRUCTURING: &str =
+        "'using' declarations do not support destructuring patterns.";
+    /// TS2804: Type must have a '[Symbol.dispose]()' method that returns void
+    pub const TYPE_MUST_HAVE_SYMBOL_DISPOSE: &str =
+        "Type '{0}' must have a '[Symbol.dispose]()' method that returns void.";
+    /// TS2803: Type must have a '[Symbol.asyncDispose]()' method that returns void
+    pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_DISPOSE: &str =
+        "Type '{0}' must have a '[Symbol.asyncDispose]()' method that returns void.";
 }
 
 /// TypeScript diagnostic error codes.
@@ -497,6 +514,14 @@ pub mod diagnostic_codes {
 
     // Const/variable declaration errors
     pub const CONST_DECLARATIONS_MUST_BE_INITIALIZED: u32 = 1155;
+    /// TS1156: 'using' declarations can only be declared inside a block
+    pub const USING_DECLARATION_ONLY_IN_BLOCK: u32 = 1156;
+    /// TS1375: 'using' declarations do not support destructuring patterns
+    pub const USING_DECLARATIONS_DO_NOT_SUPPORT_DESTRUCTURING: u32 = 1375;
+    /// TS2804: Type '{0}' must have a '[Symbol.dispose]()' method that returns void.
+    pub const TYPE_MUST_HAVE_SYMBOL_DISPOSE: u32 = 2804;
+    /// TS2803: Type '{0}' must have a '[Symbol.asyncDispose]()' method that returns void.
+    pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_DISPOSE: u32 = 2803;
 
     // Enum errors
     pub const ENUM_MEMBER_MUST_HAVE_INITIALIZER: u32 = 2432;
