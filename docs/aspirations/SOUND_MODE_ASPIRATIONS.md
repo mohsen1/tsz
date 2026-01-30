@@ -336,14 +336,14 @@ The Judge/Lawyer architecture makes this straightforward. Add flags to `SubtypeC
 // src/solver/subtype.rs
 pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     // ... existing flags
-    pub strict_array_variance: bool,
-    pub strict_method_variance: bool,
-    pub strict_this_variance: bool,
-    pub strict_any_type: bool,
-    pub strict_function_type: bool,
-    pub strict_enums: bool,
-    pub strict_generics: bool,
-    pub strict_boxing: bool,
+    pub sound_array_variance: bool,
+    pub sound_method_variance: bool,
+    pub sound_this_variance: bool,
+    pub sound_any_type: bool,
+    pub sound_function_type: bool,
+    pub sound_enums: bool,
+    pub sound_generics: bool,
+    pub sound_boxing: bool,
 }
 ```
 
@@ -354,8 +354,8 @@ The `CompatChecker` (Lawyer) would configure these based on compiler options:
 impl CompatChecker {
     pub fn from_options(options: &CompilerOptions) -> Self {
         if options.sound_mode {
-            // All strict flags enabled
-            Self { all_strict: true, .. }
+            // All sound flags enabled
+            Self { all_sound: true, .. }
         } else {
             // TypeScript-compatible defaults
             Self::default()
