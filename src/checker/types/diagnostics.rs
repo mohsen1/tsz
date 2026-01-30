@@ -281,12 +281,10 @@ pub mod diagnostic_messages {
     /// TS1375: 'using' declarations do not support destructuring patterns
     pub const USING_DECLARATIONS_DO_NOT_SUPPORT_DESTRUCTURING: &str =
         "'using' declarations do not support destructuring patterns.";
-    /// TS2804: Type must have a '[Symbol.dispose]()' method that returns void
-    pub const TYPE_MUST_HAVE_SYMBOL_DISPOSE: &str =
-        "Type '{0}' must have a '[Symbol.dispose]()' method that returns void.";
-    /// TS2803: Type must have a '[Symbol.asyncDispose]()' method that returns void
-    pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_DISPOSE: &str =
-        "Type '{0}' must have a '[Symbol.asyncDispose]()' method that returns void.";
+    /// TS2850: The initializer of a 'using' declaration must have a '[Symbol.dispose]()' method
+    pub const USING_INITIALIZER_MUST_HAVE_DISPOSE: &str = "The initializer of a 'using' declaration must be either an object with a '[Symbol.dispose]()' method, or be 'null' or 'undefined'.";
+    /// TS2851: The initializer of an 'await using' declaration must have a dispose method
+    pub const AWAIT_USING_INITIALIZER_MUST_HAVE_DISPOSE: &str = "The initializer of an 'await using' declaration must be either an object with a '[Symbol.asyncDispose]()' or '[Symbol.dispose]()' method, or be 'null' or 'undefined'.";
 }
 
 /// TypeScript diagnostic error codes.
@@ -518,10 +516,10 @@ pub mod diagnostic_codes {
     pub const USING_DECLARATION_ONLY_IN_BLOCK: u32 = 1156;
     /// TS1375: 'using' declarations do not support destructuring patterns
     pub const USING_DECLARATIONS_DO_NOT_SUPPORT_DESTRUCTURING: u32 = 1375;
-    /// TS2804: Type '{0}' must have a '[Symbol.dispose]()' method that returns void.
-    pub const TYPE_MUST_HAVE_SYMBOL_DISPOSE: u32 = 2804;
-    /// TS2803: Type '{0}' must have a '[Symbol.asyncDispose]()' method that returns void.
-    pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_DISPOSE: u32 = 2803;
+    /// TS2850: The initializer of a 'using' declaration must have a '[Symbol.dispose]()' method
+    pub const USING_INITIALIZER_MUST_HAVE_DISPOSE: u32 = 2850;
+    /// TS2851: The initializer of an 'await using' declaration must have a dispose method
+    pub const AWAIT_USING_INITIALIZER_MUST_HAVE_DISPOSE: u32 = 2851;
 
     // Enum errors
     pub const ENUM_MEMBER_MUST_HAVE_INITIALIZER: u32 = 2432;

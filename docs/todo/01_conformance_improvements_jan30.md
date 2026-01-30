@@ -343,11 +343,3 @@ Adding the easy missing checks (Tier 3):
 - +150 tests from new error checks
 
 **Projected: ~59% pass rate**, which with a few Tier 2 fixes reaches **60%+**.
-
----
-
-## 7. Test Runner Notes
-
-- TSC itself crashes on some tests (stack overflow on recursive mapped types, `Cannot read properties of undefined` on certain JS files with `@checkJs`). These should be counted as "both fail" rather than "tsz fails."
-- The `salsa` category (JS type inference with `@allowJs`/`@checkJs`) has many TSC-side crashes, so the actual gap is smaller than 23.6% suggests.
-- Consider adding a "TSC also fails" category to the runner for more accurate metrics.
