@@ -473,7 +473,7 @@ impl Default for SourceWriter {
 }
 
 #[cfg(test)]
-#[path = "source_writer_tests.rs"]
+#[path = "tests/source_writer_tests.rs"]
 mod source_writer_tests;
 
 // =============================================================================

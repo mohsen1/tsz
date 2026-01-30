@@ -77,9 +77,10 @@ pub use subtype::*;
 pub use types::*;
 pub use unsoundness_audit::*;
 
-// Test modules: Some are loaded by their source files via #[path = "..."] declarations.
+// Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.
 // Only include modules here that aren't loaded elsewhere to avoid duplicate_mod warnings.
 #[cfg(test)]
+#[path = "tests/bidirectional_tests.rs"]
 mod bidirectional_tests;
 // callable_tests: loaded from subtype.rs
 // compat_tests: loaded from compat.rs
@@ -91,9 +92,11 @@ mod bidirectional_tests;
 // infer_tests: loaded from infer.rs
 // instantiate_tests: loaded from instantiate.rs
 #[cfg(test)]
+#[path = "tests/integration_tests.rs"]
 mod integration_tests;
 // intern_tests: loaded from intern.rs
 #[cfg(test)]
+#[path = "tests/intersection_union_tests.rs"]
 mod intersection_union_tests;
 // lawyer_tests: loaded from lawyer.rs
 // lower_tests: loaded from lower.rs
@@ -102,11 +105,14 @@ mod intersection_union_tests;
 // operations_tests: loaded from operations.rs
 // subtype_tests: loaded from subtype.rs
 #[cfg(test)]
+#[path = "tests/template_expansion_tests.rs"]
 mod template_expansion_tests;
 // tracer_tests: tests are in tracer.rs module
 #[cfg(test)]
+#[path = "tests/type_law_tests.rs"]
 mod type_law_tests;
 // types_tests: loaded from types.rs
 // union_tests: loaded from subtype.rs
 #[cfg(test)]
+#[path = "tests/visitor_tests.rs"]
 mod visitor_tests;

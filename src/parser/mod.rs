@@ -28,11 +28,14 @@ mod state_statements;
 mod state_types;
 
 #[cfg(test)]
+#[path = "tests/parser_improvement_tests.rs"]
 mod parser_improvement_tests;
 #[cfg(test)]
+#[path = "tests/tests.rs"]
 mod tests;
 
 #[cfg(test)]
+#[path = "tests/trailing_comma_tests.rs"]
 mod trailing_comma_tests;
 
 // Re-export flags

@@ -1502,5 +1502,5 @@ impl<'a> DiagnosticCollector<'a> {
 }
 
 #[cfg(test)]
-#[path = "diagnostics_tests.rs"]
+#[path = "tests/diagnostics_tests.rs"]
 mod tests;
