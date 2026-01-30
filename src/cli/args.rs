@@ -118,6 +118,16 @@ pub struct CliArgs {
     #[arg(long = "rootDirs", alias = "root-dirs", value_delimiter = ',')]
     pub root_dirs: Option<Vec<PathBuf>>,
 
+    /// Specify a set of entries that re-map imports to additional lookup locations.
+    /// Accepted for CLI compatibility; normally set in tsconfig.json.
+    #[arg(long, value_delimiter = ',', hide = true)]
+    pub paths: Option<Vec<String>>,
+
+    /// Specify list of language service plugins.
+    /// Accepted for CLI compatibility; normally set in tsconfig.json.
+    #[arg(long, value_delimiter = ',', hide = true)]
+    pub plugins: Option<Vec<String>>,
+
     /// Enable importing .json files.
     #[arg(long = "resolveJsonModule", alias = "resolve-json-module")]
     pub resolve_json_module: bool,
