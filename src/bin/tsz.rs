@@ -174,9 +174,9 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                         let trimmed = line.trim();
                         // Skip empty lines and comments
                         if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                            // Each line may contain a single argument, or a flag=value pair
-                            // Split on whitespace for multi-arg lines (matching tsc behavior)
-                            for part in trimmed.split_whitespace() {
+                            // Split on whitespace, respecting quoted strings
+                            // (matching tsc behavior for response files)
+                            for part in split_response_line(trimmed) {
                                 result.push(OsString::from(part));
                             }
                         }
@@ -194,6 +194,49 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     }
 
     result
+}
+
+/// Split a response file line into arguments, respecting quoted strings.
+///
+/// Handles both double (`"`) and single (`'`) quotes. Quotes are stripped
+/// from the resulting tokens. Unquoted regions are split on whitespace.
+fn split_response_line(line: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quote: Option<char> = None;
+
+    for ch in line.chars() {
+        match in_quote {
+            Some(q) if ch == q => {
+                // Closing quote — end quoted region but don't push yet,
+                // there may be more content adjacent (e.g. foo"bar"baz)
+                in_quote = None;
+            }
+            Some(_) => {
+                // Inside quotes — take character literally
+                current.push(ch);
+            }
+            None if ch == '"' || ch == '\'' => {
+                // Opening quote
+                in_quote = Some(ch);
+            }
+            None if ch.is_ascii_whitespace() => {
+                // Unquoted whitespace — flush current token
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            None => {
+                current.push(ch);
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    args
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
@@ -682,4 +725,72 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_response_line_simple() {
+        assert_eq!(
+            split_response_line("--strict --noEmit"),
+            vec!["--strict", "--noEmit"]
+        );
+    }
+
+    #[test]
+    fn split_response_line_double_quoted_spaces() {
+        assert_eq!(
+            split_response_line(r#"--outDir "my output""#),
+            vec!["--outDir", "my output"]
+        );
+    }
+
+    #[test]
+    fn split_response_line_single_quoted_spaces() {
+        assert_eq!(
+            split_response_line("--outDir 'my output'"),
+            vec!["--outDir", "my output"]
+        );
+    }
+
+    #[test]
+    fn split_response_line_single_arg() {
+        assert_eq!(split_response_line("--strict"), vec!["--strict"]);
+    }
+
+    #[test]
+    fn split_response_line_empty() {
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(split_response_line(""), empty);
+    }
+
+    #[test]
+    fn split_response_line_only_whitespace() {
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(split_response_line("   "), empty);
+    }
+
+    #[test]
+    fn split_response_line_quoted_path_with_spaces() {
+        assert_eq!(
+            split_response_line(r#"--rootDir "C:\Program Files\project""#),
+            vec!["--rootDir", r"C:\Program Files\project"]
+        );
+    }
+
+    #[test]
+    fn split_response_line_multiple_quoted_args() {
+        assert_eq!(
+            split_response_line(r#""file one.ts" "file two.ts""#),
+            vec!["file one.ts", "file two.ts"]
+        );
+    }
+
+    #[test]
+    fn split_response_line_adjacent_quotes() {
+        // foo"bar"baz should produce foobarbaz (quotes just delimit, no split)
+        assert_eq!(split_response_line(r#"foo"bar"baz"#), vec!["foobarbaz"]);
+    }
 }
