@@ -116,13 +116,14 @@ fn main() -> Result<()> {
     }
 
     if !result.diagnostics.is_empty() {
-        let color = args
+        let pretty = args
             .pretty
-            .unwrap_or_else(|| std::io::stdout().is_terminal());
-        let mut reporter = Reporter::new(color);
+            .unwrap_or_else(|| std::io::stderr().is_terminal());
+        let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
-            eprintln!("{output}");
+            // Use eprint (not eprintln) because render() already includes all newlines
+            eprint!("{output}");
         }
     }
 
@@ -133,9 +134,10 @@ fn main() -> Result<()> {
 
     if has_errors {
         // Match tsc exit codes:
-        // Exit 1 (DiagnosticsPresent_OutputsSkipped): errors found, no output generated
-        // Exit 2 (DiagnosticsPresent_OutputsGenerated): errors found, output was still generated
-        if !result.emitted_files.is_empty() {
+        // tsc uses exit code 2 when there are errors (DiagnosticsPresent_OutputsGenerated)
+        // regardless of whether --noEmit is set. Exit code 1 is only for when emit
+        // is explicitly skipped due to errors (noEmitOnError).
+        if args.no_emit || !result.emitted_files.is_empty() {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
         } else {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
@@ -658,13 +660,13 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     }
 
     if !result.diagnostics.is_empty() {
-        let color = args
+        let pretty = args
             .pretty
-            .unwrap_or_else(|| std::io::stdout().is_terminal());
-        let mut reporter = Reporter::new(color);
+            .unwrap_or_else(|| std::io::stderr().is_terminal());
+        let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
-            eprintln!("{output}");
+            eprint!("{output}");
         }
     }
 
@@ -674,7 +676,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         .any(|diag| diag.category == wasm::checker::types::diagnostics::DiagnosticCategory::Error);
 
     if has_errors {
-        if !result.emitted_files.is_empty() {
+        if args.no_emit || !result.emitted_files.is_empty() {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
         } else {
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
