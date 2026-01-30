@@ -944,10 +944,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     SubtypeResult::False
                 }
             }
-            (
-                TypeKey::Function(_) | TypeKey::Callable(_),
-                TypeKey::ObjectWithIndex(t_shape_id),
-            ) => {
+            (TypeKey::Function(_) | TypeKey::Callable(_), TypeKey::ObjectWithIndex(t_shape_id)) => {
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 if t_shape.properties.is_empty() {
                     SubtypeResult::True
