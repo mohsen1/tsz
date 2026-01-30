@@ -263,7 +263,15 @@ export function parseTestDirectives(code: string, filePath: string): ParsedTestC
   if (isMultiFile && currentFileName) {
     files.push({ name: currentFileName, content: currentFileLines.join('\n') });
   }
-  if (!isMultiFile) {
+
+  // For multi-file tests, also include the main test file if it's not already included
+  // This is needed so TypeScript can use the main file path as the root for resolution
+  if (isMultiFile) {
+    const mainFileName = path.basename(filePath);
+    if (!files.some(f => f.name === mainFileName)) {
+      files.push({ name: mainFileName, content: cleanLines.join('\n') });
+    }
+  } else {
     files.push({ name: path.basename(filePath), content: cleanLines.join('\n') });
   }
 
@@ -275,7 +283,14 @@ export function parseTestDirectives(code: string, filePath: string): ParsedTestC
 // ============================================================================
 
 function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
-  const options: ts.CompilerOptions = { noEmit: true };
+  const options: ts.CompilerOptions = {};
+
+  // noEmit - respect the directive, default to true
+  if (opts.noemit !== undefined) {
+    options.noEmit = opts.noemit as boolean;
+  } else {
+    options.noEmit = true;
+  }
 
   if (opts.target !== undefined) {
     const t = String(opts.target).toLowerCase();
@@ -291,9 +306,17 @@ function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
     options.module = ts.ModuleKind.ESNext;
   }
 
+  // Strict mode flags
   if (opts.strict !== undefined) options.strict = opts.strict as boolean;
   if (opts.noimplicitany !== undefined) options.noImplicitAny = opts.noimplicitany as boolean;
   if (opts.strictnullchecks !== undefined) options.strictNullChecks = opts.strictnullchecks as boolean;
+  if (opts.strictfunctiontypes !== undefined) options.strictFunctionTypes = opts.strictfunctiontypes as boolean;
+  if (opts.strictbindcallapply !== undefined) options.strictBindCallApply = opts.strictbindcallapply as boolean;
+  if (opts.strictpropertyinitialization !== undefined) options.strictPropertyInitialization = opts.strictpropertyinitialization as boolean;
+  if (opts.strictbuiltiniteratorreturn !== undefined) options.strictBuiltinIteratorReturn = opts.strictbuiltiniteratorreturn as boolean;
+  if (opts.noimplicitthis !== undefined) options.noImplicitThis = opts.noimplicitthis as boolean;
+  if (opts.useunknownincatchvariables !== undefined) options.useUnknownInCatchVariables = opts.useunknownincatchvariables as boolean;
+  if (opts.alwaysstrict !== undefined) options.alwaysStrict = opts.alwaysstrict as boolean;
   if (opts.nolib !== undefined) options.noLib = opts.nolib as boolean;
 
   // Additional checks
@@ -324,6 +347,90 @@ function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
   if (opts.allowunreachablecode !== undefined) {
     options.allowUnreachableCode = opts.allowunreachablecode as boolean;
   }
+  if (opts.noimplicitoverride !== undefined) {
+    options.noImplicitOverride = opts.noimplicitoverride as boolean;
+  }
+
+  // JavaScript support (needed for @allowJs and @checkJs tests)
+  if (opts.allowjs !== undefined) options.allowJs = opts.allowjs as boolean;
+  if (opts.checkjs !== undefined) options.checkJs = opts.checkjs as boolean;
+
+  // JSX options
+  if (opts.jsx !== undefined) {
+    const jsx = String(opts.jsx).toLowerCase();
+    const jsxMap: Record<string, ts.JsxEmit> = {
+      'preserve': ts.JsxEmit.Preserve,
+      'react': ts.JsxEmit.React,
+      'react-native': ts.JsxEmit.ReactNative,
+      'react-jsx': ts.JsxEmit.ReactJSX,
+      'react-jsxdev': ts.JsxEmit.ReactJSXDev,
+    };
+    options.jsx = jsxMap[jsx] ?? ts.JsxEmit.React;
+  }
+  if (opts.jsxfactory !== undefined) {
+    options.jsxFactory = opts.jsxfactory as string;
+  }
+  if (opts.jsxfragmentfactory !== undefined) {
+    options.jsxFragmentFactory = opts.jsxfragmentfactory as string;
+  }
+  if (opts.jsximportsource !== undefined) {
+    options.jsxImportSource = opts.jsximportsource as string;
+  }
+
+  // Class fields and decorators
+  if (opts.usedefineforclassfields !== undefined) {
+    options.useDefineForClassFields = opts.usedefineforclassfields as boolean;
+  }
+  if (opts.experimentaldecorators !== undefined) {
+    options.experimentalDecorators = opts.experimentaldecorators as boolean;
+  }
+  if (opts.emitdecoratormetadata !== undefined) {
+    options.emitDecoratorMetadata = opts.emitdecoratormetadata as boolean;
+  }
+
+  // Module options
+  if (opts.allowsyntheticdefaultimports !== undefined) {
+    options.allowSyntheticDefaultImports = opts.allowsyntheticdefaultimports as boolean;
+  }
+  if (opts.esmoduleinterop !== undefined) {
+    options.esModuleInterop = opts.esmoduleinterop as boolean;
+  }
+  if (opts.preservesymlinks !== undefined) {
+    options.preserveSymlinks = opts.preservesymlinks as boolean;
+  }
+  if (opts.allowumdglobalaccess !== undefined) {
+    options.allowUmdGlobalAccess = opts.allowumdglobalaccess as boolean;
+  }
+  if (opts.allowimportingtsextensions !== undefined) {
+    options.allowImportingTsExtensions = opts.allowimportingtsextensions as boolean;
+  }
+  if (opts.resolvejsonmodule !== undefined) {
+    options.resolveJsonModule = opts.resolvejsonmodule as boolean;
+  }
+  if (opts.noresolve !== undefined) {
+    options.noResolve = opts.noresolve as boolean;
+  }
+
+  // Interop constraints
+  if (opts.isolatedmodules !== undefined) {
+    options.isolatedModules = opts.isolatedmodules as boolean;
+  }
+  if (opts.verbatimmodulesyntax !== undefined) {
+    options.verbatimModuleSyntax = opts.verbatimmodulesyntax as boolean;
+  }
+
+  // Declaration
+  if (opts.declaration !== undefined) {
+    options.declaration = opts.declaration as boolean;
+  }
+
+  // Skip lib check
+  if (opts.skiplibcheck !== undefined) {
+    options.skipLibCheck = opts.skiplibcheck as boolean;
+  }
+  if (opts.skipdefaultlibcheck !== undefined) {
+    options.skipDefaultLibCheck = opts.skipdefaultlibcheck as boolean;
+  }
 
   return options;
 }
@@ -344,13 +451,17 @@ export function runTsc(
   testCase: ParsedTestCase,
   libDir: string,
   libSource: string = '',
-  includeMessages: boolean = false
+  includeMessages: boolean = false,
+  rootFilePath: string = ''
 ): TscResult {
   const compilerOptions = toCompilerOptions(testCase.options);
   const sourceFiles = new Map<string, ts.SourceFile>();
   const fileNames: string[] = [];
   const libNames = getLibNamesForTestCase(testCase.options, compilerOptions.target);
   const libFiles = libNames.length ? collectLibFiles(libNames, libDir) : new Map<string, string>();
+
+  // Use rootFilePath to resolve relative file names
+  const rootDir = rootFilePath ? path.dirname(rootFilePath) : '.';
 
   for (const file of testCase.files) {
     let scriptKind = ts.ScriptKind.TS;
@@ -359,15 +470,17 @@ export function runTsc(
     else if (file.name.endsWith('.tsx')) scriptKind = ts.ScriptKind.TSX;
     else if (file.name.endsWith('.json')) scriptKind = ts.ScriptKind.JSON;
 
+    // Resolve file name relative to root directory
+    const resolvedFileName = path.resolve(rootDir, file.name);
     const sf = ts.createSourceFile(
-      file.name,
+      resolvedFileName,
       file.content,
       compilerOptions.target ?? ts.ScriptTarget.ES2020,
       true,
       scriptKind
     );
-    sourceFiles.set(file.name, sf);
-    fileNames.push(file.name);
+    sourceFiles.set(resolvedFileName, sf);
+    fileNames.push(resolvedFileName);
   }
 
   if (!compilerOptions.noLib && libFiles.size) {
@@ -395,8 +508,16 @@ export function runTsc(
   host.getSourceFile = (name) => sourceFiles.get(name) ?? sourceFiles.get(path.basename(name));
   host.fileExists = (name) => sourceFiles.has(name) || sourceFiles.has(path.basename(name));
   host.readFile = (name) => {
-    const file = testCase.files.find(f => f.name === name);
+    const sf = sourceFiles.get(name);
+    if (sf) return sf.getFullText();
+
+    // Try to find the file by name in testCase.files
+    const file = testCase.files.find(f => {
+      const resolved = path.resolve(rootDir, f.name);
+      return resolved === name || path.basename(name) === name;
+    });
     if (file) return file.content;
+
     const libName = libFiles.has(name) ? name : path.basename(name);
     if (libFiles.has(libName)) return libFiles.get(libName);
     if (libSource && libName === 'lib.d.ts') return libSource;
@@ -413,7 +534,7 @@ export function runTsc(
     }
     return 'lib.d.ts';
   };
-  host.getCurrentDirectory = () => '/';
+  host.getCurrentDirectory = () => rootFilePath ? path.dirname(rootFilePath) : '/';
   host.getCanonicalFileName = (name) => name;
   host.useCaseSensitiveFileNames = () => true;
   host.getNewLine = () => '\n';
