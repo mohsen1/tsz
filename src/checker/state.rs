@@ -8643,7 +8643,19 @@ impl<'a> CheckerState<'a> {
             }
 
             self.push_return_type(return_type);
+
+            // Enter async context for await expression checking
+            if is_async {
+                self.ctx.enter_async_context();
+            }
+
             self.check_statement(method.body);
+
+            // Exit async context
+            if is_async {
+                self.ctx.exit_async_context();
+            }
+
             let check_return_type =
                 self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
             let requires_return = self.requires_return_value(check_return_type);
