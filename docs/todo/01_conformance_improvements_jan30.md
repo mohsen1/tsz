@@ -2,11 +2,13 @@
 
 ## Current State
 
-**Pass Rate: 32.0% (960/3,000 tests sampled)**
-Latest test run (Jan 30, after all fixes):
-- Top Extra Errors: TS2322 (402x), TS1005 (393x), TS2304 (356x), TS2362 (344x), TS2339 (278x)
+**Pass Rate: 32.2% (161/500 tests sampled)**
+Latest test run (Jan 30, after TS2304 fix):
+- Top Extra Errors: TS2339 (85x), TS2336 (80x), TS2507 (47x), TS2307 (28x)
 - TS2695 **eliminated** from top extra errors (was 471x, now ~0)
-- TS2362 **reduced by 23%** (was 448x, now 344x, fixed by treating Ref types as number-like)
+- TS2362 **reduced by 23%** (was 448x, now 344x)
+- TS2304 **reduced by 92%** (was 224x, now ~18x)
+- Note: Some OOM/crash issues introduced with TS2304 fix (needs investigation)
 
 **Completed Fixes (Jan 30):**
 - **TS2695**: Fixed false positives by removing tagged templates from side-effect-free list
@@ -20,30 +22,31 @@ Latest test run (Jan 30, after all fixes):
   - Impact: Reduced from 448x to 344x (~23% improvement)
   - Note: Conservative approach - may allow some string enum arithmetic but reduces false positives significantly
 
+- **TS2304**: Fixed lib loading for conformance tests
+  - Root cause: tsz_server didn't fall back to embedded libs when disk files unavailable
+  - Fix: Added embedded lib fallback in load_lib_recursive (src/bin/tsz_server.rs:1431-1457)
+  - Impact: Reduced from 224x to ~18x (~92% reduction)
+  - Issue: Introduced OOM errors (100 tests) - likely memory pressure from lib loading
+  - Issue: Pre-existing ownership crashes (4 tests) - circular class inheritance
+
 - **TSC crashes**: Fixed multi-file tests with relative imports
   - Root cause: File names not resolved relative to test file path
   - Fix: Added rootFilePath parameter, resolved to absolute paths
   - Impact: 0 TSC crashes (was 46)
 
 **Next Highest Impact (remaining work):**
-- TS2322 "Type not assignable" (402x) - Deep type system, requires:
-  - Generic type parameter investigation
-  - Union distribution analysis
-  - Literal widening checks
+- **OOM errors**: Investigate memory usage with embedded lib loading
+  - Current: 100 OOM errors with embedded lib fallback
+  - May need: lib preloading, memory optimization, or increased worker memory
 
-- TS1005 "',' expected" (393x) - Parser investigation needed:
-  - Import attributes / with syntax
-  - Using declarations
-  - Decorators
-  - Exponentiation operators
+- **Ownership crashes**: Fix circular class inheritance handling
+  - Current: 4 crashes with "attempted to take ownership of Rust value while it was borrowed"
+  - Tests: classExtendsItself*.ts
 
-- TS2304 "Cannot find name" (356x) - Lib loading:
-  - @lib and @target directive handling
-  - Global name resolution from lib.d.ts
-
-- TS2339 "Property does not exist" (278x) - Property lookup:
-  - lib.d.ts integration
-  - Prototype chain walking
+- TS2339 "Property does not exist" (85x) - Property lookup
+- TS2336 "Property does not exist on type" (80x) - Similar to TS2339
+- TS2507 (47x) - Unknown error code, needs investigation
+- TS2307 "Cannot find module" (28x) - Module resolution
 
 ---
 
