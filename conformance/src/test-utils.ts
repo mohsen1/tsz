@@ -359,7 +359,15 @@ export function parseTestCase(code: string, filePath: string): ParsedTestCase {
   if (isMultiFile && currentFileName) {
     files.push({ name: currentFileName, content: currentFileLines.join('\n') });
   }
-  if (!isMultiFile) {
+
+  // For multi-file tests, also include the main test file if it's not already included
+  // This is needed so TypeScript can use the main file path as the root for resolution
+  if (isMultiFile) {
+    const mainFileName = path.basename(filePath);
+    if (!files.some(f => f.name === mainFileName)) {
+      files.push({ name: mainFileName, content: cleanLines.join('\n') });
+    }
+  } else {
     files.push({ name: path.basename(filePath), content: cleanLines.join('\n') });
   }
 
