@@ -20,12 +20,10 @@ parentPort!.on('message', (msg: { id: number; filePath: string }) => {
     parentPort!.postMessage({ id: msg.id, codes: result.codes });
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e);
-    // Mark as TSC crash - these include stack overflows, undefined property access, etc.
     parentPort!.postMessage({
       id: msg.id,
       codes: [],
-      tscCrashed: true,
-      tscError: errorMsg,
+      error: errorMsg,
     });
   }
 });
