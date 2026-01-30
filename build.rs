@@ -30,10 +30,8 @@ fn main() {
         println!("cargo:rustc-cfg=ci");
     }
 
-    // Only regenerate in debug builds or when LIB_ASSETS_FORCE is set
-    // Release builds should have lib-assets pre-generated
+    // Auto-generate when lib-assets are missing or LIB_ASSETS_FORCE is set
     let force = env::var("LIB_ASSETS_FORCE").is_ok();
-    let profile = env::var("PROFILE").unwrap_or_default();
 
     // Check if lib-assets directory exists
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -47,16 +45,9 @@ fn main() {
         return;
     }
 
-    // Only auto-generate in debug builds
-    if profile == "release" && !force {
-        if !version_file.exists() {
-            panic!(
-                "src/lib-assets/ not found. Run `node scripts/generate-lib-assets.mjs` first.\n\
-                 For release builds, lib-assets must be pre-generated."
-            );
-        }
-        return;
-    }
+    // Auto-generate lib-assets for any profile if node is available
+    // Previously release builds required pre-generation, but this caused CI failures
+    // when lib-assets weren't committed (they are gitignored).
 
     println!("cargo:warning=Generating lib-assets from TypeScript npm package...");
 
