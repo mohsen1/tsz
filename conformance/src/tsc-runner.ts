@@ -789,14 +789,29 @@ export function runTsc(
   host.realpath = (name) => name;
 
   host.getDefaultLibFileName = () => {
-    if (libFiles.size > 0) {
-      if (sourceFiles.has('lib.es5.d.ts')) return 'lib.es5.d.ts';
-      for (const name of sourceFiles.keys()) {
-        if (name.startsWith('lib.') && name.endsWith('.d.ts')) {
-          return name;
-        }
-      }
-    }
+    // Return the correct default lib file for the target.
+    // TypeScript uses getDefaultLibFileName as the root of the library
+    // dependency graph - it only loads libs reachable via /// <reference>
+    // from this file. If we always return lib.es5.d.ts, ES2015+ libs
+    // (like lib.es2015.iterable.d.ts) are never discovered, causing
+    // false TS2488 and other errors.
+    const target = compilerOptions.target ?? ts.ScriptTarget.ES2020;
+    const targetLibMap: Record<number, string> = {
+      [ts.ScriptTarget.ES3]: 'lib.es5.d.ts',
+      [ts.ScriptTarget.ES5]: 'lib.es5.d.ts',
+      [ts.ScriptTarget.ES2015]: 'lib.es2015.d.ts',
+      [ts.ScriptTarget.ES2016]: 'lib.es2016.d.ts',
+      [ts.ScriptTarget.ES2017]: 'lib.es2017.d.ts',
+      [ts.ScriptTarget.ES2018]: 'lib.es2018.d.ts',
+      [ts.ScriptTarget.ES2019]: 'lib.es2019.d.ts',
+      [ts.ScriptTarget.ES2020]: 'lib.es2020.d.ts',
+      [ts.ScriptTarget.ES2021]: 'lib.es2021.d.ts',
+      [ts.ScriptTarget.ES2022]: 'lib.es2022.d.ts',
+    };
+    const defaultLib = targetLibMap[target] ?? 'lib.esnext.d.ts';
+    if (sourceFiles.has(defaultLib)) return defaultLib;
+    // Fallback: if the target-specific lib isn't loaded, use es5
+    if (sourceFiles.has('lib.es5.d.ts')) return 'lib.es5.d.ts';
     return 'lib.d.ts';
   };
 
