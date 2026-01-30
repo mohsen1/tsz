@@ -46,9 +46,22 @@ use wasm::cli::config::{checker_target_from_emitter, default_lib_name_for_target
 use wasm::embedded_libs;
 use wasm::emitter::ScriptTarget;
 use wasm::lib_loader::LibFile;
+use wasm::lsp::call_hierarchy::CallHierarchyProvider;
+use wasm::lsp::completions::Completions;
+use wasm::lsp::definition::GoToDefinition;
+use wasm::lsp::document_symbols::DocumentSymbolProvider;
+use wasm::lsp::folding::FoldingRangeProvider;
+use wasm::lsp::highlighting::DocumentHighlightProvider;
+use wasm::lsp::hover::HoverProvider;
+use wasm::lsp::implementation::GoToImplementationProvider;
+use wasm::lsp::inlay_hints::InlayHintsProvider;
+use wasm::lsp::position::{LineMap, Position, Range};
+use wasm::lsp::references::FindReferences;
+use wasm::lsp::rename::RenameProvider;
+use wasm::lsp::selection_range::SelectionRangeProvider;
 use wasm::parser::ParserState;
 use wasm::parser::base::NodeIndex;
-use wasm::parser::node::NodeArena;
+use wasm::parser::node::{NodeAccess, NodeArena};
 use wasm::solver::TypeInterner;
 
 // =============================================================================
@@ -656,6 +669,48 @@ impl Server {
         self.response_seq
     }
 
+    // =========================================================================
+    // Helper: Parse and Bind a File
+    // =========================================================================
+
+    /// Parse and bind a file from `open_files`, returning the arena, binder,
+    /// root node index, and source text. Uses `into_arena()` to transfer
+    /// the interner so that identifier resolution works correctly.
+    fn parse_and_bind_file(
+        &self,
+        file_path: &str,
+    ) -> Option<(NodeArena, BinderState, NodeIndex, String)> {
+        let content = self.open_files.get(file_path)?.clone();
+        let mut parser = ParserState::new(file_path.to_string(), content.clone());
+        let root = parser.parse_source_file();
+        let arena = parser.into_arena();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(&arena, root);
+        Some((arena, binder, root, content))
+    }
+
+    /// Extract file path, line, and offset from tsserver request arguments.
+    /// Returns (file, line_1based, offset_1based).
+    fn extract_file_position(args: &serde_json::Value) -> Option<(String, u32, u32)> {
+        let file = args.get("file")?.as_str()?.to_string();
+        let line = args.get("line")?.as_u64()? as u32;
+        let offset = args.get("offset")?.as_u64()? as u32;
+        Some((file, line, offset))
+    }
+
+    /// Convert tsserver 1-based line/offset to 0-based LSP Position.
+    fn tsserver_to_lsp_position(line: u32, offset: u32) -> Position {
+        Position::new(line.saturating_sub(1), offset.saturating_sub(1))
+    }
+
+    /// Convert LSP 0-based Position to tsserver 1-based {line, offset} JSON.
+    fn lsp_to_tsserver_position(pos: &Position) -> serde_json::Value {
+        serde_json::json!({
+            "line": pos.line + 1,
+            "offset": pos.character + 1
+        })
+    }
+
     fn find_lib_dir() -> Result<PathBuf> {
         let cwd = std::env::current_dir().context("Failed to get CWD")?;
 
@@ -931,26 +986,206 @@ impl Server {
     }
 
     fn handle_quickinfo(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!({})))
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let interner = TypeInterner::new();
+            let provider = HoverProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                &interner,
+                &source_text,
+                file.clone(),
+            );
+            let mut type_cache = None;
+            let info = provider.get_hover(root, position, &mut type_cache)?;
+
+            // Extract display string from contents
+            let display_string = info
+                .contents
+                .iter()
+                .find(|c| c.contains("```"))
+                .map(|c| {
+                    // Strip markdown code fences
+                    c.replace("```typescript\n", "")
+                        .replace("\n```", "")
+                        .trim()
+                        .to_string()
+                })
+                .unwrap_or_default();
+
+            let documentation = info
+                .contents
+                .iter()
+                .find(|c| !c.contains("```"))
+                .cloned()
+                .unwrap_or_default();
+
+            let range = info.range.unwrap_or(Range::new(position, position));
+            Some(serde_json::json!({
+                "displayString": display_string,
+                "documentation": documentation,
+                "kind": "unknown",
+                "kindModifiers": "",
+                "start": Self::lsp_to_tsserver_position(&range.start),
+                "end": Self::lsp_to_tsserver_position(&range.end),
+            }))
+        })();
+        self.stub_response(seq, request, result.or(Some(serde_json::json!({}))))
     }
 
     fn handle_definition(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider =
+                GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let locations = provider.get_definition(root, position)?;
+            let body: Vec<serde_json::Value> = locations
+                .iter()
+                .map(|loc| {
+                    serde_json::json!({
+                        "file": loc.file_path,
+                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
+                    })
+                })
+                .collect();
+            Some(serde_json::json!(body))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_references(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider =
+                FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let locations = provider.find_references(root, position)?;
+
+            // Try to get symbol name from the position
+            let symbol_name = {
+                let ref_offset = line_map.position_to_offset(position, &source_text)?;
+                let node_idx = wasm::lsp::utils::find_node_at_offset(&arena, ref_offset);
+                if !node_idx.is_none() {
+                    arena.get_identifier_text(node_idx).map(|s| s.to_string())
+                } else {
+                    None
+                }
+            }
+            .unwrap_or_default();
+
+            let refs: Vec<serde_json::Value> = locations
+                .iter()
+                .map(|loc| {
+                    // Get line text for the reference
+                    let line_text = source_text
+                        .lines()
+                        .nth(loc.range.start.line as usize)
+                        .unwrap_or("")
+                        .to_string();
+                    serde_json::json!({
+                        "file": loc.file_path,
+                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
+                        "lineText": line_text,
+                        "isWriteAccess": false,
+                        "isDefinition": false,
+                    })
+                })
+                .collect();
+            Some(serde_json::json!({
+                "refs": refs,
+                "symbolName": symbol_name,
+            }))
+        })();
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({"refs": [], "symbolName": ""})),
+            Some(result.unwrap_or(serde_json::json!({"refs": [], "symbolName": ""}))),
         )
     }
 
     fn handle_completions(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let interner = TypeInterner::new();
+            let provider = Completions::new_with_types(
+                &arena,
+                &binder,
+                &line_map,
+                &interner,
+                &source_text,
+                file.clone(),
+            );
+            let items = provider.get_completions(root, position)?;
+
+            let entries: Vec<serde_json::Value> = items
+                .iter()
+                .map(|item| {
+                    let kind = match item.kind {
+                        wasm::lsp::completions::CompletionItemKind::Variable => "var",
+                        wasm::lsp::completions::CompletionItemKind::Function => "function",
+                        wasm::lsp::completions::CompletionItemKind::Class => "class",
+                        wasm::lsp::completions::CompletionItemKind::Method => "method",
+                        wasm::lsp::completions::CompletionItemKind::Parameter => "parameter",
+                        wasm::lsp::completions::CompletionItemKind::Property => "property",
+                        wasm::lsp::completions::CompletionItemKind::Keyword => "keyword",
+                    };
+                    let mut entry = serde_json::json!({
+                        "name": item.label,
+                        "kind": kind,
+                        "sortText": format!("{:02}{}", if kind == "keyword" { 15 } else { 0 }, item.label),
+                    });
+                    if let Some(ref detail) = item.detail {
+                        entry["kindModifiers"] = serde_json::json!(detail);
+                    }
+                    entry
+                })
+                .collect();
+
+            // Determine if this is a member completion (dot-triggered)
+            let is_member = {
+                let lsp_offset = line_map.position_to_offset(position, &source_text);
+                lsp_offset
+                    .and_then(|o| {
+                        if o > 0 {
+                            source_text.as_bytes().get((o - 1) as usize).copied()
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|ch| ch == b'.')
+                    .unwrap_or(false)
+            };
+
+            Some(serde_json::json!({
+                "isGlobalCompletion": !is_member,
+                "isMemberCompletion": is_member,
+                "isNewIdentifierLocation": false,
+                "entries": entries,
+            }))
+        })();
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({"isGlobalCompletion": false, "isMemberCompletion": false, "isNewIdentifierLocation": false, "entries": []})),
+            Some(result.unwrap_or(serde_json::json!({
+                "isGlobalCompletion": false,
+                "isMemberCompletion": false,
+                "isNewIdentifierLocation": false,
+                "entries": []
+            }))),
         )
     }
 
@@ -989,10 +1224,71 @@ impl Server {
     }
 
     fn handle_navtree(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
+            let symbols = provider.get_document_symbols(root);
+
+            fn symbol_to_navtree(
+                sym: &wasm::lsp::document_symbols::DocumentSymbol,
+            ) -> serde_json::Value {
+                let kind = match sym.kind {
+                    wasm::lsp::document_symbols::SymbolKind::File => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Module => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Namespace => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Class => "class",
+                    wasm::lsp::document_symbols::SymbolKind::Method => "method",
+                    wasm::lsp::document_symbols::SymbolKind::Property => "property",
+                    wasm::lsp::document_symbols::SymbolKind::Field => "property",
+                    wasm::lsp::document_symbols::SymbolKind::Constructor => "constructor",
+                    wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
+                    wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
+                    wasm::lsp::document_symbols::SymbolKind::Function => "function",
+                    wasm::lsp::document_symbols::SymbolKind::Variable => "var",
+                    wasm::lsp::document_symbols::SymbolKind::Constant => "const",
+                    wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                    wasm::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
+                    _ => "unknown",
+                };
+                let children: Vec<serde_json::Value> =
+                    sym.children.iter().map(symbol_to_navtree).collect();
+                serde_json::json!({
+                    "text": sym.name,
+                    "kind": kind,
+                    "childItems": children,
+                    "spans": [{
+                        "start": {
+                            "line": sym.range.start.line + 1,
+                            "offset": sym.range.start.character + 1,
+                        },
+                        "end": {
+                            "line": sym.range.end.line + 1,
+                            "offset": sym.range.end.character + 1,
+                        },
+                    }],
+                })
+            }
+
+            let child_items: Vec<serde_json::Value> =
+                symbols.iter().map(symbol_to_navtree).collect();
+
+            Some(serde_json::json!({
+                "text": "<module>",
+                "kind": "module",
+                "childItems": child_items,
+                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
+            }))
+        })();
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({"text": "<module>", "kind": "module", "childItems": []})),
+            Some(result.unwrap_or(serde_json::json!({
+                "text": "<module>",
+                "kind": "module",
+                "childItems": []
+            }))),
         )
     }
 
@@ -1001,14 +1297,141 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider = DocumentHighlightProvider::new(&arena, &binder, &line_map, &source_text);
+            let highlights = provider.get_document_highlights(root, position)?;
+
+            let body: Vec<serde_json::Value> = highlights
+                .iter()
+                .map(|hl| {
+                    let kind_str = match hl.kind {
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Read) => "read",
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Write) => "write",
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Text) => "text",
+                        None => "text",
+                    };
+                    serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(&hl.range.start),
+                        "end": Self::lsp_to_tsserver_position(&hl.range.end),
+                        "kind": kind_str,
+                    })
+                })
+                .collect();
+            Some(serde_json::json!(body))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_rename(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let new_name = request
+                .arguments
+                .get("findInStrings")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    // The actual tsserver rename command expects the new name from
+                    // a separate "rename" request, not from the initial "rename" command.
+                    // The initial command returns info + locations, not the edits.
+                    None
+                });
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider =
+                RenameProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
+
+            // First check if rename is possible (prepare)
+            let rename_range = provider.prepare_rename(position);
+            if rename_range.is_none() {
+                return Some(serde_json::json!({
+                    "info": {
+                        "canRename": false,
+                        "localizedErrorMessage": "You cannot rename this element."
+                    },
+                    "locs": []
+                }));
+            }
+
+            // If new_name is provided, perform the rename; otherwise just return locations
+            if let Some(new_name) = new_name {
+                match provider.provide_rename_edits(root, position, new_name.to_string()) {
+                    Ok(edit) => {
+                        let locs: Vec<serde_json::Value> = edit
+                            .changes
+                            .iter()
+                            .map(|(file_path, edits)| {
+                                let file_locs: Vec<serde_json::Value> = edits
+                                    .iter()
+                                    .map(|e| {
+                                        serde_json::json!({
+                                            "start": Self::lsp_to_tsserver_position(&e.range.start),
+                                            "end": Self::lsp_to_tsserver_position(&e.range.end),
+                                        })
+                                    })
+                                    .collect();
+                                serde_json::json!({
+                                    "file": file_path,
+                                    "locs": file_locs,
+                                })
+                            })
+                            .collect();
+                        Some(serde_json::json!({
+                            "info": { "canRename": true, "displayName": new_name, "fullDisplayName": new_name, "kind": "unknown", "kindModifiers": "", "triggerSpan": { "start": Self::lsp_to_tsserver_position(&rename_range.as_ref().unwrap().start), "length": 0 }},
+                            "locs": locs,
+                        }))
+                    }
+                    Err(msg) => Some(serde_json::json!({
+                        "info": { "canRename": false, "localizedErrorMessage": msg },
+                        "locs": []
+                    })),
+                }
+            } else {
+                // No new name - just return rename info with locations from references
+                let find_refs =
+                    FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
+                let locations = find_refs.find_references(root, position);
+                let file_locs: Vec<serde_json::Value> = locations
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|loc| {
+                        serde_json::json!({
+                            "start": Self::lsp_to_tsserver_position(&loc.range.start),
+                            "end": Self::lsp_to_tsserver_position(&loc.range.end),
+                        })
+                    })
+                    .collect();
+                let span = rename_range.as_ref().unwrap();
+                Some(serde_json::json!({
+                    "info": {
+                        "canRename": true,
+                        "displayName": "",
+                        "fullDisplayName": "",
+                        "kind": "unknown",
+                        "kindModifiers": "",
+                        "triggerSpan": {
+                            "start": Self::lsp_to_tsserver_position(&span.start),
+                            "length": 0
+                        }
+                    },
+                    "locs": [{
+                        "file": file,
+                        "locs": file_locs,
+                    }]
+                }))
+            }
+        })();
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({"info": {"canRename": false, "localizedErrorMessage": "Not yet implemented"}, "locs": []})),
+            Some(result.unwrap_or(serde_json::json!({
+                "info": {"canRename": false, "localizedErrorMessage": "Not yet implemented"},
+                "locs": []
+            }))),
         )
     }
 
@@ -1057,7 +1480,48 @@ impl Server {
     }
 
     fn handle_format(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let source_text = self.open_files.get(file)?.clone();
+
+            let options = wasm::lsp::formatting::FormattingOptions {
+                tab_size: request
+                    .arguments
+                    .get("options")
+                    .and_then(|o| o.get("tabSize"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(4) as u32,
+                insert_spaces: request
+                    .arguments
+                    .get("options")
+                    .and_then(|o| o.get("insertSpaces"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+                ..Default::default()
+            };
+
+            match wasm::lsp::formatting::DocumentFormattingProvider::format_document(
+                file,
+                &source_text,
+                &options,
+            ) {
+                Ok(edits) => {
+                    let body: Vec<serde_json::Value> = edits
+                        .iter()
+                        .map(|edit| {
+                            serde_json::json!({
+                                "start": Self::lsp_to_tsserver_position(&edit.range.start),
+                                "end": Self::lsp_to_tsserver_position(&edit.range.end),
+                                "newText": edit.new_text,
+                            })
+                        })
+                        .collect();
+                    Some(serde_json::json!(body))
+                }
+                Err(_) => Some(serde_json::json!([])),
+            }
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_format_on_key(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
@@ -1117,11 +1581,130 @@ impl Server {
     }
 
     fn handle_inlay_hints(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let provider = InlayHintsProvider::new(&arena, &binder, &line_map, &source_text);
+
+            // Extract the range from arguments, default to entire file
+            let start = request
+                .arguments
+                .get("start")
+                .and_then(|v| v.as_u64())
+                .map(|_| {
+                    let line = request
+                        .arguments
+                        .get("startLine")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1) as u32;
+                    let offset = request
+                        .arguments
+                        .get("startOffset")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1) as u32;
+                    Self::tsserver_to_lsp_position(line, offset)
+                })
+                .unwrap_or(Position::new(0, 0));
+            let end = request
+                .arguments
+                .get("end")
+                .and_then(|v| v.as_u64())
+                .map(|_| {
+                    let line = request
+                        .arguments
+                        .get("endLine")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(u32::MAX as u64) as u32;
+                    let offset = request
+                        .arguments
+                        .get("endOffset")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(u32::MAX as u64) as u32;
+                    Self::tsserver_to_lsp_position(line, offset)
+                })
+                .unwrap_or(Position::new(u32::MAX, u32::MAX));
+            let range = Range::new(start, end);
+
+            let hints = provider.provide_inlay_hints(root, range);
+            let body: Vec<serde_json::Value> = hints
+                .iter()
+                .map(|hint| {
+                    let kind = match hint.kind {
+                        wasm::lsp::inlay_hints::InlayHintKind::Parameter => "Parameter",
+                        wasm::lsp::inlay_hints::InlayHintKind::Type => "Type",
+                        wasm::lsp::inlay_hints::InlayHintKind::Generic => "Enum",
+                    };
+                    serde_json::json!({
+                        "text": hint.label,
+                        "position": Self::lsp_to_tsserver_position(&hint.position),
+                        "kind": kind,
+                        "whitespaceBefore": false,
+                        "whitespaceAfter": true,
+                    })
+                })
+                .collect();
+            Some(serde_json::json!(body))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_selection_range(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, _binder, _root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let provider = SelectionRangeProvider::new(&arena, &line_map, &source_text);
+
+            let locations = request.arguments.get("locations")?.as_array()?;
+            let positions: Vec<Position> = locations
+                .iter()
+                .filter_map(|loc| {
+                    let line = loc.get("line")?.as_u64()? as u32;
+                    let offset = loc.get("offset")?.as_u64()? as u32;
+                    Some(Self::tsserver_to_lsp_position(line, offset))
+                })
+                .collect();
+
+            let ranges = provider.get_selection_ranges(&positions);
+
+            fn selection_range_to_json(
+                sr: &wasm::lsp::selection_range::SelectionRange,
+            ) -> serde_json::Value {
+                let text_span = serde_json::json!({
+                    "start": {
+                        "line": sr.range.start.line + 1,
+                        "offset": sr.range.start.character + 1,
+                    },
+                    "end": {
+                        "line": sr.range.end.line + 1,
+                        "offset": sr.range.end.character + 1,
+                    },
+                });
+                if let Some(ref parent) = sr.parent {
+                    serde_json::json!({
+                        "textSpan": text_span,
+                        "parent": selection_range_to_json(parent),
+                    })
+                } else {
+                    serde_json::json!({
+                        "textSpan": text_span,
+                    })
+                }
+            }
+
+            let body: Vec<serde_json::Value> = ranges
+                .iter()
+                .map(|opt_sr| {
+                    opt_sr
+                        .as_ref()
+                        .map(selection_range_to_json)
+                        .unwrap_or(serde_json::json!(null))
+                })
+                .collect();
+            Some(serde_json::json!(body))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_linked_editing_range(
@@ -1137,11 +1720,113 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider =
+                CallHierarchyProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let item = provider.prepare(root, position)?;
+            Some(serde_json::json!([{
+                "name": item.name,
+                "kind": format!("{:?}", item.kind).to_lowercase(),
+                "file": item.uri,
+                "span": {
+                    "start": Self::lsp_to_tsserver_position(&item.range.start),
+                    "end": Self::lsp_to_tsserver_position(&item.range.end),
+                },
+                "selectionSpan": {
+                    "start": Self::lsp_to_tsserver_position(&item.selection_range.start),
+                    "end": Self::lsp_to_tsserver_position(&item.selection_range.end),
+                },
+            }]))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_call_hierarchy(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider =
+                CallHierarchyProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
+
+            let is_incoming = request.command == "provideCallHierarchyIncomingCalls";
+
+            if is_incoming {
+                let calls = provider.incoming_calls(root, position);
+                let body: Vec<serde_json::Value> = calls
+                    .iter()
+                    .map(|call| {
+                        let from_ranges: Vec<serde_json::Value> = call
+                            .from_ranges
+                            .iter()
+                            .map(|r| {
+                                serde_json::json!({
+                                    "start": Self::lsp_to_tsserver_position(&r.start),
+                                    "end": Self::lsp_to_tsserver_position(&r.end),
+                                })
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "from": {
+                                "name": call.from.name,
+                                "kind": format!("{:?}", call.from.kind).to_lowercase(),
+                                "file": call.from.uri,
+                                "span": {
+                                    "start": Self::lsp_to_tsserver_position(&call.from.range.start),
+                                    "end": Self::lsp_to_tsserver_position(&call.from.range.end),
+                                },
+                                "selectionSpan": {
+                                    "start": Self::lsp_to_tsserver_position(&call.from.selection_range.start),
+                                    "end": Self::lsp_to_tsserver_position(&call.from.selection_range.end),
+                                },
+                            },
+                            "fromSpans": from_ranges,
+                        })
+                    })
+                    .collect();
+                Some(serde_json::json!(body))
+            } else {
+                let calls = provider.outgoing_calls(root, position);
+                let body: Vec<serde_json::Value> = calls
+                    .iter()
+                    .map(|call| {
+                        let from_ranges: Vec<serde_json::Value> = call
+                            .from_ranges
+                            .iter()
+                            .map(|r| {
+                                serde_json::json!({
+                                    "start": Self::lsp_to_tsserver_position(&r.start),
+                                    "end": Self::lsp_to_tsserver_position(&r.end),
+                                })
+                            })
+                            .collect();
+                        serde_json::json!({
+                            "to": {
+                                "name": call.to.name,
+                                "kind": format!("{:?}", call.to.kind).to_lowercase(),
+                                "file": call.to.uri,
+                                "span": {
+                                    "start": Self::lsp_to_tsserver_position(&call.to.range.start),
+                                    "end": Self::lsp_to_tsserver_position(&call.to.range.end),
+                                },
+                                "selectionSpan": {
+                                    "start": Self::lsp_to_tsserver_position(&call.to.selection_range.start),
+                                    "end": Self::lsp_to_tsserver_position(&call.to.selection_range.end),
+                                },
+                            },
+                            "fromSpans": from_ranges,
+                        })
+                    })
+                    .collect();
+                Some(serde_json::json!(body))
+            }
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_map_code(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
@@ -1157,11 +1842,66 @@ impl Server {
     }
 
     fn handle_implementation(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let provider = GoToImplementationProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                file.clone(),
+                &source_text,
+            );
+            let locations = provider.get_implementations(root, position)?;
+            let body: Vec<serde_json::Value> = locations
+                .iter()
+                .map(|loc| {
+                    serde_json::json!({
+                        "file": loc.file_path,
+                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
+                    })
+                })
+                .collect();
+            Some(serde_json::json!(body))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_outlining_spans(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let provider = FoldingRangeProvider::new(&arena, &line_map, &source_text);
+            let ranges = provider.get_folding_ranges(root);
+
+            let body: Vec<serde_json::Value> = ranges
+                .iter()
+                .map(|fr| {
+                    let mut span = serde_json::json!({
+                        "textSpan": {
+                            "start": { "line": fr.start_line + 1, "offset": 1 },
+                            "end": { "line": fr.end_line + 1, "offset": 1 },
+                        },
+                        "hintSpan": {
+                            "start": { "line": fr.start_line + 1, "offset": 1 },
+                            "end": { "line": fr.start_line + 1, "offset": 1 },
+                        },
+                        "bannerText": "...",
+                        "autoCollapse": false,
+                    });
+                    if let Some(ref kind) = fr.kind {
+                        span["kind"] = serde_json::json!(kind);
+                    }
+                    span
+                })
+                .collect();
+            Some(serde_json::json!(body))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     // =========================================================================
