@@ -56,7 +56,7 @@ function collectTestFiles(dir: string): string[] {
         const p = path.join(d, entry);
         const stat = fs.statSync(p);
         if (stat.isDirectory()) walk(p);
-        else if (entry.endsWith('.ts') && !entry.endsWith('.d.ts')) files.push(p);
+        else if ((entry.endsWith('.ts') || entry.endsWith('.tsx')) && !entry.endsWith('.d.ts')) files.push(p);
       }
     } catch {}
   }

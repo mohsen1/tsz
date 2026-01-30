@@ -1476,7 +1476,10 @@ function discoverTests(dir: string, results: string[], limit: number): void {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       discoverTests(fullPath, results, limit);
-    } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+    } else if (
+      (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+      !entry.name.endsWith('.d.ts')
+    ) {
       results.push(fullPath);
     }
   }

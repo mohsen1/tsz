@@ -127,7 +127,7 @@ async function collectTestFiles(dir: string, maxFiles: number): Promise<string[]
         const p = path.join(d, entry.name);
         if (entry.isDirectory()) {
           dirs.push(p);
-        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+        } else if ((entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) && !entry.name.endsWith('.d.ts')) {
           files.push(p);
         }
       }
@@ -164,7 +164,7 @@ async function collectProjectFiles(dir: string, maxFiles: number): Promise<strin
         const p = path.join(d, entry.name);
         if (entry.isDirectory()) {
           dirs.push(p);
-        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+        } else if ((entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) && !entry.name.endsWith('.d.ts')) {
           files.push(p);
         }
       }
@@ -191,7 +191,7 @@ async function* walkDirectoryStream(dir: string): AsyncGenerator<string> {
       const p = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         yield* walkDirectoryStream(p);
-      } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+      } else if ((entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) && !entry.name.endsWith('.d.ts')) {
         yield p;
       }
     }

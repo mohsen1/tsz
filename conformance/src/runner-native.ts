@@ -273,7 +273,7 @@ async function main() {
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           walk(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith('.ts')) {
+        } else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))) {
           testFiles.push(fullPath);
         }
       }
