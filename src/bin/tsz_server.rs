@@ -96,10 +96,7 @@ struct ServerArgs {
     no_get_err_on_background_update: bool,
 
     /// Allow loading language service plugins from local project node_modules.
-    #[arg(
-        long = "allowLocalPluginLoads",
-        alias = "allow-local-plugin-loads"
-    )]
+    #[arg(long = "allowLocalPluginLoads", alias = "allow-local-plugin-loads")]
     allow_local_plugin_loads: bool,
 
     /// Enable integration with the editor's file watcher.
@@ -126,10 +123,7 @@ struct ServerArgs {
 
     /// Named pipe for request cancellation semaphore.
     /// If name ends with '*', actual pipe name is <name_without_*><requestId>.
-    #[arg(
-        long = "cancellationPipeName",
-        alias = "cancellation-pipe-name"
-    )]
+    #[arg(long = "cancellationPipeName", alias = "cancellation-pipe-name")]
     cancellation_pipe_name: Option<String>,
 
     /// Server operational mode: 'semantic' (default), 'partialSemantic', or 'syntactic'.
@@ -884,8 +878,7 @@ impl Server {
         let file = request.arguments.get("file").and_then(|v| v.as_str());
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = self.open_files.get(file_path).cloned() {
-                let mut parser =
-                    ParserState::new(file_path.to_string(), content);
+                let mut parser = ParserState::new(file_path.to_string(), content);
                 let _root = parser.parse_source_file();
                 parser
                     .get_diagnostics()
@@ -968,11 +961,7 @@ impl Server {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
-    fn handle_signature_help(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_signature_help(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(seq, request, None)
     }
 
@@ -1022,11 +1011,7 @@ impl Server {
         )
     }
 
-    fn handle_get_code_fixes(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_get_code_fixes(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
@@ -1055,18 +1040,10 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(
-            seq,
-            request,
-            Some(serde_json::json!({"edits": []})),
-        )
+        self.stub_response(seq, request, Some(serde_json::json!({"edits": []})))
     }
 
-    fn handle_organize_imports(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_organize_imports(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
@@ -1102,17 +1079,17 @@ impl Server {
         self.stub_response(seq, request, None)
     }
 
-    fn handle_external_project(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_external_project(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(seq, request, None)
     }
 
     fn handle_update_open(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         // Process opened, changed, and closed files
-        if let Some(opened) = request.arguments.get("openFiles").and_then(|v| v.as_array()) {
+        if let Some(opened) = request
+            .arguments
+            .get("openFiles")
+            .and_then(|v| v.as_array())
+        {
             for entry in opened {
                 if let (Some(file), Some(content)) = (
                     entry.get("file").and_then(|v| v.as_str()),
@@ -1142,11 +1119,7 @@ impl Server {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
-    fn handle_selection_range(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_selection_range(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
@@ -1166,11 +1139,7 @@ impl Server {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
-    fn handle_call_hierarchy(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_call_hierarchy(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
@@ -1178,11 +1147,7 @@ impl Server {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
-    fn handle_file_references(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_file_references(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(
             seq,
             request,
@@ -1190,19 +1155,11 @@ impl Server {
         )
     }
 
-    fn handle_implementation(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_implementation(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
-    fn handle_outlining_spans(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
+    fn handle_outlining_spans(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
@@ -1212,7 +1169,9 @@ impl Server {
 
     fn handle_legacy_request(&mut self, request: LegacyRequest) -> LegacyResponse {
         match request {
-            LegacyRequest::Check { id, files, options } => self.handle_legacy_check(id, files, options),
+            LegacyRequest::Check { id, files, options } => {
+                self.handle_legacy_check(id, files, options)
+            }
             LegacyRequest::Status { id } => self.handle_legacy_status(id),
             LegacyRequest::Recycle { id } => self.handle_legacy_recycle(id),
             LegacyRequest::Shutdown { id } => LegacyResponse::Ok(OkResponse { id, ok: true }),
@@ -1346,8 +1305,7 @@ impl Server {
         }
 
         // PHASE 3: Build cross-file resolution context
-        let all_arenas: Vec<Arc<NodeArena>> =
-            bound_files.iter().map(|f| f.arena.clone()).collect();
+        let all_arenas: Vec<Arc<NodeArena>> = bound_files.iter().map(|f| f.arena.clone()).collect();
         let all_binders: Vec<Arc<BinderState>> =
             bound_files.iter().map(|f| f.binder.clone()).collect();
         let user_file_contexts: Vec<LibContext> = bound_files
@@ -1554,9 +1512,9 @@ impl Server {
             no_lib: options.no_lib,
             target: checker_target,
             es_module_interop: options.es_module_interop,
-            allow_synthetic_default_imports: options.allow_synthetic_default_imports.unwrap_or(
-                options.es_module_interop,
-            ),
+            allow_synthetic_default_imports: options
+                .allow_synthetic_default_imports
+                .unwrap_or(options.es_module_interop),
         }
     }
 }
@@ -1581,9 +1539,10 @@ fn read_content_length_message(reader: &mut BufReader<std::io::Stdin>) -> Result
 
     // Parse Content-Length header
     let content_length = if let Some(len_str) = header.strip_prefix("Content-Length:") {
-        len_str.trim().parse::<usize>().with_context(|| {
-            format!("invalid Content-Length: {}", len_str.trim())
-        })?
+        len_str
+            .trim()
+            .parse::<usize>()
+            .with_context(|| format!("invalid Content-Length: {}", len_str.trim()))?
     } else {
         // Not a Content-Length header - try to parse as raw JSON (for compatibility)
         return Ok(Some(header.to_string()));
@@ -1604,7 +1563,12 @@ fn read_content_length_message(reader: &mut BufReader<std::io::Stdin>) -> Result
 
 /// Write a Content-Length framed message to stdout (tsserver protocol)
 fn write_content_length_message(stdout: &mut std::io::Stdout, message: &str) -> Result<()> {
-    write!(stdout, "Content-Length: {}\r\n\r\n{}", message.len(), message)?;
+    write!(
+        stdout,
+        "Content-Length: {}\r\n\r\n{}",
+        message.len(),
+        message
+    )?;
     stdout.flush()?;
     Ok(())
 }
