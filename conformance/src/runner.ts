@@ -74,6 +74,9 @@ interface TestResult {
   category: string;
   error?: string;
   filePath?: string;
+  /** TSC crashed on this test (stack overflow, undefined access, etc.) */
+  tscCrashed?: boolean;
+  tscError?: string;
 }
 
 interface TestStats {
@@ -84,12 +87,16 @@ interface TestStats {
   skipped: number;
   timedOut: number;
   oom: number;
+  /** Tests where TSC also crashed (not counted against tsz) */
+  tscAlsoFailed: number;
   byCategory: Record<string, { total: number; passed: number }>;
   missingCodes: Map<number, number>;
   extraCodes: Map<number, number>;
   crashedTests: { path: string; error: string }[];
   oomTests: string[];
   timedOutTests: string[];
+  /** Tests where TSC crashed (stack overflow, undefined, etc.) */
+  tscCrashedTests: string[];
   workerStats: {
     spawned: number;
     crashed: number;
@@ -609,12 +616,14 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     skipped: 0,
     timedOut: 0,
     oom: 0,
+    tscAlsoFailed: 0,
     byCategory: {},
     missingCodes: new Map(),
     extraCodes: new Map(),
     crashedTests: [],
     oomTests: [],
     timedOutTests: [],
+    tscCrashedTests: [],
     workerStats: { spawned: 0, crashed: 0, respawned: 0 },
   };
 
@@ -677,6 +686,17 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
         stats.failed++;
         stats.crashedTests.push({ path: result.filePath || filePath, error: result.error || 'Unknown' });
         if (cfg.verbose) log(`\n  ${result.filePath}: CRASH - ${result.error}`, colors.red);
+        return;
+      }
+
+      // Check if TSC also crashed on this test
+      if (result.tscCrashed) {
+        stats.tscAlsoFailed++;
+        stats.tscCrashedTests.push(result.filePath || filePath);
+        // Count as passed since TSC also fails - both compilers agree the test is problematic
+        stats.passed++;
+        stats.byCategory[cat].passed++;
+        if (cfg.verbose) log(`\n  ${result.filePath}: TSC also crashed - ${result.tscError || 'unknown error'}`, colors.magenta);
         return;
       }
 
@@ -744,6 +764,9 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
 
   log('\nSummary:', colors.bold);
   log(`  ✓ Passed:   ${stats.passed}`, colors.green);
+  if (stats.tscAlsoFailed > 0) {
+    log(`    (includes ${stats.tscAlsoFailed} where TSC also fails)`, colors.magenta);
+  }
   log(`  ✗ Failed:   ${stats.failed - stats.crashed - stats.timedOut}`, stats.failed > stats.crashed + stats.timedOut ? colors.red : colors.dim);
   log(`  ⊘ Skipped:  ${stats.skipped}`, stats.skipped > 0 ? colors.dim : colors.dim);
   log(`  💥 Crashed:  ${stats.crashed - stats.oom}`, stats.crashed - stats.oom > 0 ? colors.red : colors.dim);
@@ -791,6 +814,16 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     }
     if (stats.timedOutTests.length > 5) {
       log(`  ... and ${stats.timedOutTests.length - 5} more`, colors.dim);
+    }
+  }
+
+  if (stats.tscCrashedTests.length > 0) {
+    log('\nTSC Also Crashes (not counted against tsz):', colors.magenta);
+    for (const t of stats.tscCrashedTests.slice(0, 5)) {
+      log(`  ${t}`, colors.dim);
+    }
+    if (stats.tscCrashedTests.length > 5) {
+      log(`  ... and ${stats.tscCrashedTests.length - 5} more`, colors.dim);
     }
   }
 

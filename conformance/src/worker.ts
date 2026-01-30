@@ -66,6 +66,9 @@ interface WorkerResult {
   category: string;
   error?: string;
   memoryUsed?: number;
+  /** TSC crashed on this test (stack overflow, undefined access, etc.) */
+  tscCrashed?: boolean;
+  tscError?: string;
 }
 
 // Cached at worker startup
@@ -893,12 +896,16 @@ async function processTest(job: TestJob): Promise<WorkerResult> {
 
     // Try to use cached TSC result
     let tscCodes: number[];
+    let tscCrashed = false;
+    let tscError: string | undefined;
     const relPath = job.filePath.replace(job.testsBasePath + path.sep, '');
     const cachedEntry = tscCacheEntries?.[relPath];
 
     if (cachedEntry && cachedEntry.hash === hashContent(code)) {
       // Use cached result
       tscCodes = cachedEntry.codes;
+      tscCrashed = cachedEntry.tscCrashed ?? false;
+      tscError = cachedEntry.tscError;
     } else {
       // Run TSC (cache miss or file changed)
       tscCodes = runTsc(testCase);
@@ -931,6 +938,8 @@ async function processTest(job: TestJob): Promise<WorkerResult> {
       category: testCase.category,
       error: compilerResult.error,
       memoryUsed: memAfter - memBefore,
+      tscCrashed,
+      tscError,
     };
   } catch (e) {
     const memAfter = getMemoryUsage();

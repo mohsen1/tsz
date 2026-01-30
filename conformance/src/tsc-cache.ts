@@ -17,6 +17,10 @@ const __dirname = path.dirname(__filename);
 export interface CacheEntry {
   codes: number[];
   hash: string;
+  /** TSC crashed on this test (stack overflow, undefined access, etc.) */
+  tscCrashed?: boolean;
+  /** Error message when TSC crashed */
+  tscError?: string;
 }
 
 export interface TscCacheData {

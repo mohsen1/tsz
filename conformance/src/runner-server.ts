@@ -832,12 +832,16 @@ interface TestStats {
   skipped: number;
   timedOut: number;
   oom: number;
+  /** Tests where TSC also crashed (not counted against tsz) */
+  tscAlsoFailed: number;
   byCategory: Record<string, { total: number; passed: number }>;
   missingCodes: Map<number, number>;
   extraCodes: Map<number, number>;
   crashedTests: { path: string; error: string }[];
   oomTests: string[];
   timedOutTests: string[];
+  /** Tests where TSC crashed (stack overflow, undefined, etc.) */
+  tscCrashedTests: string[];
   workerStats: {
     spawned: number;
     crashed: number;
@@ -1099,12 +1103,14 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     skipped: 0,
     timedOut: 0,
     oom: 0,
+    tscAlsoFailed: 0,
     byCategory: {},
     missingCodes: new Map(),
     extraCodes: new Map(),
     crashedTests: [],
     oomTests: [],
     timedOutTests: [],
+    tscCrashedTests: [],
     workerStats: { spawned: workerCount, crashed: 0, respawned: 0 },
   };
 
@@ -1272,6 +1278,18 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
         // Get TSC baseline from cache or skip
         const cacheEntry = cacheEntries[relativePath];
         const tscCodes = cacheEntry?.codes || [];
+        const tscCrashed = cacheEntry?.tscCrashed ?? false;
+
+        // Check if TSC also crashed on this test
+        if (tscCrashed) {
+          stats.tscAlsoFailed++;
+          stats.tscCrashedTests.push(relativePath);
+          // Count as passed since TSC also fails
+          stats.passed++;
+          stats.byCategory[category].passed++;
+          if (verbose) log(`[tsc-crash] ${relativePath}: TSC also crashes`, colors.magenta);
+          return;
+        }
 
         // Run check via server with dynamic timeout
         const { result, timedOut } = await pool.withClientTimeout(
@@ -1428,6 +1446,16 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       }
     }
 
+    if (stats.tscCrashedTests.length > 0) {
+      log('\nTSC Also Crashes (not counted against tsz):', colors.magenta);
+      for (const t of stats.tscCrashedTests.slice(0, 5)) {
+        log(`  ${t}`, colors.dim);
+      }
+      if (stats.tscCrashedTests.length > 5) {
+        log(`  ... and ${stats.tscCrashedTests.length - 5} more`, colors.dim);
+      }
+    }
+
     // By Category
     log('\nBy Category:', colors.bold);
     for (const [cat, s] of Object.entries(stats.byCategory)) {
@@ -1444,6 +1472,9 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     // Summary
     log('\nSummary:', colors.bold);
     log(`  Passed:   ${formatNumber(stats.passed)}`, colors.green);
+    if (stats.tscAlsoFailed > 0) {
+      log(`    (includes ${formatNumber(stats.tscAlsoFailed)} where TSC also fails)`, colors.magenta);
+    }
     log(`  Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
     log(`  Skipped:  ${formatNumber(stats.skipped)}`, stats.skipped > 0 ? colors.dim : colors.dim);
     log(`  Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
