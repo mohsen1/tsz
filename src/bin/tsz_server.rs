@@ -929,7 +929,9 @@ impl Server {
         let start_byte = Self::line_offset_to_byte(content, line, offset);
         let end_byte = Self::line_offset_to_byte(content, end_line, end_offset);
         let mut result =
-            String::with_capacity(content.len() - (end_byte - start_byte) + insert_string.len());
+        let mut result = String::with_capacity(
+            content.len().saturating_sub(end_byte.saturating_sub(start_byte)).saturating_add(insert_string.len())
+        );
         result.push_str(&content[..start_byte]);
         result.push_str(insert_string);
         result.push_str(&content[end_byte..]);
