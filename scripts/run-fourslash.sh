@@ -83,6 +83,10 @@ OPTIONS:
     --filter=PATTERN    Only run tests matching pattern (substring match)
     --server-tests      Run server-specific tests (tests/cases/fourslash/server/)
 
+    Parallelism:
+    --workers=N         Number of parallel workers (default: CPU count)
+    --sequential        Run tests sequentially (single process, no workers)
+
     Build:
     --skip-build        Skip all build steps (use existing binaries)
     --skip-ts-build     Skip TypeScript build (use existing harness)
@@ -95,11 +99,14 @@ OPTIONS:
     -h, --help          Show this help message
 
 EXAMPLES:
-    # Run all tests
+    # Run all tests (parallel by default)
     ./scripts/run-fourslash.sh
 
     # Quick smoke test with 10 tests
     ./scripts/run-fourslash.sh --max=10
+
+    # Run with 4 parallel workers
+    ./scripts/run-fourslash.sh --workers=4
 
     # Run quickInfo-related tests with verbose output
     ./scripts/run-fourslash.sh --filter=quickInfo --verbose
@@ -111,14 +118,10 @@ ARCHITECTURE:
     The runner works by:
     1. Building TypeScript's test harness (non-bundled CJS modules)
     2. Building tsz-server (Rust binary)
-    3. Loading TypeScript's fourslash harness modules
-    4. Monkey-patching TestState to route to tsz-server
-    5. Running each test through the harness
-    6. Comparing behavior via the existing assertion infrastructure
-
-    Communication:
-    Main thread (SessionClient) <-> Worker thread <-> tsz-server process
-    Uses SharedArrayBuffer + Atomics for synchronous communication.
+    3. Forking N child processes, each with its own tsz-server instance
+    4. Each child loads harness, monkey-patches TestState to route to tsz-server
+    5. Tests distributed round-robin across workers
+    6. Results collected via IPC and aggregated
 
 EOF
 }
