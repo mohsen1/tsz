@@ -35,6 +35,7 @@ mod lower;
 mod narrowing;
 mod object_literal;
 pub mod operations;
+pub mod operations_property;
 // salsa_db is feature-gated until salsa API is updated
 #[cfg(feature = "experimental_salsa")]
 pub mod salsa_db;
@@ -42,6 +43,7 @@ mod subtype;
 mod subtype_rules;
 pub mod tracer;
 pub mod type_queries;
+pub mod type_queries_extended;
 pub mod types;
 pub mod unsoundness_audit;
 mod utils;
