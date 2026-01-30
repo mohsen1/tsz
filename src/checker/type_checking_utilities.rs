@@ -2044,6 +2044,11 @@ impl<'a> CheckerState<'a> {
     /// For example, Promise<void> should not trigger TS7010 even if Promise's definition
     /// contains 'any' in its type structure.
     pub(crate) fn should_report_implicit_any_return(&self, return_type: TypeId) -> bool {
+        // void is a valid inferred return type (functions with no return statements),
+        // it should NOT trigger TS7010 "Function lacks ending return statement"
+        if return_type == TypeId::VOID {
+            return false;
+        }
         return_type == TypeId::ANY || self.is_null_or_undefined_only(return_type)
     }
 
