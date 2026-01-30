@@ -181,7 +181,8 @@ async enum E { Value }
         .filter(|d| d.code == diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE)
         .count();
     assert_eq!(
-        parser_1042_count, 0,
+        parser_1042_count,
+        0,
         "Parser should not emit TS1042; the checker handles it. Got: {:?}",
         parser.get_diagnostics()
     );

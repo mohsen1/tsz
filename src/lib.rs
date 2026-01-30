@@ -80,16 +80,16 @@ pub mod limits;
 
 // Scanner module - token definitions, scanning implementation, and character codes
 pub mod scanner;
-pub use scanner::*;
+pub use scanner::char_codes;
 pub use scanner::scanner_impl;
 pub use scanner::scanner_impl::*;
-pub use scanner::char_codes;
-#[cfg(test)]
-#[path = "tests/scanner_tests.rs"]
-mod scanner_tests;
+pub use scanner::*;
 #[cfg(test)]
 #[path = "tests/scanner_impl_tests.rs"]
 mod scanner_impl_tests;
+#[cfg(test)]
+#[path = "tests/scanner_tests.rs"]
+mod scanner_tests;
 
 // Parser AST types (Phase 3)
 pub mod parser;

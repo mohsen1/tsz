@@ -670,10 +670,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Suppress when types are unresolved
-        if index_type == TypeId::ANY || index_type == TypeId::ERROR || index_type == TypeId::UNKNOWN {
+        if index_type == TypeId::ANY || index_type == TypeId::ERROR || index_type == TypeId::UNKNOWN
+        {
             return;
         }
-        if object_type == TypeId::ANY || object_type == TypeId::ERROR || object_type == TypeId::UNKNOWN {
+        if object_type == TypeId::ANY
+            || object_type == TypeId::ERROR
+            || object_type == TypeId::UNKNOWN
+        {
             return;
         }
 
@@ -1466,7 +1470,10 @@ impl<'a> CheckerState<'a> {
         if prev_type == TypeId::ANY || prev_type == TypeId::ERROR || prev_type == TypeId::UNKNOWN {
             return;
         }
-        if current_type == TypeId::ANY || current_type == TypeId::ERROR || current_type == TypeId::UNKNOWN {
+        if current_type == TypeId::ANY
+            || current_type == TypeId::ERROR
+            || current_type == TypeId::UNKNOWN
+        {
             return;
         }
         if let Some(loc) = self.get_source_location(idx) {
