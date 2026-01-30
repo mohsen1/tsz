@@ -116,9 +116,66 @@ impl<'a> CheckerState<'a> {
                 let _ = self.get_type_of_symbol(sym_id);
             }
 
-            // For arrays, tuples, readonly, etc., resolve the inner type
-            TypeKey::Array(inner) | TypeKey::ReadonlyType(inner) => {
+            // For arrays, readonly, resolve the inner type
+            TypeKey::Array(inner) | TypeKey::ReadonlyType(inner) | TypeKey::KeyOf(inner) => {
                 self.ensure_refs_resolved(inner);
+            }
+
+            // For tuples, resolve each element type
+            TypeKey::Tuple(tuple_id) => {
+                let elems = self.ctx.types.tuple_list(tuple_id);
+                for elem in elems.iter() {
+                    self.ensure_refs_resolved(elem.type_id);
+                }
+            }
+
+            // For callables (overloaded signatures), resolve all signatures
+            TypeKey::Callable(callable_id) => {
+                let callable = self.ctx.types.callable_shape(callable_id);
+                for sig in &callable.call_signatures {
+                    self.ensure_refs_resolved(sig.return_type);
+                    for param in &sig.params {
+                        self.ensure_refs_resolved(param.type_id);
+                    }
+                }
+                for sig in &callable.construct_signatures {
+                    self.ensure_refs_resolved(sig.return_type);
+                    for param in &sig.params {
+                        self.ensure_refs_resolved(param.type_id);
+                    }
+                }
+            }
+
+            // For mapped types, resolve constraint and template
+            TypeKey::Mapped(mapped_id) => {
+                let mapped = self.ctx.types.mapped_type(mapped_id);
+                self.ensure_refs_resolved(mapped.constraint);
+                self.ensure_refs_resolved(mapped.template);
+                if let Some(name_type) = mapped.name_type {
+                    self.ensure_refs_resolved(name_type);
+                }
+            }
+
+            // For conditional types, resolve all four components
+            TypeKey::Conditional(cond_id) => {
+                let cond = self.ctx.types.conditional_type(cond_id);
+                self.ensure_refs_resolved(cond.check_type);
+                self.ensure_refs_resolved(cond.extends_type);
+                self.ensure_refs_resolved(cond.true_type);
+                self.ensure_refs_resolved(cond.false_type);
+            }
+
+            // For index access types, resolve both object and index
+            TypeKey::IndexAccess(obj, idx) => {
+                self.ensure_refs_resolved(obj);
+                self.ensure_refs_resolved(idx);
+            }
+
+            // For type parameters, resolve constraints
+            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+                if let Some(constraint) = info.constraint {
+                    self.ensure_refs_resolved(constraint);
+                }
             }
 
             // For other types (primitives, literals, etc.), no resolution needed

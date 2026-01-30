@@ -160,10 +160,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a generic type application is a subtype of another application.
     ///
     /// Generic type applications (e.g., `Map<string, number>`, `Array<string>`)
-    /// must have:
-    /// 1. The same base type (e.g., both are `Map`)
-    /// 2. The same number of type arguments
-    /// 3. Covariant type arguments (each source arg must be a subtype of target arg)
+    /// are first checked with covariant args (fast path for the common case).
+    /// If that fails, we try expanding both applications to their structural forms
+    /// and comparing those, which handles contravariant/invariant positions correctly.
     pub(crate) fn check_application_to_application_subtype(
         &mut self,
         s_app_id: TypeApplicationId,
@@ -171,18 +170,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         let s_app = self.interner.type_application(s_app_id);
         let t_app = self.interner.type_application(t_app_id);
-        if s_app.args.len() != t_app.args.len() {
-            return SubtypeResult::False;
-        }
-        if !self.check_subtype(s_app.base, t_app.base).is_true() {
-            return SubtypeResult::False;
-        }
-        for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-            if !self.check_subtype(*s_arg, *t_arg).is_true() {
-                return SubtypeResult::False;
+
+        // Fast path: same base, same args count, covariant args check
+        if s_app.args.len() == t_app.args.len()
+            && self.check_subtype(s_app.base, t_app.base).is_true()
+        {
+            let mut all_covariant = true;
+            for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+                if !self.check_subtype(*s_arg, *t_arg).is_true() {
+                    all_covariant = false;
+                    break;
+                }
+            }
+            if all_covariant {
+                return SubtypeResult::True;
             }
         }
-        SubtypeResult::True
+
+        // Slow path: try expanding both applications to structural form and
+        // comparing. This handles cases with contravariant or invariant type
+        // parameters, where the covariant fast path incorrectly rejects.
+        let s_expanded = self.try_expand_application(s_app_id);
+        let t_expanded = self.try_expand_application(t_app_id);
+        match (s_expanded, t_expanded) {
+            (Some(s_struct), Some(t_struct)) => self.check_subtype(s_struct, t_struct),
+            (Some(s_struct), None) => {
+                // Re-intern the target application for comparison
+                let t_app = self.interner.type_application(t_app_id);
+                let target = self.interner.application(t_app.base, t_app.args.clone());
+                self.check_subtype(s_struct, target)
+            }
+            (None, Some(t_struct)) => {
+                let s_app = self.interner.type_application(s_app_id);
+                let source = self.interner.application(s_app.base, s_app.args.clone());
+                self.check_subtype(source, t_struct)
+            }
+            (None, None) => SubtypeResult::False,
+        }
     }
 
     /// Check Application expansion to target (one-sided Application case).
