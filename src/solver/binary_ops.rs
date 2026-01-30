@@ -186,7 +186,10 @@ impl<'a> BinaryOpEvaluator<'a> {
                     }
                     return false;
                 }
-                TypeKey::Ref(_) => return false,
+                // Ref types include enums and other named types.
+                // Conservatively treat refs as number-like to avoid false positives for numeric enums.
+                // TODO: Properly check if the ref is a numeric enum (requires binder access)
+                TypeKey::Ref(_) => return true,
                 _ => {}
             }
         }
@@ -237,6 +240,8 @@ impl<'a> BinaryOpEvaluator<'a> {
                     }
                     return false;
                 }
+                // Ref types include enums - conservatively treat as bigint-like
+                TypeKey::Ref(_) => return true,
                 _ => {}
             }
         }
