@@ -23,6 +23,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
     ///
     /// Returns Ok(()) if no cycle is detected, Err(()) if a cycle is found.
     /// Emits appropriate diagnostic error when cycle is detected.
+    #[allow(clippy::result_unit_err)]
     pub fn check_class_inheritance_cycle(
         &mut self,
         class_idx: NodeIndex,

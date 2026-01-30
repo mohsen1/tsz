@@ -261,6 +261,7 @@ struct TsServerEvent {
 /// Legacy request from client
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
+#[allow(clippy::large_enum_variant)]
 enum LegacyRequest {
     /// Type check files and return error codes
     Check {
