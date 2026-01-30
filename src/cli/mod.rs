@@ -3,6 +3,7 @@
 pub mod args;
 pub mod config;
 pub mod driver;
+pub mod driver_resolution;
 pub mod fs;
 pub mod reporter;
 pub mod watch;

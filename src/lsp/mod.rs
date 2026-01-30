@@ -37,6 +37,7 @@ pub mod inlay_hints;
 pub mod jsdoc;
 pub mod position;
 pub mod project;
+pub mod project_operations;
 pub mod references;
 pub mod rename;
 pub mod resolver;
