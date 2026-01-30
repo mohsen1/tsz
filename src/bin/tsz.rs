@@ -1,10 +1,16 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::time::Duration;
 
 use wasm::cli::args::CliArgs;
 use wasm::cli::{driver, reporter::Reporter, watch};
+
+/// tsc exit status codes (matching TypeScript's ExitStatus enum)
+const EXIT_SUCCESS: i32 = 0;
+const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
+const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
 
 fn main() -> Result<()> {
     // Initialize tracing with RUST_LOG environment variable support
@@ -16,7 +22,11 @@ fn main() -> Result<()> {
         )
         .init();
 
-    let args = CliArgs::parse();
+    // Preprocess args for tsc compatibility:
+    // - Convert -v to -V (tsc uses lowercase -v for version, clap uses -V)
+    // - Expand @file response files
+    let preprocessed = preprocess_args(std::env::args_os().collect());
+    let args = CliArgs::parse_from(preprocessed);
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
 
     // Handle --init: create tsconfig.json
@@ -122,10 +132,68 @@ fn main() -> Result<()> {
         .any(|diag| diag.category == wasm::checker::types::diagnostics::DiagnosticCategory::Error);
 
     if has_errors {
-        std::process::exit(1);
+        // Match tsc exit codes:
+        // Exit 1 (DiagnosticsPresent_OutputsSkipped): errors found, no output generated
+        // Exit 2 (DiagnosticsPresent_OutputsGenerated): errors found, output was still generated
+        if !result.emitted_files.is_empty() {
+            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
+        } else {
+            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+        }
     }
 
-    Ok(())
+    std::process::exit(EXIT_SUCCESS);
+}
+
+/// Preprocess command-line arguments for tsc compatibility.
+///
+/// Handles:
+/// - `-v` → `-V` conversion (tsc uses lowercase `-v` for version; clap uses `-V`)
+/// - `@file` response file expansion (tsc reads args from response files)
+fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
+    let mut result = Vec::with_capacity(args.len());
+
+    for (i, arg) in args.iter().enumerate() {
+        let arg_str = arg.to_string_lossy();
+
+        if i == 0 {
+            // Always keep the program name as-is
+            result.push(arg.clone());
+            continue;
+        }
+
+        if arg_str == "-v" {
+            // tsc uses -v for version; clap uses -V
+            result.push(OsString::from("-V"));
+        } else if arg_str.starts_with('@') && arg_str.len() > 1 {
+            // Response file: @path reads arguments from file
+            let path = &arg_str[1..];
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        // Skip empty lines and comments
+                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                            // Each line may contain a single argument, or a flag=value pair
+                            // Split on whitespace for multi-arg lines (matching tsc behavior)
+                            for part in trimmed.split_whitespace() {
+                                result.push(OsString::from(part));
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // If the file can't be read, pass the argument through
+                    // (clap will report an unknown argument error)
+                    result.push(arg.clone());
+                }
+            }
+        } else {
+            result.push(arg.clone());
+        }
+    }
+
+    result
 }
 
 fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
@@ -606,7 +674,11 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         .any(|diag| diag.category == wasm::checker::types::diagnostics::DiagnosticCategory::Error);
 
     if has_errors {
-        std::process::exit(1);
+        if !result.emitted_files.is_empty() {
+            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
+        } else {
+            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
+        }
     }
 
     Ok(())

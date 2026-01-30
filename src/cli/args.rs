@@ -590,6 +590,10 @@ pub struct CliArgs {
     pub assume_changes_only_affect_direct_dependencies: bool,
 
     // ==================== Backwards Compatibility ====================
+    /// Deprecated: Specify the object invoked for 'createElement' (use --jsxFactory instead).
+    #[arg(long = "reactNamespace", alias = "react-namespace", hide = true)]
+    pub react_namespace: Option<String>,
+
     /// Deprecated: In early versions, manually set the text encoding for reading files.
     #[arg(long, hide = true)]
     pub charset: Option<String>,
