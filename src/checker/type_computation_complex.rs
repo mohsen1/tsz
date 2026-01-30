@@ -1375,12 +1375,10 @@ impl<'a> CheckerState<'a> {
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;
             }
-            let flags = self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .map(|symbol| symbol.flags)
-                .unwrap_or(0);
+            // Check symbol flags to detect type-only usage.
+            // First try the main binder (fast path for local symbols).
+            let local_symbol = self.ctx.binder.get_symbol(sym_id);
+            let flags = local_symbol.map(|s| s.flags).unwrap_or(0);
             let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
             let is_type_alias = (flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0;
@@ -1395,6 +1393,31 @@ impl<'a> CheckerState<'a> {
             if is_type_alias || (has_type && !has_value) {
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;
+            }
+
+            // If the symbol wasn't found in the main binder (flags==0), it came
+            // from a lib or cross-file binder.  For known ES2015+ global type
+            // names (Symbol, Promise, Map, Set, etc.) we need to check whether
+            // the lib binder's symbol is type-only.  Only do this for the known
+            // set to avoid cross-binder ID collisions causing false TS2693 on
+            // arbitrary user symbols from other files.
+            if flags == 0 {
+                use crate::lib_loader;
+                if lib_loader::is_es2015_plus_type(name) {
+                    let lib_binders = self.get_lib_binders();
+                    let lib_flags = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    let lib_has_type = (lib_flags & crate::binder::symbol_flags::TYPE) != 0;
+                    let lib_has_value = (lib_flags & crate::binder::symbol_flags::VALUE) != 0;
+                    if lib_has_type && !lib_has_value {
+                        self.error_type_only_value_at(name, idx);
+                        return TypeId::ERROR;
+                    }
+                }
             }
             let declared_type = self.get_type_of_symbol(sym_id);
             // Check for TDZ violations (variable used before declaration in source order)
