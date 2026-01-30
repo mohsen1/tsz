@@ -74,9 +74,6 @@ interface TestResult {
   category: string;
   error?: string;
   filePath?: string;
-  /** TSC crashed on this test (stack overflow, undefined access, etc.) */
-  tscCrashed?: boolean;
-  tscError?: string;
 }
 
 interface TestStats {
@@ -87,20 +84,12 @@ interface TestStats {
   skipped: number;
   timedOut: number;
   oom: number;
-  /** Tests where TSC crashed but tsz ran successfully */
-  tszHandlesBetter: number;
-  /** Tests where both TSC and tsz crashed */
-  bothCrashed: number;
   byCategory: Record<string, { total: number; passed: number }>;
   missingCodes: Map<number, number>;
   extraCodes: Map<number, number>;
   crashedTests: { path: string; error: string }[];
   oomTests: string[];
   timedOutTests: string[];
-  /** Tests where TSC crashed but tsz succeeded */
-  tscCrashedTszSucceeded: { path: string; tscError: string }[];
-  /** Tests where both crashed */
-  bothCrashedTests: string[];
   workerStats: {
     spawned: number;
     crashed: number;
@@ -620,16 +609,12 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     skipped: 0,
     timedOut: 0,
     oom: 0,
-    tszHandlesBetter: 0,
-    bothCrashed: 0,
     byCategory: {},
     missingCodes: new Map(),
     extraCodes: new Map(),
     crashedTests: [],
     oomTests: [],
     timedOutTests: [],
-    tscCrashedTszSucceeded: [],
-    bothCrashedTests: [],
     workerStats: { spawned: 0, crashed: 0, respawned: 0 },
   };
 
@@ -692,28 +677,6 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
         stats.failed++;
         stats.crashedTests.push({ path: result.filePath || filePath, error: result.error || 'Unknown' });
         if (cfg.verbose) log(`\n  ${result.filePath}: CRASH - ${result.error}`, colors.red);
-        return;
-      }
-
-      // Check if TSC crashed on this test
-      if (result.tscCrashed) {
-        // Did tsz also crash?
-        if (result.crashed || result.oom) {
-          stats.bothCrashed++;
-          stats.bothCrashedTests.push(result.filePath || filePath);
-          // Don't count against either - both have issues
-          if (cfg.verbose) log(`\n  ${result.filePath}: Both TSC and tsz crashed`, colors.dim);
-        } else {
-          // TSC crashed but tsz handled it - this is a win for tsz!
-          stats.tszHandlesBetter++;
-          stats.tscCrashedTszSucceeded.push({ 
-            path: result.filePath || filePath, 
-            tscError: result.tscError || 'unknown error' 
-          });
-          stats.passed++;
-          stats.byCategory[cat].passed++;
-          if (cfg.verbose) log(`\n  ${result.filePath}: TSC crashes but tsz succeeds! (${result.tscError})`, colors.green);
-        }
         return;
       }
 
@@ -789,17 +752,11 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
 
   log('\nSummary:', colors.bold);
   log(`  ✓ Passed:   ${stats.passed}`, colors.green);
-  if (stats.tszHandlesBetter > 0) {
-    log(`    (includes ${stats.tszHandlesBetter} where TSC crashes but tsz succeeds)`, colors.cyan);
-  }
   log(`  ✗ Failed:   ${stats.failed - stats.crashed - stats.timedOut}`, stats.failed > stats.crashed + stats.timedOut ? colors.red : colors.dim);
   log(`  ⊘ Skipped:  ${stats.skipped}`, stats.skipped > 0 ? colors.dim : colors.dim);
   log(`  💥 Crashed:  ${stats.crashed - stats.oom}`, stats.crashed - stats.oom > 0 ? colors.red : colors.dim);
   log(`  💾 OOM:      ${stats.oom}`, stats.oom > 0 ? colors.magenta : colors.dim);
   log(`  ⏱ Timeout:  ${stats.timedOut}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
-  if (stats.bothCrashed > 0) {
-    log(`  ⚠ Both crash: ${stats.bothCrashed}`, colors.dim);
-  }
 
   // Worker stats
   log('\nWorker Health:', colors.bold);
@@ -836,27 +793,6 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     }
     if (stats.timedOutTests.length > 5) {
       log(`  ... and ${stats.timedOutTests.length - 5} more`, colors.dim);
-    }
-  }
-
-  if (stats.tscCrashedTszSucceeded.length > 0) {
-    log('\nTSC Crashes But tsz Succeeds:', colors.cyan);
-    for (const t of stats.tscCrashedTszSucceeded.slice(0, 5)) {
-      log(`  ${t.path}`, colors.green);
-      log(`    TSC error: ${t.tscError.slice(0, 60)}`, colors.dim);
-    }
-    if (stats.tscCrashedTszSucceeded.length > 5) {
-      log(`  ... and ${stats.tscCrashedTszSucceeded.length - 5} more`, colors.dim);
-    }
-  }
-
-  if (stats.bothCrashedTests.length > 0) {
-    log('\nBoth TSC and tsz Crash:', colors.dim);
-    for (const t of stats.bothCrashedTests.slice(0, 3)) {
-      log(`  ${t}`, colors.dim);
-    }
-    if (stats.bothCrashedTests.length > 3) {
-      log(`  ... and ${stats.bothCrashedTests.length - 3} more`, colors.dim);
     }
   }
 
