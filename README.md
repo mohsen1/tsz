@@ -19,6 +19,19 @@ Progress: [████████████████░░░░] 82.3% (
 ```
 <!-- CONFORMANCE_END -->
 
+## Language Service Progress
+
+We run TypeScript's fourslash language service tests against `tsz-server` to measure
+language service feature coverage (completions, quickinfo, go-to-definition, etc.).
+
+<!-- FOURSLASH_START -->
+Currently targeting `TypeScript`@`6.0.0-dev.20260116`
+
+```
+Progress: [█░░░░░░░░░░░░░░░░░░░] 6.0% (3 / 50 tests)
+```
+<!-- FOURSLASH_END -->
+
 ## Status
 
 Work in progress.

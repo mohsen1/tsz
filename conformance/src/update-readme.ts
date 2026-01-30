@@ -1,9 +1,17 @@
 #!/usr/bin/env node
 /**
- * Updates README.md with conformance test results.
+ * Updates README.md with conformance and/or fourslash test results.
  *
  * Usage:
+ *   # Update conformance progress:
  *   node dist/update-readme.js --passed=426 --total=500 --ts-version="6.0.0-dev.20260116"
+ *
+ *   # Update fourslash/LSP progress:
+ *   node dist/update-readme.js --fourslash --passed=3 --total=50 --ts-version="6.0.0-dev.20260116"
+ *
+ *   # Update both (separate invocations):
+ *   node dist/update-readme.js --passed=10184 --total=12379
+ *   node dist/update-readme.js --fourslash --passed=3 --total=50
  */
 
 import * as fs from 'fs';
@@ -15,7 +23,7 @@ const ROOT_DIR = path.resolve(__dirname, '../..');
 const README_PATH = path.join(ROOT_DIR, 'README.md');
 const TS_VERSIONS_PATH = path.join(ROOT_DIR, 'conformance/typescript-versions.json');
 
-interface ConformanceStats {
+interface ProgressStats {
   passed: number;
   total: number;
   tsVersion: string;
@@ -40,12 +48,25 @@ function generateProgressBar(percentage: number, passed: number, total: number, 
   return `Progress: [${bar}] ${percentage.toFixed(1)}% (${passed.toLocaleString()} / ${total.toLocaleString()} tests)`;
 }
 
-function updateReadme(stats: ConformanceStats): void {
+function updateSection(readme: string, startMarker: string, endMarker: string, newContent: string): string {
+  const startIdx = readme.indexOf(startMarker);
+  const endIdx = readme.indexOf(endMarker);
+
+  if (startIdx === -1 || endIdx === -1) {
+    console.error(`Could not find markers ${startMarker} / ${endMarker} in README.md`);
+    process.exit(1);
+  }
+
+  return readme.slice(0, startIdx) + newContent + readme.slice(endIdx + endMarker.length);
+}
+
+function updateReadme(stats: ProgressStats, section: 'conformance' | 'fourslash'): void {
   let readme = fs.readFileSync(README_PATH, 'utf-8');
 
   const progressBar = generateProgressBar(stats.passRate, stats.passed, stats.total);
 
-  const newContent = `<!-- CONFORMANCE_START -->
+  if (section === 'conformance') {
+    const newContent = `<!-- CONFORMANCE_START -->
 Currently targeting \`TypeScript\`@\`${stats.tsVersion}\`
 
 \`\`\`
@@ -53,27 +74,30 @@ ${progressBar}
 \`\`\`
 <!-- CONFORMANCE_END -->`;
 
-  const startMarker = '<!-- CONFORMANCE_START -->';
-  const endMarker = '<!-- CONFORMANCE_END -->';
-  const startIdx = readme.indexOf(startMarker);
-  const endIdx = readme.indexOf(endMarker);
+    readme = updateSection(readme, '<!-- CONFORMANCE_START -->', '<!-- CONFORMANCE_END -->', newContent);
+    console.log(`Updated README.md with conformance stats:`);
+  } else {
+    const newContent = `<!-- FOURSLASH_START -->
+Currently targeting \`TypeScript\`@\`${stats.tsVersion}\`
 
-  if (startIdx === -1 || endIdx === -1) {
-    console.error('Could not find conformance markers in README.md');
-    process.exit(1);
+\`\`\`
+${progressBar}
+\`\`\`
+<!-- FOURSLASH_END -->`;
+
+    readme = updateSection(readme, '<!-- FOURSLASH_START -->', '<!-- FOURSLASH_END -->', newContent);
+    console.log(`Updated README.md with fourslash/LSP stats:`);
   }
 
-  readme = readme.slice(0, startIdx) + newContent + readme.slice(endIdx + endMarker.length);
-
   fs.writeFileSync(README_PATH, readme);
-  console.log(`Updated README.md with conformance stats:`);
   console.log(`  Pass Rate: ${stats.passRate.toFixed(1)}% (${stats.passed}/${stats.total})`);
   console.log(`  TypeScript: ${stats.tsVersion}`);
 }
 
 function main(): void {
   const args = process.argv.slice(2);
-  const stats: Partial<ConformanceStats> = {};
+  const stats: Partial<ProgressStats> = {};
+  let section: 'conformance' | 'fourslash' = 'conformance';
 
   for (const arg of args) {
     if (arg.startsWith('--passed=')) {
@@ -84,6 +108,8 @@ function main(): void {
       stats.tsVersion = arg.split('=')[1];
     } else if (arg.startsWith('--pass-rate=')) {
       stats.passRate = parseFloat(arg.split('=')[1]);
+    } else if (arg === '--fourslash' || arg === '--lsp') {
+      section = 'fourslash';
     }
   }
 
@@ -96,11 +122,16 @@ function main(): void {
   }
 
   if (stats.passed === undefined || stats.total === undefined || stats.passRate === undefined) {
-    console.error('Usage: node dist/update-readme.js --passed=N --total=N [--ts-version=VERSION]');
+    console.error('Usage: node dist/update-readme.js [--fourslash] --passed=N --total=N [--ts-version=VERSION]');
+    console.error('');
+    console.error('Sections:');
+    console.error('  (default)     Update conformance progress');
+    console.error('  --fourslash   Update fourslash/LSP progress');
+    console.error('  --lsp         Alias for --fourslash');
     process.exit(1);
   }
 
-  updateReadme(stats as ConformanceStats);
+  updateReadme(stats as ProgressStats, section);
 }
 
 main();
