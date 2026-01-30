@@ -19,103 +19,46 @@ const DEFAULT_CONTEXT_LENGTH = '850k';
 const DEFAULT_MODEL = 'gemini-3-pro-preview';
 
 // Focused presets for different areas of the codebase
-// Each preset defines paths to include and recommended context for questions in that area
+// Each preset uses directory wildcards to include all related files automatically
 const PRESETS = {
   solver: {
     description: 'Type solver, inference, compatibility, and type operations',
-    paths: ['src/solver', 'src/checker/state.rs', 'src/checker/context.rs', 'AGENTS.md'],
-    coreFiles: [
-      'src/solver/state.rs',      // Main solver state and type operations
-      'src/solver/infer.rs',      // Type inference
-      'src/solver/compat.rs',     // Type compatibility/assignability
-      'src/solver/contextual.rs', // Contextual typing
-      'src/solver/evaluate.rs',   // Type evaluation
-      'src/solver/instantiate.rs',// Generic instantiation
-      'src/solver/visitor.rs',    // Type visitor pattern
-      'src/solver/db.rs',         // Type database
-    ],
+    paths: ['src/solver/', 'src/checker/state.rs', 'src/checker/context.rs', 'AGENTS.md'],
     tokens: '600k',
   },
   checker: {
     description: 'Type checker, AST traversal, diagnostics, and error reporting',
-    paths: ['src/checker', 'src/diagnostics.rs', 'src/binder.rs', 'AGENTS.md'],
-    coreFiles: [
-      'src/checker/state.rs',         // Main checker state
-      'src/checker/context.rs',       // Checker context
-      'src/checker/error_reporter.rs',// Error reporting
-      'src/checker/control_flow.rs',  // Control flow analysis
-      'src/checker/declarations.rs',  // Declaration checking
-      'src/checker/flow_analysis.rs', // Flow analysis
-      'src/diagnostics.rs',           // Diagnostic definitions
-    ],
+    paths: ['src/checker/', 'src/binder.rs', 'AGENTS.md'],
     tokens: '700k',
   },
   binder: {
     description: 'Symbol binding, scopes, and control flow graph construction',
-    paths: ['src/binder', 'src/binder.rs', 'src/checker/flow_graph_builder.rs', 'AGENTS.md'],
-    coreFiles: [
-      'src/binder/state.rs',              // Binder state
-      'src/binder.rs',                    // Main binder
-      'src/checker/flow_graph_builder.rs',// CFG builder
-    ],
+    paths: ['src/binder/', 'src/binder.rs', 'src/checker/flow_graph_builder.rs', 'AGENTS.md'],
     tokens: '400k',
   },
   parser: {
     description: 'Parser, scanner, and AST nodes',
-    paths: ['src/parser', 'src/scanner.rs', 'src/scanner_impl.rs', 'src/span.rs'],
-    coreFiles: [
-      'src/parser/state.rs',    // Parser state machine
-      'src/parser/node.rs',     // AST node definitions
-      'src/scanner.rs',         // Scanner interface
-      'src/scanner_impl.rs',    // Scanner implementation
-    ],
+    paths: ['src/parser/', 'src/scanner.rs', 'src/scanner_impl.rs', 'src/span.rs'],
     tokens: '700k',
   },
   emitter: {
     description: 'Code emission, transforms, source maps, and declaration files',
-    paths: ['src/emitter', 'src/transforms', 'src/declaration_emitter.rs', 'src/source_map.rs', 'src/source_writer.rs', 'src/printer.rs'],
-    coreFiles: [
-      'src/emitter/mod.rs',             // Main emitter
-      'src/transforms/es5.rs',          // ES5 transforms
-      'src/declaration_emitter.rs',     // .d.ts generation
-      'src/source_map.rs',              // Source map generation
-    ],
+    paths: ['src/emitter/', 'src/transforms/', 'src/declaration_emitter.rs', 'src/source_map.rs', 'src/source_writer.rs', 'src/printer.rs'],
     tokens: '600k',
   },
   lsp: {
     description: 'Language server protocol implementation',
-    paths: ['src/lsp', 'src/cli'],
-    coreFiles: [
-      'src/lsp/project.rs',       // LSP project management
-      'src/lsp/completions.rs',   // Autocompletion
-      'src/lsp/hover.rs',         // Hover information
-      'src/lsp/definition.rs',    // Go to definition
-      'src/lsp/references.rs',    // Find references
-      'src/lsp/code_actions.rs',  // Code actions
-    ],
+    paths: ['src/lsp/', 'src/cli/'],
     tokens: '600k',
   },
   types: {
     description: 'Type system overview (solver + checker type-related)',
-    paths: ['src/solver', 'src/checker/state.rs', 'src/checker/context.rs', 'src/checker/flow_analysis.rs', 'src/lowering_pass.rs', 'AGENTS.md'],
-    coreFiles: [
-      'src/solver/state.rs',
-      'src/solver/infer.rs',
-      'src/solver/compat.rs',
-      'src/checker/state.rs',
-      'src/lowering_pass.rs',
-    ],
+    paths: ['src/solver/', 'src/checker/', 'src/lowering_pass.rs', 'AGENTS.md'],
     tokens: '800k',
   },
   modules: {
     description: 'Module resolution, imports, exports, and module graph',
-    paths: ['src/module_resolver.rs', 'src/module_graph.rs', 'src/imports.rs', 'src/exports.rs', 'src/transforms/module_commonjs.rs', 'src/emitter/module_emission.rs'],
-    coreFiles: [
-      'src/module_resolver.rs',
-      'src/module_graph.rs',
-      'src/imports.rs',
-      'src/exports.rs',
-    ],
+    paths: ['src/module_resolver.rs', 'src/module_graph.rs', 'src/imports.rs', 'src/exports.rs', 'src/transforms/module_*.rs', 'src/emitter/module_*.rs'],
     tokens: '400k',
   },
 };
@@ -383,21 +326,8 @@ ${fileTree}
   // Show files included
   if (files.length > 0) {
     console.log('\nFiles included:');
-    // Highlight core files from the preset if applicable
-    // Match by filename or by full path
-    const coreFilePaths = activePreset?.coreFiles || [];
-    const coreFileNames = new Set(coreFilePaths.map(f => f.split('/').pop()));
-    const coreFileSet = new Set(coreFilePaths);
-
-    let hasCore = false;
     for (const file of files) {
-      const fileName = file.split('/').pop();
-      const isCore = coreFileSet.has(file) || coreFileSet.has(`src/${file}`) || coreFileNames.has(fileName);
-      if (isCore) hasCore = true;
-      console.log(`  ${isCore ? '★' : '-'} ${file}`);
-    }
-    if (hasCore) {
-      console.log('\n  ★ = Core file for this preset');
+      console.log(`  - ${file}`);
     }
     console.log('');
   }
