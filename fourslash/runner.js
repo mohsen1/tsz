@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * runner.js - Fourslash test runner for tsz-server
+ * runner.js - Parallel fourslash test runner for tsz-server
  *
- * Runs TypeScript's fourslash test suite against tsz-server by:
- * 1. Loading TypeScript's built harness modules (non-bundled CJS from built/local/)
- * 2. Monkey-patching TestState.getLanguageServiceAdapter to return our TszServerLanguageServiceAdapter
- * 3. Discovering fourslash test files
- * 4. Running each test through the harness
- * 5. Reporting pass/fail results
+ * Runs TypeScript's fourslash test suite against tsz-server using parallel
+ * child processes, each with its own tsz-server instance.
  *
- * Must be run with CWD set to the TypeScript directory.
+ * Architecture:
+ *   runner.js (main process)
+ *     → discovers tests, distributes to N child processes
+ *     → each child process (test-worker.js):
+ *       → loads TypeScript harness
+ *       → creates TszServerBridge → tsz-worker → tsz-server
+ *       → runs assigned tests sequentially
+ *       → reports results via IPC
  *
  * Usage:
  *   node runner.js [options]
@@ -18,16 +21,19 @@
  *   --tsz-server=PATH   Path to tsz-server binary (required)
  *   --max=N             Maximum number of tests to run
  *   --filter=PATTERN    Only run tests matching pattern (substring)
- *   --test-dir=DIR      Test directory relative to TypeScript root (default: tests/cases/fourslash)
+ *   --test-dir=DIR      Test directory relative to TypeScript root
  *   --verbose           Show detailed output for each test
- *   --server-tests      Run server-specific tests (tests/cases/fourslash/server/)
+ *   --server-tests      Run server-specific tests
+ *   --workers=N         Number of parallel workers (default: CPU count)
+ *   --sequential        Run tests sequentially (single process, no workers)
  */
 
 "use strict";
 
 const path = require("path");
 const fs = require("fs");
-const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter");
+const os = require("os");
+const { fork } = require("child_process");
 
 // =============================================================================
 // Argument parsing
@@ -42,6 +48,8 @@ function parseArgs() {
         testDir: "tests/cases/fourslash",
         verbose: false,
         serverTests: false,
+        workers: os.cpus().length,
+        sequential: false,
     };
 
     for (const arg of args) {
@@ -58,6 +66,10 @@ function parseArgs() {
         } else if (arg === "--server-tests") {
             opts.serverTests = true;
             opts.testDir = "tests/cases/fourslash/server";
+        } else if (arg.startsWith("--workers=")) {
+            opts.workers = parseInt(arg.substring("--workers=".length), 10);
+        } else if (arg === "--sequential") {
+            opts.sequential = true;
         }
     }
 
@@ -65,6 +77,10 @@ function parseArgs() {
         console.error("Error: --tsz-server=PATH is required");
         process.exit(2);
     }
+
+    // Clamp workers to reasonable range
+    if (opts.workers < 1) opts.workers = 1;
+    if (opts.workers > 32) opts.workers = 32;
 
     return opts;
 }
@@ -83,7 +99,6 @@ function discoverTests(testDir, filter) {
             if (entry.isDirectory()) {
                 walk(fullPath);
             } else if (entry.isFile() && entry.name.endsWith(".ts")) {
-                // Use forward-slash paths (TypeScript convention)
                 const relPath = fullPath.replace(/\\/g, "/");
                 if (!filter || relPath.includes(filter)) {
                     files.push(relPath);
@@ -101,16 +116,71 @@ function discoverTests(testDir, filter) {
 }
 
 // =============================================================================
-// Set up globals required by the TypeScript harness
+// Sequential runner (fallback, same as original)
 // =============================================================================
 
+async function runSequential(opts, testsToRun) {
+    const tsDir = process.cwd();
+    const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter");
+
+    // Set up globals
+    setupGlobals(tsDir);
+
+    // Load harness modules
+    const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
+
+    // Start tsz-server bridge
+    const bridge = new TszServerBridge(opts.tszServerBinary);
+    await bridge.start();
+
+    const TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+    patchTestState(FourSlash, TszAdapter);
+
+    const testType = 0;
+    let passed = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (let i = 0; i < testsToRun.length; i++) {
+        const testFile = testsToRun[i];
+        const testName = path.basename(testFile, ".ts");
+
+        if (opts.verbose) {
+            process.stdout.write(`[${i + 1}/${testsToRun.length}] ${testName}... `);
+        }
+
+        try {
+            const basePath = path.dirname(testFile);
+            const content = Harness.IO.readFile(testFile);
+            if (content == null) throw new Error(`Could not read test file: ${testFile}`);
+            FourSlash.runFourSlashTestContent(basePath, testType, content, testFile);
+            passed++;
+            if (opts.verbose) {
+                console.log("\x1b[32mPASS\x1b[0m");
+            } else if ((passed + failed) % 50 === 0) {
+                process.stdout.write(`\r  Progress: ${passed + failed}/${testsToRun.length} (${passed} passed, ${failed} failed)`);
+            }
+        } catch (err) {
+            failed++;
+            const errMsg = err.message || String(err);
+            errors.push({ file: testFile, error: errMsg });
+
+            if (opts.verbose) {
+                console.log("\x1b[31mFAIL\x1b[0m");
+                console.log(`    ${errMsg.split("\n")[0]}`);
+            }
+        }
+    }
+
+    bridge.shutdown();
+    return { passed, failed, errors };
+}
+
 function setupGlobals(tsDir) {
-    // chai provides the global `assert` used by harnessLanguageService.ts
     try {
         const chai = require(path.join(tsDir, "node_modules/chai"));
         global.assert = chai.assert;
     } catch (e) {
-        // Fallback: use Node.js assert
         const nodeAssert = require("assert");
         global.assert = {
             isOk: (val, msg) => nodeAssert.ok(val, msg),
@@ -127,64 +197,136 @@ function setupGlobals(tsDir) {
         };
     }
 
-    // Stub mocha globals (describe/it/beforeEach/afterEach) since we don't use mocha
     global.describe = function(name, fn) { fn(); };
     global.it = function(name, fn) { fn(); };
-    global.beforeEach = function(fn) { /* ignore */ };
-    global.afterEach = function(fn) { /* ignore */ };
-    global.before = function(fn) { /* ignore */ };
-    global.after = function(fn) { /* ignore */ };
+    global.beforeEach = function(fn) {};
+    global.afterEach = function(fn) {};
+    global.before = function(fn) {};
+    global.after = function(fn) {};
 }
-
-// =============================================================================
-// Load TypeScript harness modules
-// =============================================================================
 
 function loadHarnessModules(tsDir) {
     const builtDir = path.join(tsDir, "built/local");
-
-    // Load the modules we need from the non-bundled build
-    // These are CJS modules compiled with module: NodeNext + preserveConstEnums
     const ts = require(path.join(builtDir, "harness/_namespaces/ts.js"));
     const Harness = require(path.join(builtDir, "harness/_namespaces/Harness.js"));
     const FourSlash = require(path.join(builtDir, "harness/_namespaces/FourSlash.js"));
     const HarnessLS = require(path.join(builtDir, "harness/_namespaces/Harness.LanguageService.js"));
     const clientModule = require(path.join(builtDir, "harness/client.js"));
-
     return { ts, Harness, FourSlash, HarnessLS, SessionClient: clientModule.SessionClient };
 }
 
-// =============================================================================
-// Monkey-patch TestState to use our adapter
-// =============================================================================
-
 function patchTestState(FourSlash, TszAdapter) {
     const TestState = FourSlash.TestState;
-    if (!TestState) {
-        throw new Error("Could not find TestState in FourSlash module");
-    }
-
-    const originalGetAdapter = TestState.prototype.getLanguageServiceAdapter;
-
+    if (!TestState) throw new Error("Could not find TestState in FourSlash module");
     TestState.prototype.getLanguageServiceAdapter = function(testType, cancellationToken, compilationOptions) {
-        // Always return our tsz-server adapter regardless of test type
         return new TszAdapter(cancellationToken, compilationOptions);
     };
-
-    return originalGetAdapter;
 }
 
 // =============================================================================
-// Run a single test
+// Parallel runner
 // =============================================================================
 
-function runSingleTest(FourSlash, Harness, testFile, testType) {
-    const basePath = path.dirname(testFile);
-    const content = Harness.IO.readFile(testFile);
-    if (content == null) {
-        throw new Error(`Could not read test file: ${testFile}`);
+function distributeTests(tests, numWorkers) {
+    const chunks = Array.from({ length: numWorkers }, () => []);
+    // Round-robin distribution for even load
+    for (let i = 0; i < tests.length; i++) {
+        chunks[i % numWorkers].push(tests[i]);
     }
-    FourSlash.runFourSlashTestContent(basePath, testType, content, testFile);
+    return chunks.filter(c => c.length > 0);
+}
+
+async function runParallel(opts, testsToRun) {
+    const tsDir = process.cwd();
+    const numWorkers = Math.min(opts.workers, testsToRun.length);
+    const chunks = distributeTests(testsToRun, numWorkers);
+
+    console.log(`  Spawning ${chunks.length} worker processes...`);
+
+    let passed = 0;
+    let failed = 0;
+    let completed = 0;
+    const errors = [];
+    const workerFile = path.join(__dirname, "test-worker.js");
+
+    return new Promise((resolve) => {
+        let activeWorkers = chunks.length;
+        let lastProgressLen = 0;
+
+        function printProgress() {
+            const total = testsToRun.length;
+            const done = passed + failed;
+            const msg = `\r  Progress: ${done}/${total} (${passed} passed, ${failed} failed) [${activeWorkers} workers]`;
+            // Pad with spaces to clear previous longer line
+            const padded = msg + " ".repeat(Math.max(0, lastProgressLen - msg.length));
+            process.stdout.write(padded);
+            lastProgressLen = msg.length;
+        }
+
+        for (let i = 0; i < chunks.length; i++) {
+            const child = fork(workerFile, [], {
+                stdio: ["pipe", "pipe", "pipe", "ipc"],
+            });
+
+            // Suppress child stdout/stderr (they load harness modules which print)
+            child.stdout.on("data", () => {});
+            child.stderr.on("data", () => {});
+
+            child.on("message", (msg) => {
+                if (msg.type === "ready") {
+                    // Worker is ready, already running tests
+                } else if (msg.type === "result") {
+                    if (msg.passed) {
+                        passed++;
+                    } else {
+                        failed++;
+                        errors.push({ file: msg.testFile, error: msg.error });
+                    }
+                    completed++;
+
+                    if (opts.verbose) {
+                        const status = msg.passed
+                            ? "\x1b[32mPASS\x1b[0m"
+                            : "\x1b[31mFAIL\x1b[0m";
+                        console.log(`  [W${msg.workerId}] ${msg.testName} ${status}`);
+                        if (!msg.passed) {
+                            console.log(`    ${msg.error.split("\n")[0]}`);
+                        }
+                    } else if (completed % 50 === 0) {
+                        printProgress();
+                    }
+                } else if (msg.type === "done") {
+                    activeWorkers--;
+                    if (activeWorkers === 0) {
+                        if (!opts.verbose) printProgress();
+                        resolve({ passed, failed, errors });
+                    }
+                } else if (msg.type === "error") {
+                    console.error(`  Worker ${i} error: ${msg.error}`);
+                }
+            });
+
+            child.on("exit", (code) => {
+                if (code !== 0 && code !== null) {
+                    // Worker crashed - count remaining tests as failed
+                    activeWorkers--;
+                    if (activeWorkers === 0) {
+                        if (!opts.verbose) printProgress();
+                        resolve({ passed, failed, errors });
+                    }
+                }
+            });
+
+            // Send config to worker
+            child.send({
+                type: "config",
+                testFiles: chunks[i],
+                tszServerBinary: opts.tszServerBinary,
+                tsDir,
+                workerId: i,
+            });
+        }
+    });
 }
 
 // =============================================================================
@@ -193,7 +335,7 @@ function runSingleTest(FourSlash, Harness, testFile, testType) {
 
 async function main() {
     const opts = parseArgs();
-    const tsDir = process.cwd(); // Must be run from TypeScript directory
+    const tsDir = process.cwd();
 
     // Verify we're in the TypeScript directory
     if (!fs.existsSync(path.join(tsDir, "Herebyfile.mjs"))) {
@@ -215,78 +357,27 @@ async function main() {
         process.exit(2);
     }
 
-    // Set up globals
-    setupGlobals(tsDir);
-
-    // Load harness modules
-    console.log("Loading TypeScript harness modules...");
-    const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
-    console.log(`  TypeScript version: ${ts.version}`);
-
-    // Start tsz-server bridge
-    console.log(`Starting tsz-server: ${opts.tszServerBinary}`);
-    const bridge = new TszServerBridge(opts.tszServerBinary);
-    await bridge.start();
-    console.log("  tsz-server ready");
-
-    // Create the adapter factory
-    const TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
-
-    // Monkey-patch TestState
-    patchTestState(FourSlash, TszAdapter);
-    console.log("  TestState patched to use TszServerLanguageServiceAdapter");
-
-    // FourSlashTestType: Native=0, Server=1
-    // We use Native (0) because Server mode enforces "watchable paths"
-    // (e.g., /home/src/workspaces/project) which regular fourslash tests don't use.
-    // Our monkey-patched getLanguageServiceAdapter returns our TszServerLanguageServiceAdapter
-    // regardless of test type, so the actual language service calls still go through tsz-server.
-    const testType = 0; // FourSlashTestType.Native
-
     // Discover tests
     const testFiles = discoverTests(opts.testDir, opts.filter);
     const totalAvailable = testFiles.length;
     const testsToRun = opts.max > 0 ? testFiles.slice(0, opts.max) : testFiles;
 
+    const mode = opts.sequential ? "sequential" : `parallel (${Math.min(opts.workers, testsToRun.length)} workers)`;
     console.log("");
     console.log(`Found ${totalAvailable} test files in ${opts.testDir}`);
-    console.log(`Running ${testsToRun.length} tests${opts.filter ? ` (filter: "${opts.filter}")` : ""}`);
+    console.log(`Running ${testsToRun.length} tests [${mode}]${opts.filter ? ` (filter: "${opts.filter}")` : ""}`);
     console.log("─".repeat(70));
 
-    // Run tests
-    let passed = 0;
-    let failed = 0;
-    let errors = [];
     const startTime = Date.now();
+    let results;
 
-    for (let i = 0; i < testsToRun.length; i++) {
-        const testFile = testsToRun[i];
-        const testName = path.basename(testFile, ".ts");
-
-        if (opts.verbose) {
-            process.stdout.write(`[${i + 1}/${testsToRun.length}] ${testName}... `);
-        }
-
-        try {
-            runSingleTest(FourSlash, Harness, testFile, testType);
-            passed++;
-            if (opts.verbose) {
-                console.log("\x1b[32mPASS\x1b[0m");
-            } else if ((passed + failed) % 50 === 0) {
-                process.stdout.write(`\r  Progress: ${passed + failed}/${testsToRun.length} (${passed} passed, ${failed} failed)`);
-            }
-        } catch (err) {
-            failed++;
-            const errMsg = err.message || String(err);
-            errors.push({ file: testFile, error: errMsg });
-
-            if (opts.verbose) {
-                console.log("\x1b[31mFAIL\x1b[0m");
-                console.log(`    ${errMsg.split("\n")[0]}`);
-            }
-        }
+    if (opts.sequential) {
+        results = await runSequential(opts, testsToRun);
+    } else {
+        results = await runParallel(opts, testsToRun);
     }
 
+    const { passed, failed, errors } = results;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
     // Print summary
@@ -314,9 +405,6 @@ async function main() {
             console.log(`  ... and ${errors.length - 20} more failures`);
         }
     }
-
-    // Cleanup
-    bridge.shutdown();
 
     process.exit(failed > 0 ? 1 : 0);
 }
