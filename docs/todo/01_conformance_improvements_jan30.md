@@ -2,21 +2,48 @@
 
 ## Current State
 
-**Pass Rate: 32.0% (3,000 tests sampled)**
-Latest test run (Jan 30, post-TS2695 and TS2362 fixes):
-- Top Extra Errors: TS2339 (167x), TS2304 (120x), TS7010 (114x), TS2318 (66x)
+**Pass Rate: 32.0% (960/3,000 tests sampled)**
+Latest test run (Jan 30, after all fixes):
+- Top Extra Errors: TS2322 (402x), TS1005 (393x), TS2304 (356x), TS2362 (344x), TS2339 (278x)
 - TS2695 **eliminated** from top extra errors (was 471x, now ~0)
-- TS2362 **reduced by 20%** (was 448x, now 356x)
+- TS2362 **reduced by 23%** (was 448x, now 344x, fixed by treating Ref types as number-like)
 
 **Completed Fixes (Jan 30):**
-- TS2695: Fixed false positives by removing tagged templates from side-effect-free list
-- TS2362: Fixed false positives for numeric enums by treating Ref types as number-like
-- TSC crashes: Fixed multi-file tests with relative imports
+- **TS2695**: Fixed false positives by removing tagged templates from side-effect-free list
+  - Root cause: Tagged templates are function calls with side effects
+  - Fix: Removed TAGGED_TEMPLATE_EXPRESSION from is_side_effect_free
+  - Impact: ~470 false positives eliminated
 
-**Next Highest Impact:**
-- TS2304 "Cannot find name" (120x) - needs global name resolution work
-- TS2339 "Property does not exist" (167x) - needs lib.d.ts integration
-- TS7010 "Function lacking return type in .d.ts" (114x) - declaration file handling
+- **TS2362**: Fixed false positives for numeric enums
+  - Root cause: Enum types (TypeKey::Ref) rejected as invalid for arithmetic
+  - Fix: Treat Ref types conservatively as number-like/bigint-like
+  - Impact: Reduced from 448x to 344x (~23% improvement)
+  - Note: Conservative approach - may allow some string enum arithmetic but reduces false positives significantly
+
+- **TSC crashes**: Fixed multi-file tests with relative imports
+  - Root cause: File names not resolved relative to test file path
+  - Fix: Added rootFilePath parameter, resolved to absolute paths
+  - Impact: 0 TSC crashes (was 46)
+
+**Next Highest Impact (remaining work):**
+- TS2322 "Type not assignable" (402x) - Deep type system, requires:
+  - Generic type parameter investigation
+  - Union distribution analysis
+  - Literal widening checks
+
+- TS1005 "',' expected" (393x) - Parser investigation needed:
+  - Import attributes / with syntax
+  - Using declarations
+  - Decorators
+  - Exponentiation operators
+
+- TS2304 "Cannot find name" (356x) - Lib loading:
+  - @lib and @target directive handling
+  - Global name resolution from lib.d.ts
+
+- TS2339 "Property does not exist" (278x) - Property lookup:
+  - lib.d.ts integration
+  - Prototype chain walking
 
 ---
 
