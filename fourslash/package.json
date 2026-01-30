@@ -1,0 +1,10 @@
+{
+  "name": "tsz-fourslash",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fourslash test runner for tsz-server against TypeScript's fourslash test suite",
+  "scripts": {
+    "test": "cd .. && ./scripts/run-fourslash.sh"
+  },
+  "dependencies": {}
+}
