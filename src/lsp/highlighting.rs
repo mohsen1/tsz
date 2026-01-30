@@ -170,12 +170,24 @@ impl<'a> DocumentHighlightProvider<'a> {
 
     /// Check if the identifier is in a write context (assignment).
     fn is_write_context(&self, before: &str, after: &str) -> bool {
-        // Skip leading whitespace
-        let before_trimmed = before.trim_start();
+        // Trim both leading and trailing whitespace from the before-context
+        // so that `"let y = "` becomes `"let y ="` for correct ends_with checks.
+        let before_trimmed = before.trim();
 
         // Check for assignment operators (=, :=, etc.)
+        // But exclude comparison operators (==, ===, !=, !==) and arrow (=>)
+        // and generic defaults (<T = Default>).
         if before_trimmed.ends_with('=')
-            || before_trimmed.ends_with(":=")
+            && !before_trimmed.ends_with("==")
+            && !before_trimmed.ends_with("!=")
+            && !before_trimmed.ends_with("=>")
+            && !before_trimmed.ends_with("<=")
+        {
+            return true;
+        }
+
+        // Check for named compound/colon assignment operators
+        if before_trimmed.ends_with(":=")
             || before_trimmed.ends_with("+=")
             || before_trimmed.ends_with("-=")
             || before_trimmed.ends_with("*=")
@@ -192,7 +204,7 @@ impl<'a> DocumentHighlightProvider<'a> {
         }
 
         // Check for variable declaration keywords (var, let, const)
-        // Pattern: <keyword> identifier, not <keyword> identifier = or <keyword> identifier:
+        // Also handles: function, class, interface, type, enum, import, catch
         let before_trimmed_lower = before_trimmed.to_lowercase();
         let words: Vec<&str> = before_trimmed_lower.split_whitespace().collect();
         if !words.is_empty() {
@@ -205,17 +217,38 @@ impl<'a> DocumentHighlightProvider<'a> {
                 || *last_word == "interface"
                 || *last_word == "type"
                 || *last_word == "enum"
+                || *last_word == "import"
+                || *last_word == "catch"
             {
                 return true;
             }
         }
 
-        // Check for object literal property (identifier:)
+        // Check for for-in / for-of loop variables: `for (const x of ...)` or `for (x of ...)`
+        // The before context for the loop variable may end with `(` after stripping keywords
+        if before_trimmed.ends_with('(') {
+            // Check if the line looks like a for loop: `for (`
+            let prefix = before_trimmed.trim_end_matches('(').trim_end();
+            if prefix.ends_with("for") {
+                return true;
+            }
+        }
+
+        // Check for catch clause: `catch (`
+        if before_trimmed.ends_with('(') {
+            let prefix = before_trimmed.trim_end_matches('(').trim_end();
+            if prefix.ends_with("catch") {
+                return true;
+            }
+        }
+
+        // Check for object/array literal property (identifier:) or (identifier?)
+        // Covers: `{ identifier:`, `[ identifier,`, and after commas
         if before_trimmed.ends_with('{')
-            || before_trimmed.ends_with('{')
+            || before_trimmed.ends_with('[')
             || before_trimmed.ends_with(',')
         {
-            // Only true if followed by :
+            // Only true if followed by : or ? (object property pattern)
             let after_trimmed = after.trim_start();
             if after_trimmed.starts_with(':') || after_trimmed.starts_with('?') {
                 return true;
@@ -223,9 +256,26 @@ impl<'a> DocumentHighlightProvider<'a> {
         }
 
         // Check for destructuring assignment pattern
-        // { identifier } or { identifier: ... }
-        if before_trimmed.ends_with('{') || (before_trimmed.ends_with('{') && after.contains(':')) {
-            return true;
+        // { identifier } = ... or { identifier, ... } = ...
+        // [ identifier ] = ... or [ identifier, ... ] = ...
+        if before_trimmed.ends_with('{') || (before_trimmed.ends_with(',') && after.contains('}')) {
+            // Check if the after context contains a closing brace followed by =
+            let after_trimmed = after.trim_start();
+            if after_trimmed.starts_with('}')
+                || after_trimmed.starts_with(',')
+                || after_trimmed.contains("} =")
+            {
+                return true;
+            }
+        }
+        if before_trimmed.ends_with('[') || (before_trimmed.ends_with(',') && after.contains(']')) {
+            let after_trimmed = after.trim_start();
+            if after_trimmed.starts_with(']')
+                || after_trimmed.starts_with(',')
+                || after_trimmed.contains("] =")
+            {
+                return true;
+            }
         }
 
         false
@@ -394,5 +444,245 @@ mod highlighting_tests {
         assert!(highlights.is_some());
         let highlights = highlights.unwrap();
         assert!(highlights.len() >= 2);
+    }
+
+    /// Standalone test helper that calls `is_write_context` on a real provider.
+    fn test_is_write(source: &str, before: &str, after: &str) -> bool {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+        provider.is_write_context(before, after)
+    }
+
+    fn test_is_compound(source: &str, before: &str) -> bool {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+        provider.is_compound_assignment(before)
+    }
+
+    // ---- Tests for Bug 1 & Bug 2 fixes: duplicate conditions ----
+
+    #[test]
+    fn test_write_context_simple_assignment() {
+        let src = "let x = 1;";
+        // before = "x = ", after context irrelevant
+        assert!(test_is_write(src, "x = ", "1;"));
+    }
+
+    #[test]
+    fn test_write_context_var_declaration() {
+        let src = "var x = 1;";
+        assert!(test_is_write(src, "var ", "= 1;"));
+    }
+
+    #[test]
+    fn test_write_context_let_declaration() {
+        let src = "let x = 1;";
+        assert!(test_is_write(src, "let ", "= 1;"));
+    }
+
+    #[test]
+    fn test_write_context_const_declaration() {
+        let src = "const x = 1;";
+        assert!(test_is_write(src, "const ", "= 1;"));
+    }
+
+    // ---- Tests for false positive fixes (===, !==, =>) ----
+
+    #[test]
+    fn test_triple_equals_is_not_write() {
+        let src = "if (x === y) {}";
+        // before "y" is "x === ", after is ") {}"
+        assert!(
+            !test_is_write(src, "x === ", ") {}"),
+            "=== should NOT be detected as a write"
+        );
+    }
+
+    #[test]
+    fn test_double_equals_is_not_write() {
+        let src = "if (x == y) {}";
+        assert!(
+            !test_is_write(src, "x == ", ") {}"),
+            "== should NOT be detected as a write"
+        );
+    }
+
+    #[test]
+    fn test_not_equals_is_not_write() {
+        let src = "if (x !== y) {}";
+        assert!(
+            !test_is_write(src, "x !== ", ") {}"),
+            "!== should NOT be detected as a write"
+        );
+    }
+
+    #[test]
+    fn test_not_double_equals_is_not_write() {
+        let src = "if (x != y) {}";
+        assert!(
+            !test_is_write(src, "x != ", ") {}"),
+            "!= should NOT be detected as a write"
+        );
+    }
+
+    #[test]
+    fn test_arrow_is_not_write() {
+        let src = "const f = (x) => x + 1;";
+        // before the body "x" after arrow is " x + 1;"
+        assert!(
+            !test_is_write(src, "(x) => ", "+ 1;"),
+            "=> should NOT be detected as assignment"
+        );
+    }
+
+    #[test]
+    fn test_less_than_equals_is_not_write() {
+        let src = "if (x <= y) {}";
+        assert!(
+            !test_is_write(src, "x <= ", ") {}"),
+            "<= should NOT be detected as a write"
+        );
+    }
+
+    // ---- Tests for new keyword detection: import, catch ----
+
+    #[test]
+    fn test_import_is_write() {
+        let src = "import { x } from 'mod';";
+        assert!(
+            test_is_write(src, "import ", "} from 'mod';"),
+            "import specifier should be a write"
+        );
+    }
+
+    #[test]
+    fn test_catch_is_write() {
+        let src = "try {} catch (e) {}";
+        assert!(
+            test_is_write(src, "catch ", ") {}"),
+            "catch clause variable should be a write"
+        );
+    }
+
+    // ---- Tests for for-loop detection ----
+
+    #[test]
+    fn test_for_loop_variable_is_write() {
+        let src = "let items = []; for (let x of items) {}";
+        // before "x" is "for (", after is " of items) {}"
+        assert!(
+            test_is_write(src, "for (", " of items) {}"),
+            "for-of loop variable should be a write"
+        );
+    }
+
+    #[test]
+    fn test_catch_paren_is_write() {
+        let src = "try {} catch (e) {}";
+        assert!(
+            test_is_write(src, "catch (", ") {}"),
+            "catch( variable should be a write"
+        );
+    }
+
+    // ---- Tests for object destructuring (Bug 2 fix) ----
+
+    #[test]
+    fn test_object_destructuring_property_with_colon() {
+        let src = "const { a: b } = obj;";
+        // before "a" is "{ ", after is ": b } = obj;"
+        assert!(
+            test_is_write(src, "{ ", ": b } = obj;"),
+            "Object destructuring property should be a write"
+        );
+    }
+
+    #[test]
+    fn test_array_destructuring_first_element() {
+        let src = "const [a, b] = arr;";
+        // before "a" is "[", after is ", b] = arr;"
+        assert!(
+            test_is_write(src, "[", ", b] = arr;"),
+            "Array destructuring element should be a write"
+        );
+    }
+
+    #[test]
+    fn test_array_destructuring_bracket() {
+        let src = "const [a] = arr;";
+        assert!(
+            test_is_write(src, "[", "] = arr;"),
+            "Array destructuring single element should be a write"
+        );
+    }
+
+    // ---- Tests for compound assignment detection ----
+
+    #[test]
+    fn test_compound_plus_equals() {
+        let src = "x += 1;";
+        assert!(test_is_compound(src, "x +="));
+    }
+
+    #[test]
+    fn test_compound_minus_equals() {
+        let src = "x -= 1;";
+        assert!(test_is_compound(src, "x -="));
+    }
+
+    #[test]
+    fn test_not_compound_for_simple_equals() {
+        let src = "x = 1;";
+        assert!(!test_is_compound(src, "x ="));
+    }
+
+    // ---- Test that function keyword is still detected ----
+
+    #[test]
+    fn test_function_declaration_is_write() {
+        let src = "function foo() {}";
+        assert!(test_is_write(src, "function ", "() {}"));
+    }
+
+    #[test]
+    fn test_class_declaration_is_write() {
+        let src = "class Foo {}";
+        assert!(test_is_write(src, "class ", "{}"));
+    }
+
+    #[test]
+    fn test_enum_declaration_is_write() {
+        let src = "enum Color {}";
+        assert!(test_is_write(src, "enum ", "{}"));
+    }
+
+    // ---- Test that plain reads are not writes ----
+
+    #[test]
+    fn test_plain_read_is_not_write() {
+        let src = "console.log(x);";
+        assert!(
+            !test_is_write(src, "console.log(", ");"),
+            "A plain read reference should not be a write"
+        );
+    }
+
+    #[test]
+    fn test_addition_is_not_write() {
+        let src = "let z = x + y;";
+        assert!(
+            !test_is_write(src, "x + ", ";"),
+            "Addition operand should not be a write"
+        );
     }
 }

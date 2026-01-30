@@ -8,7 +8,8 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::binder::BinderState;
+use crate::binder::{BinderState, symbol_flags};
+use crate::lsp::document_symbols::SymbolKind;
 use crate::lsp::position::Location;
 
 /// Import kind for tracking how symbols are imported.
@@ -62,6 +63,11 @@ pub struct SymbolIndex {
     /// Symbol name -> definition locations across the project
     /// Maps symbol names to where they are defined
     definitions: FxHashMap<String, Vec<Location>>,
+
+    /// Symbol name -> symbol kind (Function, Class, Interface, etc.)
+    /// Populated from binder data when available, enabling accurate kind
+    /// inference in workspace symbol search instead of naming heuristics.
+    definition_kinds: FxHashMap<String, SymbolKind>,
 
     /// Module path -> exported symbol names
     /// Tracks what symbols each module exports
@@ -180,6 +186,10 @@ impl SymbolIndex {
         }
         self.definitions.retain(|_, defs| !defs.is_empty());
 
+        // Remove definition kinds for symbols that no longer have any definitions
+        self.definition_kinds
+            .retain(|name, _| self.definitions.contains_key(name));
+
         // Remove exports for this file
         self.exports.remove(file_name);
 
@@ -207,7 +217,7 @@ impl SymbolIndex {
         let mut file_symbol_names = FxHashSet::default();
 
         // Index all symbols in file_locals (top-level symbols/declarations)
-        for (name, _symbol_id) in binder.file_locals.iter() {
+        for (name, symbol_id) in binder.file_locals.iter() {
             // Add to name_to_files index
             self.name_to_files
                 .entry(name.clone())
@@ -216,6 +226,12 @@ impl SymbolIndex {
 
             // Track in reverse mapping for efficient cleanup
             file_symbol_names.insert(name.clone());
+
+            // Extract symbol kind from binder flags and store it
+            if let Some(symbol) = binder.symbols.get(*symbol_id) {
+                let kind = symbol_flags_to_kind(symbol.flags);
+                self.definition_kinds.insert(name.clone(), kind);
+            }
         }
 
         // Index exports from the module_exports if this file is registered
@@ -294,6 +310,31 @@ impl SymbolIndex {
             .push(location);
     }
 
+    /// Add a symbol definition with a known kind to the index.
+    ///
+    /// This stores both the location and the symbol kind, enabling
+    /// accurate kind reporting in workspace symbol search.
+    pub fn add_definition_with_kind(
+        &mut self,
+        symbol_name: &str,
+        location: Location,
+        kind: SymbolKind,
+    ) {
+        self.definitions
+            .entry(symbol_name.to_string())
+            .or_default()
+            .push(location);
+        self.definition_kinds.insert(symbol_name.to_string(), kind);
+    }
+
+    /// Look up the stored symbol kind for a definition name.
+    ///
+    /// Returns `None` if no kind was recorded (e.g. the definition was
+    /// added via `add_definition` without kind information).
+    pub fn get_definition_kind(&self, symbol_name: &str) -> Option<SymbolKind> {
+        self.definition_kinds.get(symbol_name).copied()
+    }
+
     /// Add an import relationship to the index.
     pub fn add_import(&mut self, file_name: &str, import_info: ImportInfo) {
         // Track the import
@@ -359,10 +400,54 @@ impl SymbolIndex {
         self.name_to_files.clear();
         self.symbol_refs.clear();
         self.definitions.clear();
+        self.definition_kinds.clear();
         self.exports.clear();
         self.imports.clear();
         self.importers.clear();
         self.file_symbols.clear();
+    }
+}
+
+/// Convert binder symbol flags to an LSP `SymbolKind`.
+///
+/// Checks flags in specificity order so that, e.g., a const-enum is
+/// reported as `Enum` rather than `Variable`.  Falls back to
+/// `SymbolKind::Variable` when no recognisable flag is set.
+fn symbol_flags_to_kind(flags: u32) -> SymbolKind {
+    if flags & symbol_flags::FUNCTION != 0 {
+        SymbolKind::Function
+    } else if flags & symbol_flags::CLASS != 0 {
+        SymbolKind::Class
+    } else if flags & symbol_flags::INTERFACE != 0 {
+        SymbolKind::Interface
+    } else if flags & symbol_flags::ENUM != 0 {
+        SymbolKind::Enum
+    } else if flags & symbol_flags::ENUM_MEMBER != 0 {
+        SymbolKind::EnumMember
+    } else if flags & symbol_flags::TYPE_ALIAS != 0 {
+        SymbolKind::TypeParameter
+    } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
+        SymbolKind::TypeParameter
+    } else if flags & symbol_flags::MODULE != 0 {
+        SymbolKind::Module
+    } else if flags & symbol_flags::METHOD != 0 {
+        SymbolKind::Method
+    } else if flags & symbol_flags::PROPERTY != 0 {
+        SymbolKind::Property
+    } else if flags & symbol_flags::CONSTRUCTOR != 0 {
+        SymbolKind::Constructor
+    } else if flags & symbol_flags::ACCESSOR != 0 {
+        SymbolKind::Property
+    } else if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+        // const declarations get Constant; let gets Variable.
+        // The binder uses BLOCK_SCOPED_VARIABLE for both let and const.
+        // We report as Variable here; callers that need to distinguish
+        // const should check node_flags::CONST on the declaration.
+        SymbolKind::Variable
+    } else if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
+        SymbolKind::Variable
+    } else {
+        SymbolKind::Variable
     }
 }
 
@@ -551,5 +636,235 @@ mod tests {
 
         let defs = index.find_definitions("foo");
         assert!(defs.is_empty());
+    }
+
+    // =========================================================================
+    // Definition kind tracking tests
+    // =========================================================================
+
+    #[test]
+    fn test_add_definition_with_kind_stores_kind() {
+        let mut index = SymbolIndex::new();
+        index.add_definition_with_kind(
+            "processItems",
+            make_location("utils.ts", 0, 0, 12),
+            SymbolKind::Function,
+        );
+
+        assert_eq!(
+            index.get_definition_kind("processItems"),
+            Some(SymbolKind::Function)
+        );
+        // The definition location should also be stored
+        let defs = index.find_definitions("processItems");
+        assert_eq!(defs.len(), 1);
+    }
+
+    #[test]
+    fn test_add_definition_without_kind_has_no_kind() {
+        let mut index = SymbolIndex::new();
+        index.add_definition("foo", make_location("a.ts", 0, 0, 3));
+
+        assert_eq!(index.get_definition_kind("foo"), None);
+    }
+
+    #[test]
+    fn test_definition_kind_survives_multiple_adds() {
+        let mut index = SymbolIndex::new();
+        // First add without kind
+        index.add_definition("bar", make_location("a.ts", 0, 0, 3));
+        assert_eq!(index.get_definition_kind("bar"), None);
+
+        // Then add with kind (simulating a re-index that now has binder data)
+        index.add_definition_with_kind("bar", make_location("b.ts", 0, 0, 3), SymbolKind::Class);
+        assert_eq!(index.get_definition_kind("bar"), Some(SymbolKind::Class));
+        // Both definition locations should exist
+        assert_eq!(index.find_definitions("bar").len(), 2);
+    }
+
+    #[test]
+    fn test_clear_removes_definition_kinds() {
+        let mut index = SymbolIndex::new();
+        index.add_definition_with_kind("Foo", make_location("a.ts", 0, 0, 3), SymbolKind::Class);
+
+        index.clear();
+
+        assert_eq!(index.get_definition_kind("Foo"), None);
+    }
+
+    #[test]
+    fn test_remove_file_cleans_up_definition_kinds() {
+        let mut index = SymbolIndex::new();
+
+        // Add a definition with kind from file a.ts
+        index.add_definition_with_kind(
+            "MyClass",
+            make_location("a.ts", 0, 0, 7),
+            SymbolKind::Class,
+        );
+
+        assert_eq!(
+            index.get_definition_kind("MyClass"),
+            Some(SymbolKind::Class)
+        );
+
+        // Remove the file
+        index.remove_file("a.ts");
+
+        // The kind should be cleaned up because no definitions remain
+        assert_eq!(index.get_definition_kind("MyClass"), None);
+        assert!(index.find_definitions("MyClass").is_empty());
+    }
+
+    #[test]
+    fn test_remove_file_keeps_kind_if_other_file_has_definition() {
+        let mut index = SymbolIndex::new();
+
+        // Add definitions in two files
+        index.add_definition_with_kind(
+            "Config",
+            make_location("a.ts", 0, 0, 6),
+            SymbolKind::Interface,
+        );
+        index.add_definition("Config", make_location("b.ts", 0, 0, 6));
+
+        // Remove only a.ts
+        index.remove_file("a.ts");
+
+        // b.ts still has a definition, so the kind should be retained
+        assert_eq!(index.find_definitions("Config").len(), 1);
+        assert_eq!(
+            index.get_definition_kind("Config"),
+            Some(SymbolKind::Interface)
+        );
+    }
+
+    // =========================================================================
+    // symbol_flags_to_kind tests
+    // =========================================================================
+
+    #[test]
+    fn test_symbol_flags_to_kind_function() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::FUNCTION),
+            SymbolKind::Function
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_class() {
+        assert_eq!(symbol_flags_to_kind(symbol_flags::CLASS), SymbolKind::Class);
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_interface() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::INTERFACE),
+            SymbolKind::Interface
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_regular_enum() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::REGULAR_ENUM),
+            SymbolKind::Enum
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_const_enum() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::CONST_ENUM),
+            SymbolKind::Enum
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_enum_member() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::ENUM_MEMBER),
+            SymbolKind::EnumMember
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_type_alias() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::TYPE_ALIAS),
+            SymbolKind::TypeParameter
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_module() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::VALUE_MODULE),
+            SymbolKind::Module
+        );
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::NAMESPACE_MODULE),
+            SymbolKind::Module
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_method() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::METHOD),
+            SymbolKind::Method
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_property() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::PROPERTY),
+            SymbolKind::Property
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_constructor() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::CONSTRUCTOR),
+            SymbolKind::Constructor
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_variable() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::BLOCK_SCOPED_VARIABLE),
+            SymbolKind::Variable
+        );
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::FUNCTION_SCOPED_VARIABLE),
+            SymbolKind::Variable
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_none() {
+        assert_eq!(
+            symbol_flags_to_kind(symbol_flags::NONE),
+            SymbolKind::Variable
+        );
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_composite_prefers_function() {
+        // A symbol with both FUNCTION and BLOCK_SCOPED_VARIABLE flags
+        // should be reported as Function (higher specificity).
+        let flags = symbol_flags::FUNCTION | symbol_flags::BLOCK_SCOPED_VARIABLE;
+        assert_eq!(symbol_flags_to_kind(flags), SymbolKind::Function);
+    }
+
+    #[test]
+    fn test_symbol_flags_to_kind_class_with_interface_merge() {
+        // Class + Interface (declaration merging): Class wins because
+        // it is checked first in the specificity order.
+        let flags = symbol_flags::CLASS | symbol_flags::INTERFACE;
+        assert_eq!(symbol_flags_to_kind(flags), SymbolKind::Class);
     }
 }
