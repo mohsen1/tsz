@@ -881,6 +881,9 @@ impl<'a> CheckerState<'a> {
     /// Report an error for possibly nullish object access.
     /// Reports the appropriate error code based on the nullable cause type.
     /// When the node is directly a `null` or `undefined` keyword, emits TS18050.
+    ///
+    /// TS2531/2532/2533 are only emitted when strictNullChecks is enabled.
+    /// TS18050 is always emitted for literal null/undefined keywords.
     pub(crate) fn report_possibly_nullish_object(&mut self, idx: NodeIndex, cause: TypeId) {
         use crate::checker::types::diagnostics::{
             diagnostic_codes, diagnostic_messages, format_message,
@@ -888,6 +891,7 @@ impl<'a> CheckerState<'a> {
         use crate::scanner::SyntaxKind;
 
         // Check if the node is directly a null or undefined keyword - emit TS18050
+        // TS18050 is not gated by strictNullChecks
         if let Some(node) = self.ctx.arena.get(idx) {
             if node.kind == SyntaxKind::NullKeyword as u16 {
                 let message =
@@ -911,6 +915,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        // TS2531/2532/2533 require strictNullChecks. When strictNullChecks is off,
+        // null/undefined are assignable to all types and property access is allowed.
+        if !self.ctx.compiler_options.strict_null_checks {
+            return;
         }
 
         let (code, message) = if cause == TypeId::NULL {
