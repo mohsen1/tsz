@@ -1525,15 +1525,6 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    #[allow(dead_code)]
-    fn collect_binding_names_from_element(
-        &self,
-        elem_idx: NodeIndex,
-        names: &mut Vec<IdentifierId>,
-    ) {
-        self.collect_binding_names_from_element_inner(elem_idx, names, 0);
-    }
-
     fn collect_binding_names_from_element_inner(
         &self,
         elem_idx: NodeIndex,

@@ -20,9 +20,6 @@
 //! - Constructor accessibility tracking (private/protected)
 //! - Abstract class tracking
 
-#[allow(dead_code)]
-const MAX_CLASS_INHERITANCE_DEPTH: usize = 256;
-
 use crate::binder::SymbolId;
 use crate::binder::symbol_flags;
 use crate::checker::state::{CheckerState, MemberAccessLevel};

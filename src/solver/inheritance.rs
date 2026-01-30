@@ -22,9 +22,6 @@ struct ClassNode {
     ancestors_bitset: Option<FixedBitSet>,
     /// Cached Method Resolution Order (linearized ancestors)
     mro: Option<Vec<SymbolId>>,
-    /// Cycle detection marker (used during DFS traversal)
-    #[allow(dead_code)]
-    on_stack: bool,
 }
 
 impl Default for ClassNode {
@@ -34,7 +31,6 @@ impl Default for ClassNode {
             children: Vec::new(),
             ancestors_bitset: None,
             mro: None,
-            on_stack: false,
         }
     }
 }
