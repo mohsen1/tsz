@@ -719,5 +719,5 @@ pub fn substitute_this_type(
 }
 
 #[cfg(test)]
-#[path = "instantiate_tests.rs"]
+#[path = "tests/instantiate_tests.rs"]
 mod tests;

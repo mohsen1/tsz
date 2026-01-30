@@ -251,5 +251,5 @@ impl<'a> FlowTypeEvaluator<'a> {
 }
 
 #[cfg(test)]
-#[path = "flow_analysis_tests.rs"]
+#[path = "tests/flow_analysis_tests.rs"]
 mod tests;

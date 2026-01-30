@@ -1964,25 +1964,25 @@ pub fn is_subtype_of_with_resolver<R: TypeResolver>(
 
 // Re-enabled subtype tests - verifying API compatibility
 #[cfg(test)]
-#[path = "subtype_tests.rs"]
+#[path = "tests/subtype_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "index_signature_tests.rs"]
+#[path = "tests/index_signature_tests.rs"]
 mod index_signature_tests;
 
 #[cfg(test)]
-#[path = "callable_tests.rs"]
+#[path = "tests/callable_tests.rs"]
 mod callable_tests;
 
 #[cfg(test)]
-#[path = "union_tests.rs"]
+#[path = "tests/union_tests.rs"]
 mod union_tests;
 
 #[cfg(test)]
-#[path = "typescript_quirks_tests.rs"]
+#[path = "tests/typescript_quirks_tests.rs"]
 mod typescript_quirks_tests;
 
 #[cfg(test)]
-#[path = "type_predicate_tests.rs"]
+#[path = "tests/type_predicate_tests.rs"]
 mod type_predicate_tests;

@@ -776,12 +776,11 @@ impl<'a> CheckerState<'a> {
         // so we try the file name first (which is more reliable)
         // Try to find the export in the target binder's module_exports
         // The module_exports is keyed by file paths and specifiers
-        for (_file_key, exports_table) in target_binder.module_exports.iter() {
+        // Only check first entry which should be the file's exports
+        if let Some((_file_key, exports_table)) = target_binder.module_exports.iter().next() {
             if let Some(sym_id) = exports_table.get(export_name) {
                 return Some(sym_id);
             }
-            // Only check first entry which should be the file's exports
-            break;
         }
 
         // Fall back to checking file_locals in the target binder

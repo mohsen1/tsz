@@ -893,5 +893,5 @@ pub fn remove_nullish(types: &TypeInterner, type_id: TypeId) -> TypeId {
 }
 
 #[cfg(test)]
-#[path = "narrowing_tests.rs"]
+#[path = "tests/narrowing_tests.rs"]
 mod tests;

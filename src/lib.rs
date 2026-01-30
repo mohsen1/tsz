@@ -61,12 +61,14 @@ fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loa
 
 // Shared test fixtures for reduced allocation overhead
 #[cfg(test)]
+#[path = "tests/test_fixtures.rs"]
 pub mod test_fixtures;
 
 // String interning for identifier deduplication (Performance optimization)
 pub mod interner;
 pub use interner::{Atom, Interner, ShardedInterner};
 #[cfg(test)]
+#[path = "tests/interner_tests.rs"]
 mod interner_tests;
 
 // Common types - Shared constants to break circular dependencies
@@ -76,20 +78,18 @@ pub use common::{ModuleKind, NewLineKind, ScriptTarget};
 // Centralized limits and thresholds
 pub mod limits;
 
-// Character code constants
-pub mod char_codes;
-
-// Scanner types and token definitions
+// Scanner module - token definitions, scanning implementation, and character codes
 pub mod scanner;
+pub use scanner::char_codes;
+pub use scanner::scanner_impl;
+pub use scanner::scanner_impl::*;
 pub use scanner::*;
 #[cfg(test)]
-mod scanner_tests;
-
-// Scanner implementation
-pub mod scanner_impl;
-pub use scanner_impl::*;
-#[cfg(test)]
+#[path = "tests/scanner_impl_tests.rs"]
 mod scanner_impl_tests;
+#[cfg(test)]
+#[path = "tests/scanner_tests.rs"]
+mod scanner_tests;
 
 // Parser AST types (Phase 3)
 pub mod parser;
@@ -99,10 +99,12 @@ pub mod syntax;
 
 // Parser - Cache-optimized parser using NodeArena (Phase 0.1)
 #[cfg(test)]
+#[path = "tests/parser_state_tests.rs"]
 mod parser_state_tests;
 
 // Regex flag error detection tests
 #[cfg(test)]
+#[path = "tests/regex_flag_tests.rs"]
 mod regex_flag_tests;
 
 // Binder types and implementation (Phase 4)
@@ -110,6 +112,7 @@ pub mod binder;
 
 // BinderState - Binder using NodeArena (Phase 0.1)
 #[cfg(test)]
+#[path = "tests/binder_state_tests.rs"]
 mod binder_state_tests;
 
 // Module Resolution Debugging - Logging for symbol table operations and scope lookups
@@ -133,33 +136,44 @@ pub use preparsed_libs::{
 pub mod checker;
 
 #[cfg(test)]
+#[path = "tests/checker_state_tests.rs"]
 mod checker_state_tests;
 pub use checker::state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 
 // Emitter - Emitter using NodeArena (Phase 0.1)
 pub mod emitter;
 #[cfg(test)]
+#[path = "tests/emitter_edge_case_tests.rs"]
 mod emitter_edge_case_tests;
 #[cfg(test)]
+#[path = "tests/emitter_parity_test_utils.rs"]
 mod emitter_parity_test_utils;
 #[cfg(test)]
+#[path = "tests/emitter_parity_tests_1.rs"]
 mod emitter_parity_tests_1;
 #[cfg(test)]
+#[path = "tests/emitter_parity_tests_2.rs"]
 mod emitter_parity_tests_2;
 #[cfg(test)]
+#[path = "tests/emitter_parity_tests_3.rs"]
 mod emitter_parity_tests_3;
 #[cfg(test)]
+#[path = "tests/emitter_parity_tests_4.rs"]
 mod emitter_parity_tests_4;
 #[cfg(test)]
+#[path = "tests/emitter_tests.rs"]
 mod emitter_tests;
 #[cfg(test)]
+#[path = "tests/emitter_transform_integration_tests.rs"]
 mod emitter_transform_integration_tests;
 #[cfg(test)]
+#[path = "tests/transform_api_tests.rs"]
 mod transform_api_tests;
 
 // Printer - Clean, safe AST-to-JavaScript printer
 pub mod printer;
 #[cfg(test)]
+#[path = "tests/printer_tests.rs"]
 mod printer_tests;
 
 // Span - Source location tracking (byte offsets)
@@ -180,19 +194,25 @@ pub mod parallel;
 // Comment preservation (Phase 6.3)
 pub mod comments;
 #[cfg(test)]
+#[path = "tests/comments_tests.rs"]
 mod comments_tests;
 
 // Source Map generation (Phase 6.2)
 pub mod source_map;
 #[cfg(test)]
+#[path = "tests/source_map_test_utils.rs"]
 mod source_map_test_utils;
 #[cfg(test)]
+#[path = "tests/source_map_tests_1.rs"]
 mod source_map_tests_1;
 #[cfg(test)]
+#[path = "tests/source_map_tests_2.rs"]
 mod source_map_tests_2;
 #[cfg(test)]
+#[path = "tests/source_map_tests_3.rs"]
 mod source_map_tests_3;
 #[cfg(test)]
+#[path = "tests/source_map_tests_4.rs"]
 mod source_map_tests_4;
 
 // SourceWriter - Abstraction for emitter output with source map tracking
@@ -210,6 +230,7 @@ pub mod lowering_pass;
 // Declaration file emitter (Phase 6.4)
 pub mod declaration_emitter;
 #[cfg(test)]
+#[path = "tests/declaration_emitter_tests.rs"]
 mod declaration_emitter_tests;
 
 // JavaScript transforms (Phase 6.5+)
@@ -223,10 +244,12 @@ pub mod lsp;
 
 // Test Harness - Infrastructure for unit and conformance tests
 #[cfg(test)]
+#[path = "tests/test_harness.rs"]
 mod test_harness;
 
 // Isolated Test Runner - Process-based test execution with resource limits
 #[cfg(test)]
+#[path = "tests/isolated_test_runner.rs"]
 mod isolated_test_runner;
 
 // Native CLI (non-wasm targets only)
@@ -2649,11 +2672,14 @@ compile_error!("Tests must be run inside Docker! Use ./scripts/test.sh");
 
 // ASI Conformance tests for verifying TS1005/TS1109 patterns
 #[cfg(test)]
+#[path = "tests/asi_conformance_tests.rs"]
 mod asi_conformance_tests;
 
 #[cfg(test)]
+#[path = "tests/debug_asi.rs"]
 mod debug_asi;
 
 // P1 Error Recovery tests for synchronization point improvements
 #[cfg(test)]
+#[path = "tests/p1_error_recovery_tests.rs"]
 mod p1_error_recovery_tests;

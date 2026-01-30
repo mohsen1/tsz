@@ -2738,5 +2738,5 @@ impl<'a> InferenceContext<'a> {
 }
 
 #[cfg(test)]
-#[path = "infer_tests.rs"]
+#[path = "tests/infer_tests.rs"]
 mod tests;
