@@ -47,11 +47,11 @@ pub struct CliArgs {
 
     // ==================== Language and Environment ====================
     /// Set the JavaScript language version for emitted JavaScript.
-    #[arg(short = 't', long, value_enum)]
+    #[arg(short = 't', long, value_enum, ignore_case = true)]
     pub target: Option<Target>,
 
     /// Specify what module code is generated.
-    #[arg(short = 'm', long, value_enum)]
+    #[arg(short = 'm', long, value_enum, ignore_case = true)]
     pub module: Option<Module>,
 
     /// Specify a set of bundled library declaration files.

@@ -296,6 +296,35 @@ function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
   if (opts.strictnullchecks !== undefined) options.strictNullChecks = opts.strictnullchecks as boolean;
   if (opts.nolib !== undefined) options.noLib = opts.nolib as boolean;
 
+  // Additional checks
+  if (opts.nopropertyaccessfromindexsignature !== undefined) {
+    options.noPropertyAccessFromIndexSignature = opts.nopropertyaccessfromindexsignature as boolean;
+  }
+  if (opts.nouncheckedindexedaccess !== undefined) {
+    options.noUncheckedIndexedAccess = opts.nouncheckedindexedaccess as boolean;
+  }
+  if (opts.exactoptionalpropertytypes !== undefined) {
+    options.exactOptionalPropertyTypes = opts.exactoptionalpropertytypes as boolean;
+  }
+  if (opts.noimplicitreturns !== undefined) {
+    options.noImplicitReturns = opts.noimplicitreturns as boolean;
+  }
+  if (opts.nofallthroughcasesinswitch !== undefined) {
+    options.noFallthroughCasesInSwitch = opts.nofallthroughcasesinswitch as boolean;
+  }
+  if (opts.nounusedlocals !== undefined) {
+    options.noUnusedLocals = opts.nounusedlocals as boolean;
+  }
+  if (opts.nounusedparameters !== undefined) {
+    options.noUnusedParameters = opts.nounusedparameters as boolean;
+  }
+  if (opts.allowunusedlabels !== undefined) {
+    options.allowUnusedLabels = opts.allowunusedlabels as boolean;
+  }
+  if (opts.allowunreachablecode !== undefined) {
+    options.allowUnreachableCode = opts.allowunreachablecode as boolean;
+  }
+
   return options;
 }
 
