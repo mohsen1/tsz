@@ -113,8 +113,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///    - `{ x?: number }` ≤ `{ x: number }` ❌
     ///    - `{ x: number }` ≤ `{ x?: number }` ✅
     ///
-    /// 2. **Readonly compatibility**: Readonly in source can't satisfy mutable in target
-    ///    - `{ readonly x: number }` ≤ `{ x: number }` ❌
+    /// 2. **Readonly compatibility**: TypeScript allows readonly source to satisfy mutable target
+    ///    - `{ readonly x: number }` ≤ `{ x: number }` ✅ (readonly is on the reference)
     ///    - `{ x: number }` ≤ `{ readonly x: number }` ✅
     ///
     /// 3. **Type compatibility**: Source type must be subtype of target type
@@ -184,10 +184,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Readonly in source can't satisfy mutable target
-        if source.readonly && !target.readonly {
-            return SubtypeResult::False;
-        }
+        // NOTE: TypeScript ALLOWS readonly source to satisfy mutable target.
+        // The readonly modifier prevents writes *through that reference*, but does NOT
+        // affect structural assignability. e.g., { readonly x: number } is assignable to { x: number }.
+        // The readonly constraint is on the reference, not on the shape itself.
 
         // Rule #26: Split Accessors (Getter/Setter Variance)
         //
@@ -421,10 +421,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if sp.optional && !t_prop.optional {
                     return SubtypeResult::False;
                 }
-                // Readonly in source can't satisfy mutable target
-                if sp.readonly && !t_prop.readonly {
-                    return SubtypeResult::False;
-                }
+                // NOTE: TypeScript allows readonly source to satisfy mutable target
+                // (readonly is a constraint on the reference, not structural compatibility)
                 let source_type = self.optional_property_type(sp);
                 let target_type = self.optional_property_type(t_prop);
                 let allow_bivariant = sp.is_method || t_prop.is_method;

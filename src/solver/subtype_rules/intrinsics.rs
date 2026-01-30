@@ -119,6 +119,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             | TypeKey::Application(_)
             | TypeKey::ThisType => true,
             TypeKey::ReadonlyType(inner) => self.check_subtype(*inner, TypeId::OBJECT).is_true(),
+            // Union: all members must be object types (e.g., {a:1} | {b:2} is assignable to object)
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(*members);
+                members.iter().all(|&m| self.is_object_keyword_type(m))
+            }
+            // Intersection: at least one member must be an object type
+            TypeKey::Intersection(members) => {
+                let members = self.interner.type_list(*members);
+                members.iter().any(|&m| self.is_object_keyword_type(m))
+            }
             TypeKey::TypeParameter(info) | TypeKey::Infer(info) => match info.constraint {
                 Some(constraint) => self.check_subtype(constraint, TypeId::OBJECT).is_true(),
                 None => false,
