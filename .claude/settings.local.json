@@ -7,28 +7,5 @@
       "Bash(node:*)",
       "Bash(./conformance/run-conformance.sh:*)"
     ]
-  },
-
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-hook.sh"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-hook.sh"
-          }
-        ]
-      }
-    ]
   }
 }
