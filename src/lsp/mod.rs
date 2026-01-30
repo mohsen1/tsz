@@ -17,22 +17,26 @@
 //! - Selection Range
 //! - Code Actions
 //! - Diagnostics
+//! - Workspace Symbols
 //!
 //! Architecture:
 //! - Position utilities for line/column <-> offset conversion
 //! - AST node lookup by position
 //! - Symbol-based navigation using binder data
 
+pub mod call_hierarchy;
 pub mod code_actions;
 pub mod code_lens;
 pub mod completions;
 pub mod definition;
 pub mod diagnostics;
+pub mod document_links;
 pub mod document_symbols;
 pub mod folding;
 pub mod formatting;
 pub mod highlighting;
 pub mod hover;
+pub mod implementation;
 pub mod inlay_hints;
 pub mod jsdoc;
 pub mod position;
@@ -44,9 +48,12 @@ pub mod resolver;
 pub mod selection_range;
 pub mod semantic_tokens;
 pub mod signature_help;
+pub mod symbol_index;
 pub mod symbols;
 pub mod type_definition;
+pub mod type_hierarchy;
 pub mod utils;
+pub mod workspace_symbols;
 
 #[cfg(test)]
 #[path = "tests/code_actions_tests.rs"]
@@ -92,3 +99,23 @@ pub use type_definition::TypeDefinitionProvider;
 
 // Code Lens
 pub use code_lens::{CodeLens, CodeLensCommand, CodeLensData, CodeLensKind, CodeLensProvider};
+
+// Symbol Index
+pub use symbol_index::SymbolIndex;
+
+// Document Links
+pub use document_links::{DocumentLink, DocumentLinkProvider};
+
+// Workspace Symbols
+pub use workspace_symbols::{SymbolInformation, WorkspaceSymbolsProvider};
+
+// Go to Implementation
+pub use implementation::GoToImplementationProvider;
+
+// Call Hierarchy
+pub use call_hierarchy::{
+    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, CallHierarchyProvider,
+};
+
+// Type Hierarchy
+pub use type_hierarchy::{TypeHierarchyItem, TypeHierarchyProvider};

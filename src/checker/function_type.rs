@@ -732,10 +732,8 @@ impl<'a> CheckerState<'a> {
 
                     // TS2531/2532/2533 require strictNullChecks
                     if !self.ctx.compiler_options.strict_null_checks {
-                        return self.apply_flow_narrowing(
-                            idx,
-                            property_type.unwrap_or(TypeId::ERROR),
-                        );
+                        return self
+                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
                     }
 
                     let (code, message) = if cause == TypeId::NULL {
