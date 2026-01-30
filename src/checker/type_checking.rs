@@ -1057,13 +1057,144 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Check if this is a using/await using declaration list
+        use crate::parser::flags::node_flags;
+        let is_using = (node.flags as u32 & node_flags::USING as u32) != 0;
+        let is_await_using = (node.flags as u32 & node_flags::AWAIT_USING as u32) != 0;
+
         // VariableDeclarationList uses the same VariableData structure
         if let Some(var_list) = self.ctx.arena.get_variable(node) {
             // Now these are actual VariableDeclaration nodes
             for &decl_idx in &var_list.declarations.nodes {
                 self.check_variable_declaration(decl_idx);
+
+                // Check using/await using declarations have Symbol.dispose
+                if is_using || is_await_using {
+                    self.check_using_declaration_disposable(decl_idx, is_await_using);
+                }
             }
         }
+    }
+
+    // =========================================================================
+    // Using Declaration Validation (TS2804, TS2803)
+    // =========================================================================
+
+    /// Check if a using/await using declaration's initializer type has the required dispose method.
+    ///
+    /// ## Parameters
+    /// - `decl_idx`: The variable declaration node index
+    /// - `is_await_using`: Whether this is an await using declaration
+    ///
+    /// Checks:
+    /// - `using` requires type to have `[Symbol.dispose]()` method
+    /// - `await using` requires type to have `[Symbol.asyncDispose]()` or `[Symbol.dispose]()` method
+    fn check_using_declaration_disposable(&mut self, decl_idx: NodeIndex, is_await_using: bool) {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return;
+        };
+
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) else {
+            return;
+        };
+
+        // Skip if no initializer
+        if var_decl.initializer.is_none() {
+            return;
+        }
+
+        // Get the type of the initializer
+        let init_type = self.get_type_of_node(var_decl.initializer);
+
+        // Skip error type and any (suppressed by convention)
+        if init_type == TypeId::ERROR || init_type == TypeId::ANY {
+            return;
+        }
+
+        // Check for the required dispose method
+        if !self.type_has_disposable_method(init_type, is_await_using) {
+            self.error_at_node(
+                var_decl.initializer,
+                diagnostic_messages::USING_INITIALIZER_MUST_HAVE_DISPOSE,
+                if is_await_using {
+                    diagnostic_codes::AWAIT_USING_INITIALIZER_MUST_HAVE_DISPOSE
+                } else {
+                    diagnostic_codes::USING_INITIALIZER_MUST_HAVE_DISPOSE
+                },
+            );
+        }
+    }
+
+    /// Check if a type has the appropriate dispose method.
+    ///
+    /// For `using`: checks for `[Symbol.dispose]()`
+    /// For `await using`: checks for `[Symbol.asyncDispose]()` or `[Symbol.dispose]()`
+    fn type_has_disposable_method(&mut self, type_id: TypeId, is_await_using: bool) -> bool {
+        // Check intrinsic types
+        if type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || type_id == TypeId::ERROR
+            || type_id == TypeId::NEVER
+        {
+            return true; // Suppress errors on these types
+        }
+
+        // null and undefined can be disposed (no-op)
+        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+            return true;
+        }
+
+        // Only check for dispose methods if Symbol.dispose is available in the current environment
+        // Check by looking for the dispose property on SymbolConstructor
+        let symbol_type = if let Some(sym_id) = self.ctx.binder.file_locals.get("Symbol") {
+            self.get_type_of_symbol(sym_id)
+        } else {
+            TypeId::ERROR
+        };
+
+        let symbol_has_dispose = self.object_has_property(symbol_type, "dispose")
+            || self.object_has_property(symbol_type, "[Symbol.dispose]")
+            || self.object_has_property(symbol_type, "Symbol.dispose");
+
+        let symbol_has_async_dispose = self.object_has_property(symbol_type, "asyncDispose")
+            || self.object_has_property(symbol_type, "[Symbol.asyncDispose]")
+            || self.object_has_property(symbol_type, "Symbol.asyncDispose");
+
+        // For await using, we need either Symbol.asyncDispose or Symbol.dispose
+        if is_await_using && !symbol_has_async_dispose && !symbol_has_dispose {
+            // Symbol.asyncDispose and Symbol.dispose are not available in this lib
+            // Don't check for them (TypeScript will emit other errors about missing globals)
+            return true;
+        }
+
+        // For regular using, we need Symbol.dispose
+        if !is_await_using && !symbol_has_dispose {
+            // Symbol.dispose is not available in this lib
+            // Don't check for it
+            return true;
+        }
+
+        // Check for the dispose method on the object type
+        // Try both "[Symbol.dispose]" and "Symbol.dispose" formats
+        let has_dispose = self.object_has_property(type_id, "[Symbol.dispose]")
+            || self.object_has_property(type_id, "Symbol.dispose");
+
+        if is_await_using {
+            // await using accepts either Symbol.asyncDispose or Symbol.dispose
+            return has_dispose
+                || self.object_has_property(type_id, "[Symbol.asyncDispose]")
+                || self.object_has_property(type_id, "Symbol.asyncDispose");
+        }
+
+        has_dispose
+    }
+
+    /// Get a type string for error messages (fallback when detailed formatting isn't available).
+    fn get_type_string_fallback(&self, type_id: TypeId) -> String {
+        // Try to get a reasonable type name
+        self.get_type_display_name(type_id)
     }
 
     // =========================================================================
