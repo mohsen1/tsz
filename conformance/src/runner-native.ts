@@ -91,8 +91,15 @@ function parseTestDirectives(source: string, filePath: string): ParsedTestCase {
     files.push({ name: currentFileName, content: currentFileLines.join('\n') });
   }
 
-  // Single file test
-  if (!isMultiFile) {
+  // For multi-file tests, also include the main test file if it's not already included
+  // This is needed so TypeScript can use the main file path as the root for resolution
+  if (isMultiFile) {
+    const mainFileName = path.basename(filePath);
+    if (!files.some(f => f.name === mainFileName)) {
+      files.push({ name: mainFileName, content: cleanLines.join('\n') });
+    }
+  } else {
+    // Single file test
     files.push({ name: path.basename(filePath), content: cleanLines.join('\n') });
   }
 
