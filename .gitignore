@@ -78,3 +78,6 @@ conformance/.tsc-cache
 # Generated lib assets (fetched from typescript npm package at build time)
 /lib-assets/
 /src/lib-assets/
+
+# Debug tests
+tests/debug/
