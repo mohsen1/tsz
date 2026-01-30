@@ -817,7 +817,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
 
             // TS5061: Check for relative module names in ambient declarations
-            // declare module "./foo" { } -> Error
+            // declare module "./foo" { } -> Error (only in script/non-module files)
+            // In module files, `declare module "./foo"` is a module augmentation, not
+            // an ambient module declaration, and relative paths are valid.
             if self
                 .ctx
                 .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16)
@@ -825,8 +827,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 && name_node.kind == SyntaxKind::StringLiteral as u16
                 && let Some(lit) = self.ctx.arena.get_literal(name_node)
             {
-                // Check TS5061 first
-                if self.is_relative_module_name(&lit.text) {
+                // Check TS5061 first - only for true ambient declarations (non-module files)
+                if self.is_relative_module_name(&lit.text) && !self.is_external_module() {
                     self.ctx.error(
                                     name_node.pos,
                                     name_node.end - name_node.pos,
@@ -839,11 +841,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // Only emit TS2664 if:
                 // 1. The file is a module file (has import/export statements)
                 // 2. The file is not a .d.ts file
+                // 3. The module name is not a relative path (relative augmentations
+                //    refer to local files which may not be resolved in all contexts)
                 // In script files (no imports/exports), declare module "xxx" declares
                 // an ambient external module, which is always valid.
                 else if !self.module_exists(&lit.text)
                     && !self.is_declaration_file()
                     && self.is_external_module()
+                    && !self.is_relative_module_name(&lit.text)
                 {
                     let message = format_message(
                         diagnostic_messages::INVALID_MODULE_NAME_IN_AUGMENTATION,
