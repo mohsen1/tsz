@@ -298,7 +298,7 @@ impl<'a> CheckerState<'a> {
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
                 return crate::solver::substitute_this_type(
-                    &*self.ctx.types,
+                    self.ctx.types,
                     return_type,
                     receiver_type,
                 );
