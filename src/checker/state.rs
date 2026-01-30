@@ -2669,6 +2669,15 @@ impl<'a> CheckerState<'a> {
                     {
                         member_sym_id_from_symbol = Some(member_id);
                     }
+                    // For classes, also check members (for static members in type queries)
+                    // This handles `typeof C.staticMember` where C is a class
+                    else if member_sym_id_from_symbol.is_none()
+                        && symbol.flags & symbol_flags::CLASS != 0
+                    {
+                        if let Some(ref members) = symbol.members {
+                            member_sym_id_from_symbol = members.get(&right_name);
+                        }
+                    }
                     // If not found in direct exports, check for re-exports
                     else if let Some(ref _exports) = symbol.exports {
                         // The member might be re-exported from another module
@@ -2721,6 +2730,14 @@ impl<'a> CheckerState<'a> {
             let mut member_sym_id = None;
             if let Some(ref exports) = symbol.exports {
                 member_sym_id = exports.get(&right_name);
+            }
+
+            // For classes, also check members (for static members in type queries)
+            // This handles `typeof C.staticMember` where C is a class
+            if member_sym_id.is_none() && symbol.flags & symbol_flags::CLASS != 0 {
+                if let Some(ref members) = symbol.members {
+                    member_sym_id = members.get(&right_name);
+                }
             }
 
             // If not found in direct exports, check for re-exports

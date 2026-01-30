@@ -21,6 +21,7 @@
 //! This module extends CheckerState with additional methods for symbol-related
 //! operations, providing cleaner APIs for common patterns.
 
+use crate::binder::symbol_flags::CLASS;
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use crate::parser::NodeIndex;
@@ -1835,6 +1836,16 @@ impl<'a> CheckerState<'a> {
         if let Some(exports) = left_symbol.exports.as_ref() {
             if exports.has(right_name) {
                 return false;
+            }
+        }
+
+        // For classes, check if the member exists in the class's members (static members)
+        // This handles `typeof C.staticMember` where C is a class
+        if left_symbol.flags & CLASS != 0 {
+            if let Some(members) = left_symbol.members.as_ref() {
+                if members.has(right_name) {
+                    return false;
+                }
             }
         }
 
