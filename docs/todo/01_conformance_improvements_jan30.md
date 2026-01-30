@@ -2,20 +2,21 @@
 
 ## Current State
 
-**Pass Rate: 31.7% (3,000+ tests sampled)**
-Latest test run (Jan 30, post-TS2695 fix):
-- Top Extra Errors: TS2362 (448x), TS2322 (401x), TS1005 (393x), TS2304 (359x)
+**Pass Rate: 32.0% (3,000 tests sampled)**
+Latest test run (Jan 30, post-TS2695 and TS2362 fixes):
+- Top Extra Errors: TS2339 (167x), TS2304 (120x), TS7010 (114x), TS2318 (66x)
 - TS2695 **eliminated** from top extra errors (was 471x, now ~0)
+- TS2362 **reduced by 20%** (was 448x, now 356x)
 
-**Completed Fixes:**
-- Jan 30: Fixed TS2695 false positives by removing tagged templates from side-effect-free list
-- Jan 30: Fixed TSC crashes on multi-file tests with relative imports (471 tests)
+**Completed Fixes (Jan 30):**
+- TS2695: Fixed false positives by removing tagged templates from side-effect-free list
+- TS2362: Fixed false positives for numeric enums by treating Ref types as number-like
+- TSC crashes: Fixed multi-file tests with relative imports
 
 **Next Highest Impact:**
-- TS2362 arithmetic operand type checking (448x)
-- TS2322 type assignability (401x)
-- TS1005 parser cascades (393x)
-- TS2304 "Cannot find name" (359x)
+- TS2304 "Cannot find name" (120x) - needs global name resolution work
+- TS2339 "Property does not exist" (167x) - needs lib.d.ts integration
+- TS7010 "Function lacking return type in .d.ts" (114x) - declaration file handling
 
 ---
 
