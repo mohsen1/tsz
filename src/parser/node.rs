@@ -1062,5 +1062,5 @@ impl Default for ExtendedNodeInfo {
 pub use super::node_access::{NodeAccess, NodeInfo, NodeView};
 
 #[cfg(test)]
-#[path = "node_tests.rs"]
+#[path = "tests/node_tests.rs"]
 mod node_tests;

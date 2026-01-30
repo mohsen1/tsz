@@ -342,5 +342,5 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
 }
 
 #[cfg(test)]
-#[path = "helpers_tests.rs"]
+#[path = "tests/helpers_tests.rs"]
 mod helpers_tests;

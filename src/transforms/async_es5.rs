@@ -207,5 +207,5 @@ impl<'a> AsyncES5Emitter<'a> {
 }
 
 #[cfg(test)]
-#[path = "async_es5_tests.rs"]
+#[path = "tests/async_es5_tests.rs"]
 mod tests;

@@ -1029,5 +1029,5 @@ pub fn is_sync_generator_type(interner: &dyn TypeDatabase, type_id: TypeId) -> b
 }
 
 #[cfg(test)]
-#[path = "contextual_tests.rs"]
+#[path = "tests/contextual_tests.rs"]
 mod tests;

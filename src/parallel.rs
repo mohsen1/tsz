@@ -1402,5 +1402,5 @@ pub fn parse_files_with_stats(files: Vec<(String, String)>) -> (Vec<ParseResult>
 }
 
 #[cfg(test)]
-#[path = "parallel_tests.rs"]
+#[path = "tests/parallel_tests.rs"]
 mod tests;

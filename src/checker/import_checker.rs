@@ -451,5 +451,4 @@ impl<'a> CheckerState<'a> {
             .import_resolution_stack
             .contains(&module.to_string())
     }
-
 }

@@ -752,5 +752,5 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 }
 
 #[cfg(test)]
-#[path = "compat_tests.rs"]
+#[path = "tests/compat_tests.rs"]
 mod tests;

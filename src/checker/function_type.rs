@@ -726,10 +726,7 @@ impl<'a> CheckerState<'a> {
                     use crate::checker::types::diagnostics::diagnostic_codes;
 
                     // Suppress cascade errors when cause is ERROR/ANY/UNKNOWN
-                    if cause == TypeId::ERROR
-                        || cause == TypeId::ANY
-                        || cause == TypeId::UNKNOWN
-                    {
+                    if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {
                         return property_type.unwrap_or(TypeId::ERROR);
                     }
 

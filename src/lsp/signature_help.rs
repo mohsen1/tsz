@@ -1132,5 +1132,5 @@ impl<'a> SignatureHelpProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "signature_help_tests.rs"]
+#[path = "tests/signature_help_tests.rs"]
 mod signature_help_tests;
