@@ -83,6 +83,7 @@ impl TsCompilerOptions {
             target: crate::checker::context::ScriptTarget::default(),
             es_module_interop: false,
             allow_synthetic_default_imports: false,
+            allow_unreachable_code: false,
         }
     }
 }
