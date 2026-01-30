@@ -23,6 +23,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1042: async modifier cannot be used on interface declarations
+        self.check_async_modifier_on_declaration(&iface.modifiers);
+
         // Check for reserved interface names (error 2427)
         if !iface.name.is_none()
             && let Some(name_node) = self.ctx.arena.get(iface.name)
@@ -56,6 +59,30 @@ impl<'a> CheckerState<'a> {
         self.check_interface_extension_compatibility(stmt_idx, iface);
 
         self.pop_type_parameters(type_param_updates);
+    }
+
+    /// Check for invalid 'async' modifier on class, enum, interface, or module declarations.
+    /// TS1042: 'async' modifier cannot be used here.
+    ///
+    /// In TypeScript, the `async` modifier is only valid on function declarations,
+    /// method declarations, and arrow functions. When placed on class, enum, interface,
+    /// or namespace/module declarations, TS1042 is reported.
+    ///
+    /// This matches tsc's checker behavior (checkGrammarModifiers) rather than
+    /// emitting the error at parse time.
+    pub(crate) fn check_async_modifier_on_declaration(
+        &mut self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        if let Some(async_mod_idx) = self.find_async_modifier(modifiers) {
+            self.error_at_node(
+                async_mod_idx,
+                "'async' modifier cannot be used here.",
+                diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
+            );
+        }
     }
 
     pub(crate) fn lookup_member_access_in_class(
@@ -1823,8 +1850,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             }
         }
     }
-
     fn check_enum_duplicate_members(&mut self, enum_idx: NodeIndex) {
+        // TS1042: async modifier cannot be used on enum declarations
+        if let Some(node) = self.ctx.arena.get(enum_idx)
+            && let Some(enum_data) = self.ctx.arena.get_enum(node)
+        {
+            self.check_async_modifier_on_declaration(&enum_data.modifiers);
+        }
+
         // Delegate to DeclarationChecker first
         let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
         checker.check_enum_declaration(enum_idx);
@@ -1839,8 +1872,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
             checker.check_module_declaration(module_idx);
 
-            // Check module body for function overload implementations
+            // Check module body and modifiers
             if let Some(module) = self.ctx.arena.get_module(node) {
+                // TS1042: async modifier cannot be used on module/namespace declarations
+                self.check_async_modifier_on_declaration(&module.modifiers);
+
                 let is_ambient = self.has_declare_modifier(&module.modifiers);
                 if !module.body.is_none() && !is_ambient {
                     self.check_module_body(module.body);

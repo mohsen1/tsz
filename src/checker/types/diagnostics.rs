@@ -244,7 +244,7 @@ pub mod diagnostic_messages {
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: &str =
         "An 'await' expression is only allowed within an async function.";
     pub const AWAIT_IN_PARAMETER_DEFAULT: &str =
-        "'await' expressions cannot be used in a parameter default value.";
+        "'await' expressions cannot be used in a parameter initializer.";
 
     // Parameter ordering errors
     pub const REQUIRED_PARAMETER_AFTER_OPTIONAL: &str =
@@ -507,7 +507,7 @@ pub mod diagnostic_codes {
     pub const PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT: u32 = 2564;
 
     // Parameter default value errors
-    pub const AWAIT_IN_PARAMETER_DEFAULT: u32 = 2524; // 'await' expressions cannot be used in a parameter default value.
+    pub const AWAIT_IN_PARAMETER_DEFAULT: u32 = 2524; // 'await' expressions cannot be used in a parameter initializer.
     pub const PARAMETER_CANNOT_REFERENCE_ITSELF: u32 = 2372; // Parameter '{0}' cannot reference itself.
 
     // Const/variable declaration errors

@@ -1812,6 +1812,7 @@ mod tests {
     use super::*;
     use crate::parser::ParserState;
     use crate::solver::PropertyInfo;
+    use crate::solver::type_queries::{classify_for_union_members, UnionMembersKind};
 
     fn get_if_condition(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
         let root_node = arena.get(root).expect("root node");
