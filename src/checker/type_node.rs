@@ -111,6 +111,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Array type (T[])
             k if k == syntax_kind_ext::ARRAY_TYPE => self.get_type_from_array_type(idx),
 
+            // Tuple type ([T, U, ...V[]])
+            k if k == syntax_kind_ext::TUPLE_TYPE => self.get_type_from_tuple_type(idx),
+
             // Type operator (readonly, unique, keyof)
             k if k == syntax_kind_ext::TYPE_OPERATOR => self.get_type_from_type_operator(idx),
 
@@ -235,6 +238,74 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Some(array_type) = self.ctx.arena.get_array_type(node) {
             let elem_type = self.check(array_type.element_type);
             return self.ctx.types.array(elem_type);
+        }
+
+        TypeId::ERROR
+    }
+
+    /// Get type from a tuple type node ([T, U, ...V[]]).
+    ///
+    /// Parses a tuple type expression and creates a Tuple type with proper handling of:
+    /// - Regular elements (e.g., `[number, string]`)
+    /// - Optional elements (e.g., `[number, string?]`)
+    /// - Rest elements (e.g., `[number, ...string[]]`)
+    /// - Named elements (e.g., `[x: number, y: string]`)
+    fn get_type_from_tuple_type(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::solver::TupleElement;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        if let Some(tuple_type) = self.ctx.arena.get_tuple_type(node) {
+            let mut elements = Vec::new();
+
+            for &elem_idx in &tuple_type.elements.nodes {
+                if elem_idx.is_none() {
+                    continue;
+                }
+
+                let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                    continue;
+                };
+
+                // Check if this is an optional/rest type or a regular type
+                use crate::parser::syntax_kind_ext;
+                if elem_node.kind == syntax_kind_ext::OPTIONAL_TYPE {
+                    // Optional element (e.g., `string?`)
+                    if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
+                        let elem_type = self.check(wrapped.type_node);
+                        elements.push(TupleElement {
+                            type_id: elem_type,
+                            name: None,
+                            optional: true,
+                            rest: false,
+                        });
+                    }
+                } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
+                    // Rest element (e.g., `...string[]`)
+                    if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
+                        let elem_type = self.check(wrapped.type_node);
+                        elements.push(TupleElement {
+                            type_id: elem_type,
+                            name: None,
+                            optional: false,
+                            rest: true,
+                        });
+                    }
+                } else {
+                    // Regular element
+                    let elem_type = self.check(elem_idx);
+                    elements.push(TupleElement {
+                        type_id: elem_type,
+                        name: None,
+                        optional: false,
+                        rest: false,
+                    });
+                }
+            }
+
+            return self.ctx.types.tuple(elements);
         }
 
         TypeId::ERROR
