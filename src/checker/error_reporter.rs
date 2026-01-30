@@ -188,6 +188,14 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
+        // Suppress cascade errors from unresolved types
+        if source == TypeId::ERROR || target == TypeId::ERROR
+            || source == TypeId::ANY || target == TypeId::ANY
+            || source == TypeId::UNKNOWN || target == TypeId::UNKNOWN
+        {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -563,8 +571,11 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress error if either type is ERROR - prevents cascading errors
-        if source == TypeId::ERROR || target == TypeId::ERROR {
+        // Suppress cascade errors from unresolved types
+        if source == TypeId::ERROR || target == TypeId::ERROR
+            || source == TypeId::ANY || target == TypeId::ANY
+            || source == TypeId::UNKNOWN || target == TypeId::UNKNOWN
+        {
             return;
         }
 
@@ -607,8 +618,8 @@ impl<'a> CheckerState<'a> {
 
     /// Report an excess property error using solver diagnostics with source tracking.
     pub fn error_excess_property_at(&mut self, prop_name: &str, target: TypeId, idx: NodeIndex) {
-        // Suppress error if type is ERROR - prevents cascading errors
-        if target == TypeId::ERROR {
+        // Suppress cascade errors from unresolved types
+        if target == TypeId::ERROR || target == TypeId::ANY || target == TypeId::UNKNOWN {
             return;
         }
 
@@ -1161,8 +1172,8 @@ impl<'a> CheckerState<'a> {
 
     /// Report a "type is not callable" error using solver diagnostics with source tracking.
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
-        // Suppress error if type is ERROR - prevents cascading errors
-        if type_id == TypeId::ERROR {
+        // Suppress cascade errors from unresolved types
+        if type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
             return;
         }
 
@@ -1183,8 +1194,8 @@ impl<'a> CheckerState<'a> {
     pub fn error_class_constructor_without_new_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         use crate::solver::TypeFormatter;
 
-        // Suppress error if type is ERROR - prevents cascading errors
-        if type_id == TypeId::ERROR {
+        // Suppress cascade errors from unresolved types
+        if type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
             return;
         }
 
@@ -1294,6 +1305,13 @@ impl<'a> CheckerState<'a> {
         right_type: TypeId,
         op: &str,
     ) {
+        // Suppress cascade errors from unresolved types
+        if left_type == TypeId::ERROR || right_type == TypeId::ERROR
+            || left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
         use crate::solver::{BinaryOpEvaluator, TypeFormatter};
 
         let mut formatter = TypeFormatter::new(self.ctx.types);
@@ -1692,6 +1710,14 @@ impl<'a> CheckerState<'a> {
         constraint: TypeId,
         idx: NodeIndex,
     ) {
+        // Suppress cascade errors from unresolved types
+        if type_arg == TypeId::ERROR || constraint == TypeId::ERROR
+            || type_arg == TypeId::UNKNOWN || constraint == TypeId::UNKNOWN
+            || type_arg == TypeId::ANY || constraint == TypeId::ANY
+        {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             let type_str = self.format_type(type_arg);
             let constraint_str = self.format_type(constraint);

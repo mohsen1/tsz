@@ -730,6 +730,14 @@ impl<'a> CheckerState<'a> {
                         return property_type.unwrap_or(TypeId::ERROR);
                     }
 
+                    // TS2531/2532/2533 require strictNullChecks
+                    if !self.ctx.compiler_options.strict_null_checks {
+                        return self.apply_flow_narrowing(
+                            idx,
+                            property_type.unwrap_or(TypeId::ERROR),
+                        );
+                    }
+
                     let (code, message) = if cause == TypeId::NULL {
                         (
                             diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,

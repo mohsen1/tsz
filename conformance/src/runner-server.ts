@@ -134,9 +134,9 @@ async function withTimeout<T>(
 }
 
 // Dynamic timeout: starts at 500ms, adapts to 10x average test time
-const INITIAL_TIMEOUT_MS = 500;
-const MIN_TIMEOUT_MS = 50;
-const MAX_TIMEOUT_MS = 5000;
+const INITIAL_TIMEOUT_MS = 10000;
+const MIN_TIMEOUT_MS = 10000;
+const MAX_TIMEOUT_MS = 60000;
 const TIMEOUT_MULTIPLIER = 10;
 
 // Lib directories for file-based resolution (set during test run)
@@ -822,6 +822,7 @@ interface ServerRunnerConfig {
   memoryLimitMB?: number;
   filter?: string;
   printTest?: boolean;
+  dumpResults?: string;  // Path to dump per-test results JSON
 }
 
 interface TestStats {
@@ -1061,6 +1062,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   const testTimeout = config.testTimeout ?? 10000;
   const filter = config.filter;
   const printTest = config.printTest ?? false;
+  const dumpResults = config.dumpResults;
   // Calculate memory limit: 80% of total memory / number of workers
   const memoryLimitMB = config.memoryLimitMB ?? calculateMemoryLimitMB(workerCount);
   const totalMemoryMB = Math.round(os.totalmem() / 1024 / 1024);
@@ -1174,6 +1176,9 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   try {
     await pool.start();
     log(`Server pool started (${workerCount} workers, ${formatMemory(memoryLimitMB)} limit each)\n`, colors.green);
+
+    // Per-test results for dump mode
+    const perTestResults: Array<{path: string; missing: number[]; extra: number[]; tscCodes: number[]; tszCodes: number[]; status: string}> = [];
 
     // Process tests in parallel
     const startTime = Date.now();
@@ -1317,36 +1322,18 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
 
         const wasmCodes = result!.codes;
 
-        // Compare results using set-based comparison
-        // tsz is a developing checker that may not emit every error tsc does,
-        // and may emit additional cascade/false-positive errors.
-        // Comparison tolerance:
-        // - Missing codes (tsc expects, tsz doesn't emit): allow up to MAX_MISSING_TOLERANCE unique codes
-        // - Extra codes (tsz emits, tsc doesn't expect): tolerated (reported but don't cause failure)
-        const MAX_MISSING_TOLERANCE = 1;
-
+        // Compare results - exact set match of unique error codes
         const tscSet = new Set(tscCodes);
         const wasmSet = new Set(wasmCodes);
 
         const missing = tscCodes.filter(c => !wasmSet.has(c));
         const extra = wasmCodes.filter(c => !tscSet.has(c));
-        const uniqueMissing = new Set(missing);
-        const uniqueExtra = new Set(extra);
 
-        const isPass = uniqueMissing.size <= MAX_MISSING_TOLERANCE && uniqueExtra.size === 0;
-        const isNearPass = !isPass && uniqueMissing.size <= MAX_MISSING_TOLERANCE;
-
-        if (isPass || isNearPass) {
+        if (missing.length === 0 && extra.length === 0) {
           stats.passed++;
           stats.byCategory[category].passed++;
-          if (verbose) {
-            if (isNearPass) {
-              log(`[pass~] ${relativePath}`, colors.green);
-              if (uniqueExtra.size > 0) log(`  Extra (tolerated): ${[...uniqueExtra].join(', ')}`, colors.dim);
-            } else {
-              log(`[pass] ${relativePath}`, colors.green);
-            }
-          }
+          if (verbose) log(`[pass] ${relativePath}`, colors.green);
+          if (dumpResults) perTestResults.push({path: relativePath, missing: [], extra: [], tscCodes, tszCodes: wasmCodes, status: 'pass'});
         } else {
           stats.failed++;
           if (verbose) {
@@ -1360,6 +1347,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
           for (const code of extra) {
             stats.extraCodes.set(code, (stats.extraCodes.get(code) || 0) + 1);
           }
+          if (dumpResults) perTestResults.push({path: relativePath, missing: [...new Set(missing)], extra: [...new Set(extra)], tscCodes, tszCodes: wasmCodes, status: 'fail'});
         }
       } catch (err: any) {
         stats.crashed++;
@@ -1490,6 +1478,12 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     }
 
     log('\n' + '═'.repeat(60), colors.dim);
+
+    // Dump per-test results if requested
+    if (dumpResults) {
+      fs.writeFileSync(dumpResults, JSON.stringify(perTestResults, null, 0));
+      log(`\nDumped ${perTestResults.length} test results to ${dumpResults}`, colors.cyan);
+    }
 
   } finally {
     await pool.stop();

@@ -829,6 +829,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (arg === '--server') useServer = true;
     else if (arg.startsWith('--filter=')) config.filter = arg.split('=')[1];
     else if (arg === '--print-test') config.printTest = true;
+    else if (arg.startsWith('--dump-results=')) (config as any).dumpResults = arg.split('=')[1];
   }
 
   // --print-test implies --server mode

@@ -1323,17 +1323,23 @@ impl<'a> CheckerState<'a> {
 
                         let symbol_type = self.get_type_of_symbol(sym_to_check);
 
-                        // Check if this is an interface - emit TS2689 instead of TS2507
+                        // Check if this is ONLY an interface (not also a class from
+                        // declaration merging) - emit TS2689 instead of TS2507
                         // BUT only for class declarations, not interface declarations
                         // (interfaces can validly extend other interfaces)
-                        let is_interface = self
+                        // When a name is both an interface and a class (merged declaration),
+                        // the class part can be validly extended, so don't emit TS2689.
+                        let is_interface_only = self
                             .ctx
                             .binder
                             .get_symbol(sym_to_check)
-                            .map(|s| (s.flags & symbol_flags::INTERFACE) != 0)
+                            .map(|s| {
+                                (s.flags & symbol_flags::INTERFACE) != 0
+                                    && (s.flags & symbol_flags::CLASS) == 0
+                            })
                             .unwrap_or(false);
 
-                        if is_interface && is_class_declaration {
+                        if is_interface_only && is_class_declaration {
                             // Emit TS2689: Cannot extend an interface (only for classes)
                             if let Some(name) = self.heritage_name_text(expr_idx) {
                                 use crate::checker::types::diagnostics::{
@@ -1349,7 +1355,7 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::CANNOT_EXTEND_AN_INTERFACE,
                                 );
                             }
-                        } else if !is_interface
+                        } else if !is_interface_only
                             && is_class_declaration
                             && !self.is_constructor_type(symbol_type)
                             && !self.is_class_symbol(sym_to_check)

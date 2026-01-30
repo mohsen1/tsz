@@ -610,6 +610,7 @@ run_server() {
     local verbose="$5"
     local filter="${6:-}"
     local print_test="${7:-false}"
+    local dump_results="${8:-}"
 
     # Print banner (skip for print-test mode to keep output clean)
     if [[ "$print_test" != "true" ]]; then
@@ -656,6 +657,9 @@ run_server() {
     if [[ "$print_test" == "true" ]]; then
         runner_args="$runner_args --print-test"
     fi
+    if [[ -n "$dump_results" ]]; then
+        runner_args="$runner_args --dump-results=$dump_results"
+    fi
 
     # Run with timeout
     local exit_code=0
@@ -700,6 +704,7 @@ main() {
     local positional_args=()
     local filter=""
     local print_test=false
+    local dump_results=""
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -761,7 +766,13 @@ main() {
             --print-test)
                 print_test=true
                 ;;
-            
+            --dump-results=*)
+                dump_results="${1#*=}"
+                ;;
+            --dump-results)
+                dump_results="$SCRIPT_DIR/.tsc-cache/test-results.json"
+                ;;
+
             # Execution
             --workers=*)
                 workers="${1#*=}"
@@ -840,7 +851,7 @@ main() {
     # Run tests based on mode
     case "$mode" in
         server)
-            run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose" "$filter" "$print_test"
+            run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose" "$filter" "$print_test" "$dump_results"
             ;;
         wasm)
             local use_wasm=true
