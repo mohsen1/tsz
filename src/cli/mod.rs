@@ -18,4 +18,6 @@ mod fs_tests;
 #[cfg(test)]
 mod reporter_tests;
 #[cfg(test)]
+mod tsc_compat_tests;
+#[cfg(test)]
 mod watch_tests;
