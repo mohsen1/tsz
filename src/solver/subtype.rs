@@ -475,6 +475,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if `source` is a subtype of `target`.
     /// This is the main entry point for subtype checking.
+    ///
+    /// When a QueryDatabase is available (via `with_query_db`), fast-path checks
+    /// (identity, any, unknown, never) are done locally, then the full structural
+    /// check is delegated to the internal `check_subtype` which may use Salsa
+    /// memoization for evaluate_type calls.
     pub fn is_subtype_of(&mut self, source: TypeId, target: TypeId) -> bool {
         self.check_subtype(source, target).is_true()
     }
