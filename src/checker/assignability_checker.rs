@@ -586,8 +586,11 @@ impl<'a> CheckerState<'a> {
         }
         self.ensure_application_symbols_resolved(prev_type);
         self.ensure_application_symbols_resolved(current_type);
-        self.is_assignable_to(prev_type, current_type)
-            && self.is_assignable_to(current_type, prev_type)
+        // TypeScript allows var redeclarations when the new type is assignable to the
+        // previous type (subtype relationship). Bidirectional check is too strict and
+        // causes false positives with enum literals assigned to number types, etc.
+        self.is_assignable_to(current_type, prev_type)
+            || self.is_assignable_to(prev_type, current_type)
     }
 
     /// Check if source type is assignable to ANY member of a target union.
