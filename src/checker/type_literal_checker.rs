@@ -76,6 +76,12 @@ impl<'a> CheckerState<'a> {
     fn get_type_from_type_reference_in_type_literal(&mut self, idx: NodeIndex) -> TypeId {
         use crate::solver::{SymbolRef, TypeKey};
 
+        // TODO(Phase 4.3): Migration to TypeKey::Lazy(DefId) is ready but requires:
+        // 1. TypeResolver support for Lazy types
+        // 2. DefinitionStore body population during type resolution
+        // For now, continue using TypeKey::Ref(SymbolRef).
+        // Infrastructure: see ctx.create_lazy_type_ref() and ctx.definition_store
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
