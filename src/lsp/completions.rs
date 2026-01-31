@@ -585,15 +585,9 @@ impl<'a> Completions<'a> {
     /// typing a brand-new identifier (e.g. a variable name after `const`, a
     /// parameter name, an import binding name, etc.).
     pub fn compute_is_new_identifier_location(&self, root: NodeIndex, offset: u32) -> bool {
-        // isNewIdentifierLocation=true means the user could type a new identifier that
-        // doesn't already exist in scope. This is true for most expression/value positions
-        // (where you could write any new expression), class/interface member positions,
-        // object literal properties, string literal module specifiers, etc.
-        //
-        // It is false for:
-        // - Property access (x.|) - can only access existing members
-        // - Type assertion (x as |) - should reference existing types
-        // - After declaration keywords (var |, function |) where we define a name
+        // TypeScript's isNewIdentifierLocation defaults to false and only returns true
+        // for specific token/parent-kind combinations. Our heuristic approximates this
+        // by checking AST context and text patterns.
 
         let node_idx = self.find_completions_node(root, offset);
 
@@ -610,7 +604,7 @@ impl<'a> Completions<'a> {
                 return true;
             }
 
-            // Inside class/interface body at member position
+            // Inside class/interface body at member position (after `{`)
             if k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::CLASS_EXPRESSION
                 || k == syntax_kind_ext::INTERFACE_DECLARATION
@@ -620,27 +614,25 @@ impl<'a> Completions<'a> {
                     return true;
                 }
             }
+
+            // Object literal expression → properties are new identifiers
+            if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return true;
+            }
+
+            // Constructor or function type parameter position
+            if k == syntax_kind_ext::CONSTRUCTOR
+                || k == syntax_kind_ext::FUNCTION_TYPE
+            {
+                return true;
+            }
         }
 
-        // Text-based heuristic
+        // Text-based heuristic for the context token
         let text = &self.source_text[..offset as usize];
         let trimmed = text.trim_end();
         if trimmed.is_empty() {
             return false;
-        }
-
-        let last_char = trimmed.as_bytes()[trimmed.len() - 1];
-
-        // After dot: member access, false
-        if last_char == b'.' {
-            return false;
-        }
-
-        // After these characters: typically new identifier location
-        // These are operators/punctuation that precede expressions where the user
-        // could type a brand new identifier name
-        if matches!(last_char, b'=' | b'(' | b',' | b'[' | b'{') {
-            return true;
         }
 
         // Find the last word before cursor
@@ -650,36 +642,15 @@ impl<'a> Completions<'a> {
             .unwrap_or(0);
         let last_word = &trimmed[last_word_start..];
 
-        // Keywords that explicitly introduce a new name (isNewIdentifierLocation=true)
-        matches!(
-            last_word,
-            "const"
-                | "let"
-                | "var"
-                | "function"
-                | "class"
-                | "interface"
-                | "type"
-                | "enum"
-                | "namespace"
-                | "module"
-                | "import"
-                | "from"
-                | "catch"
-                | "extends"
-                | "return"
-                | "yield"
-                | "await"
-                | "throw"
-                | "new"
-                | "typeof"
-                | "void"
-                | "delete"
-                | "case"
-                | "implements"
-                | "export"
-                | "default"
-        )
+        // Only these specific keywords return true per TypeScript's implementation:
+        // module |, namespace |, import |
+        if matches!(last_word, "module" | "namespace" | "import") {
+            return true;
+        }
+
+        // Default to false - TypeScript's implementation is very conservative
+        // and only returns true for specific AST-verified contexts
+        false
     }
 
     /// Check if the cursor is inside a context where completions should not be offered,
@@ -2458,61 +2429,15 @@ mod completions_tests {
 
     #[test]
     fn test_is_new_identifier_location_after_const() {
+        // TypeScript returns false for `const |` - it's a declaration keyword but
+        // the default in TS is false unless specific AST conditions are met
         let source = "const ";
         let (root, arena, binder, line_map, src) = make_completions_provider(source);
         let completions = Completions::new(&arena, &binder, &line_map, &src);
         let offset = source.len() as u32;
         assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'const '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_let() {
-        let source = "let ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'let '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_var() {
-        let source = "var ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'var '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_function() {
-        let source = "function ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'function '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_class() {
-        let source = "class ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'class '"
+            !completions.compute_is_new_identifier_location(root, offset),
+            "Should NOT be new identifier location after 'const ' (TypeScript default is false)"
         );
     }
 
@@ -2525,6 +2450,30 @@ mod completions_tests {
         assert!(
             completions.compute_is_new_identifier_location(root, offset),
             "Should be new identifier location after 'import '"
+        );
+    }
+
+    #[test]
+    fn test_is_new_identifier_location_after_namespace() {
+        let source = "namespace ";
+        let (root, arena, binder, line_map, src) = make_completions_provider(source);
+        let completions = Completions::new(&arena, &binder, &line_map, &src);
+        let offset = source.len() as u32;
+        assert!(
+            completions.compute_is_new_identifier_location(root, offset),
+            "Should be new identifier location after 'namespace '"
+        );
+    }
+
+    #[test]
+    fn test_is_new_identifier_location_after_module() {
+        let source = "module ";
+        let (root, arena, binder, line_map, src) = make_completions_provider(source);
+        let completions = Completions::new(&arena, &binder, &line_map, &src);
+        let offset = source.len() as u32;
+        assert!(
+            completions.compute_is_new_identifier_location(root, offset),
+            "Should be new identifier location after 'module '"
         );
     }
 
@@ -2542,55 +2491,28 @@ mod completions_tests {
     }
 
     #[test]
-    fn test_is_new_identifier_location_after_extends() {
-        let source = "class Foo extends ";
+    fn test_is_new_identifier_location_not_after_return() {
+        // TypeScript returns false for `return |` - it falls through to the default
+        let source = "function f() { return ";
         let (root, arena, binder, line_map, src) = make_completions_provider(source);
         let completions = Completions::new(&arena, &binder, &line_map, &src);
         let offset = source.len() as u32;
         assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'extends '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_new() {
-        let source = "new ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'new '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_type() {
-        let source = "type ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'type '"
+            !completions.compute_is_new_identifier_location(root, offset),
+            "Should NOT be new identifier location after 'return '"
         );
     }
 
     #[test]
     fn test_is_new_identifier_location_not_in_normal_expression() {
-        // After a semicolon at top-level, we're not in a new identifier context
-        let source = "const x = 1;
-";
+        let source = "const x = 1;\n";
         let (root, arena, binder, line_map, src) = make_completions_provider(source);
         let completions = Completions::new(&arena, &binder, &line_map, &src);
         let offset = source.len() as u32;
-        // At end of file after a complete statement, not after a keyword
-        // This should NOT be a new identifier location
-        let _result = completions.compute_is_new_identifier_location(root, offset);
-        // Note: this may be true if the AST node at this position is within
-        // a variable declaration. We primarily care about the keyword heuristic.
-        // The important thing is that after keywords like const/let/var it IS true.
+        assert!(
+            !completions.compute_is_new_identifier_location(root, offset),
+            "Should NOT be new identifier location at end of file"
+        );
     }
 
     #[test]
@@ -2641,51 +2563,4 @@ obj.";
         assert!(!result.entries.is_empty(), "Should have entries");
     }
 
-    #[test]
-    fn test_is_new_identifier_location_after_return() {
-        let source = "function f() { return ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'return '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_enum() {
-        let source = "enum ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'enum '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_interface() {
-        let source = "interface ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'interface '"
-        );
-    }
-
-    #[test]
-    fn test_is_new_identifier_location_after_namespace() {
-        let source = "namespace ";
-        let (root, arena, binder, line_map, src) = make_completions_provider(source);
-        let completions = Completions::new(&arena, &binder, &line_map, &src);
-        let offset = source.len() as u32;
-        assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'namespace '"
-        );
-    }
 }

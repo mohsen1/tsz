@@ -2251,7 +2251,7 @@ impl Server {
                     let line_map = LineMap::build(&source_text);
                     let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
                     let symbols = provider.get_document_symbols(root);
-                    Self::collect_navto_items(&symbols, &search_lower, file_path, &mut nav_items);
+                    Self::collect_navto_items(&symbols, search_value, &search_lower, file_path, &mut nav_items);
                 }
             }
             Some(serde_json::json!(nav_items))
@@ -2261,6 +2261,7 @@ impl Server {
 
     fn collect_navto_items(
         symbols: &[wasm::lsp::document_symbols::DocumentSymbol],
+        search_value: &str,
         search_lower: &str,
         file_path: &str,
         result: &mut Vec<serde_json::Value>,
@@ -2268,6 +2269,7 @@ impl Server {
         for sym in symbols {
             let name_lower = sym.name.to_lowercase();
             if name_lower.contains(search_lower) {
+                let is_case_sensitive = sym.name.contains(search_value);
                 let kind = match sym.kind {
                     wasm::lsp::document_symbols::SymbolKind::Module => "module",
                     wasm::lsp::document_symbols::SymbolKind::Class => "class",
@@ -2296,7 +2298,7 @@ impl Server {
                     "kind": kind,
                     "kindModifiers": "",
                     "matchKind": match_kind,
-                    "isCaseSensitive": false,
+                    "isCaseSensitive": is_case_sensitive,
                     "file": file_path,
                     "start": {
                         "line": sym.range.start.line + 1,
@@ -2308,7 +2310,7 @@ impl Server {
                     },
                 }));
             }
-            Self::collect_navto_items(&sym.children, search_lower, file_path, result);
+            Self::collect_navto_items(&sym.children, search_value, search_lower, file_path, result);
         }
     }
 
