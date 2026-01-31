@@ -1434,11 +1434,12 @@ impl<'a> CheckerState<'a> {
             } else if self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx) {
                 self.error_variable_used_before_assigned_at(name, idx);
                 return TypeId::ERROR;
-            } else if self.should_check_definite_assignment(sym_id, idx)
-                && !self.is_definitely_assigned_at(idx)
-            {
-                self.error_variable_used_before_assigned_at(name, idx);
-                return TypeId::ERROR;
+            } else if self.should_check_definite_assignment(sym_id, idx) {
+                let skip_type = self.skip_definite_assignment_for_type(declared_type);
+                if !skip_type && !self.is_definitely_assigned_at(idx) {
+                    self.error_variable_used_before_assigned_at(name, idx);
+                    return TypeId::ERROR;
+                }
             }
             return self.apply_flow_narrowing(idx, declared_type);
         }

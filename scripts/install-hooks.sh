@@ -30,14 +30,22 @@ fi
 # This is the modern approach - no symlinks needed
 git -C "$ROOT_DIR" config core.hooksPath .githooks
 
+# Make all hooks executable
+chmod +x "$GITHOOKS_DIR"/* 2>/dev/null || true
+
 echo "Git hooks installed successfully!"
 echo ""
 echo "The following hooks are now active:"
 for hook in "$GITHOOKS_DIR"/*; do
-    if [ -f "$hook" ] && [ -x "$hook" ]; then
+    if [ -f "$hook" ]; then
         hook_name=$(basename "$hook")
         echo "  - $hook_name"
     fi
 done
 echo ""
+echo "Hook features:"
+echo "  - pre-commit: Format, clippy, tests, conformance regression check"
+echo "  - prepare-commit-msg: Auto-append conformance % to commit messages"
+echo ""
 echo "To disable hooks temporarily, use: git commit --no-verify"
+echo "To skip conformance check only: TSZ_SKIP_CONFORMANCE=1 git commit ..."

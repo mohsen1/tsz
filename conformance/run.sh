@@ -61,6 +61,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOCKER_IMAGE="tsz-conformance"
 
+# ==============================================================================
+# Auto-install Git Hooks
+# ==============================================================================
+
+install_hooks_if_needed() {
+    # Check if we're in a git repository
+    if ! git -C "$ROOT_DIR" rev-parse --git-dir &>/dev/null; then
+        return 0
+    fi
+    
+    # Check if hooks are already configured
+    local current_hooks_path
+    current_hooks_path=$(git -C "$ROOT_DIR" config core.hooksPath 2>/dev/null || echo "")
+    
+    if [[ "$current_hooks_path" != ".githooks" ]]; then
+        echo -e "${YELLOW}⚠${RESET}  Git hooks not configured. Installing..."
+        git -C "$ROOT_DIR" config core.hooksPath .githooks
+        
+        # Make hooks executable
+        chmod +x "$ROOT_DIR/.githooks/"* 2>/dev/null || true
+        
+        echo -e "${GREEN}✓${RESET}  Git hooks installed (pre-commit + conformance check)"
+        echo ""
+    fi
+}
+
+# Install hooks at startup (silent if already installed)
+install_hooks_if_needed
+
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
     RED='\033[0;31m'
