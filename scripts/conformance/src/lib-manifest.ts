@@ -37,8 +37,8 @@ export function loadLibManifest(): LibManifest | null {
   }
 
   const manifestPaths = [
-    path.resolve(__dirname, '../../lib-assets/lib_manifest.json'),
-    path.resolve(__dirname, '../../src/lib-assets/lib_manifest.json'),
+    path.resolve(__dirname, '../../../lib-assets/lib_manifest.json'),
+    path.resolve(__dirname, '../../../src/lib-assets/lib_manifest.json'),
   ];
 
   for (const manifestPath of manifestPaths) {

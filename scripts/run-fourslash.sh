@@ -47,7 +47,7 @@ trap cleanup INT TERM EXIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TS_DIR="$ROOT_DIR/TypeScript"
-FOURSLASH_DIR="$ROOT_DIR/fourslash"
+FOURSLASH_DIR="$ROOT_DIR/scripts/fourslash"
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then

@@ -2,7 +2,7 @@
 #
 # Install git hooks for Project Zang
 #
-# This script configures git to use the .githooks directory for hooks.
+# This script configures git to use the scripts/githooks directory for hooks.
 # The hooks run formatting, clippy, and unit tests before commits.
 #
 
@@ -10,13 +10,13 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-GITHOOKS_DIR="$ROOT_DIR/.githooks"
+GITHOOKS_DIR="$ROOT_DIR/scripts/githooks"
 
 echo "Installing git hooks..."
 
-# Check if .githooks directory exists
+# Check if scripts/githooks directory exists
 if [ ! -d "$GITHOOKS_DIR" ]; then
-    echo "Error: .githooks directory not found"
+    echo "Error: scripts/githooks directory not found"
     exit 1
 fi
 
@@ -26,9 +26,9 @@ if ! git -C "$ROOT_DIR" rev-parse --git-dir > /dev/null 2>&1; then
     exit 1
 fi
 
-# Configure git to use .githooks directory
+# Configure git to use scripts/githooks directory
 # This is the modern approach - no symlinks needed
-git -C "$ROOT_DIR" config core.hooksPath .githooks
+git -C "$ROOT_DIR" config core.hooksPath scripts/githooks
 
 # Make all hooks executable
 chmod +x "$GITHOOKS_DIR"/* 2>/dev/null || true

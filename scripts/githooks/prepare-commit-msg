@@ -7,7 +7,7 @@
 COMMIT_MSG_FILE="$1"
 COMMIT_SOURCE="$2"  # message, template, merge, squash, or empty
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 CONFORMANCE_FILE="$ROOT_DIR/.conformance-value"
 
 # Skip for merge commits or when amending
