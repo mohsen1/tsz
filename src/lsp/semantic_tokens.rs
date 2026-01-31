@@ -14,8 +14,8 @@
 use crate::binder::BinderState;
 use crate::binder::{Symbol, symbol_flags};
 use crate::lsp::position::LineMap;
-use crate::parser::node::NodeArena;
-use crate::parser::{NodeIndex, syntax_kind_ext};
+use crate::parser::node::{NodeAccess, NodeArena};
+use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
 /// LSP Semantic Token Types (mapped to indices 0-N).
@@ -161,6 +161,10 @@ impl<'a> SemanticTokensProvider<'a> {
 
     /// Visit a node and its children recursively.
     fn visit_node(&mut self, node_idx: NodeIndex) {
+        if node_idx.is_none() {
+            return;
+        }
+
         let Some(node) = self.arena.get(node_idx) else {
             return;
         };
@@ -168,12 +172,6 @@ impl<'a> SemanticTokensProvider<'a> {
         // Handle modifiers (keywords like public, private, static, readonly)
         if self.is_modifier(node.kind) {
             self.emit_token_for_node(node_idx, SemanticTokenType::Modifier, 0);
-            return;
-        }
-
-        // Handle identifiers in decorator context
-        if self.in_decorator && node.kind == SyntaxKind::Identifier as u16 {
-            self.emit_token_for_node(node_idx, SemanticTokenType::Decorator, 0);
             return;
         }
 
@@ -186,16 +184,221 @@ impl<'a> SemanticTokensProvider<'a> {
             return;
         }
 
-        // Check if this declaration node has a symbol
-        if let Some(sym_id) = self.binder.get_node_symbol(node_idx)
-            && let Some(symbol) = self.binder.get_symbol(sym_id)
-        {
-            // This is a declaration - emit token for its name
-            self.emit_token_for_declaration(node_idx, symbol);
+        // Handle identifiers - both declarations and references
+        if node.kind == SyntaxKind::Identifier as u16 {
+            self.handle_identifier(node_idx);
+            return;
         }
 
-        // Recurse into children
+        // For all other nodes, just recurse into children
         self.visit_children(node_idx);
+    }
+
+    /// Handle an identifier node by resolving it to a symbol and emitting a token.
+    fn handle_identifier(&mut self, node_idx: NodeIndex) {
+        // Check if in decorator context
+        if self.in_decorator {
+            self.emit_token_for_node(node_idx, SemanticTokenType::Decorator, 0);
+            return;
+        }
+
+        // First check if this is a declaration (has a symbol directly bound to its parent)
+        if let Some(sym_id) = self.find_declaration_symbol(node_idx) {
+            if let Some(symbol) = self.binder.get_symbol(sym_id) {
+                let (token_type, mut modifiers) = self.map_symbol_to_token(symbol);
+                modifiers |= semantic_token_modifiers::DECLARATION;
+
+                // Check for const variable (readonly modifier)
+                modifiers |= self.get_contextual_modifiers(node_idx, symbol);
+
+                self.emit_token_at(node_idx, token_type, modifiers);
+                return;
+            }
+        }
+
+        // Try to resolve this identifier as a reference
+        if let Some(sym_id) = self.binder.resolve_identifier(self.arena, node_idx) {
+            if let Some(symbol) = self.binder.get_symbol(sym_id) {
+                let (token_type, mut modifiers) = self.map_symbol_to_token(symbol);
+                modifiers |= self.get_contextual_modifiers_for_ref(symbol);
+                self.emit_token_at(node_idx, token_type, modifiers);
+                return;
+            }
+        }
+
+        // Unresolved identifier - don't emit a token (let editor use default highlighting)
+    }
+
+    /// Find the symbol for a declaration that this identifier is the name of.
+    ///
+    /// Walks up to the parent declaration node and checks if it has a bound symbol.
+    fn find_declaration_symbol(&self, ident_idx: NodeIndex) -> Option<crate::binder::SymbolId> {
+        // Check each possible parent declaration type
+        // The binder maps declaration nodes (not their name identifiers) to symbols
+        let ext = self.arena.get_extended(ident_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent = self.arena.get(parent_idx)?;
+
+        // Check if the parent is a declaration and this identifier is its name
+        let is_name_of_decl = match parent.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                self.arena.get_variable_declaration(parent).map(|d| d.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.arena.get_function(parent).and_then(|f| {
+                    if f.name == ident_idx { Some(true) } else { None }
+                }).unwrap_or(false)
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
+                self.arena.get_class(parent).map(|c| c.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(parent).map(|i| i.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(parent).map(|e| e.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::ENUM_MEMBER => {
+                self.arena.get_enum_member(parent).map(|m| m.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(parent).map(|t| t.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(parent).map(|m| m.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                self.arena.get_property_decl(parent).map(|p| p.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
+                self.arena.get_signature(parent).map(|s| s.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                self.arena.get_signature(parent).map(|s| s.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::PARAMETER => {
+                self.arena.get_parameter(parent).map(|p| p.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::TYPE_PARAMETER => {
+                self.arena.get_type_parameter(parent).map(|t| t.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                self.arena.get_accessor(parent).map(|a| a.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.arena.get_module(parent).map(|m| m.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::IMPORT_SPECIFIER
+                || k == syntax_kind_ext::EXPORT_SPECIFIER =>
+            {
+                self.arena.get_specifier(parent).map(|s| s.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::IMPORT_CLAUSE => {
+                self.arena.get_import_clause(parent).map(|c| c.name) == Some(ident_idx)
+            }
+            k if k == syntax_kind_ext::NAMESPACE_IMPORT
+                || k == syntax_kind_ext::NAMESPACE_EXPORT =>
+            {
+                self.arena.get_named_imports(parent).map(|n| n.name) == Some(ident_idx)
+            }
+            _ => false,
+        };
+
+        if is_name_of_decl {
+            self.binder.get_node_symbol(parent_idx)
+        } else {
+            None
+        }
+    }
+
+    /// Get contextual modifiers based on the declaration context (e.g., const -> readonly).
+    fn get_contextual_modifiers(&self, ident_idx: NodeIndex, symbol: &Symbol) -> u32 {
+        let mut modifiers = 0u32;
+
+        // Check for const variable -> READONLY modifier
+        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+            if self.is_const_variable(ident_idx) {
+                modifiers |= semantic_token_modifiers::READONLY;
+            }
+        }
+
+        // Check for exported symbol
+        if symbol.is_exported || symbol.flags & symbol_flags::EXPORT_VALUE != 0 {
+            modifiers |= semantic_token_modifiers::DEFAULT_LIBRARY; // Using DEFAULT_LIBRARY as export indicator
+        }
+
+        // Check for async function/method via extended node modifier flags
+        if let Some(ext) = self.arena.get_extended(ident_idx) {
+            let parent_idx = ext.parent;
+            if let Some(parent_ext) = self.arena.get_extended(parent_idx) {
+                let mf = parent_ext.modifier_flags;
+                if mf & crate::parser::flags::modifier_flags::ASYNC != 0 {
+                    modifiers |= semantic_token_modifiers::ASYNC;
+                }
+                if mf & crate::parser::flags::modifier_flags::DEPRECATED != 0 {
+                    modifiers |= semantic_token_modifiers::DEPRECATED;
+                }
+            }
+        }
+
+        modifiers
+    }
+
+    /// Get contextual modifiers for a reference (not declaration).
+    fn get_contextual_modifiers_for_ref(&self, symbol: &Symbol) -> u32 {
+        let mut modifiers = 0u32;
+
+        // Check for const variable -> READONLY modifier
+        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+            // Check the declaration to see if it's const
+            if let Some(decl_idx) = symbol.declarations.first() {
+                if let Some(decl_node) = self.arena.get(*decl_idx) {
+                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                        // Walk up to the variable declaration list to check for CONST flag
+                        if let Some(ext) = self.arena.get_extended(*decl_idx) {
+                            let parent_idx = ext.parent;
+                            if let Some(parent_node) = self.arena.get(parent_idx) {
+                                if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                                    if (parent_node.flags as u32 & node_flags::CONST) != 0 {
+                                        modifiers |= semantic_token_modifiers::READONLY;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        modifiers
+    }
+
+    /// Check if the identifier is in a `const` declaration.
+    fn is_const_variable(&self, ident_idx: NodeIndex) -> bool {
+        // ident -> VariableDeclaration -> VariableDeclarationList
+        let Some(ext) = self.arena.get_extended(ident_idx) else {
+            return false;
+        };
+        let var_decl_idx = ext.parent;
+        let Some(var_decl_ext) = self.arena.get_extended(var_decl_idx) else {
+            return false;
+        };
+        let decl_list_idx = var_decl_ext.parent;
+        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+            return false;
+        };
+        if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return (decl_list_node.flags as u32 & node_flags::CONST) != 0;
+        }
+        false
     }
 
     /// Check if a node kind is a modifier keyword.
@@ -235,390 +438,22 @@ impl<'a> SemanticTokensProvider<'a> {
             .push(pos.line, pos.character, length, token_type, modifiers);
     }
 
-    /// Visit all children of a node in document order.
+    /// Emit a semantic token at a node's position.
+    fn emit_token_at(
+        &mut self,
+        node_idx: NodeIndex,
+        token_type: SemanticTokenType,
+        modifiers: u32,
+    ) {
+        self.emit_token_for_node(node_idx, token_type, modifiers);
+    }
+
+    /// Visit all children of a node using the generic get_children traversal.
     fn visit_children(&mut self, node_idx: NodeIndex) {
-        let Some(node) = self.arena.get(node_idx) else {
-            return;
-        };
-
-        // Don't recurse into identifiers - they're already handled
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return;
+        let children = self.arena.get_children(node_idx);
+        for child in children {
+            self.visit_node(child);
         }
-
-        match node.kind {
-            k if k == syntax_kind_ext::SOURCE_FILE => {
-                if let Some(sf) = self.arena.get_source_file(node) {
-                    for &stmt in &sf.statements.nodes {
-                        self.visit_node(stmt);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::BLOCK => {
-                if let Some(block) = self.arena.get_block(node) {
-                    for &stmt in &block.statements.nodes {
-                        self.visit_node(stmt);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var) = self.arena.get_variable(node) {
-                    if let Some(modifiers) = &var.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    for &decl_list in &var.declarations.nodes {
-                        self.visit_node(decl_list);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
-                if let Some(list) = self.arena.get_variable(node) {
-                    for &decl in &list.declarations.nodes {
-                        self.visit_node(decl);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                if let Some(decl) = self.arena.get_variable_declaration(node) {
-                    self.visit_node(decl.name);
-                    if !decl.type_annotation.is_none() {
-                        self.visit_node(decl.type_annotation);
-                    }
-                    if !decl.initializer.is_none() {
-                        self.visit_node(decl.initializer);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = self.arena.get_function(node) {
-                    if let Some(modifiers) = &func.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    if !func.name.is_none() {
-                        self.visit_node(func.name);
-                    }
-                    if let Some(type_params) = &func.type_parameters {
-                        for &param in &type_params.nodes {
-                            self.visit_node(param);
-                        }
-                    }
-                    for &param in &func.parameters.nodes {
-                        self.visit_node(param);
-                    }
-                    if !func.type_annotation.is_none() {
-                        self.visit_node(func.type_annotation);
-                    }
-                    if !func.body.is_none() {
-                        self.visit_node(func.body);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = self.arena.get_class(node) {
-                    if let Some(modifiers) = &class.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    if !class.name.is_none() {
-                        self.visit_node(class.name);
-                    }
-                    if let Some(type_params) = &class.type_parameters {
-                        for &param in &type_params.nodes {
-                            self.visit_node(param);
-                        }
-                    }
-                    if let Some(heritage) = &class.heritage_clauses {
-                        for &clause in &heritage.nodes {
-                            self.visit_node(clause);
-                        }
-                    }
-                    for &member in &class.members.nodes {
-                        self.visit_node(member);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                if let Some(method) = self.arena.get_method_decl(node) {
-                    if let Some(modifiers) = &method.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    if !method.name.is_none() {
-                        self.visit_node(method.name);
-                    }
-                    if let Some(type_params) = &method.type_parameters {
-                        for &param in &type_params.nodes {
-                            self.visit_node(param);
-                        }
-                    }
-                    for &param in &method.parameters.nodes {
-                        self.visit_node(param);
-                    }
-                    if !method.type_annotation.is_none() {
-                        self.visit_node(method.type_annotation);
-                    }
-                    if !method.body.is_none() {
-                        self.visit_node(method.body);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                if let Some(call) = self.arena.get_call_expr(node) {
-                    self.visit_node(call.expression);
-                    if let Some(args) = &call.arguments {
-                        for &arg in &args.nodes {
-                            self.visit_node(arg);
-                        }
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                if let Some(bin) = self.arena.get_binary_expr(node) {
-                    self.visit_node(bin.left);
-                    self.visit_node(bin.right);
-                }
-            }
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                if let Some(access) = self.arena.get_access_expr(node) {
-                    self.visit_node(access.expression);
-                    self.visit_node(access.name_or_argument);
-                }
-            }
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                if let Some(iface) = self.arena.get_interface(node) {
-                    if let Some(modifiers) = &iface.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    if !iface.name.is_none() {
-                        self.visit_node(iface.name);
-                    }
-                    if let Some(type_params) = &iface.type_parameters {
-                        for &param in &type_params.nodes {
-                            self.visit_node(param);
-                        }
-                    }
-                    if let Some(heritage) = &iface.heritage_clauses {
-                        for &clause in &heritage.nodes {
-                            self.visit_node(clause);
-                        }
-                    }
-                    for &member in &iface.members.nodes {
-                        self.visit_node(member);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_decl) = self.arena.get_enum(node) {
-                    if let Some(modifiers) = &enum_decl.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    if !enum_decl.name.is_none() {
-                        self.visit_node(enum_decl.name);
-                    }
-                    for &member in &enum_decl.members.nodes {
-                        self.visit_node(member);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::ENUM_MEMBER => {
-                if let Some(member) = self.arena.get_enum_member(node) {
-                    if !member.name.is_none() {
-                        self.visit_node(member.name);
-                    }
-                    if !member.initializer.is_none() {
-                        self.visit_node(member.initializer);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                if let Some(alias) = self.arena.get_type_alias(node) {
-                    if let Some(modifiers) = &alias.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    if !alias.name.is_none() {
-                        self.visit_node(alias.name);
-                    }
-                    if let Some(type_params) = &alias.type_parameters {
-                        for &param in &type_params.nodes {
-                            self.visit_node(param);
-                        }
-                    }
-                    if !alias.type_node.is_none() {
-                        self.visit_node(alias.type_node);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::DECORATOR => {
-                if let Some(decorator) = self.arena.get_decorator(node) {
-                    self.visit_node(decorator.expression);
-                }
-            }
-            k if k == syntax_kind_ext::TYPE_PARAMETER => {
-                if let Some(param) = self.arena.get_type_parameter(node) {
-                    self.visit_node(param.name);
-                    if !param.constraint.is_none() {
-                        self.visit_node(param.constraint);
-                    }
-                    if !param.default.is_none() {
-                        self.visit_node(param.default);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                if let Some(prop) = self.arena.get_property_decl(node) {
-                    if let Some(modifiers) = &prop.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    self.visit_node(prop.name);
-                    if !prop.type_annotation.is_none() {
-                        self.visit_node(prop.type_annotation);
-                    }
-                    if !prop.initializer.is_none() {
-                        self.visit_node(prop.initializer);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::PARAMETER => {
-                if let Some(param) = self.arena.get_parameter(node) {
-                    if let Some(modifiers) = &param.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    self.visit_node(param.name);
-                    if !param.type_annotation.is_none() {
-                        self.visit_node(param.type_annotation);
-                    }
-                    if !param.initializer.is_none() {
-                        self.visit_node(param.initializer);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                if let Some(accessor) = self.arena.get_accessor(node) {
-                    if let Some(modifiers) = &accessor.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    self.visit_node(accessor.name);
-                    for &param in &accessor.parameters.nodes {
-                        self.visit_node(param);
-                    }
-                    if !accessor.body.is_none() {
-                        self.visit_node(accessor.body);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::CONSTRUCTOR => {
-                if let Some(ctor) = self.arena.get_constructor(node) {
-                    if let Some(modifiers) = &ctor.modifiers {
-                        for &mod_idx in &modifiers.nodes {
-                            self.visit_node(mod_idx);
-                        }
-                    }
-                    for &param in &ctor.parameters.nodes {
-                        self.visit_node(param);
-                    }
-                    if !ctor.body.is_none() {
-                        self.visit_node(ctor.body);
-                    }
-                }
-            }
-            _ => {
-                // For other node types, we don't need special traversal
-            }
-        }
-    }
-
-    /// Emit a semantic token for a declaration.
-    ///
-    /// Extracts the name identifier from the declaration and emits a token for it.
-    fn emit_token_for_declaration(&mut self, decl_idx: NodeIndex, symbol: &Symbol) {
-        let Some(decl_node) = self.arena.get(decl_idx) else {
-            return;
-        };
-
-        // Extract the name identifier from the declaration
-        let name_idx = match decl_node.kind {
-            k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
-                .arena
-                .get_variable_declaration(decl_node)
-                .map(|v| v.name),
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.arena.get_function(decl_node).map(|f| f.name)
-            }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                self.arena.get_class(decl_node).map(|c| c.name)
-            }
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                self.arena.get_interface(decl_node).map(|i| i.name)
-            }
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                self.arena.get_enum(decl_node).map(|e| e.name)
-            }
-            k if k == syntax_kind_ext::ENUM_MEMBER => {
-                self.arena.get_enum_member(decl_node).map(|m| m.name)
-            }
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                self.arena.get_type_alias(decl_node).map(|t| t.name)
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                self.arena.get_method_decl(decl_node).map(|m| m.name)
-            }
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                self.arena.get_property_decl(decl_node).map(|p| p.name)
-            }
-            k if k == syntax_kind_ext::PARAMETER => {
-                self.arena.get_parameter(decl_node).map(|p| p.name)
-            }
-            k if k == syntax_kind_ext::TYPE_PARAMETER => {
-                self.arena.get_type_parameter(decl_node).map(|t| t.name)
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                self.arena.get_accessor(decl_node).map(|a| a.name)
-            }
-            _ => None,
-        };
-
-        if let Some(name_idx) = name_idx
-            && !name_idx.is_none()
-        {
-            self.emit_token_for_name(name_idx, symbol, true);
-        }
-    }
-
-    /// Emit a semantic token for a name identifier.
-    fn emit_token_for_name(&mut self, node_idx: NodeIndex, symbol: &Symbol, is_declaration: bool) {
-        let Some(node) = self.arena.get(node_idx) else {
-            return;
-        };
-
-        let pos = self.line_map.offset_to_position(node.pos, self.source_text);
-        let length = node.end - node.pos;
-
-        let (token_type, mut modifiers) = self.map_symbol_to_token(symbol);
-
-        if is_declaration {
-            modifiers |= semantic_token_modifiers::DECLARATION;
-        }
-
-        self.builder
-            .push(pos.line, pos.character, length, token_type, modifiers);
     }
 
     /// Map a symbol to a semantic token type and modifiers.
@@ -634,7 +469,7 @@ impl<'a> SemanticTokensProvider<'a> {
             modifiers |= semantic_token_modifiers::ABSTRACT;
         }
 
-        // Determine token type based on symbol flags
+        // Determine token type based on symbol flags (ordered by specificity)
         let token_type = if flags & symbol_flags::CLASS != 0 {
             SemanticTokenType::Class
         } else if flags & symbol_flags::INTERFACE != 0 {
@@ -651,21 +486,30 @@ impl<'a> SemanticTokensProvider<'a> {
             SemanticTokenType::Function
         } else if flags & symbol_flags::METHOD != 0 {
             SemanticTokenType::Method
+        } else if flags & symbol_flags::GET_ACCESSOR != 0 || flags & symbol_flags::SET_ACCESSOR != 0 {
+            SemanticTokenType::Property
         } else if flags & symbol_flags::PROPERTY != 0 {
             SemanticTokenType::Property
         } else if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             // Check if it's a parameter
-            if symbol.value_declaration.is_some()
-                && let Some(decl_node) = self.arena.get(symbol.value_declaration)
-                && decl_node.kind == syntax_kind_ext::PARAMETER
-            {
-                return (SemanticTokenType::Parameter, modifiers);
+            if let Some(decl_idx) = symbol.declarations.first() {
+                if let Some(decl_node) = self.arena.get(*decl_idx) {
+                    if decl_node.kind == syntax_kind_ext::PARAMETER {
+                        return (SemanticTokenType::Parameter, modifiers);
+                    }
+                }
             }
             SemanticTokenType::Variable
         } else if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
             SemanticTokenType::Variable
-        } else if flags & symbol_flags::NAMESPACE_MODULE != 0 {
+        } else if flags & symbol_flags::VALUE_MODULE != 0
+            || flags & symbol_flags::NAMESPACE_MODULE != 0
+        {
             SemanticTokenType::Namespace
+        } else if flags & symbol_flags::ALIAS != 0 {
+            // Import alias - try to determine the underlying type from the name
+            // For now, classify as Variable (the editor can refine via type info)
+            SemanticTokenType::Variable
         } else {
             // Default to variable for unknown types
             SemanticTokenType::Variable
@@ -681,9 +525,8 @@ mod semantic_tokens_tests {
     use crate::binder::BinderState;
     use crate::parser::ParserState;
 
-    #[test]
-    fn test_semantic_tokens_basic() {
-        let source = "const x = 1;\nfunction foo() {}\nclass Bar {}";
+    /// Helper to parse source, bind, and compute semantic tokens.
+    fn get_tokens(source: &str) -> Vec<u32> {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
@@ -693,8 +536,43 @@ mod semantic_tokens_tests {
 
         let line_map = LineMap::build(source);
         let mut provider = SemanticTokensProvider::new(arena, &binder, &line_map, source);
+        provider.get_semantic_tokens(root)
+    }
 
-        let tokens = provider.get_semantic_tokens(root);
+    /// Helper to decode delta-encoded tokens into absolute (line, col, len, type, modifiers).
+    fn decode_tokens(data: &[u32]) -> Vec<(u32, u32, u32, u32, u32)> {
+        let mut result = Vec::new();
+        let mut line = 0u32;
+        let mut col = 0u32;
+        for chunk in data.chunks_exact(5) {
+            let delta_line = chunk[0];
+            let delta_col = chunk[1];
+            let length = chunk[2];
+            let token_type = chunk[3];
+            let modifiers = chunk[4];
+
+            if delta_line > 0 {
+                line += delta_line;
+                col = delta_col;
+            } else {
+                col += delta_col;
+            }
+            result.push((line, col, length, token_type, modifiers));
+        }
+        result
+    }
+
+    /// Find a token by its position (line, col). Returns (type, modifiers).
+    fn find_token_at(tokens: &[(u32, u32, u32, u32, u32)], line: u32, col: u32) -> Option<(u32, u32)> {
+        tokens.iter()
+            .find(|t| t.0 == line && t.1 == col)
+            .map(|t| (t.3, t.4))
+    }
+
+    #[test]
+    fn test_semantic_tokens_basic() {
+        let source = "const x = 1;\nfunction foo() {}\nclass Bar {}";
+        let tokens = get_tokens(source);
 
         // Should have tokens (5 values per token)
         assert!(!tokens.is_empty(), "Should have semantic tokens");
@@ -710,70 +588,38 @@ mod semantic_tokens_tests {
     #[test]
     fn test_semantic_tokens_function() {
         let source = "function myFunc() {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let arena = parser.get_arena();
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
 
-        let mut binder = BinderState::new();
-        binder.bind_source_file(arena, root);
-
-        let line_map = LineMap::build(source);
-        let mut provider = SemanticTokensProvider::new(arena, &binder, &line_map, source);
-
-        let tokens = provider.get_semantic_tokens(root);
-
-        // Should have exactly 1 token (myFunc - the function name)
-        assert_eq!(tokens.len(), 5, "Should have 1 token (5 values)");
-
-        // Check token type is Function (12)
-        assert_eq!(tokens[3], SemanticTokenType::Function as u32);
-
-        // Check DECLARATION modifier is set (bit 0)
-        assert_eq!(
-            tokens[4] & semantic_token_modifiers::DECLARATION,
-            semantic_token_modifiers::DECLARATION
-        );
+        // Find the function name token (at column 9, "myFunc")
+        let func_token = find_token_at(&decoded, 0, 9);
+        assert!(func_token.is_some(), "Should have token for myFunc");
+        let (token_type, modifiers) = func_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Function as u32);
+        assert_ne!(modifiers & semantic_token_modifiers::DECLARATION, 0, "Should have DECLARATION modifier");
     }
 
     #[test]
     fn test_semantic_tokens_class() {
         let source = "class MyClass {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let arena = parser.get_arena();
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
 
-        let mut binder = BinderState::new();
-        binder.bind_source_file(arena, root);
-
-        let line_map = LineMap::build(source);
-        let mut provider = SemanticTokensProvider::new(arena, &binder, &line_map, source);
-
-        let tokens = provider.get_semantic_tokens(root);
-
-        // Should have exactly 1 token (MyClass)
-        assert_eq!(tokens.len(), 5, "Should have 1 token (5 values)");
-
-        // Check token type is Class (2)
-        assert_eq!(tokens[3], SemanticTokenType::Class as u32);
+        // Find the class name token (at column 6, "MyClass")
+        let class_token = find_token_at(&decoded, 0, 6);
+        assert!(class_token.is_some(), "Should have token for MyClass");
+        let (token_type, modifiers) = class_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Class as u32);
+        assert_ne!(modifiers & semantic_token_modifiers::DECLARATION, 0);
     }
 
     #[test]
     fn test_semantic_tokens_delta_encoding() {
         let source = "const a = 1;\nconst b = 2;";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let arena = parser.get_arena();
+        let tokens = get_tokens(source);
 
-        let mut binder = BinderState::new();
-        binder.bind_source_file(arena, root);
-
-        let line_map = LineMap::build(source);
-        let mut provider = SemanticTokensProvider::new(arena, &binder, &line_map, source);
-
-        let tokens = provider.get_semantic_tokens(root);
-
-        // Should have 2 tokens (a and b)
-        assert_eq!(tokens.len(), 10, "Should have 2 tokens (10 values)");
+        // Should have at least 2 tokens (a and b)
+        assert!(tokens.len() >= 10, "Should have at least 2 tokens (10 values)");
 
         // First token: deltaLine=0, deltaStart=6 (position of 'a')
         assert_eq!(tokens[0], 0); // deltaLine (first token always 0)
@@ -782,5 +628,300 @@ mod semantic_tokens_tests {
         // Second token: deltaLine=1 (next line), deltaStart=6 (position of 'b')
         assert_eq!(tokens[5], 1); // deltaLine (moved to next line)
         assert_eq!(tokens[6], 6); // deltaStart (absolute position on new line)
+    }
+
+    #[test]
+    fn test_semantic_tokens_interface() {
+        let source = "interface IFoo { bar: string; }";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Interface name at col 10
+        let iface_token = find_token_at(&decoded, 0, 10);
+        assert!(iface_token.is_some(), "Should have token for IFoo");
+        let (token_type, _) = iface_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Interface as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_enum() {
+        let source = "enum Color { Red, Green, Blue }";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Enum name "Color" at col 5
+        let enum_token = find_token_at(&decoded, 0, 5);
+        assert!(enum_token.is_some(), "Should have token for Color");
+        let (token_type, _) = enum_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Enum as u32);
+
+        // Enum members should be EnumMember
+        let red_token = find_token_at(&decoded, 0, 13);
+        assert!(red_token.is_some(), "Should have token for Red");
+        let (token_type, _) = red_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::EnumMember as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_type_alias() {
+        let source = "type MyType = string | number;";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Type alias name "MyType" at col 5
+        let type_token = find_token_at(&decoded, 0, 5);
+        assert!(type_token.is_some(), "Should have token for MyType");
+        let (token_type, modifiers) = type_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Type as u32);
+        assert_ne!(modifiers & semantic_token_modifiers::DECLARATION, 0);
+    }
+
+    #[test]
+    fn test_semantic_tokens_parameter() {
+        let source = "function greet(name: string) {}";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Parameter "name" at col 15
+        let param_token = find_token_at(&decoded, 0, 15);
+        assert!(param_token.is_some(), "Should have token for parameter 'name'");
+        let (token_type, modifiers) = param_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Parameter as u32);
+        assert_ne!(modifiers & semantic_token_modifiers::DECLARATION, 0);
+    }
+
+
+    #[test]
+    fn test_debug_type_parameter_tokens() {
+        let source = "function identity<T>(x: T): T { return x; }";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+        for (i, t) in decoded.iter().enumerate() {
+            let text_start = t.1 as usize;
+            let text_end = (t.1 + t.2) as usize;
+            let text = if text_end <= source.len() {
+                &source[text_start..text_end]
+            } else {
+                "???"
+            };
+            eprintln!("Token {}: line={} col={} len={} type={} mods={} text='{}'",
+                i, t.0, t.1, t.2, t.3, t.4, text);
+        }
+        // Just print - don't assert
+    }
+
+    #[test]
+    fn test_semantic_tokens_type_parameter() {
+        let source = "function identity<T>(x: T): T { return x; }";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Type parameter "T" at col 18
+        let tp_token = find_token_at(&decoded, 0, 18);
+        assert!(tp_token.is_some(), "Should have token for type parameter T");
+        let (token_type, _) = tp_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::TypeParameter as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_const_readonly_modifier() {
+        let source = "const PI = 3.14;";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Variable "PI" at col 6
+        let var_token = find_token_at(&decoded, 0, 6);
+        assert!(var_token.is_some(), "Should have token for PI");
+        let (token_type, modifiers) = var_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Variable as u32);
+        assert_ne!(modifiers & semantic_token_modifiers::READONLY, 0,
+            "const variable should have READONLY modifier");
+        assert_ne!(modifiers & semantic_token_modifiers::DECLARATION, 0);
+    }
+
+    #[test]
+    fn test_semantic_tokens_let_variable_no_readonly() {
+        let source = "let mutable = 1;";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Variable "mutable" at col 4
+        let var_token = find_token_at(&decoded, 0, 4);
+        assert!(var_token.is_some(), "Should have token for 'mutable'");
+        let (token_type, modifiers) = var_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Variable as u32);
+        assert_eq!(modifiers & semantic_token_modifiers::READONLY, 0,
+            "let variable should NOT have READONLY modifier");
+    }
+
+    #[test]
+    fn test_semantic_tokens_namespace() {
+        let source = "namespace MyNS { export const x = 1; }";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Namespace "MyNS" at col 10
+        let ns_token = find_token_at(&decoded, 0, 10);
+        assert!(ns_token.is_some(), "Should have token for MyNS");
+        let (token_type, _) = ns_token.unwrap();
+        assert_eq!(token_type, SemanticTokenType::Namespace as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_variable_reference() {
+        let source = "const x = 1;\nconst y = x;";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // 'x' declaration at (0, 6)
+        let x_decl = find_token_at(&decoded, 0, 6);
+        assert!(x_decl.is_some(), "Should have declaration token for x");
+        let (tt, m) = x_decl.unwrap();
+        assert_eq!(tt, SemanticTokenType::Variable as u32);
+        assert_ne!(m & semantic_token_modifiers::DECLARATION, 0);
+
+        // 'y' declaration at (1, 6)
+        let y_decl = find_token_at(&decoded, 1, 6);
+        assert!(y_decl.is_some(), "Should have declaration token for y");
+
+        // 'x' reference at (1, 10) - used in initializer
+        let x_ref = find_token_at(&decoded, 1, 10);
+        assert!(x_ref.is_some(), "Should have reference token for x");
+        let (tt, m) = x_ref.unwrap();
+        assert_eq!(tt, SemanticTokenType::Variable as u32);
+        // Reference should NOT have DECLARATION modifier
+        assert_eq!(m & semantic_token_modifiers::DECLARATION, 0,
+            "Reference should not have DECLARATION modifier");
+    }
+
+    #[test]
+    fn test_semantic_tokens_function_call_reference() {
+        let source = "function add(a: number, b: number) { return a + b; }\nadd(1, 2);";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // 'add' declaration at (0, 9)
+        let add_decl = find_token_at(&decoded, 0, 9);
+        assert!(add_decl.is_some(), "Should have declaration token for add");
+        let (tt, m) = add_decl.unwrap();
+        assert_eq!(tt, SemanticTokenType::Function as u32);
+        assert_ne!(m & semantic_token_modifiers::DECLARATION, 0);
+
+        // 'add' reference at (1, 0) in call expression
+        let add_ref = find_token_at(&decoded, 1, 0);
+        assert!(add_ref.is_some(), "Should have reference token for add call");
+        let (tt, _m) = add_ref.unwrap();
+        assert_eq!(tt, SemanticTokenType::Function as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_class_method_property() {
+        let source = "class Foo {\n  bar: number;\n  baz() {}\n}";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Class name "Foo" at (0, 6)
+        let class_token = find_token_at(&decoded, 0, 6);
+        assert!(class_token.is_some(), "Should have token for Foo");
+        assert_eq!(class_token.unwrap().0, SemanticTokenType::Class as u32);
+
+        // Property "bar" at (1, 2)
+        let prop_token = find_token_at(&decoded, 1, 2);
+        assert!(prop_token.is_some(), "Should have token for property bar");
+        assert_eq!(prop_token.unwrap().0, SemanticTokenType::Property as u32);
+
+        // Method "baz" at (2, 2)
+        let method_token = find_token_at(&decoded, 2, 2);
+        assert!(method_token.is_some(), "Should have token for method baz");
+        assert_eq!(method_token.unwrap().0, SemanticTokenType::Method as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_multiple_declarations_same_line() {
+        let source = "let a = 1, b = 2;";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // 'a' at (0, 4)
+        let a_token = find_token_at(&decoded, 0, 4);
+        assert!(a_token.is_some(), "Should have token for a");
+        assert_eq!(a_token.unwrap().0, SemanticTokenType::Variable as u32);
+
+        // 'b' at (0, 11)
+        let b_token = find_token_at(&decoded, 0, 11);
+        assert!(b_token.is_some(), "Should have token for b");
+        assert_eq!(b_token.unwrap().0, SemanticTokenType::Variable as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_expression_statement_reference() {
+        let source = "const x = 1;\nx;";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // 'x' reference at (1, 0)
+        let x_ref = find_token_at(&decoded, 1, 0);
+        assert!(x_ref.is_some(), "Should have reference token for x in expression statement");
+        assert_eq!(x_ref.unwrap().0, SemanticTokenType::Variable as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_parameter_reference_in_body() {
+        let source = "function f(x: number) { return x; }";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // 'x' parameter declaration at (0, 11)
+        let x_decl = find_token_at(&decoded, 0, 11);
+        assert!(x_decl.is_some(), "Should have declaration token for parameter x");
+        let (tt, m) = x_decl.unwrap();
+        assert_eq!(tt, SemanticTokenType::Parameter as u32);
+        assert_ne!(m & semantic_token_modifiers::DECLARATION, 0);
+
+        // 'x' reference at (0, 31) in return statement
+        let x_ref = find_token_at(&decoded, 0, 31);
+        assert!(x_ref.is_some(), "Should have reference token for x in return");
+        assert_eq!(x_ref.unwrap().0, SemanticTokenType::Parameter as u32);
+    }
+
+    #[test]
+    fn test_semantic_tokens_static_modifier() {
+        let source = "class C {\n  static count = 0;\n}";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // "static" keyword as Modifier token
+        let static_token = find_token_at(&decoded, 1, 2);
+        assert!(static_token.is_some(), "Should have token for static keyword");
+        assert_eq!(static_token.unwrap().0, SemanticTokenType::Modifier as u32);
+
+        // "count" property with STATIC modifier
+        let count_token = find_token_at(&decoded, 1, 9);
+        assert!(count_token.is_some(), "Should have token for count");
+        let (tt, m) = count_token.unwrap();
+        assert_eq!(tt, SemanticTokenType::Property as u32);
+        assert_ne!(m & semantic_token_modifiers::STATIC, 0, "Should have STATIC modifier");
+    }
+
+    #[test]
+    fn test_semantic_tokens_enum_with_values() {
+        let source = "enum Direction {\n  Up = 1,\n  Down = 2,\n}";
+        let tokens = get_tokens(source);
+        let decoded = decode_tokens(&tokens);
+
+        // Enum "Direction" at (0, 5)
+        let dir_token = find_token_at(&decoded, 0, 5);
+        assert!(dir_token.is_some(), "Should have token for Direction");
+        assert_eq!(dir_token.unwrap().0, SemanticTokenType::Enum as u32);
+
+        // Enum member "Up" at (1, 2)
+        let up_token = find_token_at(&decoded, 1, 2);
+        assert!(up_token.is_some(), "Should have token for Up");
+        assert_eq!(up_token.unwrap().0, SemanticTokenType::EnumMember as u32);
+
+        // Enum member "Down" at (2, 2)
+        let down_token = find_token_at(&decoded, 2, 2);
+        assert!(down_token.is_some(), "Should have token for Down");
+        assert_eq!(down_token.unwrap().0, SemanticTokenType::EnumMember as u32);
     }
 }

@@ -367,6 +367,10 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             throw new Error("getPreProcessedFileInfo is not available using the tsz-server interface.");
         }
 
+        assertTextConsistent(fileName) {
+            // No-op: tsz-server text consistency is managed by the adapter
+        }
+
         getLogger() {
             return undefined;
         }

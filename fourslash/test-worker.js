@@ -119,7 +119,7 @@ async function main() {
     let TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
     patchTestState(FourSlash, TszAdapter);
 
-    const testType = 0; // FourSlashTestType.Native
+    const testType = 1; // FourSlashTestType.Server
 
     // Signal ready
     process.send({ type: "ready", workerId });
