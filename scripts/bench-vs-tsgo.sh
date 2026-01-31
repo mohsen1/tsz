@@ -515,22 +515,6 @@ main() {
         echo -e "${BOLD}Score:${NC} ${GREEN}tsz ${tsz_wins}${NC} vs ${YELLOW}tsgo ${tsgo_wins}${NC}"
         echo
     fi
-    
-    print_header "Analysis"
-    
-    echo -e "${BOLD}Key Observations:${NC}"
-    echo "  • tsz has ~95ms startup overhead (68ms system time for process init)"
-    echo "  • tsz wins on very large control-flow-heavy files (largeControlFlowGraph: 5x)"
-    echo "  • tsgo wins on most files due to lower startup cost (~80ms total)"
-    echo
-    echo -e "${BOLD}Optimization Opportunities:${NC}"
-    echo "  1. Reduce startup overhead (lazy initialization, smaller binary)"
-    echo "  2. Server mode avoids repeated startup (tsz-server for batch compilation)"
-    echo "  3. Focus optimization on type-heavy workloads where tsz algorithms shine"
-    echo
-    echo -e "${BOLD}Compilers:${NC}"
-    echo "  • ${GREEN}tsz${NC}:  Rust-based TypeScript compiler"
-    echo "  • ${YELLOW}tsgo${NC}: Go-based TypeScript 7 compiler"
 }
 
 main "$@"
