@@ -908,17 +908,13 @@ impl<'a> CheckerContext<'a> {
         *self.fuel_exhausted.borrow()
     }
 
-    /// Maximum recursion depth before bailing out to prevent stack overflow.
-    /// Each guarded cycle adds ~7-14 stack frames per depth increment.
-    /// With depth 50, that's 350-700 frames (~0.7MB), well within the 8MB stack.
-    pub const MAX_RECURSION_DEPTH: u32 = 50;
-
     /// Enter a recursive call. Returns true if recursion is allowed,
     /// false if the depth limit has been reached (caller should bail out).
+    /// Prevents stack overflow by bailing out when depth exceeds MAX_CHECKER_RECURSION_DEPTH.
     #[inline]
     pub fn enter_recursion(&self) -> bool {
         let depth = self.recursion_depth.get();
-        if depth >= Self::MAX_RECURSION_DEPTH {
+        if depth >= crate::limits::MAX_CHECKER_RECURSION_DEPTH {
             return false;
         }
         self.recursion_depth.set(depth + 1);
