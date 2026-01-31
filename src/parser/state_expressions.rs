@@ -1165,6 +1165,7 @@ impl ParserState {
             SyntaxKind::NewKeyword => self.parse_new_expression(),
             SyntaxKind::FunctionKeyword => self.parse_function_expression(),
             SyntaxKind::ClassKeyword => self.parse_class_expression(),
+            SyntaxKind::AtToken => self.parse_decorated_class_expression(),
             SyntaxKind::AsyncKeyword => {
                 // async function expression or async arrow function
                 if self.look_ahead_is_async_function() {
@@ -1224,6 +1225,22 @@ impl ParserState {
                         .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
                 }
             }
+        }
+    }
+
+    /// Parse a decorated class expression: `@dec class C { }`
+    /// Used when `@` is encountered in expression position.
+    fn parse_decorated_class_expression(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let decorators = self.parse_decorators();
+        if self.is_token(SyntaxKind::ClassKeyword) || self.is_token(SyntaxKind::AbstractKeyword) {
+            self.parse_class_expression_with_decorators(decorators, start_pos)
+        } else {
+            // Decorators not followed by class - emit error and create error token
+            self.error_expression_expected();
+            let end_pos = self.token_end();
+            self.arena
+                .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
         }
     }
 

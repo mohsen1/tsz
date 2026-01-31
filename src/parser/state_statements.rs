@@ -1130,8 +1130,14 @@ impl ParserState {
     ///
     /// Unlike class declarations, class expressions can be anonymous.
     pub(crate) fn parse_class_expression(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
+        self.parse_class_expression_with_decorators(None, self.token_pos())
+    }
 
+    pub(crate) fn parse_class_expression_with_decorators(
+        &mut self,
+        decorators: Option<NodeList>,
+        start_pos: u32,
+    ) -> NodeIndex {
         self.parse_expected(SyntaxKind::ClassKeyword);
 
         // Parse optional name (class expressions can be anonymous)
@@ -1163,7 +1169,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ClassData {
-                modifiers: None,
+                modifiers: decorators,
                 name,
                 type_parameters,
                 heritage_clauses: heritage,
