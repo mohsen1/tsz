@@ -86,23 +86,13 @@ function patchTestState(FourSlash, TszAdapter) {
         // which is not available through the server protocol.
     };
 
-    // getProgram: return undefined instead of calling Debug.fail when the
-    // language service cannot provide a Program object.
-    TestState.prototype.getProgram = function() {
-        if (!this._program) {
-            this._program = this.languageService.getProgram() || "missing";
-        }
-        if (this._program === "missing") {
-            return undefined;
-        }
-        return this._program;
-    };
-
-    // getChecker: depends on getProgram() which may return undefined.
+    // getChecker: depends on getProgram() which may return a stub.
     TestState.prototype.getChecker = function() {
         const program = this.getProgram();
         if (!program) return undefined;
-        return this._checker || (this._checker = program.getTypeChecker());
+        const checker = program.getTypeChecker();
+        if (!checker) return undefined;
+        return this._checker || (this._checker = checker);
     };
 
     // getSourceFile: depends on getProgram() which may return undefined.
@@ -119,6 +109,34 @@ function patchTestState(FourSlash, TszAdapter) {
         const sf = this.getSourceFile();
         if (!sf) return undefined;
         return originalGetNode.call(this);
+    };
+
+    // getProgram: return a minimal stub that provides getCompilerOptions().
+    // The fourslash harness calls getProgram().getCompilerOptions() without null
+    // checks when testType !== Server (our case, since we use testType=Native).
+    // The stub provides safe defaults so these calls don't throw.
+    const _origGetProgram = TestState.prototype.getProgram;
+    TestState.prototype.getProgram = function() {
+        if (!this._program) {
+            this._program = this.languageService.getProgram() || "missing";
+        }
+        if (this._program === "missing") {
+            // Return a minimal stub with getCompilerOptions so callers
+            // like verifyNoErrors don't crash.
+            if (!this._programStub) {
+                const compilationOptions = this.compilationOptions || {};
+                this._programStub = {
+                    getCompilerOptions: function() { return compilationOptions; },
+                    getTypeChecker: function() { return undefined; },
+                    getSourceFile: function() { return undefined; },
+                    getSourceFiles: function() { return []; },
+                    getCurrentDirectory: function() { return "/"; },
+                    getConfigFileParsingDiagnostics: function() { return []; },
+                };
+            }
+            return this._programStub;
+        }
+        return this._program;
     };
 }
 
