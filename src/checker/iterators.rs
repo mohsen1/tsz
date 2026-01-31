@@ -42,9 +42,11 @@
 //! ```
 
 use super::context::CheckerContext;
-use super::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message, Diagnostic};
-use crate::parser::syntax_kind_ext;
+use super::types::diagnostics::{
+    Diagnostic, diagnostic_codes, diagnostic_messages, format_message,
+};
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 
@@ -415,10 +417,10 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     fn create_iterator_result_type(&self, yield_type: TypeId, return_type: TypeId) -> TypeId {
         // Try to find the global IteratorResult type from lib contexts
         if let Some(iterator_result_base) = self.lookup_global_type("IteratorResult") {
-            return self.ctx.types.application(
-                iterator_result_base,
-                vec![yield_type, return_type],
-            );
+            return self
+                .ctx
+                .types
+                .application(iterator_result_base, vec![yield_type, return_type]);
         }
 
         // Fallback: create structural IteratorResult<T, TReturn>
@@ -477,10 +479,10 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     pub fn create_iterable_iterator_type(&self, element_type: TypeId) -> TypeId {
         // Try to find the global IterableIterator interface from lib contexts
         if let Some(iterable_iterator_base) = self.lookup_global_type("IterableIterator") {
-            return self.ctx.types.application(
-                iterable_iterator_base,
-                vec![element_type],
-            );
+            return self
+                .ctx
+                .types
+                .application(iterable_iterator_base, vec![element_type]);
         }
 
         // Fallback: use the iterator type (structural equivalent)
@@ -516,10 +518,10 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
         // Try to find the global AsyncIterableIterator interface from lib contexts
         if let Some(async_iterable_iterator_base) = self.lookup_global_type("AsyncIterableIterator")
         {
-            return self.ctx.types.application(
-                async_iterable_iterator_base,
-                vec![element_type],
-            );
+            return self
+                .ctx
+                .types
+                .application(async_iterable_iterator_base, vec![element_type]);
         }
 
         // Fallback: use async iterator type
@@ -569,7 +571,9 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
 
         // Fallback: use the synthetic Promise base type
         // This allows the type to be recognized as promise-like even without lib types
-        self.ctx.types.application(TypeId::PROMISE_BASE, vec![inner_type])
+        self.ctx
+            .types
+            .application(TypeId::PROMISE_BASE, vec![inner_type])
     }
 
     // =========================================================================
@@ -744,8 +748,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
 
         if let Some(array_lit) = self.ctx.arena.get_array_literal(node) {
             if array_lit.elements.nodes.is_empty() {
-                // Empty array literal has never[] element type by default
-                return self.ctx.types.array(TypeId::NEVER);
+                // Empty array literal: use any[] since we don't support evolving arrays yet
+                return self.ctx.types.array(TypeId::ANY);
             }
 
             // Collect element types
@@ -862,10 +866,17 @@ impl std::fmt::Display for IteratorError {
                 write!(f, "Type is not an async iterable")
             }
             IteratorError::MissingIteratorMethod => {
-                write!(f, "Type must have a '[Symbol.iterator]()' method that returns an iterator")
+                write!(
+                    f,
+                    "Type must have a '[Symbol.iterator]()' method that returns an iterator"
+                )
             }
             IteratorError::IteratorResultMismatch { expected, actual } => {
-                write!(f, "Iterator result type '{:?}' is not assignable to '{:?}'", actual, expected)
+                write!(
+                    f,
+                    "Iterator result type '{:?}' is not assignable to '{:?}'",
+                    actual, expected
+                )
             }
         }
     }
@@ -874,9 +885,9 @@ impl std::fmt::Display for IteratorError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solver::TypeInterner;
     use crate::binder::BinderState;
     use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
 
     fn create_context(source: &str) -> (ParserState, BinderState, TypeInterner) {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -939,8 +950,14 @@ mod tests {
 
         // Create a tuple type [number, string]
         let tuple_type = types.tuple(vec![
-            crate::solver::TupleElement { type_id: TypeId::NUMBER, optional: false },
-            crate::solver::TupleElement { type_id: TypeId::STRING, optional: false },
+            crate::solver::TupleElement {
+                type_id: TypeId::NUMBER,
+                optional: false,
+            },
+            crate::solver::TupleElement {
+                type_id: TypeId::STRING,
+                optional: false,
+            },
         ]);
 
         let checker = IteratorChecker { ctx: &mut { ctx } };
@@ -977,9 +994,12 @@ mod tests {
                 crate::solver::TypeKey::Object(shape_id) => {
                     let shape = types.object_shape(shape_id);
                     // Should have a `next` property
-                    assert!(shape.properties.iter().any(|p| {
-                        types.resolve_atom(p.name) == "next" && p.is_method
-                    }));
+                    assert!(
+                        shape
+                            .properties
+                            .iter()
+                            .any(|p| { types.resolve_atom(p.name) == "next" && p.is_method })
+                    );
                 }
                 _ => {
                     // Could be an Application type if lib types were available
@@ -1086,9 +1106,10 @@ mod tests {
             let shape = types.object_shape(shape_id);
 
             // Find the next property
-            let next_prop = shape.properties.iter().find(|p| {
-                types.resolve_atom(p.name) == "next"
-            });
+            let next_prop = shape
+                .properties
+                .iter()
+                .find(|p| types.resolve_atom(p.name) == "next");
 
             assert!(next_prop.is_some(), "Iterator should have a 'next' method");
 
@@ -1096,7 +1117,8 @@ mod tests {
             assert!(next_prop.is_method, "next should be a method");
 
             // Verify next is a function
-            if let Some(crate::solver::TypeKey::Function(func_id)) = types.lookup(next_prop.type_id) {
+            if let Some(crate::solver::TypeKey::Function(func_id)) = types.lookup(next_prop.type_id)
+            {
                 let func_shape = types.function_shape(func_id);
                 // Return type should be IteratorResult<number, any>
                 assert_ne!(func_shape.return_type, TypeId::ANY);
