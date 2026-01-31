@@ -15,6 +15,11 @@ use crate::solver::TypeId;
 impl<'a> CheckerState<'a> {
     /// Get type from a type reference node (e.g., "number", "string", "MyType").
     pub(crate) fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
+        // Fuel check: prevent infinite loops in circular type references
+        if !self.ctx.consume_fuel() {
+            return TypeId::ERROR;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -514,6 +519,12 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
         use crate::solver::TypeLowering;
 
+        // Recursion depth check: prevents stack overflow from circular
+        // interface/class type references (e.g. I<T extends I<T>>)
+        if !self.ctx.enter_recursion() {
+            return TypeId::ERROR;
+        }
+
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             // For merged class+namespace symbols, return the constructor type (with namespace exports)
             // instead of the instance type. This allows accessing namespace members via Foo.Bar.
@@ -521,6 +532,7 @@ impl<'a> CheckerState<'a> {
                 && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
                 && let Some(instance_type) = self.class_instance_type_from_symbol(sym_id)
             {
+                self.ctx.leave_recursion();
                 return instance_type;
             }
             if symbol.flags & symbol_flags::INTERFACE != 0 {
@@ -548,15 +560,21 @@ impl<'a> CheckerState<'a> {
                     .with_type_param_bindings(type_param_bindings);
                     let interface_type =
                         lowering.lower_interface_declarations(&symbol.declarations);
-                    return self
-                        .merge_interface_heritage_types(&symbol.declarations, interface_type);
+                    let result =
+                        self.merge_interface_heritage_types(&symbol.declarations, interface_type);
+                    self.ctx.leave_recursion();
+                    return result;
                 }
                 if !symbol.value_declaration.is_none() {
-                    return self.get_type_of_interface(symbol.value_declaration);
+                    let result = self.get_type_of_interface(symbol.value_declaration);
+                    self.ctx.leave_recursion();
+                    return result;
                 }
             }
         }
-        self.get_type_of_symbol(sym_id)
+        let result = self.get_type_of_symbol(sym_id);
+        self.ctx.leave_recursion();
+        result
     }
 
     /// Like `type_reference_symbol_type` but also returns the type parameters used.

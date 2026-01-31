@@ -544,6 +544,12 @@ impl<'a> CheckerState<'a> {
             return (Vec::new(), Vec::new());
         };
 
+        // Recursion depth check: prevent stack overflow from circular type parameter
+        // references (e.g. interface I<T extends I<T>> {} or circular generic defaults)
+        if !self.ctx.enter_recursion() {
+            return (Vec::new(), Vec::new());
+        }
+
         let mut params = Vec::new();
         let mut updates = Vec::new();
         let mut param_indices = Vec::new();
@@ -668,6 +674,7 @@ impl<'a> CheckerState<'a> {
                 .insert(name.clone(), constrained_type_id);
         }
 
+        self.ctx.leave_recursion();
         (params, updates)
     }
 

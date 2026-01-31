@@ -2208,7 +2208,15 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::CloseBraceToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
-                    statements.push(self.parse_statement());
+                    let pos_before = self.token_pos();
+                    let stmt = self.parse_statement();
+                    if !stmt.is_none() {
+                        statements.push(stmt);
+                    }
+                    // Safety: if position didn't advance, force-skip to prevent infinite loop
+                    if self.token_pos() == pos_before {
+                        self.next_token();
+                    }
                 }
 
                 let clause_end = self.token_end();
@@ -2232,7 +2240,15 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::CloseBraceToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
-                    statements.push(self.parse_statement());
+                    let pos_before = self.token_pos();
+                    let stmt = self.parse_statement();
+                    if !stmt.is_none() {
+                        statements.push(stmt);
+                    }
+                    // Safety: if position didn't advance, force-skip to prevent infinite loop
+                    if self.token_pos() == pos_before {
+                        self.next_token();
+                    }
                 }
 
                 let clause_end = self.token_end();
