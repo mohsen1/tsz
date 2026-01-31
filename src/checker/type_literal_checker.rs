@@ -74,13 +74,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_type_from_type_reference_in_type_literal(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::solver::{SymbolRef, TypeKey};
+        use crate::solver::TypeKey;
 
-        // TODO(Phase 4.3): Migration to TypeKey::Lazy(DefId) is ready but requires:
-        // 1. TypeResolver support for Lazy types
-        // 2. DefinitionStore body population during type resolution
-        // For now, continue using TypeKey::Ref(SymbolRef).
-        // Infrastructure: see ctx.create_lazy_type_ref() and ctx.definition_store
+        // Phase 4.3: Migration to TypeKey::Lazy(DefId) is complete for this file.
+        // Type references now use create_lazy_type_ref() instead of TypeKey::Ref(SymbolRef).
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -113,7 +110,8 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             };
-            let base_type = self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
+            // Phase 4.3: Use Lazy(DefId) instead of Ref(SymbolRef)
+            let base_type = self.ctx.create_lazy_type_ref(sym_id);
             if has_type_args {
                 let type_args = type_ref
                     .type_arguments
@@ -204,7 +202,8 @@ impl<'a> CheckerState<'a> {
                 let base_type = if let Some(type_param) = type_param {
                     type_param
                 } else if let Some(sym_id) = sym_id {
-                    self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)))
+                    // Phase 4.3: Use Lazy(DefId) instead of Ref(SymbolRef)
+                    self.ctx.create_lazy_type_ref(sym_id)
                 } else {
                     TypeId::ERROR
                 };
@@ -226,7 +225,8 @@ impl<'a> CheckerState<'a> {
                 if let TypeSymbolResolution::Type(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
                 {
-                    return self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
+                    // Phase 4.3: Use Lazy(DefId) instead of Ref(SymbolRef)
+                    return self.ctx.create_lazy_type_ref(sym_id);
                 }
                 if let Some(type_param) = self.lookup_type_parameter(name) {
                     return type_param;
@@ -289,7 +289,8 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
-                return self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
+                // Phase 4.3: Use Lazy(DefId) instead of Ref(SymbolRef)
+                return self.ctx.create_lazy_type_ref(sym_id);
             }
 
             if name == "await" {
