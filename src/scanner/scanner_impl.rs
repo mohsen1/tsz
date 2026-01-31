@@ -847,8 +847,46 @@ impl ScannerState {
                     return self.token;
                 }
 
+                // Backslash - Unicode escape sequence starting an identifier (\uXXXX)
+                CharacterCodes::BACKSLASH => {
+                    // In TypeScript, \uXXXX can start an identifier
+                    // e.g., \u0041 is 'A', so `let \u0041 = 1;` is valid
+                    let escaped_ch = self.peek_unicode_escape();
+                    if let Some(code_point) = escaped_ch {
+                        if is_identifier_start(code_point) {
+                            self.scan_identifier_with_escapes();
+                            return self.token;
+                        }
+                    }
+                    // Not a valid unicode escape - treat as unknown
+                    self.pos += 1;
+                    self.token = SyntaxKind::Unknown;
+                    return self.token;
+                }
+
                 // Default: identifier or unknown
                 _ => {
+                    // Handle additional Unicode whitespace characters not in the fast path above
+                    if ch > 127 && is_white_space_single_line(ch) {
+                        if self.skip_trivia {
+                            self.pos += self.char_len_at(self.pos);
+                            while self.pos < self.end
+                                && is_white_space_single_line(self.char_code_unchecked(self.pos))
+                            {
+                                self.pos += self.char_len_at(self.pos);
+                            }
+                            continue;
+                        } else {
+                            self.pos += self.char_len_at(self.pos);
+                            while self.pos < self.end
+                                && is_white_space_single_line(self.char_code_unchecked(self.pos))
+                            {
+                                self.pos += self.char_len_at(self.pos);
+                            }
+                            self.token = SyntaxKind::WhitespaceTrivia;
+                            return self.token;
+                        }
+                    }
                     if is_identifier_start(ch) {
                         self.scan_identifier();
                         return self.token;
@@ -1186,6 +1224,121 @@ impl ScannerState {
         // ZERO-ALLOCATION: Don't store token_value for identifiers.
         // get_token_value_ref() will resolve from token_atom or fall back to source slice.
         self.token_value.clear();
+    }
+
+    /// Peek at a unicode escape sequence without advancing the position.
+    /// Returns the code point if the escape is valid (\uXXXX or \u{XXXXX}), None otherwise.
+    fn peek_unicode_escape(&self) -> Option<u32> {
+        // Must start with \u
+        if self.pos + 1 >= self.end {
+            return None;
+        }
+        let bytes = self.source.as_bytes();
+        if bytes.get(self.pos + 1).copied() != Some(b'u') {
+            return None;
+        }
+        // \u{XXXXX} form
+        if bytes.get(self.pos + 2).copied() == Some(b'{') {
+            let start = self.pos + 3;
+            let mut end = start;
+            while end < self.end && bytes.get(end).map_or(false, |b| b.is_ascii_hexdigit()) {
+                end += 1;
+            }
+            if end == start || bytes.get(end).copied() != Some(b'}') {
+                return None;
+            }
+            let hex = &self.source[start..end];
+            u32::from_str_radix(hex, 16).ok().filter(|&cp| cp <= 0x10FFFF)
+        } else {
+            // \uXXXX form (exactly 4 hex digits)
+            if self.pos + 5 >= self.end {
+                return None;
+            }
+            let hex = &self.source[self.pos + 2..self.pos + 6];
+            if hex.len() == 4 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                u32::from_str_radix(hex, 16).ok()
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Scan an identifier that starts with a unicode escape sequence (\uXXXX).
+    fn scan_identifier_with_escapes(&mut self) {
+        let mut result = String::new();
+
+        // Process initial unicode escape
+        if let Some(ch) = self.scan_unicode_escape_value() {
+            if let Some(c) = char::from_u32(ch) {
+                result.push(c);
+            }
+        }
+
+        // Continue scanning identifier parts
+        while self.pos < self.end {
+            let ch = self.char_code_unchecked(self.pos);
+            if ch == CharacterCodes::BACKSLASH {
+                // Another unicode escape in identifier
+                if let Some(code_point) = self.peek_unicode_escape() {
+                    if is_identifier_part(code_point) {
+                        if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
+                            result.push(c);
+                        }
+                        continue;
+                    }
+                }
+                break;
+            }
+            if !is_identifier_part(ch) {
+                break;
+            }
+            if let Some(c) = char::from_u32(ch) {
+                result.push(c);
+            }
+            self.pos += self.char_len_at(self.pos);
+        }
+
+        self.token = crate::scanner::text_to_keyword(&result).unwrap_or(SyntaxKind::Identifier);
+        self.token_atom = self.interner.intern(&result);
+        self.token_value.clear();
+        self.token_flags |= TokenFlags::UnicodeEscape as u32;
+    }
+
+    /// Consume a unicode escape sequence and return its code point.
+    /// Advances self.pos past the escape.
+    fn scan_unicode_escape_value(&mut self) -> Option<u32> {
+        // Skip the backslash
+        self.pos += 1;
+        if self.pos >= self.end || self.source.as_bytes()[self.pos] != b'u' {
+            return None;
+        }
+        self.pos += 1; // Skip 'u'
+
+        if self.pos < self.end && self.source.as_bytes()[self.pos] == b'{' {
+            // \u{XXXXX} form
+            self.pos += 1;
+            let start = self.pos;
+            while self.pos < self.end && self.source.as_bytes().get(self.pos).map_or(false, |b| b.is_ascii_hexdigit()) {
+                self.pos += 1;
+            }
+            let result = u32::from_str_radix(&self.source[start..self.pos], 16).ok();
+            if self.pos < self.end && self.source.as_bytes()[self.pos] == b'}' {
+                self.pos += 1;
+            }
+            result
+        } else {
+            // \uXXXX form (exactly 4 hex digits)
+            if self.pos + 4 > self.end {
+                return None;
+            }
+            let hex = &self.source[self.pos..self.pos + 4];
+            if hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                self.pos += 4;
+                u32::from_str_radix(hex, 16).ok()
+            } else {
+                None
+            }
+        }
     }
 
     // =========================================================================
