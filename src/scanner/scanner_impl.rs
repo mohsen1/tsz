@@ -1128,12 +1128,115 @@ impl ScannerState {
                     let escaped_char_len = self.char_len_at(self.pos);
                     self.pos += escaped_char_len;
                     match escaped {
+                        CharacterCodes::_0 => {
+                            // \0 in template literals - only valid if not followed by digit
+                            if self.pos < self.end
+                                && is_digit(self.char_code_unchecked(self.pos))
+                            {
+                                self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+                                result.push('\\');
+                                result.push('0');
+                            } else {
+                                result.push('\0');
+                            }
+                        }
+                        CharacterCodes::_1
+                        | CharacterCodes::_2
+                        | CharacterCodes::_3
+                        | CharacterCodes::_4
+                        | CharacterCodes::_5
+                        | CharacterCodes::_6
+                        | CharacterCodes::_7
+                        | CharacterCodes::_8
+                        | CharacterCodes::_9 => {
+                            // Octal escapes invalid in template literals
+                            self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+                            if let Some(c) = char::from_u32(escaped) {
+                                result.push('\\');
+                                result.push(c);
+                            }
+                        }
                         CharacterCodes::LOWER_N => result.push('\n'),
                         CharacterCodes::LOWER_R => result.push('\r'),
                         CharacterCodes::LOWER_T => result.push('\t'),
+                        CharacterCodes::LOWER_V => result.push('\x0B'),
+                        CharacterCodes::LOWER_B => result.push('\x08'),
+                        CharacterCodes::LOWER_F => result.push('\x0C'),
                         CharacterCodes::BACKTICK => result.push('`'),
                         CharacterCodes::DOLLAR => result.push('$'),
                         CharacterCodes::BACKSLASH => result.push('\\'),
+                        CharacterCodes::LOWER_X => {
+                            // Hex escape \xHH
+                            if self.pos + 2 <= self.end {
+                                let hex = self.substring(self.pos, self.pos + 2);
+                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                    self.pos += 2;
+                                    if let Some(c) = char::from_u32(code) {
+                                        result.push(c);
+                                    }
+                                } else {
+                                    self.token_flags |=
+                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    result.push('\\');
+                                    result.push('x');
+                                }
+                            } else {
+                                self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+                                result.push('\\');
+                                result.push('x');
+                            }
+                        }
+                        CharacterCodes::LOWER_U => {
+                            // Unicode escape \uHHHH or \u{H+}
+                            if self.pos < self.end
+                                && self.char_code_unchecked(self.pos)
+                                    == CharacterCodes::OPEN_BRACE
+                            {
+                                // \u{...}
+                                self.pos += 1;
+                                let hex_start = self.pos;
+                                while self.pos < self.end
+                                    && is_hex_digit(self.char_code_unchecked(self.pos))
+                                {
+                                    self.pos += 1;
+                                }
+                                if self.pos < self.end
+                                    && self.char_code_unchecked(self.pos)
+                                        == CharacterCodes::CLOSE_BRACE
+                                {
+                                    let hex = self.substring(hex_start, self.pos);
+                                    self.pos += 1;
+                                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                        if let Some(c) = char::from_u32(code) {
+                                            result.push(c);
+                                        }
+                                    }
+                                } else {
+                                    self.token_flags |=
+                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    result.push('\\');
+                                    result.push('u');
+                                }
+                            } else if self.pos + 4 <= self.end {
+                                // \uHHHH
+                                let hex = self.substring(self.pos, self.pos + 4);
+                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                    self.pos += 4;
+                                    if let Some(c) = char::from_u32(code) {
+                                        result.push(c);
+                                    }
+                                } else {
+                                    self.token_flags |=
+                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    result.push('\\');
+                                    result.push('u');
+                                }
+                            } else {
+                                self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+                                result.push('\\');
+                                result.push('u');
+                            }
+                        }
                         // Line continuation: backslash followed by line terminator
                         CharacterCodes::LINE_FEED
                         | CharacterCodes::CARRIAGE_RETURN
@@ -1149,7 +1252,7 @@ impl ScannerState {
                             }
                         }
                         _ => {
-                            result.push('\\');
+                            // Unknown escape in templates - just include the character
                             if let Some(c) = char::from_u32(escaped) {
                                 result.push(c);
                             }
