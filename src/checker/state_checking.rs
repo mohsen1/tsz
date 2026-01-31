@@ -1392,6 +1392,28 @@ impl<'a> CheckerState<'a> {
                     let is_valid_constructor = if let Some(expr_node) = self.ctx.arena.get(expr_idx)
                         && expr_node.kind == SyntaxKind::Identifier as u16
                     {
+                        // Check if this is a primitive type keyword - these should not
+                        // trigger type resolution errors in extends clauses.
+                        // TypeScript silently fails for `class C extends number {}`.
+                        if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+                            let name = ident.escaped_text.as_str();
+                            if matches!(
+                                name,
+                                "number"
+                                    | "string"
+                                    | "boolean"
+                                    | "symbol"
+                                    | "bigint"
+                                    | "any"
+                                    | "unknown"
+                                    | "never"
+                                    | "object"
+                            ) {
+                                // Skip type resolution for primitive type keywords
+                                // They can't be extended and shouldn't emit TS2552 suggestions
+                                continue;
+                            }
+                        }
                         // Try to get the type of the expression to check if it's a constructor
                         let expr_type = self.get_type_of_node(expr_idx);
                         self.is_constructor_type(expr_type)
@@ -1467,9 +1489,25 @@ impl<'a> CheckerState<'a> {
                         if let Some(name) = self.heritage_name_text(expr_idx) {
                             // Skip certain reserved names that are handled elsewhere or shouldn't trigger errors
                             // Note: "null" is not included because `extends null` is valid and handled above
+                            // Primitive type keywords (number, string, boolean, etc.) in extends clauses
+                            // are parsed as identifiers but shouldn't emit TS2318/TS2304 errors.
+                            // TypeScript silently fails to resolve them without emitting these errors.
                             if matches!(
                                 name.as_str(),
-                                "undefined" | "true" | "false" | "void" | "0"
+                                "undefined"
+                                    | "true"
+                                    | "false"
+                                    | "void"
+                                    | "0"
+                                    | "number"
+                                    | "string"
+                                    | "boolean"
+                                    | "symbol"
+                                    | "bigint"
+                                    | "any"
+                                    | "unknown"
+                                    | "never"
+                                    | "object"
                             ) {
                                 continue;
                             }
@@ -1651,6 +1689,9 @@ impl<'a> CheckerState<'a> {
         for &member_idx in &class.members.nodes {
             self.check_class_member(member_idx);
         }
+
+        // Check for duplicate member names (TS2300, TS2393)
+        self.check_duplicate_class_members(&class.members.nodes);
 
         // Check for missing method/constructor implementations (2389, 2390, 2391)
         // Skip for declared classes (ambient declarations don't need implementations)

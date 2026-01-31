@@ -390,6 +390,7 @@ pub mod diagnostic_codes {
     pub const CONSTRUCTOR_IMPLEMENTATION_MISSING: u32 = 2390; // Constructor implementation is missing
     pub const FUNCTION_IMPLEMENTATION_MISSING: u32 = 2391; // Function implementation is missing
     pub const MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS: u32 = 2392; // Multiple constructor implementations are not allowed
+    pub const DUPLICATE_FUNCTION_IMPLEMENTATION: u32 = 2393; // Duplicate function implementation
     pub const NOT_ALL_CODE_PATHS_RETURN_VALUE: u32 = 2366;
     pub const LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2362; // The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
     pub const RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2363; // The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.

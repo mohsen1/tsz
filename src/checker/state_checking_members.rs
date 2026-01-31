@@ -55,10 +55,292 @@ impl<'a> CheckerState<'a> {
             self.check_type_member_for_parameter_properties(member_idx);
         }
 
+        // Check for duplicate member names (TS2300)
+        self.check_duplicate_interface_members(&iface.members.nodes);
+
         // Check that interface correctly extends base interfaces (error 2430)
         self.check_interface_extension_compatibility(stmt_idx, iface);
 
         self.pop_type_parameters(type_param_updates);
+    }
+
+    /// Check for duplicate property names in interface members (TS2300).
+    /// TypeScript reports "Duplicate identifier 'X'." for each duplicate occurrence.
+    /// NOTE: Method signatures (overloads) are NOT considered duplicates - interfaces allow
+    /// multiple method signatures with the same name for function overloading.
+    pub(crate) fn check_duplicate_interface_members(&mut self, members: &[NodeIndex]) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+        use std::collections::HashMap;
+
+        // Track property names and their indices (methods are allowed to have overloads)
+        let mut seen_properties: HashMap<String, Vec<NodeIndex>> = HashMap::new();
+
+        for &member_idx in members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            // Only check property signatures for duplicates
+            // Method signatures can have multiple overloads (same name, different types)
+            let name = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_SIGNATURE => self
+                    .ctx
+                    .arena
+                    .get_signature(member_node)
+                    .and_then(|sig| self.get_member_name_text(sig.name)),
+                // Method signatures are allowed to have overloads - don't flag as duplicates
+                k if k == syntax_kind_ext::METHOD_SIGNATURE => None,
+                // Call, construct, and index signatures don't have names that can conflict
+                _ => None,
+            };
+
+            if let Some(name) = name {
+                seen_properties.entry(name).or_default().push(member_idx);
+            }
+        }
+
+        // Report errors for duplicates
+        for (name, indices) in seen_properties {
+            if indices.len() > 1 {
+                // Report TS2300 for each occurrence (including the first one, matching tsc behavior)
+                for &idx in &indices {
+                    let message =
+                        format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+                    // Get the name node for precise error location
+                    let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Get the name text from a member name node (identifier, string literal, or computed).
+    fn get_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        use crate::scanner::SyntaxKind;
+
+        if name_idx.is_none() {
+            return None;
+        }
+
+        let name_node = self.ctx.arena.get(name_idx)?;
+
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|id| id.escaped_text.to_string()),
+            k if k == SyntaxKind::StringLiteral as u16 => self
+                .ctx
+                .arena
+                .get_literal(name_node)
+                .map(|lit| lit.text.to_string()),
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .ctx
+                .arena
+                .get_literal(name_node)
+                .map(|lit| lit.text.to_string()),
+            // For computed property names, we can't easily check for duplicates
+            // since the value is computed at runtime
+            _ => None,
+        }
+    }
+
+    /// Get the name node from an interface member for error reporting.
+    fn get_interface_member_name_node(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_SIGNATURE => self
+                .ctx
+                .arena
+                .get_signature(member_node)
+                .map(|sig| sig.name)
+                .filter(|idx: &NodeIndex| !idx.is_none()),
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => self
+                .ctx
+                .arena
+                .get_signature(member_node)
+                .map(|sig| sig.name)
+                .filter(|idx: &NodeIndex| !idx.is_none()),
+            _ => None,
+        }
+    }
+
+    /// Check for duplicate property/method names in class members (TS2300, TS2393).
+    /// TypeScript reports:
+    /// - TS2300 "Duplicate identifier 'X'." for duplicate properties
+    /// - TS2393 "Duplicate function implementation." for multiple method implementations
+    ///
+    /// NOTE: Method overloads (signatures + implementation) are allowed:
+    ///   foo(x: number): void;    // overload signature
+    ///   foo(x: string): void;    // overload signature  
+    ///   foo(x: any) { }          // implementation - this is valid!
+    pub(crate) fn check_duplicate_class_members(&mut self, members: &[NodeIndex]) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+        use std::collections::HashMap;
+
+        // Track member names with their info
+        struct MemberInfo {
+            indices: Vec<NodeIndex>,
+            is_property: Vec<bool>, // true for PROPERTY_DECLARATION, false for METHOD_DECLARATION
+            method_has_body: Vec<bool>, // only valid when is_property is false
+            is_static: Vec<bool>,
+        }
+
+        let mut seen_names: HashMap<String, MemberInfo> = HashMap::new();
+
+        for &member_idx in members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            // Get the member name and type info
+            let (name, is_property, method_has_body, is_static) = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_property_decl(member_node)
+                    .and_then(|prop| {
+                        let is_static = self.has_static_modifier(&prop.modifiers);
+                        self.get_member_name_text(prop.name)
+                            .map(|n| (n, true, false, is_static))
+                    })
+                    .unwrap_or_default(),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(member_node)
+                    .and_then(|method| {
+                        let has_body = !method.body.is_none();
+                        let is_static = self.has_static_modifier(&method.modifiers);
+                        self.get_member_name_text(method.name)
+                            .map(|n| (n, false, has_body, is_static))
+                    })
+                    .unwrap_or_default(),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    // Accessors are handled separately (getter/setter pairs are allowed)
+                    continue;
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    // Constructors have separate duplicate checking (TS2392)
+                    continue;
+                }
+                _ => continue,
+            };
+
+            if name.is_empty() {
+                continue;
+            }
+
+            // Create a key that considers static vs instance members separately
+            let key = if is_static {
+                format!("static:{}", name)
+            } else {
+                name.clone()
+            };
+
+            let info = seen_names.entry(key).or_insert(MemberInfo {
+                indices: Vec::new(),
+                is_property: Vec::new(),
+                method_has_body: Vec::new(),
+                is_static: Vec::new(),
+            });
+            info.indices.push(member_idx);
+            info.is_property.push(is_property);
+            info.method_has_body.push(method_has_body);
+            info.is_static.push(is_static);
+        }
+
+        // Report errors for duplicates
+        for (_key, info) in seen_names {
+            if info.indices.len() <= 1 {
+                continue;
+            }
+
+            // Count types of members
+            let property_count = info.is_property.iter().filter(|&&p| p).count();
+            let method_impl_count = info
+                .is_property
+                .iter()
+                .zip(info.method_has_body.iter())
+                .filter(|(is_prop, has_body)| !**is_prop && **has_body)
+                .count();
+
+            // Case 1: Multiple properties with same name -> TS2300 for all
+            // Case 2: Property mixed with methods -> TS2300 for all
+            // Case 3: Multiple method implementations -> TS2393 for implementations only
+            // Case 4: Method overloads (signatures + 1 implementation) -> Valid, no error
+
+            if property_count > 0 {
+                // If any properties are involved, it's TS2300 for all
+                for &idx in &info.indices {
+                    let member_node = self.ctx.arena.get(idx);
+                    let (name, error_node) = match member_node.map(|n| n.kind) {
+                        Some(k) if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                            let prop = self.ctx.arena.get_property_decl(member_node.unwrap());
+                            let name = prop.and_then(|p| self.get_member_name_text(p.name));
+                            let node = prop
+                                .map(|p| p.name)
+                                .filter(|idx| !idx.is_none())
+                                .unwrap_or(idx);
+                            (name, node)
+                        }
+                        Some(k) if k == syntax_kind_ext::METHOD_DECLARATION => {
+                            let method = self.ctx.arena.get_method_decl(member_node.unwrap());
+                            let name = method.and_then(|m| self.get_member_name_text(m.name));
+                            let node = method
+                                .map(|m| m.name)
+                                .filter(|idx| !idx.is_none())
+                                .unwrap_or(idx);
+                            (name, node)
+                        }
+                        _ => continue,
+                    };
+
+                    if let Some(name) = name {
+                        let message =
+                            format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        );
+                    }
+                }
+            } else if method_impl_count > 1 {
+                // Multiple method implementations -> TS2393 for implementations only
+                for ((&idx, &is_prop), &has_body) in info
+                    .indices
+                    .iter()
+                    .zip(info.is_property.iter())
+                    .zip(info.method_has_body.iter())
+                {
+                    if !is_prop && has_body {
+                        let member_node = self.ctx.arena.get(idx);
+                        let error_node = member_node
+                            .and_then(|n| self.ctx.arena.get_method_decl(n))
+                            .map(|m| m.name)
+                            .filter(|idx| !idx.is_none())
+                            .unwrap_or(idx);
+                        self.error_at_node(
+                            error_node,
+                            "Duplicate function implementation.",
+                            diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                        );
+                    }
+                }
+            }
+            // else: Only method signatures + at most 1 implementation = valid overloads
+        }
     }
 
     /// Check for invalid 'async' modifier on class, enum, interface, or module declarations.
