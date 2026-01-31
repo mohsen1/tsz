@@ -960,11 +960,23 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             };
 
             if let Some(param) = self.ctx.arena.get_parameter(node) {
-                // If parameter has accessibility modifiers (public/private/protected/readonly)
-                // and we're not in a constructor, report error
-                if param.modifiers.is_some()
-                    && let Some((pos, end)) = self.ctx.get_node_span(param_idx)
-                {
+                // If parameter has parameter property modifiers (public/private/protected/readonly)
+                // and we're not in a constructor, report error.
+                // Decorators on parameters are NOT parameter properties.
+                let has_prop_modifier = if let Some(ref mods) = param.modifiers {
+                    mods.nodes.iter().any(|&mod_idx| {
+                        self.ctx.arena.get(mod_idx).is_some_and(|m| {
+                            use crate::scanner::SyntaxKind;
+                            m.kind == SyntaxKind::PublicKeyword as u16
+                                || m.kind == SyntaxKind::PrivateKeyword as u16
+                                || m.kind == SyntaxKind::ProtectedKeyword as u16
+                                || m.kind == SyntaxKind::ReadonlyKeyword as u16
+                        })
+                    })
+                } else {
+                    false
+                };
+                if has_prop_modifier && let Some((pos, end)) = self.ctx.get_node_span(param_idx) {
                     self.ctx.error(
                         pos,
                         end - pos,
