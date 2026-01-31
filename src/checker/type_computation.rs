@@ -765,6 +765,39 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Logical AND: `a && b`
+            // In TypeScript, the result type is the falsy parts of `a` unioned with `b`.
+            // When `a` is `boolean` (common case: comparisons, type guards), the falsy
+            // part is `false` which TypeScript drops, yielding just `typeof b`.
+            if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
+                if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+                // When the left type is boolean (comparisons, type guards), the result
+                // is just the right type.  Otherwise fall back to union.
+                let result = if left_type == TypeId::BOOLEAN {
+                    right_type
+                } else {
+                    self.ctx.types.union2(left_type, right_type)
+                };
+                type_stack.push(result);
+                continue;
+            }
+
+            // Logical OR: `a || b`
+            // In TypeScript, the result type is the truthy parts of `a` unioned with `b`.
+            // When `a` is `boolean`, the truthy part is `true` which is `boolean`, so
+            // we keep the full union.
+            if op_kind == SyntaxKind::BarBarToken as u16 {
+                if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+                type_stack.push(self.ctx.types.union2(left_type, right_type));
+                continue;
+            }
+
             // Nullish coalescing: `a ?? b`
             if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
                 // Propagate error types (don't collapse to unknown)
@@ -800,8 +833,7 @@ impl<'a> CheckerState<'a> {
                 k if k == SyntaxKind::ExclamationEqualsToken as u16 => "!=",
                 k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => "===",
                 k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => "!==",
-                k if k == SyntaxKind::AmpersandAmpersandToken as u16 => "&&",
-                k if k == SyntaxKind::BarBarToken as u16 => "||",
+                // && and || are handled above
                 k if k == SyntaxKind::AmpersandToken as u16
                     || k == SyntaxKind::BarToken as u16
                     || k == SyntaxKind::CaretToken as u16
