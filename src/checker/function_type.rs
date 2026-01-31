@@ -787,7 +787,14 @@ impl<'a> CheckerState<'a> {
                 return self.apply_flow_narrowing(idx, member_type);
             }
             if self.namespace_has_type_only_member(object_type, property_name) {
-                self.error_type_only_value_at(property_name, access.name_or_argument);
+                // Don't emit TS2693 in heritage clause context — the heritage
+                // checker will emit the appropriate error (e.g., TS2689).
+                if self
+                    .find_enclosing_heritage_clause(access.name_or_argument)
+                    .is_none()
+                {
+                    self.error_type_only_value_at(property_name, access.name_or_argument);
+                }
                 return TypeId::ERROR;
             }
 

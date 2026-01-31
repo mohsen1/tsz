@@ -1003,7 +1003,14 @@ impl<'a> CheckerState<'a> {
                 result_type = Some(member_type);
                 use_index_signature_check = false;
             } else if self.namespace_has_type_only_member(object_type_for_access, name) {
-                self.error_type_only_value_at(name, access.name_or_argument);
+                // Don't emit TS2693 in heritage clause context — the heritage
+                // checker will emit the appropriate error (e.g., TS2689).
+                if self
+                    .find_enclosing_heritage_clause(access.name_or_argument)
+                    .is_none()
+                {
+                    self.error_type_only_value_at(name, access.name_or_argument);
+                }
                 return TypeId::ERROR;
             }
         }

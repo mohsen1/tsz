@@ -1410,6 +1410,30 @@ impl<'a> CheckerState<'a> {
                 if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
                     return self.get_type_of_symbol(val_sym_id);
                 }
+
+                // Don't emit TS2693 in heritage clause context — the heritage
+                // checker will emit the appropriate error (e.g., TS2689 for
+                // class extends interface).
+                if self.find_enclosing_heritage_clause(idx).is_some() {
+                    return TypeId::ERROR;
+                }
+
+                // Don't emit TS2693 for export default/export = expressions.
+                // `export default InterfaceName` and `export = InterfaceName`
+                // are valid TypeScript — they export the type binding.
+                if let Some(parent_ext) = self.ctx.arena.get_extended(idx) {
+                    if !parent_ext.parent.is_none() {
+                        if let Some(parent_node) = self.ctx.arena.get(parent_ext.parent) {
+                            use crate::parser::syntax_kind_ext;
+                            if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                                || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                            {
+                                return TypeId::ERROR;
+                            }
+                        }
+                    }
+                }
+
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;
             }
