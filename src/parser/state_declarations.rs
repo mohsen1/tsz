@@ -1400,8 +1400,13 @@ impl ParserState {
         self.parse_expected(SyntaxKind::DefaultKeyword);
 
         // Parse the default expression or declaration
+        // For export default, function/class names are optional:
+        //   export default function() {}    // valid, anonymous
+        //   export default function foo() {} // valid, named
         let expression = match self.token() {
-            SyntaxKind::FunctionKeyword => self.parse_function_declaration(),
+            SyntaxKind::FunctionKeyword => {
+                self.parse_function_declaration_with_async_optional_name(false, None)
+            }
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
             SyntaxKind::AbstractKeyword => self.parse_abstract_class_declaration(),
             _ => {

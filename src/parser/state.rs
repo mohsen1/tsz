@@ -872,7 +872,10 @@ impl ParserState {
             | SyntaxKind::FunctionKeyword
             | SyntaxKind::DeleteKeyword
             | SyntaxKind::VoidKeyword
+            | SyntaxKind::TypeOfKeyword
             | SyntaxKind::InstanceOfKeyword => true,
+            // Private identifiers (e.g., #field in obj)
+            SyntaxKind::PrivateIdentifier => true,
             // Unary operators
             SyntaxKind::PlusToken
             | SyntaxKind::MinusToken
