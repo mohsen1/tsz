@@ -13,12 +13,12 @@
 //! - **Build Order**: Topologically sorted order of projects based on dependencies
 //! - **Declaration Output**: .d.ts files that reference consuming projects use
 
-use anyhow::{Context, Result, bail, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use super::config::{TsConfig, CompilerOptions, parse_tsconfig, load_tsconfig};
+use super::config::{CompilerOptions, TsConfig};
 
 /// A project reference as specified in tsconfig.json
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -129,8 +129,12 @@ impl ProjectReferenceGraph {
         let mut stack = Vec::new();
 
         // Start with the root project
-        let canonical_root = std::fs::canonicalize(root_config_path)
-            .with_context(|| format!("failed to canonicalize root config: {}", root_config_path.display()))?;
+        let canonical_root = std::fs::canonicalize(root_config_path).with_context(|| {
+            format!(
+                "failed to canonicalize root config: {}",
+                root_config_path.display()
+            )
+        })?;
 
         stack.push(canonical_root.clone());
 
@@ -142,7 +146,7 @@ impl ProjectReferenceGraph {
             visited.insert(config_path.clone());
 
             let project = load_project(&config_path)?;
-            let project_id = graph.add_project(project.clone());
+            let _project_id = graph.add_project(project.clone());
 
             // Queue referenced projects for loading
             for ref_info in &project.resolved_references {
@@ -206,12 +210,18 @@ impl ProjectReferenceGraph {
 
     /// Get direct references of a project
     pub fn get_references(&self, id: ProjectId) -> &[ProjectId] {
-        self.references.get(&id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.references
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Get direct dependents of a project (projects that reference it)
     pub fn get_dependents(&self, id: ProjectId) -> &[ProjectId] {
-        self.dependents.get(&id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.dependents
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Check for circular references
@@ -262,14 +272,21 @@ impl ProjectReferenceGraph {
     pub fn build_order(&self) -> Result<Vec<ProjectId>> {
         let cycles = self.detect_cycles();
         if !cycles.is_empty() {
-            let cycle_desc: Vec<String> = cycles.iter().map(|cycle| {
-                let names: Vec<String> = cycle.iter()
-                    .filter_map(|&id| self.projects.get(id))
-                    .map(|p| p.config_path.display().to_string())
-                    .collect();
-                names.join(" -> ")
-            }).collect();
-            bail!("Circular project references detected:\n{}", cycle_desc.join("\n"));
+            let cycle_desc: Vec<String> = cycles
+                .iter()
+                .map(|cycle| {
+                    let names: Vec<String> = cycle
+                        .iter()
+                        .filter_map(|&id| self.projects.get(id))
+                        .map(|p| p.config_path.display().to_string())
+                        .collect();
+                    names.join(" -> ")
+                })
+                .collect();
+            bail!(
+                "Circular project references detected:\n{}",
+                cycle_desc.join("\n")
+            );
         }
 
         // Kahn's algorithm for topological sort
@@ -283,8 +300,9 @@ impl ProjectReferenceGraph {
             }
         }
 
-        let mut queue: Vec<ProjectId> = in_degree.iter()
-            .filter(|(_, &deg)| deg == 0)
+        let mut queue: Vec<ProjectId> = in_degree
+            .iter()
+            .filter(|&(_, &deg)| deg == 0)
             .map(|(&id, _)| id)
             .collect();
         queue.sort(); // Deterministic order
@@ -348,7 +366,8 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
     let config = parse_tsconfig_with_references(&source)
         .with_context(|| format!("failed to parse tsconfig: {}", config_path.display()))?;
 
-    let root_dir = config_path.parent()
+    let root_dir = config_path
+        .parent()
         .ok_or_else(|| anyhow!("tsconfig has no parent directory"))?
         .to_path_buf();
 
@@ -357,27 +376,28 @@ pub fn load_project(config_path: &Path) -> Result<ResolvedProject> {
     // Resolve project references
     let resolved_references = resolve_project_references(&root_dir, &config.references)?;
 
-    // Check if composite
-    let is_composite = config.base.compiler_options
-        .as_ref()
-        .and_then(|opts| {
-            // Parse the JSON again to get composite field
-            // Since CompilerOptions doesn't have composite, we need a workaround
-            None::<bool>
-        })
-        .unwrap_or(false) || check_composite_from_source(&source);
+    // Check if composite - CompilerOptions doesn't have composite field,
+    // so we check the raw source JSON
+    let is_composite = check_composite_from_source(&source);
 
     // Get output directories
-    let declaration_dir = config.base.compiler_options.as_ref()
+    let declaration_dir = config
+        .base
+        .compiler_options
+        .as_ref()
         .and_then(|opts| opts.declaration_dir.as_ref())
         .map(|d| root_dir.join(d));
 
-    let out_dir = config.base.compiler_options.as_ref()
+    let out_dir = config
+        .base
+        .compiler_options
+        .as_ref()
         .and_then(|opts| opts.out_dir.as_ref())
         .map(|d| root_dir.join(d));
 
     Ok(ResolvedProject {
-        config_path: std::fs::canonicalize(config_path).unwrap_or_else(|_| config_path.to_path_buf()),
+        config_path: std::fs::canonicalize(config_path)
+            .unwrap_or_else(|_| config_path.to_path_buf()),
         root_dir,
         config,
         resolved_references,
@@ -398,9 +418,17 @@ pub fn parse_tsconfig_with_references(source: &str) -> Result<TsConfigWithRefere
 
 /// Check if composite is set in the raw source (workaround for type limitations)
 fn check_composite_from_source(source: &str) -> bool {
-    // Simple check - look for "composite": true in the source
+    // Use proper JSON parsing to extract the composite field
     let stripped = strip_jsonc(source);
-    stripped.contains("\"composite\"") && stripped.contains("true")
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&stripped) {
+        value
+            .get("compilerOptions")
+            .and_then(|opts| opts.get("composite"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    } else {
+        false
+    }
 }
 
 /// Resolve project references to absolute paths
@@ -423,7 +451,10 @@ fn resolve_project_references(
 }
 
 /// Resolve a single project reference
-fn resolve_single_reference(root_dir: &Path, reference: &ProjectReference) -> ResolvedProjectReference {
+fn resolve_single_reference(
+    root_dir: &Path,
+    reference: &ProjectReference,
+) -> ResolvedProjectReference {
     let ref_path = PathBuf::from(&reference.path);
 
     // Make path absolute
@@ -436,7 +467,7 @@ fn resolve_single_reference(root_dir: &Path, reference: &ProjectReference) -> Re
     // Check if it's a directory or a file
     let config_path = if abs_path.is_dir() {
         abs_path.join("tsconfig.json")
-    } else if abs_path.extension().map_or(false, |ext| ext == "json") {
+    } else if abs_path.extension().is_some_and(|ext| ext == "json") {
         abs_path
     } else {
         // Assume directory and append tsconfig.json
@@ -450,7 +481,13 @@ fn resolve_single_reference(root_dir: &Path, reference: &ProjectReference) -> Re
     let (is_valid, error) = if canonical_path.exists() {
         (true, None)
     } else {
-        (false, Some(format!("Referenced project not found: {}", config_path.display())))
+        (
+            false,
+            Some(format!(
+                "Referenced project not found: {}",
+                config_path.display()
+            )),
+        )
     };
 
     ResolvedProjectReference {
@@ -485,7 +522,10 @@ pub fn validate_composite_project(project: &ResolvedProject) -> Result<Vec<Strin
     // Check that all references point to composite projects
     for ref_info in &project.resolved_references {
         if !ref_info.is_valid {
-            errors.push(format!("Invalid reference: {}", ref_info.error.as_deref().unwrap_or("unknown error")));
+            errors.push(format!(
+                "Invalid reference: {}",
+                ref_info.error.as_deref().unwrap_or("unknown error")
+            ));
         }
     }
 
@@ -500,11 +540,15 @@ pub fn get_declaration_output_path(
     let opts = project.config.base.compiler_options.as_ref()?;
 
     // Need either declarationDir or outDir
-    let out_base = project.declaration_dir.as_ref()
+    let out_base = project
+        .declaration_dir
+        .as_ref()
         .or(project.out_dir.as_ref())?;
 
     // Get the relative path from rootDir
-    let root_dir = opts.root_dir.as_ref()
+    let root_dir = opts
+        .root_dir
+        .as_ref()
         .map(|r| project.root_dir.join(r))
         .unwrap_or_else(|| project.root_dir.clone());
 
@@ -523,7 +567,7 @@ pub fn resolve_cross_project_import(
     from_project: ProjectId,
     import_specifier: &str,
 ) -> Option<PathBuf> {
-    let project = graph.get_project(from_project)?;
+    let _project = graph.get_project(from_project)?;
 
     // Check each referenced project
     for &ref_id in graph.get_references(from_project) {
@@ -547,7 +591,10 @@ fn try_resolve_in_project(project: &ResolvedProject, specifier: &str) -> Option<
     }
 
     // Handle package-like imports
-    let out_dir = project.declaration_dir.as_ref().or(project.out_dir.as_ref())?;
+    let out_dir = project
+        .declaration_dir
+        .as_ref()
+        .or(project.out_dir.as_ref())?;
 
     // Try to find a matching .d.ts file
     let dts_path = out_dir.join(specifier).with_extension("d.ts");
@@ -684,7 +731,6 @@ fn remove_trailing_commas(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
 
     fn create_test_project(dir: &Path, config: &str) -> PathBuf {
@@ -756,22 +802,31 @@ mod tests {
         // Create project A (no dependencies)
         let proj_a = root.join("project-a");
         std::fs::create_dir_all(&proj_a).unwrap();
-        create_test_project(&proj_a, r#"{
+        create_test_project(
+            &proj_a,
+            r#"{
             "compilerOptions": { "composite": true, "declaration": true }
-        }"#);
+        }"#,
+        );
 
         // Create project B (depends on A)
         let proj_b = root.join("project-b");
         std::fs::create_dir_all(&proj_b).unwrap();
-        create_test_project(&proj_b, r#"{
+        create_test_project(
+            &proj_b,
+            r#"{
             "compilerOptions": { "composite": true, "declaration": true },
             "references": [{ "path": "../project-a" }]
-        }"#);
+        }"#,
+        );
 
         // Create root project (depends on B)
-        let root_config = create_test_project(root, r#"{
+        let root_config = create_test_project(
+            root,
+            r#"{
             "references": [{ "path": "./project-b" }]
-        }"#);
+        }"#,
+        );
 
         let graph = ProjectReferenceGraph::load(&root_config).unwrap();
         assert_eq!(graph.project_count(), 3);
@@ -781,10 +836,22 @@ mod tests {
 
         // A should come before B, B should come before root
         let a_idx = order.iter().position(|&id| {
-            graph.get_project(id).unwrap().config_path.parent().unwrap().ends_with("project-a")
+            graph
+                .get_project(id)
+                .unwrap()
+                .config_path
+                .parent()
+                .unwrap()
+                .ends_with("project-a")
         });
         let b_idx = order.iter().position(|&id| {
-            graph.get_project(id).unwrap().config_path.parent().unwrap().ends_with("project-b")
+            graph
+                .get_project(id)
+                .unwrap()
+                .config_path
+                .parent()
+                .unwrap()
+                .ends_with("project-b")
         });
 
         if let (Some(a), Some(b)) = (a_idx, b_idx) {
@@ -800,18 +867,24 @@ mod tests {
         // Create project A (depends on B)
         let proj_a = root.join("project-a");
         std::fs::create_dir_all(&proj_a).unwrap();
-        create_test_project(&proj_a, r#"{
+        create_test_project(
+            &proj_a,
+            r#"{
             "compilerOptions": { "composite": true, "declaration": true },
             "references": [{ "path": "../project-b" }]
-        }"#);
+        }"#,
+        );
 
         // Create project B (depends on A - cycle!)
         let proj_b = root.join("project-b");
         std::fs::create_dir_all(&proj_b).unwrap();
-        create_test_project(&proj_b, r#"{
+        create_test_project(
+            &proj_b,
+            r#"{
             "compilerOptions": { "composite": true, "declaration": true },
             "references": [{ "path": "../project-a" }]
-        }"#);
+        }"#,
+        );
 
         let config_a = proj_a.join("tsconfig.json");
         let graph = ProjectReferenceGraph::load(&config_a).unwrap();
@@ -831,28 +904,39 @@ mod tests {
         // A -> B -> C
         let proj_c = root.join("project-c");
         std::fs::create_dir_all(&proj_c).unwrap();
-        create_test_project(&proj_c, r#"{
+        create_test_project(
+            &proj_c,
+            r#"{
             "compilerOptions": { "composite": true, "declaration": true }
-        }"#);
+        }"#,
+        );
 
         let proj_b = root.join("project-b");
         std::fs::create_dir_all(&proj_b).unwrap();
-        create_test_project(&proj_b, r#"{
+        create_test_project(
+            &proj_b,
+            r#"{
             "compilerOptions": { "composite": true, "declaration": true },
             "references": [{ "path": "../project-c" }]
-        }"#);
+        }"#,
+        );
 
         let proj_a = root.join("project-a");
         std::fs::create_dir_all(&proj_a).unwrap();
-        create_test_project(&proj_a, r#"{
+        create_test_project(
+            &proj_a,
+            r#"{
             "compilerOptions": { "composite": true, "declaration": true },
             "references": [{ "path": "../project-b" }]
-        }"#);
+        }"#,
+        );
 
         let config_a = proj_a.join("tsconfig.json");
         let graph = ProjectReferenceGraph::load(&config_a).unwrap();
 
-        let a_id = graph.get_project_id(&std::fs::canonicalize(&config_a).unwrap()).unwrap();
+        let a_id = graph
+            .get_project_id(&std::fs::canonicalize(&config_a).unwrap())
+            .unwrap();
         let deps = graph.transitive_dependencies(a_id);
 
         // A should transitively depend on both B and C

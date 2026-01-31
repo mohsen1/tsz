@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::checker::types::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation,
 };
+use crate::cli::locale;
 use crate::lsp::position::LineMap;
 
 pub struct Reporter {
@@ -98,7 +99,9 @@ impl Reporter {
             out.push_str(&self.format_code_label(diagnostic.code));
         }
         out.push_str(": ");
-        out.push_str(&diagnostic.message_text);
+        // Translate message using current locale if available
+        let message = self.translate_message(diagnostic.code, &diagnostic.message_text);
+        out.push_str(&message);
 
         // Non-pretty: related info is shown inline
         for related in &diagnostic.related_information {
@@ -148,7 +151,9 @@ impl Reporter {
         } else {
             out.push_str(": ");
         }
-        out.push_str(&diagnostic.message_text);
+        // Translate message using current locale if available
+        let message = self.translate_message(diagnostic.code, &diagnostic.message_text);
+        out.push_str(&message);
 
         // Source snippet
         if let Some(snippet) =
@@ -279,7 +284,8 @@ impl Reporter {
             out.push_str(&format!("  {}", file_display));
         }
         out.push_str(": ");
-        out.push_str(&related.message_text);
+        let message = self.translate_message(related.code, &related.message_text);
+        out.push_str(&message);
     }
 
     /// Format related information in pretty mode.
@@ -322,7 +328,8 @@ impl Reporter {
         // Message (4-space indent)
         out.push('\n');
         out.push_str("    ");
-        out.push_str(&related.message_text);
+        let message = self.translate_message(related.code, &related.message_text);
+        out.push_str(&message);
     }
 
     /// Format snippet for related info with 4-space indent and cyan underline.
@@ -559,5 +566,13 @@ impl Reporter {
         } else {
             label
         }
+    }
+
+    /// Translate a diagnostic message using the current locale.
+    ///
+    /// If a locale is set and has a translation for the given code, returns
+    /// the translated message. Otherwise returns the original message.
+    fn translate_message(&self, code: u32, message: &str) -> String {
+        locale::translate(code, message)
     }
 }
