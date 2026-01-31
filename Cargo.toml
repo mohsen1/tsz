@@ -70,18 +70,17 @@ criterion = "0.5"
 once_cell = "1.19"
 
 [profile.release]
-# Maximum optimization for production binary
-lto = "fat"           # Full link-time optimization for smaller, faster binary
-codegen-units = 1     # Single codegen unit for better optimization
-strip = "symbols"     # Strip debug symbols to reduce binary size
-
-[profile.dev-fast]
-# Fast compilation with decent runtime performance (for conformance testing)
-inherits = "release"
+# Fast compilation with decent runtime performance (for testing)
 lto = false           # No LTO = much faster compilation
 codegen-units = 16    # Parallel codegen = faster compilation
 strip = false         # Keep symbols for debugging
-debug = 1             # Line tables only
+
+[profile.dist]
+# Maximum optimization for production binary (use: cargo build --profile dist)
+inherits = "release"
+lto = "fat"           # Full link-time optimization for smaller, faster binary
+codegen-units = 1     # Single codegen unit for better optimization
+strip = "symbols"     # Strip debug symbols to reduce binary size
 
 [profile.test]
 # Thin LTO for faster test binaries (trade-off: slightly slower test compilation)
