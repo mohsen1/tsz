@@ -2639,10 +2639,14 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes, diagnostic_messages, format_message,
         };
 
-        // When lib contexts are loaded, lib symbols (Array, String, etc.) have
-        // multiple declarations from merged lib files. We skip lib-only symbols
-        // but still check user-defined symbols for duplicates.
-        let has_lib = self.ctx.has_lib_loaded();
+        // Skip duplicate checking entirely if lib contexts are loaded.
+        // Lib symbols (Array, String, etc.) have multiple declarations from merged
+        // lib files. symbol_is_from_lib uses arena pointer equality which doesn't
+        // detect symbols that were merged into user arenas during binding, causing
+        // false TS2451 errors for built-in types.
+        if self.ctx.has_lib_loaded() {
+            return;
+        }
 
         let mut symbol_ids = FxHashSet::default();
         if !self.ctx.binder.scopes.is_empty() {
@@ -2658,11 +2662,6 @@ impl<'a> CheckerState<'a> {
         }
 
         for sym_id in symbol_ids {
-            // Skip symbols that originate from lib files (e.g., Array, String)
-            // These have multiple declarations from merged lib files which are not conflicts
-            if has_lib && self.ctx.symbol_is_from_lib(sym_id) {
-                continue;
-            }
 
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
