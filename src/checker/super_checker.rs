@@ -333,8 +333,17 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        // Check if the class has a base class (is a derived class)
-        let has_base_class = self.get_base_class_idx(class_idx).is_some();
+        // Check if the class has an extends clause (is a derived class)
+        // We check for the existence of an extends heritage clause, not whether the
+        // base class symbol resolves. This matches TypeScript's behavior where
+        // `class B extends A {}` is always a derived class even if `A` can't be resolved.
+        let has_base_class = self
+            .ctx
+            .arena
+            .get(class_idx)
+            .and_then(|node| self.ctx.arena.get_class(node))
+            .map(|class| self.class_has_base(class))
+            .unwrap_or(false);
 
         // Detect if this is a super() call or super property access
         let parent_info = self
