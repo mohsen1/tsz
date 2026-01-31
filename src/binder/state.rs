@@ -2845,6 +2845,22 @@ impl BinderState {
             return true;
         }
 
+        // Allow TYPE_ALIAS to merge with VALUE symbols
+        // In TypeScript, type aliases and values exist in separate namespaces
+        // and can share the same name:
+        //   type Foo = number;
+        //   export const Foo = 1;  // legal: Foo is both a type and a value
+        if (existing_flags & symbol_flags::TYPE_ALIAS) != 0
+            && (new_flags & symbol_flags::VALUE) != 0
+        {
+            return true;
+        }
+        if (new_flags & symbol_flags::TYPE_ALIAS) != 0
+            && (existing_flags & symbol_flags::VALUE) != 0
+        {
+            return true;
+        }
+
         // Allow static and instance members to have the same name
         // TypeScript allows a class to have both a static member and an instance member with the same name
         // e.g., class C { static foo; foo; }
