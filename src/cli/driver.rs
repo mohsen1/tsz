@@ -1387,9 +1387,9 @@ fn collect_diagnostics(
             file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
         }
         diagnostics.extend(file_diagnostics.clone());
-        let export_hash = compute_export_hash(program, file, file_idx, &mut checker);
 
         if let Some(cache) = cache.as_deref_mut() {
+            let export_hash = compute_export_hash(program, file, file_idx, &mut checker);
             cache
                 .type_caches
                 .insert(file_path.clone(), checker.extract_cache());
@@ -1423,6 +1423,7 @@ fn compute_export_hash(
 ) -> u64 {
     let mut formatter = TypeFormatter::with_symbols(&program.type_interner, &program.symbols);
     let mut hasher = FxHasher::default();
+    let mut type_str_cache: FxHashMap<TypeId, String> = FxHashMap::default();
 
     if let Some(file_locals) = program.file_locals.get(file_idx) {
         let mut exports: Vec<(&String, SymbolId)> = file_locals
@@ -1436,7 +1437,9 @@ fn compute_export_hash(
         for (name, sym_id) in exports {
             name.hash(&mut hasher);
             let type_id = checker.get_type_of_symbol(sym_id);
-            let type_str = formatter.format(type_id);
+            let type_str = type_str_cache
+                .entry(type_id)
+                .or_insert_with(|| formatter.format(type_id));
             type_str.hash(&mut hasher);
         }
     }
