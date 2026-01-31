@@ -22,7 +22,8 @@ impl<'a> ArrayLiteralBuilder<'a> {
             if let Some(ctx) = contextual {
                 return ctx;
             }
-            return self.interner.array(TypeId::NEVER);
+            // Use any[] since we don't support evolving array types yet
+            return self.interner.array(TypeId::ANY);
         }
 
         if let Some(ctx_type) = contextual {

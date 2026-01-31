@@ -117,11 +117,14 @@ impl<'a> CheckerState<'a> {
         };
 
         if array.elements.nodes.is_empty() {
-            // Empty array literal: infer from context or use never[]
+            // Empty array literal: infer from context or use any[]
+            // TypeScript uses "evolving array types" where [] starts as never[] and widens
+            // via control flow. Since we don't yet support evolving arrays, use any[] to
+            // avoid false TS2322 errors on subsequent element assignments.
             if let Some(contextual) = self.ctx.contextual_type {
                 return contextual;
             }
-            return self.ctx.types.array(TypeId::NEVER);
+            return self.ctx.types.array(TypeId::ANY);
         }
 
         let tuple_context = match self.ctx.contextual_type {
