@@ -21,8 +21,8 @@
 //! the `__generator` helper. See `transforms/generators.rs` for the transform.
 
 use super::context::CheckerContext;
-use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 
@@ -475,55 +475,30 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     }
 
     fn is_iterable(&self, type_id: TypeId) -> bool {
-        // Check if type has Symbol.iterator method
-        // This is a simplified check - arrays and strings are always iterable
-        if type_id == TypeId::STRING {
-            return true;
-        }
-
-        // Check for array types
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            match type_key {
-                crate::solver::TypeKey::Array(_) => return true,
-                crate::solver::TypeKey::Tuple(_) => return true,
-                crate::solver::TypeKey::Object(shape_id) => {
-                    // Check for Symbol.iterator property
-                    let shape = self.ctx.types.object_shape(shape_id);
-                    for prop in &shape.properties {
-                        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                        // Check for [Symbol.iterator] method (iterable protocol)
-                        if prop_name.as_ref() == "[Symbol.iterator]" && prop.is_method {
-                            return true;
-                        }
-                        // Check for 'next' method (direct iterator)
-                        if prop_name.as_ref() == "next" && prop.is_method {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-                _ => {}
-            }
-        }
-
-        false
+        use crate::solver::judge::IterableKind;
+        // Use Judge's classify_iterable for type classification
+        !matches!(
+            self.judge_classify_iterable(type_id),
+            IterableKind::NotIterable
+        )
     }
 
     fn get_iterable_element_type(&self, type_id: TypeId) -> TypeId {
-        // Extract element type from iterable
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            match type_key {
-                crate::solver::TypeKey::Array(elem_type) => return elem_type,
-                crate::solver::TypeKey::Tuple(tuple_id) => {
-                    let elements = self.ctx.types.tuple_list(tuple_id);
-                    if elements.is_empty() {
-                        return TypeId::NEVER;
-                    }
-                    let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
-                    return self.ctx.types.union(types);
+        use crate::solver::judge::IterableKind;
+        // Use Judge's classify_iterable to get element type information
+        match self.judge_classify_iterable(type_id) {
+            IterableKind::Array(elem) => elem,
+            IterableKind::Tuple(elems) => {
+                if elems.is_empty() {
+                    TypeId::NEVER
+                } else {
+                    self.ctx.types.union(elems)
                 }
-                _ => {}
             }
+            IterableKind::String => TypeId::STRING,
+            IterableKind::SyncIterator { element_type, .. } => element_type,
+            IterableKind::AsyncIterator { element_type, .. } => element_type,
+            IterableKind::NotIterable => TypeId::ANY,
         }
 
         if type_id == TypeId::STRING {
@@ -586,7 +561,12 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     ///   [Symbol.iterator](): Generator<T, TReturn, TNext>;
     /// }
     /// ```
-    fn create_generator_type(&self, yield_type: TypeId, return_type: TypeId, next_type: TypeId) -> TypeId {
+    fn create_generator_type(
+        &self,
+        yield_type: TypeId,
+        return_type: TypeId,
+        next_type: TypeId,
+    ) -> TypeId {
         // Create IteratorResult<Y, R> = { value: Y; done: false } | { value: R; done: true }
         let iterator_result = self.create_iterator_result_type(yield_type, return_type);
 
@@ -683,7 +663,12 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     ///   [Symbol.asyncIterator](): AsyncGenerator<T, TReturn, TNext>;
     /// }
     /// ```
-    fn create_async_generator_type(&self, yield_type: TypeId, return_type: TypeId, next_type: TypeId) -> TypeId {
+    fn create_async_generator_type(
+        &self,
+        yield_type: TypeId,
+        return_type: TypeId,
+        next_type: TypeId,
+    ) -> TypeId {
         // Create IteratorResult<Y, R> = { value: Y; done: false } | { value: R; done: true }
         let iterator_result = self.create_iterator_result_type(yield_type, return_type);
 
@@ -778,10 +763,10 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     fn create_iterator_result_type(&self, yield_type: TypeId, return_type: TypeId) -> TypeId {
         // Try to find the global IteratorResult type from lib contexts
         if let Some(iterator_result_base) = self.lookup_global_type("IteratorResult") {
-            return self.ctx.types.application(
-                iterator_result_base,
-                vec![yield_type, return_type],
-            );
+            return self
+                .ctx
+                .types
+                .application(iterator_result_base, vec![yield_type, return_type]);
         }
 
         // Fallback: create structural IteratorResult<T, TReturn>
@@ -842,7 +827,9 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
 
         // Fallback: use the synthetic Promise base type
         // This allows the type to be recognized as promise-like even without lib types
-        self.ctx.types.application(TypeId::PROMISE_BASE, vec![inner_type])
+        self.ctx
+            .types
+            .application(TypeId::PROMISE_BASE, vec![inner_type])
     }
 
     /// Look up a global type by name from lib contexts.
@@ -882,7 +869,10 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
 }
 
 /// Extract the yield type from an AsyncGenerator type for for-await-of loops.
-pub fn get_async_iterable_element_type(types: &crate::solver::TypeInterner, type_id: TypeId) -> TypeId {
+pub fn get_async_iterable_element_type(
+    types: &crate::solver::TypeInterner,
+    type_id: TypeId,
+) -> TypeId {
     if let Some(type_key) = types.lookup(type_id) {
         match type_key {
             crate::solver::TypeKey::Object(shape_id) => {
@@ -904,7 +894,10 @@ pub fn get_async_iterable_element_type(types: &crate::solver::TypeInterner, type
 }
 
 /// Extract element type from a Promise<IteratorResult<T, R>> structure.
-fn extract_async_iterator_element(types: &crate::solver::TypeInterner, method_type: TypeId) -> TypeId {
+fn extract_async_iterator_element(
+    types: &crate::solver::TypeInterner,
+    method_type: TypeId,
+) -> TypeId {
     // The method type should be a function
     if let Some(crate::solver::TypeKey::Function(func_id)) = types.lookup(method_type) {
         let func = types.function_shape(func_id);
@@ -927,7 +920,10 @@ fn extract_async_iterator_element(types: &crate::solver::TypeInterner, method_ty
 }
 
 /// Extract yield type from an IteratorResult<T, R> structure.
-fn extract_iterator_result_yield_type(types: &crate::solver::TypeInterner, result_type: TypeId) -> TypeId {
+fn extract_iterator_result_yield_type(
+    types: &crate::solver::TypeInterner,
+    result_type: TypeId,
+) -> TypeId {
     // IteratorResult is a union: { value: Y; done: false } | { value: R; done: true }
     if let Some(type_key) = types.lookup(result_type) {
         match type_key {
@@ -956,7 +952,10 @@ fn extract_value_from_object(types: &crate::solver::TypeInterner, type_id: TypeI
 }
 
 /// Extract 'value' property from an object shape.
-fn extract_value_from_object_shape(types: &crate::solver::TypeInterner, shape_id: crate::solver::ObjectShapeId) -> TypeId {
+fn extract_value_from_object_shape(
+    types: &crate::solver::TypeInterner,
+    shape_id: crate::solver::ObjectShapeId,
+) -> TypeId {
     let shape = types.object_shape(shape_id);
     for prop in &shape.properties {
         let prop_name = types.resolve_atom_ref(prop.name);
@@ -982,13 +981,23 @@ impl std::fmt::Display for GeneratorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             GeneratorError::YieldOutsideGenerator => {
-                write!(f, "A 'yield' expression is only allowed in a generator body")
+                write!(
+                    f,
+                    "A 'yield' expression is only allowed in a generator body"
+                )
             }
             GeneratorError::YieldDelegationNonIterable => {
-                write!(f, "Type is not iterable. Must have a '[Symbol.iterator]()' method")
+                write!(
+                    f,
+                    "Type is not iterable. Must have a '[Symbol.iterator]()' method"
+                )
             }
             GeneratorError::YieldTypeMismatch { expected, actual } => {
-                write!(f, "Type '{:?}' is not assignable to type '{:?}'", actual, expected)
+                write!(
+                    f,
+                    "Type '{:?}' is not assignable to type '{:?}'",
+                    actual, expected
+                )
             }
         }
     }
@@ -997,9 +1006,9 @@ impl std::fmt::Display for GeneratorError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solver::TypeInterner;
     use crate::binder::BinderState;
     use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
 
     fn create_context(source: &str) -> (ParserState, BinderState, TypeInterner) {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1103,15 +1112,18 @@ mod tests {
                             crate::solver::TypeKey::Object(shape_id) => {
                                 let shape = types.object_shape(shape_id);
                                 // Should have next, return, throw methods
-                                let has_next = shape.properties.iter().any(|p| {
-                                    types.resolve_atom_ref(p.name).as_ref() == "next"
-                                });
-                                let has_return = shape.properties.iter().any(|p| {
-                                    types.resolve_atom_ref(p.name).as_ref() == "return"
-                                });
-                                let has_throw = shape.properties.iter().any(|p| {
-                                    types.resolve_atom_ref(p.name).as_ref() == "throw"
-                                });
+                                let has_next = shape
+                                    .properties
+                                    .iter()
+                                    .any(|p| types.resolve_atom_ref(p.name).as_ref() == "next");
+                                let has_return = shape
+                                    .properties
+                                    .iter()
+                                    .any(|p| types.resolve_atom_ref(p.name).as_ref() == "return");
+                                let has_throw = shape
+                                    .properties
+                                    .iter()
+                                    .any(|p| types.resolve_atom_ref(p.name).as_ref() == "throw");
                                 assert!(has_next, "AsyncGenerator should have 'next' method");
                                 assert!(has_return, "AsyncGenerator should have 'return' method");
                                 assert!(has_throw, "AsyncGenerator should have 'throw' method");
@@ -1198,6 +1210,10 @@ mod tests {
         let extracted = get_async_iterable_element_type(&types, async_gen);
 
         // Should be number (the yield type)
-        assert_eq!(extracted, TypeId::NUMBER, "Should extract number as yield type from AsyncGenerator<number, void, unknown>");
+        assert_eq!(
+            extracted,
+            TypeId::NUMBER,
+            "Should extract number as yield type from AsyncGenerator<number, void, unknown>"
+        );
     }
 }
