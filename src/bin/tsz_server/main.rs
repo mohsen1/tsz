@@ -2172,7 +2172,7 @@ impl Server {
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({"changes": [], "commands": []})),
+            Some(serde_json::json!({"changes": []})),
         )
     }
 
