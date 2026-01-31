@@ -847,8 +847,60 @@ impl ScannerState {
                     return self.token;
                 }
 
+                // Backslash - Unicode escape sequence starting an identifier (\uXXXX)
+                CharacterCodes::BACKSLASH => {
+                    // In TypeScript, \uXXXX can start an identifier
+                    // e.g., \u0041 is 'A', so `let \u0041 = 1;` is valid
+                    let escaped_ch = self.peek_unicode_escape();
+                    if let Some(code_point) = escaped_ch {
+                        if is_identifier_start(code_point) {
+                            self.scan_identifier_with_escapes();
+                            return self.token;
+                        }
+                    }
+                    // Not a valid unicode escape - treat as unknown
+                    self.pos += 1;
+                    self.token = SyntaxKind::Unknown;
+                    return self.token;
+                }
+
                 // Default: identifier or unknown
                 _ => {
+                    // Handle Unicode line separators (U+2028, U+2029) as newlines
+                    if ch == CharacterCodes::LINE_SEPARATOR
+                        || ch == CharacterCodes::PARAGRAPH_SEPARATOR
+                    {
+                        self.token_flags |= TokenFlags::PrecedingLineBreak as u32;
+                        if self.skip_trivia {
+                            self.pos += self.char_len_at(self.pos);
+                            continue;
+                        } else {
+                            self.pos += self.char_len_at(self.pos);
+                            self.token = SyntaxKind::NewLineTrivia;
+                            return self.token;
+                        }
+                    }
+                    // Handle additional Unicode whitespace characters not in the fast path above
+                    if ch > 127 && is_white_space_single_line(ch) {
+                        if self.skip_trivia {
+                            self.pos += self.char_len_at(self.pos);
+                            while self.pos < self.end
+                                && is_white_space_single_line(self.char_code_unchecked(self.pos))
+                            {
+                                self.pos += self.char_len_at(self.pos);
+                            }
+                            continue;
+                        } else {
+                            self.pos += self.char_len_at(self.pos);
+                            while self.pos < self.end
+                                && is_white_space_single_line(self.char_code_unchecked(self.pos))
+                            {
+                                self.pos += self.char_len_at(self.pos);
+                            }
+                            self.token = SyntaxKind::WhitespaceTrivia;
+                            return self.token;
+                        }
+                    }
                     if is_identifier_start(ch) {
                         self.scan_identifier();
                         return self.token;
@@ -884,11 +936,127 @@ impl ScannerState {
                     let escaped_char_len = self.char_len_at(self.pos);
                     self.pos += escaped_char_len;
                     match escaped {
+                        CharacterCodes::_0 => {
+                            // \0 - null character (only if not followed by digit)
+                            if self.pos < self.end
+                                && is_digit(self.char_code_unchecked(self.pos))
+                            {
+                                // Legacy octal escape: \0N - scan as octal
+                                let mut value = 0u32;
+                                // Back up to include the '0' we already consumed
+                                let octal_start = self.pos - 1;
+                                self.pos = octal_start;
+                                while self.pos < self.end
+                                    && self.pos < octal_start + 3
+                                    && is_octal_digit(self.char_code_unchecked(self.pos))
+                                {
+                                    value = value * 8
+                                        + (self.char_code_unchecked(self.pos)
+                                            - CharacterCodes::_0);
+                                    self.pos += 1;
+                                }
+                                if let Some(c) = char::from_u32(value) {
+                                    result.push(c);
+                                }
+                            } else {
+                                result.push('\0');
+                            }
+                        }
+                        CharacterCodes::_1
+                        | CharacterCodes::_2
+                        | CharacterCodes::_3
+                        | CharacterCodes::_4
+                        | CharacterCodes::_5
+                        | CharacterCodes::_6
+                        | CharacterCodes::_7 => {
+                            // Legacy octal escape: \1 through \7
+                            let mut value = escaped - CharacterCodes::_0;
+                            // Consume up to 2 more octal digits
+                            let mut count = 1;
+                            while count < 3
+                                && self.pos < self.end
+                                && is_octal_digit(self.char_code_unchecked(self.pos))
+                            {
+                                value = value * 8
+                                    + (self.char_code_unchecked(self.pos) - CharacterCodes::_0);
+                                self.pos += 1;
+                                count += 1;
+                            }
+                            if let Some(c) = char::from_u32(value) {
+                                result.push(c);
+                            }
+                        }
                         CharacterCodes::LOWER_N => result.push('\n'),
                         CharacterCodes::LOWER_R => result.push('\r'),
                         CharacterCodes::LOWER_T => result.push('\t'),
+                        CharacterCodes::LOWER_V => result.push('\x0B'),
+                        CharacterCodes::LOWER_B => result.push('\x08'),
+                        CharacterCodes::LOWER_F => result.push('\x0C'),
                         CharacterCodes::BACKSLASH => result.push('\\'),
                         c if c == quote => result.push(char::from_u32(quote).unwrap_or('\0')),
+                        CharacterCodes::LOWER_X => {
+                            // Hex escape \xHH
+                            if self.pos + 2 <= self.end {
+                                let hex = self.substring(self.pos, self.pos + 2);
+                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                    self.pos += 2;
+                                    if let Some(c) = char::from_u32(code) {
+                                        result.push(c);
+                                    }
+                                } else {
+                                    result.push('\\');
+                                    result.push('x');
+                                }
+                            } else {
+                                result.push('\\');
+                                result.push('x');
+                            }
+                        }
+                        CharacterCodes::LOWER_U => {
+                            // Unicode escape \uHHHH or \u{H+}
+                            if self.pos < self.end
+                                && self.char_code_unchecked(self.pos) == CharacterCodes::OPEN_BRACE
+                            {
+                                // \u{...}
+                                self.pos += 1;
+                                let hex_start = self.pos;
+                                while self.pos < self.end
+                                    && is_hex_digit(self.char_code_unchecked(self.pos))
+                                {
+                                    self.pos += 1;
+                                }
+                                if self.pos < self.end
+                                    && self.char_code_unchecked(self.pos)
+                                        == CharacterCodes::CLOSE_BRACE
+                                {
+                                    let hex = self.substring(hex_start, self.pos);
+                                    self.pos += 1;
+                                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                        if let Some(c) = char::from_u32(code) {
+                                            result.push(c);
+                                        }
+                                    }
+                                } else {
+                                    result.push('\\');
+                                    result.push('u');
+                                }
+                            } else if self.pos + 4 <= self.end {
+                                // \uHHHH
+                                let hex = self.substring(self.pos, self.pos + 4);
+                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                    self.pos += 4;
+                                    if let Some(c) = char::from_u32(code) {
+                                        result.push(c);
+                                    }
+                                } else {
+                                    result.push('\\');
+                                    result.push('u');
+                                }
+                            } else {
+                                result.push('\\');
+                                result.push('u');
+                            }
+                        }
                         // Line continuation: backslash followed by line terminator
                         CharacterCodes::LINE_FEED
                         | CharacterCodes::CARRIAGE_RETURN
@@ -904,7 +1072,7 @@ impl ScannerState {
                             }
                         }
                         _ => {
-                            result.push('\\');
+                            // Unknown escape - just include the character (not the backslash)
                             if let Some(c) = char::from_u32(escaped) {
                                 result.push(c);
                             }
@@ -960,12 +1128,115 @@ impl ScannerState {
                     let escaped_char_len = self.char_len_at(self.pos);
                     self.pos += escaped_char_len;
                     match escaped {
+                        CharacterCodes::_0 => {
+                            // \0 in template literals - only valid if not followed by digit
+                            if self.pos < self.end
+                                && is_digit(self.char_code_unchecked(self.pos))
+                            {
+                                self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+                                result.push('\\');
+                                result.push('0');
+                            } else {
+                                result.push('\0');
+                            }
+                        }
+                        CharacterCodes::_1
+                        | CharacterCodes::_2
+                        | CharacterCodes::_3
+                        | CharacterCodes::_4
+                        | CharacterCodes::_5
+                        | CharacterCodes::_6
+                        | CharacterCodes::_7
+                        | CharacterCodes::_8
+                        | CharacterCodes::_9 => {
+                            // Octal escapes invalid in template literals
+                            self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+                            if let Some(c) = char::from_u32(escaped) {
+                                result.push('\\');
+                                result.push(c);
+                            }
+                        }
                         CharacterCodes::LOWER_N => result.push('\n'),
                         CharacterCodes::LOWER_R => result.push('\r'),
                         CharacterCodes::LOWER_T => result.push('\t'),
+                        CharacterCodes::LOWER_V => result.push('\x0B'),
+                        CharacterCodes::LOWER_B => result.push('\x08'),
+                        CharacterCodes::LOWER_F => result.push('\x0C'),
                         CharacterCodes::BACKTICK => result.push('`'),
                         CharacterCodes::DOLLAR => result.push('$'),
                         CharacterCodes::BACKSLASH => result.push('\\'),
+                        CharacterCodes::LOWER_X => {
+                            // Hex escape \xHH
+                            if self.pos + 2 <= self.end {
+                                let hex = self.substring(self.pos, self.pos + 2);
+                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                    self.pos += 2;
+                                    if let Some(c) = char::from_u32(code) {
+                                        result.push(c);
+                                    }
+                                } else {
+                                    self.token_flags |=
+                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    result.push('\\');
+                                    result.push('x');
+                                }
+                            } else {
+                                self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+                                result.push('\\');
+                                result.push('x');
+                            }
+                        }
+                        CharacterCodes::LOWER_U => {
+                            // Unicode escape \uHHHH or \u{H+}
+                            if self.pos < self.end
+                                && self.char_code_unchecked(self.pos)
+                                    == CharacterCodes::OPEN_BRACE
+                            {
+                                // \u{...}
+                                self.pos += 1;
+                                let hex_start = self.pos;
+                                while self.pos < self.end
+                                    && is_hex_digit(self.char_code_unchecked(self.pos))
+                                {
+                                    self.pos += 1;
+                                }
+                                if self.pos < self.end
+                                    && self.char_code_unchecked(self.pos)
+                                        == CharacterCodes::CLOSE_BRACE
+                                {
+                                    let hex = self.substring(hex_start, self.pos);
+                                    self.pos += 1;
+                                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                        if let Some(c) = char::from_u32(code) {
+                                            result.push(c);
+                                        }
+                                    }
+                                } else {
+                                    self.token_flags |=
+                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    result.push('\\');
+                                    result.push('u');
+                                }
+                            } else if self.pos + 4 <= self.end {
+                                // \uHHHH
+                                let hex = self.substring(self.pos, self.pos + 4);
+                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                    self.pos += 4;
+                                    if let Some(c) = char::from_u32(code) {
+                                        result.push(c);
+                                    }
+                                } else {
+                                    self.token_flags |=
+                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    result.push('\\');
+                                    result.push('u');
+                                }
+                            } else {
+                                self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+                                result.push('\\');
+                                result.push('u');
+                            }
+                        }
                         // Line continuation: backslash followed by line terminator
                         CharacterCodes::LINE_FEED
                         | CharacterCodes::CARRIAGE_RETURN
@@ -981,7 +1252,7 @@ impl ScannerState {
                             }
                         }
                         _ => {
-                            result.push('\\');
+                            // Unknown escape in templates - just include the character
                             if let Some(c) = char::from_u32(escaped) {
                                 result.push(c);
                             }
@@ -1056,7 +1327,7 @@ impl ScannerState {
                 return;
             }
             if next == CharacterCodes::LOWER_O || next == CharacterCodes::UPPER_O {
-                // Octal number
+                // Octal number (0o777)
                 self.pos += 2;
                 self.token_flags |= TokenFlags::OctalSpecifier as u32;
                 self.scan_digits_with_separators(is_octal_digit);
@@ -1076,6 +1347,13 @@ impl ScannerState {
                 }
                 self.token = SyntaxKind::NumericLiteral;
                 return;
+            }
+
+            // Legacy octal: 0777 (no prefix, starts with 0 followed by octal digits)
+            if is_octal_digit(next) {
+                self.token_flags |= TokenFlags::Octal as u32;
+                // Fall through to decimal scanning - the value "0777" will be scanned normally
+                // The Octal flag signals to the checker that this is a legacy octal literal
             }
         }
 
@@ -1186,6 +1464,121 @@ impl ScannerState {
         // ZERO-ALLOCATION: Don't store token_value for identifiers.
         // get_token_value_ref() will resolve from token_atom or fall back to source slice.
         self.token_value.clear();
+    }
+
+    /// Peek at a unicode escape sequence without advancing the position.
+    /// Returns the code point if the escape is valid (\uXXXX or \u{XXXXX}), None otherwise.
+    fn peek_unicode_escape(&self) -> Option<u32> {
+        // Must start with \u
+        if self.pos + 1 >= self.end {
+            return None;
+        }
+        let bytes = self.source.as_bytes();
+        if bytes.get(self.pos + 1).copied() != Some(b'u') {
+            return None;
+        }
+        // \u{XXXXX} form
+        if bytes.get(self.pos + 2).copied() == Some(b'{') {
+            let start = self.pos + 3;
+            let mut end = start;
+            while end < self.end && bytes.get(end).map_or(false, |b| b.is_ascii_hexdigit()) {
+                end += 1;
+            }
+            if end == start || bytes.get(end).copied() != Some(b'}') {
+                return None;
+            }
+            let hex = &self.source[start..end];
+            u32::from_str_radix(hex, 16).ok().filter(|&cp| cp <= 0x10FFFF)
+        } else {
+            // \uXXXX form (exactly 4 hex digits)
+            if self.pos + 5 >= self.end {
+                return None;
+            }
+            let hex = &self.source[self.pos + 2..self.pos + 6];
+            if hex.len() == 4 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                u32::from_str_radix(hex, 16).ok()
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Scan an identifier that starts with a unicode escape sequence (\uXXXX).
+    fn scan_identifier_with_escapes(&mut self) {
+        let mut result = String::new();
+
+        // Process initial unicode escape
+        if let Some(ch) = self.scan_unicode_escape_value() {
+            if let Some(c) = char::from_u32(ch) {
+                result.push(c);
+            }
+        }
+
+        // Continue scanning identifier parts
+        while self.pos < self.end {
+            let ch = self.char_code_unchecked(self.pos);
+            if ch == CharacterCodes::BACKSLASH {
+                // Another unicode escape in identifier
+                if let Some(code_point) = self.peek_unicode_escape() {
+                    if is_identifier_part(code_point) {
+                        if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
+                            result.push(c);
+                        }
+                        continue;
+                    }
+                }
+                break;
+            }
+            if !is_identifier_part(ch) {
+                break;
+            }
+            if let Some(c) = char::from_u32(ch) {
+                result.push(c);
+            }
+            self.pos += self.char_len_at(self.pos);
+        }
+
+        self.token = crate::scanner::text_to_keyword(&result).unwrap_or(SyntaxKind::Identifier);
+        self.token_atom = self.interner.intern(&result);
+        self.token_value.clear();
+        self.token_flags |= TokenFlags::UnicodeEscape as u32;
+    }
+
+    /// Consume a unicode escape sequence and return its code point.
+    /// Advances self.pos past the escape.
+    fn scan_unicode_escape_value(&mut self) -> Option<u32> {
+        // Skip the backslash
+        self.pos += 1;
+        if self.pos >= self.end || self.source.as_bytes()[self.pos] != b'u' {
+            return None;
+        }
+        self.pos += 1; // Skip 'u'
+
+        if self.pos < self.end && self.source.as_bytes()[self.pos] == b'{' {
+            // \u{XXXXX} form
+            self.pos += 1;
+            let start = self.pos;
+            while self.pos < self.end && self.source.as_bytes().get(self.pos).map_or(false, |b| b.is_ascii_hexdigit()) {
+                self.pos += 1;
+            }
+            let result = u32::from_str_radix(&self.source[start..self.pos], 16).ok();
+            if self.pos < self.end && self.source.as_bytes()[self.pos] == b'}' {
+                self.pos += 1;
+            }
+            result
+        } else {
+            // \uXXXX form (exactly 4 hex digits)
+            if self.pos + 4 > self.end {
+                return None;
+            }
+            let hex = &self.source[self.pos..self.pos + 4];
+            if hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                self.pos += 4;
+                u32::from_str_radix(hex, 16).ok()
+            } else {
+                None
+            }
+        }
     }
 
     // =========================================================================

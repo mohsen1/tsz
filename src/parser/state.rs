@@ -554,7 +554,16 @@ impl ParserState {
         if self.is_token(SyntaxKind::SemicolonToken) {
             self.next_token();
         } else if !self.can_parse_semicolon() {
-            self.error_token_expected(";");
+            // Suppress cascading TS1005 "';' expected" when a recent error was already
+            // emitted. This happens when a prior parse failure (e.g., missing identifier,
+            // unsupported syntax) causes the parser to not consume tokens, then
+            // parse_semicolon is called and fails too.
+            // We check if last_error_pos is close to current position (within 3 chars)
+            // to catch cascading errors that advanced only slightly.
+            let current = self.token_pos();
+            if self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3 {
+                self.error_token_expected(";");
+            }
         }
     }
 

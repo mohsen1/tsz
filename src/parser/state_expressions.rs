@@ -392,8 +392,12 @@ impl ParserState {
     }
 
     /// Parse a single type parameter: T or T extends U or T = Default or T extends U = Default
+    /// Also supports modifiers: `const T`, `in T`, `out T`, `in out T`, `const in T`, etc.
     pub(crate) fn parse_type_parameter(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+
+        // Parse optional modifiers: const, in, out (TypeScript 4.7+ variance, 5.0+ const)
+        let modifiers = self.parse_type_parameter_modifiers();
 
         // Parse the type parameter name
         let name = self.parse_identifier();
@@ -419,12 +423,47 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::TypeParameterData {
-                modifiers: None,
+                modifiers,
                 name,
                 constraint,
                 default,
             },
         )
+    }
+
+    /// Parse type parameter modifiers: `const`, `in`, `out`
+    fn parse_type_parameter_modifiers(&mut self) -> Option<NodeList> {
+        let mut modifiers = Vec::new();
+
+        loop {
+            match self.token() {
+                SyntaxKind::ConstKeyword => {
+                    let pos = self.token_pos();
+                    let end = self.token_end();
+                    self.next_token();
+                    modifiers.push(self.arena.add_token(SyntaxKind::ConstKeyword as u16, pos, end));
+                }
+                SyntaxKind::InKeyword => {
+                    let pos = self.token_pos();
+                    let end = self.token_end();
+                    self.next_token();
+                    modifiers.push(self.arena.add_token(SyntaxKind::InKeyword as u16, pos, end));
+                }
+                SyntaxKind::OutKeyword => {
+                    let pos = self.token_pos();
+                    let end = self.token_end();
+                    self.next_token();
+                    modifiers.push(self.arena.add_token(SyntaxKind::OutKeyword as u16, pos, end));
+                }
+                _ => break,
+            }
+        }
+
+        if modifiers.is_empty() {
+            None
+        } else {
+            Some(self.make_node_list(modifiers))
+        }
     }
 
     /// Parse binary expression with precedence climbing
