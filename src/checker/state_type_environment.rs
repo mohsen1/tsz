@@ -691,10 +691,19 @@ impl<'a> CheckerState<'a> {
         // Use try_borrow_mut to avoid panic if type_env is already borrowed.
         // This can happen during recursive type resolution.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            // Get the DefId if one exists (Phase 4.3 migration)
+            let def_id = self.ctx.symbol_to_def.get(&sym_id).copied();
+
             if type_params.is_empty() {
                 env.insert(SymbolRef(sym_id.0), resolved);
+                if let Some(def_id) = def_id {
+                    env.insert_def(def_id, resolved);
+                }
             } else {
-                env.insert_with_params(SymbolRef(sym_id.0), resolved, type_params);
+                env.insert_with_params(SymbolRef(sym_id.0), resolved, type_params.clone());
+                if let Some(def_id) = def_id {
+                    env.insert_def_with_params(def_id, resolved, type_params);
+                }
             }
         }
     }
@@ -963,10 +972,19 @@ impl<'a> CheckerState<'a> {
             if type_id != TypeId::ANY && type_id != TypeId::ERROR {
                 // Get type parameters if this is a generic type
                 let type_params = self.get_type_params_for_symbol(sym_id);
+                // Get the DefId if one exists (Phase 4.3 migration)
+                let def_id = self.ctx.symbol_to_def.get(&sym_id).copied();
+
                 if type_params.is_empty() {
                     env.insert(SymbolRef(sym_id.0), type_id);
+                    if let Some(def_id) = def_id {
+                        env.insert_def(def_id, type_id);
+                    }
                 } else {
-                    env.insert_with_params(SymbolRef(sym_id.0), type_id, type_params);
+                    env.insert_with_params(SymbolRef(sym_id.0), type_id, type_params.clone());
+                    if let Some(def_id) = def_id {
+                        env.insert_def_with_params(def_id, type_id, type_params);
+                    }
                 }
             }
         }
