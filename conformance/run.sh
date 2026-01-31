@@ -115,16 +115,16 @@ build_wasm() {
 }
 
 build_native() {
-    log_step "Building native binary (dev-fast)..."
+    log_step "Building native binary (release)..."
     require_cmd cargo
-    (cd "$ROOT_DIR" && cargo build --profile dev-fast --bin tsz)
+    (cd "$ROOT_DIR" && cargo build --release --bin tsz)
     log_success "Native binary built"
 }
 
 build_server() {
-    log_step "Building tsz-server (dev-fast)..."
+    log_step "Building tsz-server (release)..."
     require_cmd cargo
-    (cd "$ROOT_DIR" && cargo build --profile dev-fast --bin tsz-server)
+    (cd "$ROOT_DIR" && cargo build --release --bin tsz-server)
     log_success "tsz-server built"
 }
 
@@ -273,7 +273,7 @@ cmd_single() {
     build_native
 
     local binary
-    binary="$(get_target_dir)/dev-fast/tsz"
+    binary="$(get_target_dir)/release/tsz"
 
     echo ""
     echo -e "${BOLD}Running: ${RESET}$test_file"
@@ -309,7 +309,7 @@ run_server_mode() {
     cd "$SCRIPT_DIR"
     local target_dir
     target_dir=$(get_target_dir)
-    export TSZ_SERVER_BINARY="$target_dir/dev-fast/tsz-server"
+    export TSZ_SERVER_BINARY="$target_dir/release/tsz-server"
     export TSZ_LIB_DIR="$ROOT_DIR/TypeScript/src/lib"
 
     local args
@@ -345,7 +345,7 @@ run_wasm_native_mode() {
     cd "$SCRIPT_DIR"
 
     if [[ "$use_wasm" == "false" ]]; then
-        export TSZ_BINARY="$(get_target_dir)/dev-fast/tsz"
+        export TSZ_BINARY="$(get_target_dir)/release/tsz"
     fi
 
     local runner_args

@@ -76,12 +76,6 @@ lto = false           # No LTO = much faster compilation
 codegen-units = 16    # Parallel codegen = faster compilation
 strip = false         # Keep symbols for debugging
 
-[profile.dev-fast]
-# Fast dev builds with basic optimizations (for conformance testing)
-inherits = "dev"
-opt-level = 2
-debug = true
-
 [profile.dist]
 # Maximum optimization for production binary (use: cargo build --profile dist)
 inherits = "release"
