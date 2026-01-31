@@ -410,6 +410,7 @@ where
                     || info.default.map(|d| self.check(d)).unwrap_or(false)
             }
             TypeKey::Ref(_)
+            | TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => false,
@@ -821,6 +822,7 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
         | TypeKey::Ref(_)
+        | TypeKey::Lazy(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -1121,6 +1123,7 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
         | TypeKey::TypeQuery(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
+        | TypeKey::Lazy(_)
         | TypeKey::Error => ConstraintTypeKind::NoConstraint,
     }
 }
@@ -1206,6 +1209,7 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
         | TypeKey::Ref(_)
+        | TypeKey::Lazy(_)
         | TypeKey::Application(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
@@ -1331,6 +1335,7 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
         TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Ref(_)
+        | TypeKey::Lazy(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -1515,6 +1520,7 @@ pub fn classify_for_property_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> P
         | TypeKey::TypeParameter(_)
         | TypeKey::Infer(_)
         | TypeKey::Ref(_)
+        | TypeKey::Lazy(_)
         | TypeKey::Application(_)
         | TypeKey::Conditional(_)
         | TypeKey::Mapped(_)
@@ -1605,13 +1611,14 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
             constraint: info.constraint,
         },
         TypeKey::ReadonlyType(inner) => EvaluationNeeded::Readonly(inner),
-        // Already resolved types
+        // Already resolved types (Lazy needs special handling when DefId lookup is implemented)
         TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Object(_)
         | TypeKey::ObjectWithIndex(_)
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
+        | TypeKey::Lazy(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -1696,11 +1703,12 @@ pub fn classify_for_property_access(
         TypeKey::Conditional(_) | TypeKey::Mapped(_) | TypeKey::KeyOf(_) => {
             PropertyAccessClassification::NeedsEvaluation(type_id)
         }
-        // Primitives and resolved types
+        // Primitives and resolved types (Lazy needs special handling when DefId lookup is implemented)
         TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
+        | TypeKey::Lazy(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
@@ -1803,10 +1811,11 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         TypeKey::ReadonlyType(inner) => TypeTraversalKind::Readonly(inner),
         TypeKey::IndexAccess(object, index) => TypeTraversalKind::IndexAccess { object, index },
         TypeKey::KeyOf(inner) => TypeTraversalKind::KeyOf(inner),
-        // Terminal types - no nested types to traverse
+        // Terminal types - no nested types to traverse (Lazy needs resolution for traversal)
         TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::TemplateLiteral(_)
+        | TypeKey::Lazy(_)
         | TypeKey::UniqueSymbol(_)
         | TypeKey::ThisType
         | TypeKey::TypeQuery(_)
@@ -1903,6 +1912,7 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         | TypeKey::TypeParameter(_)
         | TypeKey::Infer(_)
         | TypeKey::Ref(_)
+        | TypeKey::Lazy(_)
         | TypeKey::Application(_)
         | TypeKey::Conditional(_)
         | TypeKey::Mapped(_)

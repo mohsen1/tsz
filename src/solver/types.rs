@@ -4,6 +4,7 @@
 //! an interning table. The actual structure is stored in `TypeKey`.
 
 use crate::interner::Atom;
+use crate::solver::def::DefId;
 use serde::Serialize;
 
 /// A lightweight handle to an interned type.
@@ -329,7 +330,25 @@ pub enum TypeKey {
 
     /// Reference to a named type (interface, class, type alias)
     /// Uses SymbolId to break infinite recursion
+    /// DEPRECATED: Use `Lazy(DefId)` for new code. This is kept for backward compatibility
+    /// during the migration from SymbolRef to DefId.
     Ref(SymbolRef),
+
+    /// Lazy reference to a type definition.
+    ///
+    /// Unlike `Ref(SymbolRef)` which references Binder symbols, `Lazy(DefId)` uses
+    /// Solver-owned identifiers that:
+    /// - Don't require Binder context
+    /// - Support content-addressed hashing for LSP stability
+    /// - Enable Salsa integration for incremental compilation
+    ///
+    /// The type is evaluated lazily when first accessed, resolving to the actual
+    /// type stored in the `DefinitionStore`.
+    ///
+    /// ## Migration
+    ///
+    /// Eventually all `Ref(SymbolRef)` usages will be replaced with `Lazy(DefId)`.
+    Lazy(DefId),
 
     /// Generic type application (Base<Args>)
     Application(TypeApplicationId),

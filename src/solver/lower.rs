@@ -1329,6 +1329,7 @@ impl<'a> TypeLowering<'a> {
                 self.contains_meta_type_inner(type_arg, visited)
             }
             TypeKey::Ref(_)
+            | TypeKey::Lazy(_)
             | TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::UniqueSymbol(_)
@@ -1617,6 +1618,7 @@ impl<'a> TypeLowering<'a> {
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Ref(_)
+            | TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ThisType
