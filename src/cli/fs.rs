@@ -112,7 +112,7 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
 fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
     match options.include.as_ref() {
         Some(patterns) if patterns.is_empty() => Vec::new(),
-        Some(patterns) => normalize_patterns(patterns),
+        Some(patterns) => expand_include_patterns(&normalize_patterns(patterns)),
         None => {
             if options.files.is_empty() {
                 vec!["**/*".to_string()]
@@ -121,6 +121,40 @@ fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
             }
         }
     }
+}
+
+/// Expand include patterns to match files in directories.
+///
+/// TypeScript's include patterns work as follows:
+/// - `src` matches `src/` directory and expands to `src/**/*`
+/// - `src/*` matches files directly in src, but for directories, adds `/**/*`
+/// - Patterns with extensions (e.g., `*.ts`) are used as-is
+fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
+    let mut expanded = Vec::new();
+    for pattern in patterns {
+        // If pattern already has glob metacharacters with extensions, use as-is
+        if pattern.ends_with(".ts")
+            || pattern.ends_with(".tsx")
+            || pattern.ends_with(".js")
+            || pattern.ends_with(".jsx")
+            || pattern.ends_with(".mts")
+            || pattern.ends_with(".cts")
+        {
+            expanded.push(pattern.clone());
+            continue;
+        }
+
+        // If pattern ends with /**/* or /**/*.*, it's already expanded
+        if pattern.ends_with("/**/*") || pattern.ends_with("/**/*.*") {
+            expanded.push(pattern.clone());
+            continue;
+        }
+
+        // Directory pattern (no extension or glob at end) - expand to match all files
+        let base = pattern.trim_end_matches('/');
+        expanded.push(format!("{}/**/*", base));
+    }
+    expanded
 }
 
 fn build_exclude_patterns(options: &FileDiscoveryOptions) -> Vec<String> {

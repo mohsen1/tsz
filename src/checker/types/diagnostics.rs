@@ -1,6 +1,8 @@
 //! Diagnostic codes and message templates for the type checker.
 //!
 //! Message templates match TypeScript's diagnosticMessages.json exactly.
+//! When a locale is set via `--locale`, messages are translated using
+//! TypeScript's official locale files.
 
 use serde::Serialize;
 

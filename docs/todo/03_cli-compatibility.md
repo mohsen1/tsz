@@ -12,13 +12,13 @@ This document tracks the CLI compatibility status between tsz/tsz-server and tsc
 | `--version` / `-V` | Done | Via clap |
 | `-v` (lowercase) | Done | Preprocessed to -V for tsc compat |
 | `--all` | Done | Shows all compiler options |
-| `--init` | Done | Creates tsconfig.json |
+| `--init` | Done | Creates tsconfig.json matching tsc 5.x format with comments and recommended options |
 | `--showConfig` | Done | Prints resolved configuration |
 | `--listFilesOnly` | Done | Lists files and exits |
-| `--build` / `-b` | Done | Basic build mode |
-| `--watch` / `-w` | Done | File watching with recompilation |
+| `--build` / `-b` | Done | Build mode with project reference graph, topological sort, and build order |
+| `--watch` / `-w` | Done | File watching with recompilation; supports all watcher strategies (native, polling) |
 | `--project` / `-p` | Done | Project path |
-| `--locale` | Done | Messaging locale |
+| `--locale` | Done | Messaging locale; loads TypeScript's official translations for 13 locales with proper parameter substitution |
 | `@file` response files | Done | Read args from file |
 | Exit code 0 | Done | Success |
 | Exit code 1 | Done | Errors, outputs skipped |
@@ -36,7 +36,8 @@ This document tracks the CLI compatibility status between tsz/tsz-server and tsc
 | `--pretty` | Done | Color output control |
 | `--diagnostics` / `--extendedDiagnostics` | Done | Performance info |
 | `--listFiles` / `--listEmittedFiles` | Done | File listing |
-| `--explainFiles` | Partial | Lists files but not full inclusion reasons |
+| `--explainFiles` | Done | Lists files with inclusion reasons (RootFile, IncludePattern, ImportedFrom, LibFile) |
+| `--generateTrace <dir>` | Done | Generates Chrome DevTools compatible trace files for performance analysis |
 | `--traceResolution` | Done | Module resolution tracing |
 | `--generateCpuProfile <path>` | Done (N/A) | V8-specific; flag accepted for compat, prints explanatory message |
 | `--noCheck` | Done | Flag skips type checking; only parse/emit diagnostics reported |
@@ -49,13 +50,8 @@ This document tracks the CLI compatibility status between tsz/tsz-server and tsc
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| `--generateTrace <dir>` | Medium | Event trace for performance analysis; prints warning but doesn't generate |
-| `--explainFiles` full reasons | Medium | Currently just lists files; needs inclusion reason tracking (e.g., "Matched by include pattern", "Imported via...") |
-| Full `--build` project references | High | Build mode currently does basic compilation; full multi-project build graph, dependency ordering, and incremental builds across references are not yet implemented |
-| `--init` template variations | Low | tsc's --init can be customized; tsz uses a fixed template |
-| Error message format | Medium | Diagnostic messages may differ in wording/formatting from tsc |
-| `--locale` i18n message loading | Low | Flag is accepted but messages are always in English |
-| Watch mode file watcher strategy | Medium | Some watcher strategies may not be fully implemented |
+| Error message format | Low | Diagnostic messages generally match tsc; minor wording/formatting differences may exist |
+| Incremental `.tsbuildinfo` | Medium | Build mode compiles projects in correct order but doesn't generate/use .tsbuildinfo for incremental builds |
 
 ## tsz-server vs tsserver
 
