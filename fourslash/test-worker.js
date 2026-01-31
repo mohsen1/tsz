@@ -206,7 +206,7 @@ function patchSessionClient(SessionClient) {
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset, options };
         const request = this.processRequest("indentation", args);
         const response = this.processResponse(request);
-        return response.body;
+        return response.body ? response.body.indentation : 0;
     };
 
     proto.toggleLineComment = function(fileName, textRange) {
@@ -324,9 +324,9 @@ function patchSessionClient(SessionClient) {
     // Return safe stubs so tests that don't strictly need these objects can proceed.
 
     proto.getProgram = function() {
-        // Returns a minimal stub Program object. The fourslash harness calls
-        // getProgram().getCompilerOptions(), getProgram().getSourceFile(), etc.
-        // We return a stub that provides safe defaults for these methods.
+        // Returns undefined - the fourslash harness guards against this
+        // with try/catch or null checks in most cases.
+        // TODO: Implement proper Program stub when compiler supports it
         return undefined;
     };
 

@@ -585,12 +585,15 @@ impl<'a> Completions<'a> {
     /// typing a brand-new identifier (e.g. a variable name after `const`, a
     /// parameter name, an import binding name, etc.).
     pub fn compute_is_new_identifier_location(&self, root: NodeIndex, offset: u32) -> bool {
-        // isNewIdentifierLocation=true means the user is typing a new NAME (not referring
-        // to an existing one). This is true after declaration keywords and in class/interface
-        // member positions, but false for most expression/statement positions.
+        // isNewIdentifierLocation=true means the user could type a new identifier that
+        // doesn't already exist in scope. This is true for most expression/value positions
+        // (where you could write any new expression), class/interface member positions,
+        // object literal properties, string literal module specifiers, etc.
         //
-        // We use a conservative approach: primarily text-based heuristics, with limited
-        // AST checks for class/interface bodies.
+        // It is false for:
+        // - Property access (x.|) - can only access existing members
+        // - Type assertion (x as |) - should reference existing types
+        // - After declaration keywords (var |, function |) where we define a name
 
         let node_idx = self.find_completions_node(root, offset);
 
@@ -619,16 +622,25 @@ impl<'a> Completions<'a> {
             }
         }
 
-        // Text-based heuristic: check if the previous non-whitespace token is
-        // a keyword that introduces a new name
-        self.check_preceding_keyword_for_new_id(offset)
-    }
-
-    fn check_preceding_keyword_for_new_id(&self, offset: u32) -> bool {
+        // Text-based heuristic
         let text = &self.source_text[..offset as usize];
         let trimmed = text.trim_end();
         if trimmed.is_empty() {
             return false;
+        }
+
+        let last_char = trimmed.as_bytes()[trimmed.len() - 1];
+
+        // After dot: member access, false
+        if last_char == b'.' {
+            return false;
+        }
+
+        // After these characters: typically new identifier location
+        // These are operators/punctuation that precede expressions where the user
+        // could type a brand new identifier name
+        if matches!(last_char, b'=' | b'(' | b',' | b'[' | b'{') {
+            return true;
         }
 
         // Find the last word before cursor
@@ -638,7 +650,7 @@ impl<'a> Completions<'a> {
             .unwrap_or(0);
         let last_word = &trimmed[last_word_start..];
 
-        // Keywords that explicitly introduce a new name
+        // Keywords that explicitly introduce a new name (isNewIdentifierLocation=true)
         matches!(
             last_word,
             "const"
@@ -655,6 +667,19 @@ impl<'a> Completions<'a> {
                 | "as"
                 | "from"
                 | "catch"
+                | "extends"
+                | "return"
+                | "yield"
+                | "await"
+                | "throw"
+                | "new"
+                | "typeof"
+                | "void"
+                | "delete"
+                | "case"
+                | "implements"
+                | "export"
+                | "default"
         )
     }
 
