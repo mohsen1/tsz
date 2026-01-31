@@ -460,7 +460,13 @@ impl<'a> CheckerState<'a> {
             ConstructableTypeKind, classify_for_constructability, construct_to_call_callable,
         };
 
-        match classify_for_constructability(self.ctx.types, type_id) {
+        // Recursion depth check to prevent stack overflow from recursive
+        // constructability checks (e.g. D<D<T>> patterns, symbol→type→symbol cycles)
+        if !self.ctx.enter_recursion() {
+            return None;
+        }
+
+        let result = match classify_for_constructability(self.ctx.types, type_id) {
             ConstructableTypeKind::CallableWithConstruct => {
                 // Return a callable with construct signatures as call signatures
                 construct_to_call_callable(self.ctx.types, type_id)
@@ -498,7 +504,10 @@ impl<'a> CheckerState<'a> {
             ConstructableTypeKind::Application => Some(type_id),
             ConstructableTypeKind::Object => Some(type_id),
             ConstructableTypeKind::NotConstructable => None,
-        }
+        };
+
+        self.ctx.leave_recursion();
+        result
     }
 
     /// Check if a symbol reference is constructable.

@@ -293,6 +293,8 @@ pub struct CheckerContext<'a> {
     pub symbol_resolution_set: HashSet<SymbolId>,
     /// O(1) lookup set for class instance type resolution to avoid recursion.
     pub class_instance_resolution_set: HashSet<SymbolId>,
+    /// O(1) lookup set for class constructor type resolution to avoid recursion.
+    pub class_constructor_resolution_set: HashSet<SymbolId>,
 
     /// Inheritance graph tracking class/interface relationships
     pub inheritance_graph: crate::solver::inheritance::InheritanceGraph,
@@ -314,6 +316,10 @@ pub struct CheckerContext<'a> {
 
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: RefCell<bool>,
+
+    /// General recursion depth counter for type checking.
+    /// Prevents stack overflow by bailing out when depth exceeds MAX_RECURSION_DEPTH.
+    pub recursion_depth: Cell<u32>,
 
     /// Current depth of call expression resolution.
     pub call_depth: RefCell<u32>,
@@ -457,6 +463,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
+            class_constructor_resolution_set: HashSet::new(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
@@ -464,6 +471,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
+            recursion_depth: Cell::new(0),
             call_depth: RefCell::new(0),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
@@ -532,6 +540,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
+            class_constructor_resolution_set: HashSet::new(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
@@ -539,6 +548,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
+            recursion_depth: Cell::new(0),
             call_depth: RefCell::new(0),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
@@ -609,6 +619,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
+            class_constructor_resolution_set: HashSet::new(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
@@ -616,6 +627,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
+            recursion_depth: Cell::new(0),
             call_depth: RefCell::new(0),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
@@ -685,6 +697,7 @@ impl<'a> CheckerContext<'a> {
             symbol_resolution_depth: Cell::new(0),
             max_symbol_resolution_depth: 256,
             class_instance_resolution_set: HashSet::new(),
+            class_constructor_resolution_set: HashSet::new(),
             inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: HashSet::new(),
@@ -692,6 +705,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
+            recursion_depth: Cell::new(0),
             call_depth: RefCell::new(0),
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
@@ -892,6 +906,34 @@ impl<'a> CheckerContext<'a> {
     /// Check if type resolution fuel has been exhausted.
     pub fn is_fuel_exhausted(&self) -> bool {
         *self.fuel_exhausted.borrow()
+    }
+
+    /// Maximum recursion depth before bailing out to prevent stack overflow.
+    /// Each guarded cycle adds ~7-14 stack frames per depth increment.
+    /// With depth 50, that's 350-700 frames (~0.7MB), well within the 8MB stack.
+    pub const MAX_RECURSION_DEPTH: u32 = 50;
+
+    /// Enter a recursive call. Returns true if recursion is allowed,
+    /// false if the depth limit has been reached (caller should bail out).
+    #[inline]
+    pub fn enter_recursion(&self) -> bool {
+        let depth = self.recursion_depth.get();
+        if depth >= Self::MAX_RECURSION_DEPTH {
+            return false;
+        }
+        self.recursion_depth.set(depth + 1);
+        true
+    }
+
+    /// Leave a recursive call (decrement depth counter).
+    #[inline]
+    pub fn leave_recursion(&self) {
+        let depth = self.recursion_depth.get();
+        debug_assert!(
+            depth > 0,
+            "leave_recursion called without matching enter_recursion"
+        );
+        self.recursion_depth.set(depth - 1);
     }
 
     /// Check if Promise is available in lib files or global scope.

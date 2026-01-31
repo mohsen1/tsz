@@ -923,6 +923,47 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &crate::parser::node::ClassData,
     ) -> TypeId {
+        // Cycle detection: prevent infinite recursion on circular class hierarchies
+        // (e.g. class C extends C {}, or A extends B extends A)
+        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let did_insert = if let Some(sym_id) = current_sym {
+            if self.ctx.class_constructor_resolution_set.insert(sym_id) {
+                true
+            } else {
+                // Already resolving this class's constructor type — cycle detected
+                return TypeId::ERROR;
+            }
+        } else {
+            false
+        };
+
+        // Check fuel to prevent timeout on pathological inheritance hierarchies
+        if !self.ctx.consume_fuel() {
+            if did_insert {
+                if let Some(sym_id) = current_sym {
+                    self.ctx.class_constructor_resolution_set.remove(&sym_id);
+                }
+            }
+            return TypeId::ERROR;
+        }
+
+        let result = self.get_class_constructor_type_inner(class_idx, class);
+
+        // Cleanup: remove from resolution set
+        if did_insert {
+            if let Some(sym_id) = current_sym {
+                self.ctx.class_constructor_resolution_set.remove(&sym_id);
+            }
+        }
+
+        result
+    }
+
+    fn get_class_constructor_type_inner(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &crate::parser::node::ClassData,
+    ) -> TypeId {
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
         let (class_type_params, type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
