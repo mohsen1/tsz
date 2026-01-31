@@ -6,9 +6,10 @@
 # Requires: hyperfine (brew install hyperfine)
 #
 # Usage:
-#   ./scripts/bench-vs-tsgo.sh           # Full benchmark suite
-#   ./scripts/bench-vs-tsgo.sh --quick   # Quick smoke test (fewer runs, fewer files)
-#   ./scripts/bench-vs-tsgo.sh --json    # Export results to JSON
+#   ./scripts/bench-vs-tsgo.sh                    # Full benchmark suite
+#   ./scripts/bench-vs-tsgo.sh --quick              # Quick smoke test (fewer runs, fewer files)
+#   ./scripts/bench-vs-tsgo.sh --json               # Export results to JSON
+#   ./scripts/bench-vs-tsgo.sh --filter 'BCT|CFA'   # Run only tests matching regex
 
 set -euo pipefail
 
@@ -22,10 +23,13 @@ TSGO="${TSGO:-$(which tsgo 2>/dev/null || echo "")}"
 # Parse arguments
 QUICK_MODE=false
 JSON_OUTPUT=false
-for arg in "$@"; do
-    case $arg in
-        --quick) QUICK_MODE=true ;;
-        --json) JSON_OUTPUT=true ;;
+FILTER=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --quick) QUICK_MODE=true; shift ;;
+        --json) JSON_OUTPUT=true; shift ;;
+        --filter) FILTER="$2"; shift 2 ;;
+        *) shift ;;
     esac
 done
 
@@ -39,6 +43,10 @@ else
     WARMUP=3
     MIN_RUNS=10
     MAX_RUNS=50
+fi
+
+if [ -n "$FILTER" ]; then
+    echo "Filter: only running tests matching /$FILTER/"
 fi
 
 # Colors
@@ -111,7 +119,12 @@ run_benchmark() {
     local name="$1"
     local file="$2"
     local extra_args="${3:-}"
-    
+
+    # Skip if filter is set and name doesn't match
+    if [ -n "$FILTER" ] && ! echo "$name" | grep -qE "$FILTER"; then
+        return
+    fi
+
     local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
     local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
     local kb=$((bytes / 1024))
@@ -1396,16 +1409,23 @@ main() {
             "Test" "Lines" "KB" "tsz(ms)" "tsgo(ms)" "Winner" "Factor"
         printf "${CYAN}%s${NC}\n" "─────────────────────────────────────────────────────────────────────────────────────────────────"
         
-        # Table rows
-        echo -e "$RESULTS_CSV" | while IFS=',' read -r name lines kb tsz_ms tsgo_ms tsz_lps tsgo_lps winner ratio; do
+        # Table rows (sorted best-to-worst for tsz: tsz wins by descending factor, then tsgo wins by ascending factor)
+        echo -e "$RESULTS_CSV" | awk -F',' '
+            $1 != "" {
+                # Create a sort key: tsz wins get +ratio, tsgo wins get -ratio
+                if ($8 == "tsz") sort_key = $9 + 0;
+                else sort_key = -($9 + 0);
+                print sort_key "," $0
+            }
+        ' | sort -t',' -k1 -rn | cut -d',' -f2- | while IFS=',' read -r name lines kb tsz_ms tsgo_ms tsz_lps tsgo_lps winner ratio; do
             [ -z "$name" ] && continue
-            
+
             # Truncate long test names
             local display_name="$name"
             if [ ${#name} -gt 44 ]; then
                 display_name="${name:0:41}..."
             fi
-            
+
             # Color the winner and show factor
             if [ "$winner" = "tsz" ]; then
                 printf "%-45s %7s %6s %10s %10s ${GREEN}%8s${NC} ${GREEN}%7sx${NC}\n" \

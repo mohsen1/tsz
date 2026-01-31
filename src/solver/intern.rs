@@ -146,6 +146,7 @@ impl TypeShard {
 /// Inner data for ConcurrentSliceInterner, lazily initialized.
 struct SliceInternerInner<T> {
     items: DashMap<u32, Arc<[T]>, FxBuildHasher>,
+    map: DashMap<Arc<[T]>, u32, FxBuildHasher>,
 }
 
 /// Lock-free slice interner using DashMap for concurrent access.
@@ -170,9 +171,11 @@ where
     fn get_inner(&self) -> &SliceInternerInner<T> {
         self.inner.get_or_init(|| {
             let items = DashMap::with_hasher(FxBuildHasher);
+            let map = DashMap::with_hasher(FxBuildHasher);
             let empty: Arc<[T]> = Arc::from(Vec::new());
-            items.insert(0, empty);
-            SliceInternerInner { items }
+            items.insert(0, empty.clone());
+            map.insert(empty, 0);
+            SliceInternerInner { items, map }
         })
     }
 
@@ -182,21 +185,25 @@ where
         }
 
         let inner = self.get_inner();
-
-        // Create a temporary Arc for lookup
         let temp_arc: Arc<[T]> = Arc::from(items_slice.to_vec());
 
-        // Try to insert - if already exists, get existing ID
-        for entry in inner.items.iter() {
-            if entry.value() == &temp_arc {
-                return *entry.key();
-            }
+        // Try to get existing ID via reverse map — O(1)
+        if let Some(ref_entry) = inner.map.get(&temp_arc) {
+            return *ref_entry.value();
         }
 
         // Allocate new ID
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        inner.items.insert(id, temp_arc);
-        id
+
+        // Double-check: another thread might have inserted while we allocated
+        match inner.map.entry(temp_arc.clone()) {
+            dashmap::mapref::entry::Entry::Vacant(e) => {
+                e.insert(id);
+                inner.items.insert(id, temp_arc);
+                id
+            }
+            dashmap::mapref::entry::Entry::Occupied(e) => *e.get(),
+        }
     }
 
     fn get(&self, id: u32) -> Option<Arc<[T]>> {
