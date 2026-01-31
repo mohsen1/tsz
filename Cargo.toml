@@ -83,6 +83,11 @@ lto = "fat"           # Full link-time optimization for smaller, faster binary
 codegen-units = 1     # Single codegen unit for better optimization
 strip = "symbols"     # Strip debug symbols to reduce binary size
 
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 2
+debug = true
+
 [profile.test]
 # Thin LTO for faster test binaries (trade-off: slightly slower test compilation)
 lto = "thin"
