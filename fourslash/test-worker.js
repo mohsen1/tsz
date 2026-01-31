@@ -227,8 +227,10 @@ function patchSessionClient(SessionClient) {
             ...(options || {}),
         };
         const request = this.processRequest("docCommentTemplate", args);
-        const response = this.processResponse(request, /*expectEmptyBody*/ true);
-        return response.body || undefined;
+        const response = this.processResponse(request);
+        // Server returns {newText: "", caretOffset: 0} for "no template"
+        if (!response.body || !response.body.newText) return undefined;
+        return response.body;
     };
 
     proto.getIndentationAtPosition = function(fileName, position, options) {
@@ -391,6 +393,7 @@ function patchSessionClient(SessionClient) {
                 getSourceFiles: function() { return []; },
                 getCurrentDirectory: function() { return "/"; },
                 getConfigFileParsingDiagnostics: function() { return []; },
+                getOptionsDiagnostics: function() { return []; },
                 getSemanticDiagnostics: function() { return []; },
                 getSyntacticDiagnostics: function() { return []; },
                 getGlobalDiagnostics: function() { return []; },
