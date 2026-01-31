@@ -545,6 +545,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =========================================================================
+        // Cross-checker memoization (QueryCache lookup)
+        // =========================================================================
+        // Check the shared cache for a previously computed result.
+        // This avoids re-doing expensive structural checks for type pairs
+        // already resolved by a prior SubtypeChecker instance.
+        if let Some(db) = self.query_db {
+            if let Some(cached) = db.lookup_subtype_cache(source, target) {
+                return if cached {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                };
+            }
+        }
+
+        // =========================================================================
         // Iteration limit check (timeout prevention)
         // =========================================================================
 
@@ -635,6 +651,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Remove from in-progress and decrement depth
         self.depth -= 1;
         self.in_progress.remove(&pair);
+
+        // Cache definitive results in the shared QueryCache for cross-checker memoization.
+        // Only cache True/False, not Provisional (which is a cycle-detection artifact).
+        if let Some(db) = self.query_db {
+            match result {
+                SubtypeResult::True => db.insert_subtype_cache(source, target, true),
+                SubtypeResult::False => db.insert_subtype_cache(source, target, false),
+                SubtypeResult::Provisional => {} // Don't cache provisional results
+            }
+        }
 
         result
     }
