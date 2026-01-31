@@ -22,7 +22,7 @@ required-features = ["cli"]
 
 [[bin]]
 name = "tsz-server"
-path = "src/bin/tsz_server.rs"
+path = "src/bin/tsz_server/main.rs"
 required-features = ["cli"]
 
 [features]
