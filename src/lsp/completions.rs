@@ -664,7 +664,6 @@ impl<'a> Completions<'a> {
                 | "namespace"
                 | "module"
                 | "import"
-                | "as"
                 | "from"
                 | "catch"
                 | "extends"
@@ -2531,13 +2530,14 @@ mod completions_tests {
 
     #[test]
     fn test_is_new_identifier_location_after_as() {
-        let source = "import { foo as ";
+        // `x as <type>` is a type assertion - selecting existing type, not new identifier
+        let source = "var y = x as ";
         let (root, arena, binder, line_map, src) = make_completions_provider(source);
         let completions = Completions::new(&arena, &binder, &line_map, &src);
         let offset = source.len() as u32;
         assert!(
-            completions.compute_is_new_identifier_location(root, offset),
-            "Should be new identifier location after 'as '"
+            !completions.compute_is_new_identifier_location(root, offset),
+            "Should NOT be new identifier location after 'as' in type assertion"
         );
     }
 
