@@ -1044,7 +1044,7 @@ fn test_signature_overload_count() {
 fn test_debug_callee_name() {
     use crate::scanner::SyntaxKind;
     let source = "function greet(name: string): void {}\ngreet(\"hello\");";
-    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let (parser, _binder, _interner, _line_map, _root) = setup_provider(source);
     let arena = parser.get_arena();
 
     // Find the call expression manually

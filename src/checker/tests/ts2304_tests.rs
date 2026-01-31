@@ -10,6 +10,7 @@ use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::solver::TypeInterner;
+#[allow(unused_imports)]
 use crate::test_fixtures::TestContext;
 use std::sync::Arc;
 

@@ -2450,7 +2450,7 @@ mod completions_tests {
         let offset = source.len() as u32;
         // At end of file after a complete statement, not after a keyword
         // This should NOT be a new identifier location
-        let result = completions.compute_is_new_identifier_location(root, offset);
+        let _result = completions.compute_is_new_identifier_location(root, offset);
         // Note: this may be true if the AST node at this position is within
         // a variable declaration. We primarily care about the keyword heuristic.
         // The important thing is that after keywords like const/let/var it IS true.
