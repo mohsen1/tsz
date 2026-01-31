@@ -769,11 +769,11 @@ impl Server {
             "change" => self.handle_change(seq, &request),
             "configure" => self.handle_configure(seq, &request),
             "quickinfo" => self.handle_quickinfo(seq, &request),
-            "definition" | "typeDefinition" => self.handle_definition(seq, &request),
+            "definition" | "typeDefinition" | "definition-full" | "typeDefinition-full" => self.handle_definition(seq, &request),
             "references" => self.handle_references(seq, &request),
             "references-full" => self.handle_references_full(seq, &request),
             "completions" | "completionInfo" => self.handle_completions(seq, &request),
-            "completionEntryDetails" => self.handle_completion_details(seq, &request),
+            "completionEntryDetails" | "completionEntryDetails-full" => self.handle_completion_details(seq, &request),
             "signatureHelp" => self.handle_signature_help(seq, &request),
             "semanticDiagnosticsSync" => self.handle_semantic_diagnostics_sync(seq, &request),
             "syntacticDiagnosticsSync" => self.handle_syntactic_diagnostics_sync(seq, &request),
@@ -781,9 +781,9 @@ impl Server {
             "geterr" => self.handle_geterr(seq, &request),
             "geterrForProject" => self.handle_geterr_for_project(seq, &request),
             "navtree" | "navbar" => self.handle_navtree(seq, &request),
-            "navto" | "navTo" => self.handle_navto(seq, &request),
+            "navto" | "navTo" | "navto-full" | "navTo-full" => self.handle_navto(seq, &request),
             "documentHighlights" => self.handle_document_highlights(seq, &request),
-            "rename" => self.handle_rename(seq, &request),
+            "rename" | "rename-full" => self.handle_rename(seq, &request),
             "getCodeFixes" => self.handle_get_code_fixes(seq, &request),
             "getCombinedCodeFix" => self.handle_get_combined_code_fix(seq, &request),
             "getSupportedCodeFixes" => self.handle_get_supported_code_fixes(seq, &request),
@@ -813,7 +813,7 @@ impl Server {
             }
             "mapCode" => self.handle_map_code(seq, &request),
             "fileReferences" => self.handle_file_references(seq, &request),
-            "implementation" => self.handle_implementation(seq, &request),
+            "implementation" | "implementation-full" => self.handle_implementation(seq, &request),
             "getOutliningSpans" => self.handle_outlining_spans(seq, &request),
             "exit" => TsServerResponse {
                 seq,
@@ -929,7 +929,6 @@ impl Server {
     ) -> String {
         let start_byte = Self::line_offset_to_byte(content, line, offset);
         let end_byte = Self::line_offset_to_byte(content, end_line, end_offset);
-        let mut result =
         let mut result = String::with_capacity(
             content.len().saturating_sub(end_byte.saturating_sub(start_byte)).saturating_add(insert_string.len())
         );
