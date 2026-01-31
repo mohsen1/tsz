@@ -7,8 +7,6 @@
 #
 # Examples:
 #   ./run.sh                          # Run with defaults (server mode, all tests)
-#   ./run.sh --all                    # Run all tests (same as default)
-#   ./run.sh --native --no-docker     # Run native binary without Docker
 #   ./run.sh --max=100 --verbose      # Run 100 tests with verbose output
 #   ./run.sh cache generate           # Generate TSC cache for faster runs
 #   ./run.sh single path/to/test.ts   # Run a single test file
@@ -22,15 +20,10 @@ set -euo pipefail
 # =============================================================================
 
 CHILD_PIDS=()
-DOCKER_CONTAINER_NAME=""
 
 cleanup() {
     local exit_code=$?
     echo ""
-    if [[ -n "$DOCKER_CONTAINER_NAME" ]]; then
-        docker stop "$DOCKER_CONTAINER_NAME" 2>/dev/null || true
-        docker rm -f "$DOCKER_CONTAINER_NAME" 2>/dev/null || true
-    fi
     for pid in "${CHILD_PIDS[@]:-}"; do
         kill -TERM "$pid" 2>/dev/null || true
     done
@@ -46,7 +39,6 @@ trap cleanup INT TERM EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DOCKER_IMAGE="tsz-conformance"
 
 if [[ -t 1 ]]; then
     RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[0;33m'
@@ -61,7 +53,6 @@ fi
 # =============================================================================
 
 CFG_MODE="server"
-CFG_DOCKER=false
 CFG_MAX=99999
 CFG_WORKERS=""
 CFG_TIMEOUT=600
@@ -137,20 +128,6 @@ build_server() {
     log_success "tsz-server built"
 }
 
-build_native_for_docker() {
-    log_step "Building native binary for Linux (Docker)..."
-    docker run --rm \
-        -v "$ROOT_DIR:/work:rw" \
-        -w /work \
-        --platform linux/arm64 \
-        rust:1-slim \
-        bash -c "
-            apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev >/dev/null 2>&1
-            cargo build --release --bin tsz
-        "
-    log_success "Native binary for Linux built"
-}
-
 build_runner() {
     log_step "Building conformance runner..."
     cd "$SCRIPT_DIR"
@@ -159,27 +136,6 @@ build_runner() {
     fi
     npm run build --silent 2>/dev/null || npm run build
     log_success "Runner built"
-}
-
-# =============================================================================
-# Docker Functions
-# =============================================================================
-
-check_docker() {
-    command -v docker &>/dev/null || die "Docker not found. Install from: https://docs.docker.com/get-docker/"
-    docker info &>/dev/null || die "Docker daemon not running. Start Docker Desktop or run: sudo systemctl start docker"
-}
-
-ensure_docker_image() {
-    if ! docker image inspect "$DOCKER_IMAGE" &>/dev/null; then
-        log_step "Building Docker image..."
-        docker build --platform linux/arm64 -t "$DOCKER_IMAGE" -f - "$SCRIPT_DIR" << 'DOCKERFILE'
-FROM node:22-slim
-WORKDIR /app
-RUN mkdir -p /app/conformance /app/pkg /app/target /app/TypeScript/tests
-DOCKERFILE
-    fi
-    log_success "Docker image ready"
 }
 
 # =============================================================================
@@ -241,10 +197,8 @@ COMMANDS:
 OPTIONS:
   Execution Mode:
     --server            Persistent tsz-server process (default, fastest)
-    --wasm              WASM module (slower, good isolation)
+    --wasm              WASM module (good isolation via WASM sandbox)
     --native            Native binary per test (legacy)
-    --docker            Run inside Docker container
-    --no-docker         Run directly on host (default with --server)
 
   Test Selection:
     --all               Run all tests (default)
@@ -261,7 +215,6 @@ OPTIONS:
     --print-test        Show file content, directives, expected vs actual (use with --filter)
     --pass-rate-only    Output only pass rate percentage (for CI/scripts)
     -q, --quiet         Minimal output
-    --json              JSON output (not yet implemented)
     --dump-results=FILE Dump full results to JSON file
 
   Other:
@@ -270,9 +223,8 @@ OPTIONS:
     --dry-run           Show config without running
 
 EXECUTION MODES:
-    Server (default)    Persistent process, libs cached in memory, 5-10x fastest
-    WASM + Docker       Best isolation, cross-platform, safest for CI
-    WASM (no Docker)    WASM sandbox without container overhead
+    Server (default)    Persistent process, libs cached in memory, fastest
+    WASM                WASM sandbox provides isolation from crashes/OOM
     Native (legacy)     Spawns binary per test, no isolation
 
 EXIT CODES:
@@ -287,7 +239,6 @@ show_version() {
     echo "TSZ Conformance Test Runner v1.0.0"
     echo "Rust: $(rustc --version 2>/dev/null || echo 'not installed')"
     echo "Node: $(node --version 2>/dev/null || echo 'not installed')"
-    echo "Docker: $(docker --version 2>/dev/null || echo 'not installed')"
 }
 
 # =============================================================================
@@ -338,10 +289,10 @@ cmd_single() {
 # Build runner args from global config.
 build_runner_args() {
     local args="--max=$CFG_MAX --workers=$CFG_WORKERS --category=$CFG_CATEGORIES"
-    [[ "$CFG_VERBOSE" == "true" ]] && args="$args --verbose"
-    [[ -n "$CFG_FILTER" ]]        && args="$args --filter=$CFG_FILTER"
+    [[ "$CFG_VERBOSE" == "true" ]]    && args="$args --verbose"
+    [[ -n "$CFG_FILTER" ]]            && args="$args --filter=$CFG_FILTER"
     [[ "$CFG_PRINT_TEST" == "true" ]] && args="$args --print-test"
-    [[ -n "$CFG_DUMP_RESULTS" ]]  && args="$args --dump-results=$CFG_DUMP_RESULTS"
+    [[ -n "$CFG_DUMP_RESULTS" ]]      && args="$args --dump-results=$CFG_DUMP_RESULTS"
     echo "$args"
 }
 
@@ -377,92 +328,15 @@ run_wasm_native_mode() {
     local use_wasm="$1"
     local mode_desc
     if [[ "$use_wasm" == "true" ]]; then mode_desc="WASM"; else mode_desc="Native"; fi
-    if [[ "$CFG_DOCKER" == "true" ]]; then mode_desc="$mode_desc + Docker"; else mode_desc="$mode_desc (direct)"; fi
-
-    # Warn about macOS + native + docker
-    if [[ "$CFG_DOCKER" == "true" ]] && [[ "$use_wasm" == "false" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
-        log_warning "Native + Docker may not work on macOS (binary is macOS, container is Linux)."
-        echo "  Use --no-docker or --wasm instead."
-        echo ""
-    fi
 
     print_banner "$mode_desc"
 
-    # Build
     if [[ "$use_wasm" == "true" ]]; then
         build_wasm
-    elif [[ "$CFG_DOCKER" == "true" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
-        build_native_for_docker
     else
         build_native
     fi
     build_runner
-
-    local runner_args
-    runner_args="$(build_runner_args) --wasm=$use_wasm"
-
-    if [[ "$CFG_DOCKER" == "true" ]]; then
-        run_in_docker "$use_wasm" "$runner_args"
-    else
-        run_direct "$use_wasm" "$runner_args"
-    fi
-}
-
-run_in_docker() {
-    local use_wasm="$1"
-    local runner_args="$2"
-
-    check_docker
-    ensure_docker_image
-
-    local memory_gb=$(( CFG_WORKERS * 3 ))
-    (( memory_gb < 8 )) && memory_gb=8
-
-    log_step "Running tests in Docker (Memory: ${memory_gb}GB, CPUs: $CFG_WORKERS)..."
-    echo ""
-
-    local mount_dir
-    if [[ "$use_wasm" == "true" ]]; then
-        mount_dir="$ROOT_DIR/pkg"
-    else
-        mount_dir="$(get_target_dir)"
-    fi
-
-    DOCKER_CONTAINER_NAME="tsz-conformance-$$"
-
-    docker run --rm \
-        --name "$DOCKER_CONTAINER_NAME" \
-        --platform linux/arm64 \
-        --memory="${memory_gb}g" \
-        --memory-swap="${memory_gb}g" \
-        --cpus="$CFG_WORKERS" \
-        --pids-limit=1000 \
-        -v "$mount_dir:/app/target:ro" \
-        -v "$ROOT_DIR/pkg:/app/pkg:ro" \
-        -v "$SCRIPT_DIR/src:/app/conformance/src:ro" \
-        -v "$SCRIPT_DIR/dist:/app/conformance/dist:ro" \
-        -v "$SCRIPT_DIR/package.json:/app/conformance/package.json:ro" \
-        -v "$SCRIPT_DIR/.tsc-cache:/app/conformance/.tsc-cache:ro" \
-        -v "$ROOT_DIR/TypeScript/tests:/app/TypeScript/tests:ro" \
-        -v "$ROOT_DIR/TypeScript/src/lib:/app/TypeScript/src/lib:ro" \
-        "$DOCKER_IMAGE" sh -c "
-            cd /app/conformance
-            npm install --silent 2>/dev/null || true
-            timeout ${CFG_TIMEOUT}s node --expose-gc dist/runner.js $runner_args
-            EXIT_CODE=\$?
-            [ \$EXIT_CODE -eq 124 ] && echo '' && echo 'Tests timed out after ${CFG_TIMEOUT}s'
-            exit \$EXIT_CODE
-        "
-    local docker_exit=$?
-    DOCKER_CONTAINER_NAME=""
-    return $docker_exit
-}
-
-run_direct() {
-    local use_wasm="$1"
-    local runner_args="$2"
-
-    [[ "$use_wasm" == "false" ]] && log_warning "No Docker isolation. Infinite loops may hang your system."
 
     log_step "Running tests..."
     echo ""
@@ -472,6 +346,8 @@ run_direct() {
         export TSZ_BINARY="$(get_target_dir)/release/tsz"
     fi
 
+    local runner_args
+    runner_args="$(build_runner_args) --wasm=$use_wasm"
     run_node $runner_args
 }
 
@@ -499,11 +375,9 @@ parse_args() {
             cache)             command="cache"; shift; positional_args+=("$@"); break ;;
             single)            command="single"; shift; positional_args+=("$@"); break ;;
 
-            --server)          CFG_MODE="server"; CFG_DOCKER=false ;;
+            --server)          CFG_MODE="server" ;;
             --wasm)            CFG_MODE="wasm" ;;
             --native)          CFG_MODE="native" ;;
-            --docker)          CFG_DOCKER=true ;;
-            --no-docker|--no-sandbox) CFG_DOCKER=false ;;
 
             --all)             CFG_MAX=99999; CFG_TIMEOUT=3600 ;;
             --max=*)           CFG_MAX="${1#*=}" ;;
@@ -523,6 +397,9 @@ parse_args() {
 
             --dry-run)         CFG_DRY_RUN=true ;;
 
+            # Accept but ignore removed Docker flags for backwards compat
+            --docker|--no-docker|--no-sandbox) ;;
+
             -*)                die "Unknown option: $1 (use --help for usage)" ;;
             *)                 positional_args+=("$1") ;;
         esac
@@ -533,10 +410,6 @@ parse_args() {
     if [[ -z "$CFG_WORKERS" ]]; then
         CFG_WORKERS=$(detect_cores)
         if (( CFG_WORKERS > 8 )) && (( CFG_MAX < 1000 )); then
-            CFG_WORKERS=8
-        fi
-        if [[ "$CFG_MODE" == "wasm" ]] && [[ "$CFG_DOCKER" == "true" ]] && (( CFG_WORKERS > 8 )); then
-            log_warning "Capping WASM+Docker workers to 8 (was $CFG_WORKERS) to prevent OOM"
             CFG_WORKERS=8
         fi
     fi
@@ -558,7 +431,6 @@ main() {
     if [[ "$CFG_DRY_RUN" == "true" ]]; then
         echo "Dry run — would execute:"
         echo "  Mode:       $CFG_MODE"
-        echo "  Docker:     $CFG_DOCKER"
         echo "  Max tests:  $CFG_MAX"
         echo "  Workers:    $CFG_WORKERS"
         echo "  Timeout:    ${CFG_TIMEOUT}s"
