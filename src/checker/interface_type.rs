@@ -629,6 +629,8 @@ impl<'a> CheckerState<'a> {
             (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => {
                 self.ctx.types.intersection2(derived, base)
             }
+            // When the derived interface has no own members (TypeId::ANY), just use the base.
+            (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
             _ => derived,
         }
     }
