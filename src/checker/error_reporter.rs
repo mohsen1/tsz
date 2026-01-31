@@ -869,8 +869,10 @@ impl<'a> CheckerState<'a> {
     /// document, HTMLElement, etc.) is used but the 'dom' lib is not included.
     pub fn error_cannot_find_name_change_target_lib(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
-            let message =
-                format_message(diagnostic_messages::CANNOT_FIND_NAME_CHANGE_TARGET_LIB, &[name]);
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_NAME_CHANGE_TARGET_LIB,
+                &[name],
+            );
             self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::CANNOT_FIND_NAME_CHANGE_TARGET_LIB,
                 category: DiagnosticCategory::Error,

@@ -9,8 +9,8 @@ use crate::parser::NodeIndex;
 use crate::parser::node::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::solver::{TypeId, TypePredicateTarget};
 use crate::solver::types::TypeParamInfo;
+use crate::solver::{TypeId, TypePredicateTarget};
 
 #[allow(dead_code)]
 impl<'a> CheckerState<'a> {
@@ -1644,8 +1644,7 @@ impl<'a> CheckerState<'a> {
                     );
                     // For interfaces, use all declarations (handles declaration merging)
                     if !symbol.declarations.is_empty() {
-                        lib_types
-                            .push(lowering.lower_interface_declarations(&symbol.declarations));
+                        lib_types.push(lowering.lower_interface_declarations(&symbol.declarations));
                         continue;
                     }
                     // For type aliases and other single-declaration types
@@ -1756,8 +1755,8 @@ impl<'a> CheckerState<'a> {
                     );
 
                     if !symbol.declarations.is_empty() {
-                        let (ty, params) = lowering
-                            .lower_interface_declarations_with_params(&symbol.declarations);
+                        let (ty, params) =
+                            lowering.lower_interface_declarations_with_params(&symbol.declarations);
                         lib_types.push(ty);
                         // Take type params from the first definition (primary interface)
                         if first_params.is_none() && !params.is_empty() {
@@ -1774,7 +1773,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let lib_type_id = if lib_types.len() == 1 {
+        let mut lib_type_id = if lib_types.len() == 1 {
             Some(lib_types[0])
         } else if lib_types.len() > 1 {
             let mut merged = lib_types[0];
@@ -1785,6 +1784,38 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
+
+        // Merge global augmentations (same as resolve_lib_type_by_name)
+        if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
+            && !augmentation_decls.is_empty()
+        {
+            let arena_ref = self.ctx.arena;
+            let binder_ref = self.ctx.binder;
+            let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                if is_compiler_managed_type(ident_name) {
+                    return None;
+                }
+                if let Some(found_sym) = binder_ref.file_locals.get(ident_name) {
+                    return Some(found_sym.0);
+                }
+                for ctx in &lib_contexts {
+                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                        return Some(found_sym.0);
+                    }
+                }
+                None
+            };
+
+            let lowering = TypeLowering::with_resolver(self.ctx.arena, self.ctx.types, &resolver);
+            let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
+
+            lib_type_id = if let Some(lib_type) = lib_type_id {
+                Some(self.ctx.types.intersection2(lib_type, augmentation_type))
+            } else {
+                Some(augmentation_type)
+            };
+        }
 
         (lib_type_id, first_params.unwrap_or_default())
     }

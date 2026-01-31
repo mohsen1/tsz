@@ -877,7 +877,8 @@ impl<'a> TypeLowering<'a> {
     }
 
     pub fn lower_interface_declarations(&self, declarations: &[NodeIndex]) -> TypeId {
-        self.lower_interface_declarations_with_params(declarations).0
+        self.lower_interface_declarations_with_params(declarations)
+            .0
     }
 
     /// Lower interface declarations and also return the collected type parameters.
