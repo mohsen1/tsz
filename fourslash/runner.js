@@ -487,6 +487,12 @@ async function main() {
         }
     }
 
+    // Dump all errors to file for analysis (development aid)
+    try {
+        const errDump = errors.map(({file, error}) => path.basename(file, ".ts") + ": " + error.split("\n")[0]).join("\n");
+        require("fs").writeFileSync("/tmp/all-errors.txt", errDump);
+    } catch (_) {}
+
     process.exit(failed > 0 ? 1 : 0);
 }
 
