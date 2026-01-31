@@ -199,8 +199,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if instance_types.is_empty() {
-                    // TS2507: Type 'X' is not a constructor function type
-                    self.error_not_a_constructor_at(constructor_type, idx);
+                    // TS2351: This expression is not constructable
+                    self.error_not_constructable_at(constructor_type, idx);
                     return TypeId::ERROR;
                 } else if instance_types.len() == 1 {
                     return instance_types[0];
@@ -240,7 +240,7 @@ impl<'a> CheckerState<'a> {
                         }
 
                         if instance_types.is_empty() {
-                            self.error_not_a_constructor_at(constructor_type, idx);
+                            self.error_not_constructable_at(constructor_type, idx);
                             return TypeId::ERROR;
                         } else if instance_types.len() == 1 {
                             return instance_types[0];
@@ -287,8 +287,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let Some(construct_type) = construct_type else {
-            // TS2507: Type 'X' is not a constructor function type
-            self.error_not_a_constructor_at(constructor_type, idx);
+            // TS2351: This expression is not constructable
+            self.error_not_constructable_at(constructor_type, idx);
             return TypeId::ERROR;
         };
 
@@ -356,8 +356,9 @@ impl<'a> CheckerState<'a> {
                 // Determine which error to emit:
                 // - TS2555: "Expected at least N arguments" when got < min and there's a range
                 // - TS2554: "Expected N arguments" otherwise
-                if actual < expected_min && expected_max.is_some_and(|max| max != expected_min) {
-                    // Too few arguments with optional parameters - use TS2555
+                if actual < expected_min && expected_max != Some(expected_min) {
+                    // Too few arguments with rest/optional parameters - use TS2555
+                    // expected_max is None (rest params) or Some(max) where max > min (optional params)
                     self.error_expected_at_least_arguments_at(expected_min, actual, idx);
                 } else {
                     // Either too many, or exact count expected - use TS2554
@@ -1262,8 +1263,9 @@ impl<'a> CheckerState<'a> {
                 // Determine which error to emit:
                 // - TS2555: "Expected at least N arguments" when got < min and there's a range
                 // - TS2554: "Expected N arguments" otherwise
-                if actual < expected_min && expected_max.is_some_and(|max| max != expected_min) {
-                    // Too few arguments with optional parameters - use TS2555
+                if actual < expected_min && expected_max != Some(expected_min) {
+                    // Too few arguments with rest/optional parameters - use TS2555
+                    // expected_max is None (rest params) or Some(max) where max > min (optional params)
                     self.error_expected_at_least_arguments_at(expected_min, actual, idx);
                 } else {
                     // Either too many, or exact count expected - use TS2554

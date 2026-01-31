@@ -107,6 +107,8 @@ pub mod diagnostic_messages {
         "Left side of comma operator is unused and has no side effects.";
 
     // Arithmetic operator errors
+    pub const ARITHMETIC_OPERAND_MUST_BE_NUMBER: &str =
+        "An arithmetic operand must be of type 'any', 'number', 'bigint' or an enum type.";
     pub const LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: &str = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.";
     pub const RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: &str = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.";
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPES: &str =
@@ -146,6 +148,8 @@ pub mod diagnostic_messages {
         "'{0}' is referenced directly or indirectly in its own base expression.";
     pub const TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE: &str =
         "Type '{0}' is not a constructor function type.";
+    pub const THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE: &str =
+        "This expression is not constructable.\n  Type '{0}' has no construct signatures.";
     pub const PROPERTY_HAS_NO_INITIALIZER: &str =
         "Property '{0}' has no initializer and is not definitely assigned in the constructor.";
     pub const PROPERTY_USED_BEFORE_BEING_ASSIGNED: &str =
@@ -392,6 +396,8 @@ pub mod diagnostic_codes {
     pub const MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS: u32 = 2392; // Multiple constructor implementations are not allowed
     pub const DUPLICATE_FUNCTION_IMPLEMENTATION: u32 = 2393; // Duplicate function implementation
     pub const NOT_ALL_CODE_PATHS_RETURN_VALUE: u32 = 2366;
+    pub const THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE: u32 = 2351; // This expression is not constructable. Type 'X' has no construct signatures.
+    pub const ARITHMETIC_OPERAND_MUST_BE_NUMBER: u32 = 2356; // An arithmetic operand must be of type 'any', 'number', 'bigint' or an enum type.
     pub const LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2362; // The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
     pub const RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2363; // The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPES: u32 = 2365; // Operator '{0}' cannot be applied to types '{1}' and '{2}'.

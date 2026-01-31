@@ -1318,7 +1318,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report TS2507: "Type 'X' is not a constructor function type"
-    /// This is for expressions used with `new` that don't have construct signatures.
+    /// This is for extends clauses where the base type isn't a constructor.
     pub fn error_not_a_constructor_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         use crate::solver::TypeFormatter;
 
@@ -1339,6 +1339,36 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.diagnostics.push(Diagnostic {
             code: diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+            category: DiagnosticCategory::Error,
+            message_text: message,
+            file: self.ctx.file_name.clone(),
+            start: loc.start,
+            length: loc.length(),
+            related_information: Vec::new(),
+        });
+    }
+
+    /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
+    /// This is for `new` expressions where the expression type has no construct signatures.
+    pub fn error_not_constructable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
+        use crate::solver::TypeFormatter;
+
+        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+            return;
+        }
+
+        let Some(loc) = self.get_source_location(idx) else {
+            return;
+        };
+
+        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        let type_str = formatter.format(type_id);
+
+        let message =
+            diagnostic_messages::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE.replace("{0}", &type_str);
+
+        self.ctx.diagnostics.push(Diagnostic {
+            code: diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE,
             category: DiagnosticCategory::Error,
             message_text: message,
             file: self.ctx.file_name.clone(),
