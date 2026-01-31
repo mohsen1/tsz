@@ -114,6 +114,17 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
+                // TS2318: Array<T> with noLib should emit "Cannot find global type 'Array'"
+                if is_builtin_array && !has_libs && sym_id.is_none() {
+                    self.error_cannot_find_global_type(name, type_name_idx);
+                    // Still process type arguments to avoid cascading errors
+                    if let Some(args) = &type_ref.type_arguments {
+                        for &arg_idx in &args.nodes {
+                            let _ = self.get_type_from_type_node(arg_idx);
+                        }
+                    }
+                    return TypeId::ERROR;
+                }
                 if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     // Only try resolving from lib binders if lib files are loaded (noLib is false)
                     if has_libs {
