@@ -26,7 +26,27 @@ use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{NarrowingContext, ParamInfo, TypeId, TypeInterner, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use std::collections::VecDeque;
+
+/// Maximum recursion depth for type narrowing to prevent exponential blowup
+/// on deeply nested optional chains and logical expressions.
+const MAX_NARROWING_DEPTH: usize = 50;
+
+/// Cache key for narrowing results to avoid redundant computations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct NarrowingCacheKey {
+    type_id: u32,
+    condition_idx: u32,
+    target: u32,
+    is_true_branch: bool,
+}
+
+// Thread-local cache for narrowing results to prevent exponential blowup.
+thread_local! {
+    static NARROWING_CACHE: RefCell<FxHashMap<NarrowingCacheKey, TypeId>> = RefCell::new(FxHashMap::default());
+    static NARROWING_DEPTH: RefCell<usize> = const { RefCell::new(0) };
+}
 
 // =============================================================================
 // FlowGraph
@@ -1360,13 +1380,56 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
     ) -> TypeId {
         let mut visited_aliases = Vec::new();
-        self.narrow_type_by_condition_inner(
+
+        // Check cache first
+        let cache_key = NarrowingCacheKey {
+            type_id: type_id.0,
+            condition_idx: condition_idx.0,
+            target: target.0,
+            is_true_branch,
+        };
+
+        let cached_result = NARROWING_CACHE.with(|cache| cache.borrow().get(&cache_key).copied());
+
+        if let Some(result) = cached_result {
+            return result;
+        }
+
+        // Check depth limit to prevent exponential blowup
+        let should_clear_cache = NARROWING_DEPTH.with(|depth| {
+            let current = *depth.borrow();
+            if current >= MAX_NARROWING_DEPTH {
+                true
+            } else {
+                *depth.borrow_mut() = current + 1;
+                false
+            }
+        });
+
+        // If we've hit the depth limit, return the original type without narrowing
+        if should_clear_cache {
+            return type_id;
+        }
+
+        let result = self.narrow_type_by_condition_inner(
             type_id,
             condition_idx,
             target,
             is_true_branch,
             &mut visited_aliases,
-        )
+        );
+
+        // Cache the result
+        NARROWING_CACHE.with(|cache| {
+            cache.borrow_mut().insert(cache_key, result);
+        });
+
+        // Decrement depth
+        NARROWING_DEPTH.with(|depth| {
+            *depth.borrow_mut() -= 1;
+        });
+
+        result
     }
 
     pub(crate) fn narrow_type_by_condition_inner(

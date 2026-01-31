@@ -921,6 +921,46 @@ impl<'a> CheckerState<'a> {
                 && let Some(node) = self.ctx.arena.get(decl_idx)
                 && let Some(class) = self.ctx.arena.get_class(node)
             {
+                // CRITICAL: Check for self-referential class BEFORE computing constructor type
+                // This catches class C extends C before we recurse into get_class_constructor_type
+                // which would call get_class_instance_type -> heritage resolution -> get_type_of_symbol (same symbol)
+                if let Some(ref heritage_clauses) = class.heritage_clauses {
+                    for &clause_idx in &heritage_clauses.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx) {
+                            if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node)
+                            {
+                                if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
+                                    if let Some(&type_idx) = heritage.types.nodes.first() {
+                                        if let Some(type_node) = self.ctx.arena.get(type_idx) {
+                                            let expr_idx = self
+                                                .ctx
+                                                .arena
+                                                .get_expr_type_args(type_node)
+                                                .map(|e| e.expression)
+                                                .unwrap_or(type_idx);
+                                            // Check if the extends clause refers to the same class
+                                            if let Some(extends_sym) =
+                                                self.ctx.binder.get_node_symbol(expr_idx)
+                                            {
+                                                if extends_sym == sym_id {
+                                                    // Self-referential inheritance detected
+                                                    // Return a placeholder type to break the cycle
+                                                    // The actual error is reported by ClassInheritanceChecker
+                                                    let placeholder = self
+                                                        .ctx
+                                                        .types
+                                                        .intern(TypeKey::Ref(SymbolRef(sym_id.0)));
+                                                    return (placeholder, Vec::new());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let ctor_type = self.get_class_constructor_type(decl_idx, class);
                 if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
                     let merged = self.merge_namespace_exports_into_constructor(sym_id, ctor_type);

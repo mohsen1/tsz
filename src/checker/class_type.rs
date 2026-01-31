@@ -28,8 +28,8 @@ use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeLowering,
-    TypeSubstitution, instantiate_type,
+    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, SymbolRef, TypeId,
+    TypeKey, TypeLowering, TypeSubstitution, instantiate_type,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -926,6 +926,46 @@ impl<'a> CheckerState<'a> {
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
         let (class_type_params, type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
+
+        // CRITICAL: Check for self-referential class BEFORE calling get_class_instance_type
+        // This catches class C extends C before we recurse into heritage resolution
+        // which would call get_type_of_symbol -> get_class_constructor_type (same class)
+        if let Some(current_sym) = self.ctx.binder.get_node_symbol(class_idx) {
+            if let Some(ref heritage_clauses) = class.heritage_clauses {
+                for &clause_idx in &heritage_clauses.nodes {
+                    if let Some(clause_node) = self.ctx.arena.get(clause_idx) {
+                        if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) {
+                            if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
+                                if let Some(&type_idx) = heritage.types.nodes.first() {
+                                    if let Some(type_node) = self.ctx.arena.get(type_idx) {
+                                        let expr_idx = self
+                                            .ctx
+                                            .arena
+                                            .get_expr_type_args(type_node)
+                                            .map(|e| e.expression)
+                                            .unwrap_or(type_idx);
+                                        // Check if the extends clause refers to the same class
+                                        if let Some(extends_sym) =
+                                            self.ctx.binder.get_node_symbol(expr_idx)
+                                        {
+                                            if extends_sym == current_sym {
+                                                // Self-referential inheritance detected
+                                                // Return a placeholder constructor type to break the cycle
+                                                self.pop_type_parameters(type_param_updates);
+                                                return self.ctx.types.intern(TypeKey::Ref(
+                                                    SymbolRef(current_sym.0),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let instance_type = self.get_class_instance_type(class_idx, class);
 
         struct MethodAggregate {

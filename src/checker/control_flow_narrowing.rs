@@ -21,8 +21,17 @@ use crate::solver::{
     },
 };
 use std::borrow::Cow;
+use std::cell::Cell;
 
 use super::control_flow::{FlowAnalyzer, PredicateSignature, PropertyKey, PropertyPresence};
+
+// Maximum depth for reference matching recursion to prevent stack overflow
+const MAX_REFERENCE_MATCH_DEPTH: usize = 100;
+
+// Thread-local depth counter for reference matching
+thread_local! {
+    static REFERENCE_MATCH_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn assignment_affects_reference(&self, left: NodeIndex, target: NodeIndex) -> bool {
@@ -1261,6 +1270,20 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Check if two references point to the same symbol or property access chain.
     pub(crate) fn is_matching_reference(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        // Check depth limit to prevent stack overflow on deeply nested chains
+        let current_depth = REFERENCE_MATCH_DEPTH.with(|d| d.get());
+        if current_depth >= MAX_REFERENCE_MATCH_DEPTH {
+            return false;
+        }
+        REFERENCE_MATCH_DEPTH.with(|d| d.set(current_depth + 1));
+
+        let result = self.is_matching_reference_inner(a, b);
+
+        REFERENCE_MATCH_DEPTH.with(|d| d.set(current_depth));
+        result
+    }
+
+    fn is_matching_reference_inner(&self, a: NodeIndex, b: NodeIndex) -> bool {
         let a = self.skip_parenthesized(a);
         let b = self.skip_parenthesized(b);
 
