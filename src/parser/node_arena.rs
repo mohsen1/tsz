@@ -575,12 +575,18 @@ impl NodeArena {
         end: u32,
         data: TypeAssertionData,
     ) -> NodeIndex {
+        let expression = data.expression;
+        let type_node = data.type_node;
         let data_index = self.type_assertions.len() as u32;
         self.type_assertions.push(data);
         let index = self.nodes.len() as u32;
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+
+        let parent = NodeIndex(index);
+        self.set_parent(expression, parent);
+        self.set_parent(type_node, parent);
+        parent
     }
 
     /// Add a template expression node
@@ -1259,32 +1265,48 @@ impl NodeArena {
 
     /// Add a labeled statement node
     pub fn add_labeled(&mut self, kind: u16, pos: u32, end: u32, data: LabeledData) -> NodeIndex {
+        let label = data.label;
+        let statement = data.statement;
         let data_index = self.labeled_data.len() as u32;
         self.labeled_data.push(data);
         let index = self.nodes.len() as u32;
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+
+        let parent = NodeIndex(index);
+        self.set_parent(label, parent);
+        self.set_parent(statement, parent);
+        parent
     }
 
     /// Add a break/continue statement node
     pub fn add_jump(&mut self, kind: u16, pos: u32, end: u32, data: JumpData) -> NodeIndex {
+        let label = data.label;
         let data_index = self.jump_data.len() as u32;
         self.jump_data.push(data);
         let index = self.nodes.len() as u32;
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+
+        let parent = NodeIndex(index);
+        self.set_parent(label, parent);
+        parent
     }
 
     /// Add a with statement node
     pub fn add_with(&mut self, kind: u16, pos: u32, end: u32, data: WithData) -> NodeIndex {
+        let expression = data.expression;
+        let statement = data.statement;
         let data_index = self.with_data.len() as u32;
         self.with_data.push(data);
         let index = self.nodes.len() as u32;
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+
+        let parent = NodeIndex(index);
+        self.set_parent(expression, parent);
+        self.set_parent(statement, parent);
+        parent
     }
 
     /// Add a type reference node
