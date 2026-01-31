@@ -108,17 +108,11 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(env) = env {
                 let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                checker.set_strict_function_types(self.ctx.strict_function_types());
-                checker.set_strict_null_checks(self.ctx.strict_null_checks());
-                checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-                checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+                self.ctx.configure_compat_checker(&mut checker);
                 return Some(checker.is_assignable(TypeId::NUMBER, target));
             }
             let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-            checker.set_strict_function_types(self.ctx.strict_function_types());
-            checker.set_strict_null_checks(self.ctx.strict_null_checks());
-            checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-            checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+            self.ctx.configure_compat_checker(&mut checker);
             return Some(checker.is_assignable(TypeId::NUMBER, target));
         }
 
@@ -127,17 +121,11 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(env) = env {
                 let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                checker.set_strict_function_types(self.ctx.strict_function_types());
-                checker.set_strict_null_checks(self.ctx.strict_null_checks());
-                checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-                checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+                self.ctx.configure_compat_checker(&mut checker);
                 return Some(checker.is_assignable(source, TypeId::NUMBER));
             }
             let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-            checker.set_strict_function_types(self.ctx.strict_function_types());
-            checker.set_strict_null_checks(self.ctx.strict_null_checks());
-            checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-            checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+            self.ctx.configure_compat_checker(&mut checker);
             return Some(checker.is_assignable(source, TypeId::NUMBER));
         }
 

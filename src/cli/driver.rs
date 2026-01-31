@@ -1233,6 +1233,9 @@ fn collect_diagnostics(
         }
     }
 
+    // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
+    let query_cache = crate::solver::QueryCache::new(&program.type_interner);
+
     for (file_idx, file) in program.files.iter().enumerate() {
         let file_path = PathBuf::from(&file.file_name);
         used_paths.insert(file_path.clone());
@@ -1292,6 +1295,7 @@ fn collect_diagnostics(
                 compiler_options,
             )
         };
+        checker.ctx.set_query_db(&query_cache);
         checker.ctx.report_unresolved_imports = true;
         // Set lib contexts for global symbol resolution (console, Array, Promise, etc.)
         if !lib_contexts.is_empty() {

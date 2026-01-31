@@ -2993,6 +2993,8 @@ impl Server {
         let file_names = vec![file_path.to_string()];
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
 
+        let query_cache = wasm::solver::QueryCache::new(&type_interner);
+
         let mut checker = CheckerState::new(
             &arena,
             &binder,
@@ -3000,6 +3002,8 @@ impl Server {
             file_path.to_string(),
             checker_options,
         );
+
+        checker.ctx.set_query_db(&query_cache);
 
         if !all_contexts.is_empty() {
             checker.ctx.set_lib_contexts(all_contexts);
@@ -3130,6 +3134,7 @@ impl Server {
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
 
         // PHASE 4: Type check all files
+        let query_cache = wasm::solver::QueryCache::new(&type_interner);
         let mut all_codes: Vec<i32> = Vec::new();
         for (file_idx, bound) in bound_files.iter().enumerate() {
             all_codes.extend(&bound.parse_errors);
@@ -3141,6 +3146,8 @@ impl Server {
                 bound.name.clone(),
                 checker_options.clone(),
             );
+
+            checker.ctx.set_query_db(&query_cache);
 
             if !all_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(all_contexts.clone());
