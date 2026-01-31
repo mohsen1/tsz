@@ -1687,6 +1687,24 @@ impl ParserState {
                     self.parse_variable_statement()
                 }
             }
+            SyntaxKind::AtToken => {
+                // export @decorator class Foo {}
+                let decorators = self.parse_decorators();
+                match self.token() {
+                    SyntaxKind::ClassKeyword => {
+                        self.parse_class_declaration_with_decorators(decorators, self.token_pos())
+                    }
+                    SyntaxKind::AbstractKeyword => self
+                        .parse_abstract_class_declaration_with_decorators(
+                            decorators,
+                            self.token_pos(),
+                        ),
+                    _ => {
+                        self.error_statement_expected();
+                        self.parse_expression_statement()
+                    }
+                }
+            }
             _ => {
                 // Unsupported export
                 self.error_statement_expected();
