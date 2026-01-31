@@ -282,13 +282,28 @@ impl<'a> SignatureHelpProvider<'a> {
     fn resolve_callee_name(&self, expr_idx: NodeIndex, _call_kind: CallKind) -> String {
         // Try to get identifier text directly (handles simple identifiers)
         if let Some(name) = self.arena.get_identifier_text(expr_idx) {
-            return name.to_string();
+            if !name.is_empty() {
+                return name.to_string();
+            }
         }
         if let Some(node) = self.arena.get(expr_idx) {
             // Property access: obj.method(...)
             if let Some(access) = self.arena.get_access_expr(node) {
                 if let Some(name) = self.arena.get_identifier_text(access.name_or_argument) {
-                    return name.to_string();
+                    if !name.is_empty() {
+                        return name.to_string();
+                    }
+                }
+                // Source text fallback for property name
+                if let Some(pn) = self.arena.get(access.name_or_argument) {
+                    let s = pn.pos as usize;
+                    let e = pn.end as usize;
+                    if s < e && e <= self.source_text.len() {
+                        let text = self.source_text[s..e].trim();
+                        if !text.is_empty() && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+                            return text.to_string();
+                        }
+                    }
                 }
             }
         }
