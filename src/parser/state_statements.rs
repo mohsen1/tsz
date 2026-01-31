@@ -16,6 +16,9 @@ impl ParserState {
     pub fn parse_source_file(&mut self) -> NodeIndex {
         let start_pos = 0u32;
 
+        // Skip shebang (#!) if present at start of file
+        self.scanner.scan_shebang_trivia();
+
         // Initialize scanner
         self.next_token();
 
@@ -128,7 +131,9 @@ impl ParserState {
             } else {
                 // Statement parsing failed, resync to recover
                 // Emit error for unexpected token if we haven't already
-                if self.token_pos() != self.last_error_pos
+                // Also suppress cascading errors when a recent error was within 3 chars
+                let current = self.token_pos();
+                if (self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     use crate::checker::types::diagnostics::diagnostic_codes;
@@ -180,7 +185,9 @@ impl ParserState {
             } else {
                 // Statement parsing failed, resync to recover
                 // Emit error for unexpected token if we haven't already
-                if self.token_pos() != self.last_error_pos
+                // Also suppress cascading errors when a recent error was within 3 chars
+                let current = self.token_pos();
+                if (self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     use crate::checker::types::diagnostics::diagnostic_codes;
