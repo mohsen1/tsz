@@ -693,19 +693,19 @@ src/checker/
     JavaScript + Source Maps
 ```
 
-**Two-Phase Transform Architecture**:
+**Two-Phase Transform Architecture** (for ES5 downleveling):
 ```
-    Phase 1: Transform (AST -> IR)
+    Phase 1: Transform (AST -> IR)    [src/transforms/]
     +------------------+
     | Transformer      |
     | - transform_*()  |
     +------------------+
            |
            v
-    IRNode (structured)
+    IRNode (structured)               [src/transforms/ir.rs]
            |
            v
-    Phase 2: Print (IR -> String)
+    Phase 2: Print (IR -> String)     [src/transforms/ir_printer.rs]
     +------------------+
     | IRPrinter        |
     | - emit_to_string |

@@ -1,31 +1,39 @@
 # Checker Module Deep Dive
 
-The checker is a large module (~64,000 lines), responsible for type checking orchestration. It coordinates symbol resolution, type computation, control flow analysis, and error reporting.
+The checker is a large module (~69,000 lines across 81 files), responsible for type checking orchestration. It coordinates symbol resolution, type computation, control flow analysis, and error reporting.
 
 ## File Structure
 
 ```
-src/checker/
-├── mod.rs              Module organization
-├── state.rs            Main orchestration and state machine (~9,000 LOC)
-├── context.rs          Shared checking context (~1,100 LOC)
-├── type_checking.rs    Type checking utilities (~7,900 LOC)
-├── type_computation.rs Expression type computation (~3,200 LOC)
-├── control_flow.rs     Control flow analysis (~3,900 LOC)
-├── symbol_resolver.rs  Symbol resolution (~2,000 LOC)
-├── flow_analysis.rs    Definite assignment analysis (~1,700 LOC)
-├── error_reporter.rs   Error emission and formatting (~2,100 LOC)
-├── class_type.rs       Class-specific type checking
-├── function_type.rs    Function-specific type checking
-├── array_type.rs       Array type handling
-├── interface_type.rs   Interface type handling
-├── union_type.rs       Union type operations
-├── intersection_type.rs Intersection type operations
-├── iterators.rs        Iterator protocol checking
-├── generators.rs       Generator support
-├── jsx.rs              JSX type checking
-├── promise_checker.rs  Promise type checking
-└── types/              Type-specific modules
+src/checker/                          # 81 files, ~69,000 LOC total
+├── mod.rs                            Module organization
+├── state.rs                          Core orchestration (~1,100 LOC)
+├── state_checking.rs                 Statement/expression checking dispatch (~2,200 LOC)
+├── state_checking_members.rs         Class/interface member checking (~2,300 LOC)
+├── state_type_analysis.rs            Type analysis utilities (~1,700 LOC)
+├── context.rs                        Shared checking context (~1,400 LOC)
+├── type_checking.rs                  Type checking utilities (~3,200 LOC)
+├── type_checking_queries.rs          Type checking query methods (~2,700 LOC)
+├── type_checking_utilities.rs        Type checking helpers (~2,400 LOC)
+├── type_computation.rs               Expression type computation (~1,700 LOC)
+├── type_computation_complex.rs       Complex type computations (~1,600 LOC)
+├── control_flow.rs                   Control flow analysis (~2,300 LOC)
+├── control_flow_narrowing.rs         Type narrowing via CFA (~1,700 LOC)
+├── flow_graph_builder.rs             Flow graph construction (~2,200 LOC)
+├── symbol_resolver.rs                Symbol resolution (~2,200 LOC)
+├── flow_analysis.rs                  Definite assignment analysis (~1,800 LOC)
+├── error_reporter.rs                 Error emission and formatting (~2,300 LOC)
+├── class_type.rs                     Class-specific type checking
+├── function_type.rs                  Function-specific type checking
+├── array_type.rs                     Array type handling
+├── interface_type.rs                 Interface type handling
+├── union_type.rs                     Union type operations
+├── intersection_type.rs              Intersection type operations
+├── iterators.rs                      Iterator protocol checking
+├── generators.rs                     Generator support
+├── jsx.rs                            JSX type checking
+├── promise_checker.rs                Promise type checking
+└── ...                               (60+ additional specialized modules)
 ```
 
 ## Core Architecture

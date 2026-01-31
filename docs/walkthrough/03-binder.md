@@ -5,15 +5,15 @@ The binder transforms the AST into a symbol table and control flow graph. It est
 ## File Structure
 
 ```
-src/
-├── binder.rs          Shared types and flags (~600 LOC)
-└── binder/
-    └── state.rs       Main binder implementation (~5,200 LOC)
+src/binder/
+├── mod.rs              Shared types and flags (~600 LOC)
+├── state.rs            Main binder implementation (~3,100 LOC)
+└── state_binding.rs    Declaration binding logic (~2,400 LOC)
 ```
 
 ## Core Data Structures
 
-### Symbol (`binder.rs`)
+### Symbol (`binder/mod.rs`)
 
 `Symbol` struct key fields:
 - `flags: u32` - Kind and properties (see symbol_flags module)
@@ -26,7 +26,7 @@ src/
 - `is_exported`, `is_type_only` - Export/import modifiers
 - `decl_file_idx`, `import_module`, `import_name` - Cross-file resolution
 
-### SymbolId (`binder.rs`)
+### SymbolId (`binder/mod.rs`)
 
 `SymbolId(u32)` - Newtype wrapper with `NONE = u32::MAX` sentinel
 
@@ -46,7 +46,7 @@ src/
 
 **Composite flags:** `ENUM`, `VARIABLE`, `VALUE`, `TYPE`, `NAMESPACE`, `MODULE`, `ACCESSOR`
 
-### SymbolArena (`binder.rs`)
+### SymbolArena (`binder/mod.rs`)
 
 `SymbolArena` struct:
 - `symbols: Vec<Symbol>` - Storage
@@ -55,7 +55,7 @@ src/
 
 ## Scope Management
 
-### Scope Structure (`binder.rs`)
+### Scope Structure (`binder/mod.rs`)
 
 `Scope` struct fields:
 - `parent: ScopeId` - Parent scope
@@ -162,7 +162,7 @@ JavaScript's hoisting behavior for `var` and function declarations allows use be
 
 ## Control Flow Graph
 
-### FlowNode (`binder.rs`)
+### FlowNode (`binder/mod.rs`)
 
 `FlowNode` struct fields:
 - `flags: u32` - Flow type from `flow_flags` module

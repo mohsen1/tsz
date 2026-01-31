@@ -7,7 +7,7 @@ TSZ ("Zang" - Persian for "rust") is a high-performance TypeScript compiler writ
 
 ## Current Status
 
-- **Codebase**: ~560,000 lines of Rust
+- **Codebase**: ~600,000 lines of Rust
 - **Target**: Systematic conformance improvements
 
 ## Compilation Pipeline
@@ -18,7 +18,7 @@ Source Code (.ts/.tsx)
        ▼
 ┌─────────────────┐
 │    Scanner      │  Tokenization: Source → Token Stream
-│  scanner*.rs    │  ~3,500 LOC
+│  scanner/       │  ~3,500 LOC
 └────────┬────────┘
          │
          ▼
@@ -36,13 +36,13 @@ Source Code (.ts/.tsx)
          ▼
 ┌─────────────────┐
 │    Checker      │  Type Checking: Symbols → Type Errors
-│  checker/       │  ~64,000 LOC
+│  checker/       │  ~69,000 LOC
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │    Solver       │  Type System: Subtyping, Inference, Evaluation
-│  solver/        │  ~160,000 LOC
+│  solver/        │  ~165,000 LOC
 └────────┬────────┘
          │
          ▼
@@ -159,7 +159,6 @@ These constants in `src/limits.rs` prevent pathological cases from causing hangs
 This documentation complements:
 - [docs/specs/TS_UNSOUNDNESS_CATALOG.md](../specs/TS_UNSOUNDNESS_CATALOG.md) - TypeScript compatibility rules
 - [docs/architecture/NORTH_STAR.md](../architecture/NORTH_STAR.md) - Target architecture guide
-- [docs/architecture/MIGRATION_ROADMAP.md](../architecture/MIGRATION_ROADMAP.md) - Migration plan
 - [AGENTS.md](../../AGENTS.md) - Architecture rules for contributors
 
 ## Navigation Tips
