@@ -9,6 +9,9 @@ This guide covers setting up and working with the Project Zang codebase.
 git clone https://github.com/mohsen1/tsz.git
 cd tsz
 
+# Initialize the TypeScript submodule (required for conformance tests)
+git submodule update --init TypeScript
+
 # Build the project (also installs git hooks automatically)
 cargo build
 ```
@@ -59,8 +62,6 @@ Conformance tests compare Zang's output against the official TypeScript compiler
 # Run with WASM
 ./scripts/conformance/run.sh --wasm --max=500
 ```
-
-See [TESTING.md](./TESTING.md) for more details on the testing infrastructure.
 
 ## Building
 

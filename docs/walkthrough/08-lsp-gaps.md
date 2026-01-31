@@ -14,7 +14,7 @@ TSZ provides **LSP feature modules** and a basic **LSP server binary** (`tsz-lsp
 | ⚠️ Partial | 2 | Features with known limitations |
 | ❌ Stub | 0 | Empty placeholder modules |
 
-**Total LOC**: ~16,500 lines of Rust (excluding tests)
+**Total LOC**: ~34,000 lines of Rust across 32 files (excluding tests)
 
 **New in this update**:
 - Selection Range fully implemented

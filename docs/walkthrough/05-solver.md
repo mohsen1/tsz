@@ -1,6 +1,6 @@
 # Solver Module Deep Dive
 
-The solver is the type system core (~160,000 lines), implementing subtyping, inference, instantiation, and type evaluation. It uses semantic subtyping with coinductive semantics for recursive types.
+The solver is the type system core (~165,000 lines), implementing subtyping, inference, instantiation, and type evaluation. It uses semantic subtyping with coinductive semantics for recursive types.
 
 ## File Structure
 
