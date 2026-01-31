@@ -13,7 +13,7 @@ This document consolidates all known gaps, TODOs, and incomplete implementations
 
 ## Conformance Error Mapping
 
-Run `./conformance/run.sh --server` to get current conformance rate.
+Run `./scripts/conformance/run.sh --server` to get current conformance rate.
 
 ### False Positives (We report, TSC doesn't)
 
