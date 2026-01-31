@@ -967,25 +967,24 @@ fn load_lib_files_for_contexts(
     use crate::binder::BinderState;
     use crate::cli::config::{extract_lib_references, resolve_lib_files};
     use crate::parser::ParserState;
+    use rayon::prelude::*;
     use std::collections::{HashSet, VecDeque};
     use std::sync::Arc;
 
-    let mut lib_contexts = Vec::new();
+    // Phase 1: Collect all lib files and their content (sequential due to dependencies)
+    let mut lib_contents: Vec<(String, String)> = Vec::new();
     let mut loaded_lib_names = HashSet::new();
     let mut pending_libs = VecDeque::new();
 
     // Initially add the specified lib files to the queue
-    // Lib files are loaded from disk only (like tsgo) - no embedded fallback
     for lib_path in lib_files {
         if lib_path.exists() {
             pending_libs.push_back(lib_path.clone());
         }
-        // Skip non-existent lib files - they should be in TypeScript installation
     }
 
-    // Process libs recursively, resolving /// <reference lib="..." /> directives
+    // Collect all lib content, resolving /// <reference lib="..." /> directives
     while let Some(lib_path) = pending_libs.pop_front() {
-        // Get lib name from path for deduplication
         let lib_name = lib_path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -993,43 +992,23 @@ fn load_lib_files_for_contexts(
             .and_then(|s| s.strip_suffix(".generated"))
             .unwrap_or_else(|| lib_path.file_stem().and_then(|s| s.to_str()).unwrap_or(""));
 
-        // Skip if already loaded
         if !loaded_lib_names.insert(lib_name.to_string()) {
             continue;
         }
 
-        // Read the lib file content from disk (no embedded fallback)
         let source_text = match std::fs::read_to_string(&lib_path) {
             Ok(content) => content,
-            Err(_) => continue, // Skip if file can't be read
+            Err(_) => continue,
         };
 
-        // Extract and queue referenced libs BEFORE moving source_text to parser
+        // Extract referenced libs BEFORE storing content
         let referenced_libs = extract_lib_references(&source_text);
 
-        // Parse the lib file
         let file_name = lib_path.to_string_lossy().to_string();
-        let mut lib_parser = ParserState::new(file_name.clone(), source_text);
-        let source_file_idx = lib_parser.parse_source_file();
+        lib_contents.push((file_name, source_text));
 
-        // Skip if there are parse errors (lib files may use advanced syntax)
-        if !lib_parser.get_diagnostics().is_empty() {
-            continue;
-        }
-
-        // Bind the lib file
-        let mut lib_binder = BinderState::new();
-        lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-        // Create the LibContext
-        let arena = Arc::new(lib_parser.into_arena());
-        let binder = Arc::new(lib_binder);
-
-        lib_contexts.push(LibContext { arena, binder });
-
-        // Queue referenced libs for loading
+        // Queue referenced libs
         for ref_lib in referenced_libs {
-            // Resolve referenced lib to file path
             if let Ok(ref_paths) = resolve_lib_files(std::slice::from_ref(&ref_lib)) {
                 for ref_path in ref_paths {
                     if !loaded_lib_names.contains(ref_lib.as_str()) && ref_path.exists() {
@@ -1039,6 +1018,27 @@ fn load_lib_files_for_contexts(
             }
         }
     }
+
+    // Phase 2: Parse and bind all libs in parallel for faster startup
+    let lib_contexts: Vec<LibContext> = lib_contents
+        .into_par_iter()
+        .filter_map(|(file_name, source_text)| {
+            let mut lib_parser = ParserState::new(file_name, source_text);
+            let source_file_idx = lib_parser.parse_source_file();
+
+            if !lib_parser.get_diagnostics().is_empty() {
+                return None;
+            }
+
+            let mut lib_binder = BinderState::new();
+            lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
+
+            let arena = Arc::new(lib_parser.into_arena());
+            let binder = Arc::new(lib_binder);
+
+            Some(LibContext { arena, binder })
+        })
+        .collect();
 
     // Merge all lib binders into a single binder to avoid duplicate SymbolIds
     // This is necessary because different lib files may declare the same symbols
