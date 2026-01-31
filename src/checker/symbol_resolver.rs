@@ -2025,6 +2025,50 @@ impl<'a> CheckerState<'a> {
         self.ctx.use_unknown_in_catch_variables() // Use the value from the strict flag
     }
 
+    /// Resolve the noImplicitThis setting from source file comments.
+    pub(crate) fn resolve_no_implicit_this_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitthis") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.no_implicit_this()
+    }
+
+    /// Resolve the strictPropertyInitialization setting from source file comments.
+    pub(crate) fn resolve_strict_property_initialization_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@strictpropertyinitialization") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.compiler_options.strict_property_initialization
+    }
+
+    /// Resolve the strictNullChecks setting from source file comments.
+    pub(crate) fn resolve_strict_null_checks_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@strictnullchecks") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.strict_null_checks()
+    }
+
+    /// Resolve the strictFunctionTypes setting from source file comments.
+    pub(crate) fn resolve_strict_function_types_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@strictfunctiontypes") {
+            return value;
+        }
+        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+            return strict;
+        }
+        self.ctx.compiler_options.strict_function_types
+    }
+
     // =========================================================================
     // Duplicate Declaration Resolution
     // =========================================================================

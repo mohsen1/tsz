@@ -81,6 +81,14 @@ impl<'a> CheckerState<'a> {
                 self.resolve_no_implicit_returns_from_source(&sf.text);
             self.ctx.compiler_options.use_unknown_in_catch_variables =
                 self.resolve_use_unknown_in_catch_variables_from_source(&sf.text);
+            self.ctx.compiler_options.no_implicit_this =
+                self.resolve_no_implicit_this_from_source(&sf.text);
+            self.ctx.compiler_options.strict_property_initialization =
+                self.resolve_strict_property_initialization_from_source(&sf.text);
+            self.ctx.compiler_options.strict_null_checks =
+                self.resolve_strict_null_checks_from_source(&sf.text);
+            self.ctx.compiler_options.strict_function_types =
+                self.resolve_strict_function_types_from_source(&sf.text);
 
             // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
             // This enables primitive property access to use lib definitions instead of hardcoded lists
