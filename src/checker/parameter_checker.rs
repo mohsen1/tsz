@@ -166,19 +166,22 @@ impl<'a> CheckerState<'a> {
                 break;
             }
 
-            // A parameter is optional if it has a question token or an initializer
-            let is_optional = param.question_token || !param.initializer.is_none();
-
-            if is_optional {
+            // Only `?` token marks a parameter as "optional" for the seen_optional flag.
+            // Parameters with initializers don't set seen_optional.
+            if param.question_token {
                 seen_optional = true;
             } else if seen_optional {
-                // Required parameter after optional - emit TS1016
-                // Report on the parameter name for better error highlighting
-                self.error_at_node(
-                    param.name,
-                    diagnostic_messages::REQUIRED_PARAMETER_AFTER_OPTIONAL,
-                    diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL,
-                );
+                // A parameter is "required" only if it has neither `?` nor an initializer.
+                // Parameters with initializers (e.g., `options = {}`) are effectively optional
+                // and don't trigger TS1016 even after `?` parameters.
+                let has_initializer = !param.initializer.is_none();
+                if !has_initializer {
+                    self.error_at_node(
+                        param.name,
+                        diagnostic_messages::REQUIRED_PARAMETER_AFTER_OPTIONAL,
+                        diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL,
+                    );
+                }
             }
         }
     }
