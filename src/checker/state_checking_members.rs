@@ -1245,6 +1245,16 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Error 1242: 'abstract' modifier can only appear on a class, method, or property declaration.
+        // Constructors cannot be abstract.
+        if self.has_abstract_modifier(&ctor.modifiers) {
+            self.error_at_node(
+                member_idx,
+                "'abstract' modifier can only appear on a class, method, or property declaration.",
+                diagnostic_codes::ABSTRACT_MODIFIER_ONLY_ON_CLASS_METHOD_OR_PROPERTY,
+            );
+        }
+
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the constructor has a body
         if !ctor.body.is_none()
