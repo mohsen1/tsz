@@ -174,12 +174,15 @@ symbol-based lookups that aren't supported by the TypeEnvironment alone.
 - Type **queries** (pattern matching) should move to Judge classifiers
 - Traversal for symbol resolution is Checker-specific, harder to abstract
 
-### 5.2 Create Judge Queries for Each Match
-- [ ] For each unique operation, determine if existing query covers it
-- [ ] If not, add new Judge query
-- [ ] Replace TypeKey match with query call
+### 5.2 Create Judge Queries for Each Match - IN PROGRESS
+- [x] Migrate iterators.rs (is_iterable, is_async_iterable, get_iterable_element_type)
+- [x] Migrate generators.rs (is_iterable, get_iterable_element_type)
+- [ ] Migrate assignability_checker.rs (15 matches)
+- [ ] Migrate remaining files
 - [ ] Verify behavior unchanged
 - [ ] Commit incrementally (one file at a time)
+
+**Progress**: TypeKey matches reduced from 79 to 65 (14 removed)
 
 ### 5.3 Final Audit
 - [ ] Re-run `grep -r "TypeKey::" src/checker/`
