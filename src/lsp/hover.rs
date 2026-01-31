@@ -17,6 +17,15 @@ use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::solver::TypeInterner;
 
+/// A single JSDoc tag (e.g. `@param`, `@returns`, `@deprecated`).
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct JsDocTag {
+    /// The tag name (e.g. "param", "returns", "deprecated")
+    pub name: String,
+    /// The tag text content
+    pub text: String,
+}
+
 /// Information returned for a hover request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HoverInfo {
@@ -32,6 +41,8 @@ pub struct HoverInfo {
     pub kind_modifiers: String,
     /// The documentation text extracted from JSDoc
     pub documentation: String,
+    /// JSDoc tags (e.g. @param, @returns, @deprecated)
+    pub tags: Vec<JsDocTag>,
 }
 
 /// Hover provider.
@@ -228,6 +239,7 @@ impl<'a> HoverProvider<'a> {
             kind,
             kind_modifiers,
             documentation: documentation_text,
+            tags: Vec::new(),
         })
     }
 

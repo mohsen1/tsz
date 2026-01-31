@@ -1230,11 +1230,24 @@ impl Server {
             let kind_modifiers = info.kind_modifiers.clone();
 
             let range = info.range.unwrap_or(Range::new(position, position));
+            // Build tags array from JSDoc tags when available
+            let tags: Vec<serde_json::Value> = info
+                .tags
+                .iter()
+                .map(|tag| {
+                    serde_json::json!({
+                        "name": tag.name,
+                        "text": tag.text,
+                    })
+                })
+                .collect();
+
             Some(serde_json::json!({
                 "displayString": display_string,
                 "documentation": documentation,
                 "kind": kind,
                 "kindModifiers": kind_modifiers,
+                "tags": tags,
                 "start": Self::lsp_to_tsserver_position(&range.start),
                 "end": Self::lsp_to_tsserver_position(&range.end),
             }))
@@ -1251,6 +1264,7 @@ impl Server {
                 "documentation": "",
                 "kind": "",
                 "kindModifiers": "",
+                "tags": [],
                 "start": Self::lsp_to_tsserver_position(&position),
                 "end": Self::lsp_to_tsserver_position(&position),
             }))
@@ -1263,6 +1277,7 @@ impl Server {
                 "documentation": "",
                 "kind": "",
                 "kindModifiers": "",
+                "tags": [],
                 "start": {"line": 1, "offset": 1},
                 "end": {"line": 1, "offset": 1},
             }))),
