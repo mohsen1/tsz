@@ -7,12 +7,8 @@ All benchmarks use [Criterion.rs](https://github.com/bheisler/criterion.rs) for 
 
 ## Running Benchmarks
 
-**⚠️ CRITICAL: Always use Docker for benchmarks!**
-
-Running `cargo bench` directly on the host can consume 60GB+ RAM and crash the system.
-
 ```bash
-# Run all benchmarks (Docker-safe)
+# Run all benchmarks (with resource limits)
 ./scripts/bench.sh
 
 # Run specific benchmark
@@ -153,8 +149,8 @@ Track these metrics over time:
 ## Troubleshooting
 
 ### Benchmark Fails with OOM
-- Ensure you're using `./scripts/bench.sh` (Docker wrapper)
-- Check Docker memory limit (default: 8GB)
+- Ensure you're using `./scripts/bench.sh` (applies memory limits)
+- Adjust memory limit with `TSZ_MAX_RSS_MB` env var (default: 8192)
 - Reduce test source size if needed
 
 ### High Variance (> 10%)
