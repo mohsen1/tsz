@@ -3084,7 +3084,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(method) = self.ctx.arena.get_method_decl(node) {
                     let member_name = self.get_method_name_from_node(member_idx);
                     if member_name.as_deref() != Some(name) {
-                        // Different method name - no implementation found for this overload group
+                        if method.body.is_some() {
+                            // Different name but has body - wrong-named implementation (TS2389)
+                            return (true, member_name);
+                        }
+                        // Different name, no body - no implementation found
                         return (false, None);
                     }
                     if !method.body.is_none() {

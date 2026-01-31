@@ -350,13 +350,16 @@ impl<'a> CheckerState<'a> {
                 let is_valid = evaluator.is_arithmetic_operand(operand_type);
 
                 if !is_valid {
-                    // Emit TS2362 for invalid increment/decrement operand
+                    // Emit TS2356 for invalid increment/decrement operand type
                     if let Some(loc) = self.get_source_location(unary.operand) {
-                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        use crate::checker::types::diagnostics::{
+                            diagnostic_codes, diagnostic_messages,
+                        };
                         self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            code: diagnostic_codes::ARITHMETIC_OPERAND_MUST_BE_NUMBER,
                             category: DiagnosticCategory::Error,
-                            message_text: "The operand of an increment or decrement operator must be a variable or a property access.".to_string(),
+                            message_text: diagnostic_messages::ARITHMETIC_OPERAND_MUST_BE_NUMBER
+                                .to_string(),
                             file: self.ctx.file_name.clone(),
                             start: loc.start,
                             length: loc.length(),
