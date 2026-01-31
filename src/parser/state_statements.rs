@@ -95,6 +95,17 @@ impl ParserState {
         while !self.is_token(SyntaxKind::EndOfFileToken) {
             let pos_before = self.token_pos();
 
+            // Handle Unknown tokens (invalid characters) - must be checked FIRST
+            if self.is_token(SyntaxKind::Unknown) {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Invalid character.",
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+                self.next_token();
+                continue;
+            }
+
             // If we see a closing brace at the top level, report error 1128
             if self.is_token(SyntaxKind::CloseBraceToken) {
                 // Only emit error if we haven't already emitted one at this position
@@ -136,11 +147,6 @@ impl ParserState {
             if self.token_pos() == pos_before && !self.is_token(SyntaxKind::EndOfFileToken) {
                 self.next_token();
             }
-
-            // Safety: break on Unknown tokens to avoid infinite loop
-            if self.is_token(SyntaxKind::Unknown) {
-                break;
-            }
         }
 
         self.make_node_list(statements)
@@ -156,6 +162,17 @@ impl ParserState {
             && !self.is_token(SyntaxKind::CloseBraceToken)
         {
             let pos_before = self.token_pos();
+
+            // Handle Unknown tokens (invalid characters)
+            if self.is_token(SyntaxKind::Unknown) {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Invalid character.",
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+                self.next_token();
+                continue;
+            }
 
             let stmt = self.parse_statement();
             if !stmt.is_none() {
@@ -184,11 +201,6 @@ impl ParserState {
                 && !self.is_token(SyntaxKind::CloseBraceToken)
             {
                 self.next_token();
-            }
-
-            // Safety: break on Unknown tokens to avoid infinite loop
-            if self.is_token(SyntaxKind::Unknown) {
-                break;
             }
         }
 
