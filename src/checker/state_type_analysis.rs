@@ -967,8 +967,10 @@ impl<'a> CheckerState<'a> {
 
         // Namespace / Module
         // Return a Ref type so resolve_qualified_name can access the symbol's exports
-        // NOTE: Cannot migrate to Lazy(DefId) yet - resolve_qualified_name depends on SymbolRef
-        // to access the symbol's exports map. This needs TypeResolver support for Lazy types first.
+        // NOTE: Cannot migrate to Lazy(DefId) yet - resolve_qualified_name depends on
+        // TypeKey::Ref(SymbolRef) to look up the symbol's exports map via get_symbol_ref().
+        // The Lazy type evaluation returns ERROR for namespaces because they don't have
+        // structural types in the TypeEnvironment.
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
             use crate::solver::{SymbolRef, TypeKey};
             // Note: We use the symbol ID directly.
@@ -980,8 +982,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Enum - return a nominal reference type
-        // NOTE: Cannot migrate to Lazy(DefId) yet - enum type checking depends on SymbolRef
-        // to access enum members. This needs TypeResolver support for Lazy types first.
+        // NOTE: Cannot migrate to Lazy(DefId) yet - enum type checking depends on
+        // TypeKey::Ref(SymbolRef) to access the symbol via get_symbol_ref() for
+        // enum member resolution and nominal type checking.
         if flags & symbol_flags::ENUM != 0 {
             use crate::solver::{SymbolRef, TypeKey};
             return (
