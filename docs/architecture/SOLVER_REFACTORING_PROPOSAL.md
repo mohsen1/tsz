@@ -109,7 +109,7 @@ The Judge/Lawyer separation enables an opt-in **Sound Mode** (see `docs/aspirati
 pub enum TypeCheckMode {
     /// Standard TypeScript behavior (Lawyer + Judge)
     TypeScript,
-    /// Strict sound checking (Judge only)
+    /// Strict sound checking (Judge only + Sound Lawyer)
     Sound,
 }
 
@@ -117,17 +117,101 @@ impl CheckerState {
     fn is_assignable(&self, source: TypeId, target: TypeId) -> bool {
         match self.options.type_check_mode {
             TypeCheckMode::TypeScript => self.lawyer.is_assignable(source, target),
-            TypeCheckMode::Sound => self.judge.is_subtype(source, target),
+            TypeCheckMode::Sound => self.sound_lawyer.is_assignable(source, target),
         }
     }
 }
 ```
 
-Sound Mode would catch issues TypeScript allows:
+Sound Mode catches issues TypeScript allows:
 - Covariant mutable arrays
 - Method parameter bivariance
 - `any` as both top and bottom type
 - Enum to number assignability
+- **Excess property bypass** (see below)
+
+#### 1.3.1 Sticky Freshness: Principled Excess Property Checking
+
+TypeScript's excess property checking is inconsistent - it only applies to "fresh" object literals and is easily bypassed:
+
+```typescript
+// TypeScript's bypass loophole
+const point3d = { x: 1, y: 2, z: 3 };     // Inferred as { x, y, z }
+const point2d: { x: number; y: number } = point3d;  // ✅ No error! z is silently lost
+
+// But direct assignment errors
+const point2d: { x: number; y: number } = { x: 1, y: 2, z: 3 };  // ❌ Error
+```
+
+**Sound Mode introduces "Sticky Freshness"**: Object literals remain subject to excess property checks as long as they flow through **inferred** types. Freshness only ends at **explicit type annotations**.
+
+```typescript
+// Sound Mode behavior
+const point3d = { x: 1, y: 2, z: 3 };     // point3d is "sticky fresh"
+const point2d: { x: number; y: number } = point3d;  // ❌ TS9001: 'z' is excess
+
+// Explicit opt-out still works
+const wide: { x: number; y: number } = point3d as { x: number; y: number };  // ✅ OK
+```
+
+**Implementation**:
+
+```rust
+pub struct FreshnessTracker {
+    /// Legacy TS mode: fresh only at creation
+    fresh_types: FxHashSet<TypeId>,
+    /// Sound mode: fresh until explicit annotation
+    sticky_fresh_types: FxHashSet<TypeId>,
+    sound_mode: bool,
+}
+
+impl FreshnessTracker {
+    /// Object literal created
+    pub fn mark_fresh(&mut self, type_id: TypeId) {
+        self.fresh_types.insert(type_id);
+        if self.sound_mode {
+            self.sticky_fresh_types.insert(type_id);
+        }
+    }
+    
+    /// Assignment to inferred variable (no annotation)
+    pub fn propagate_freshness(&mut self, source: TypeId, target: TypeId) {
+        if self.sound_mode && self.sticky_fresh_types.contains(&source) {
+            self.sticky_fresh_types.insert(target);  // Freshness propagates
+        }
+    }
+    
+    /// Assignment to explicit type annotation
+    pub fn consume_freshness(&mut self, type_id: TypeId) {
+        self.fresh_types.remove(&type_id);
+        self.sticky_fresh_types.remove(&type_id);  // Explicit annotation breaks seal
+    }
+    
+    pub fn is_fresh(&self, type_id: TypeId) -> bool {
+        if self.sound_mode {
+            self.sticky_fresh_types.contains(&type_id)
+        } else {
+            self.fresh_types.contains(&type_id)
+        }
+    }
+}
+```
+
+**Trade-offs**:
+
+| Scenario | TypeScript Mode | Sound Mode |
+|----------|-----------------|------------|
+| Direct literal assignment | ❌ Excess error | ❌ Excess error |
+| Via intermediate variable | ✅ Bypass allowed | ❌ Excess error (correct) |
+| Class instance to base | ✅ Allowed | ✅ Allowed (not fresh) |
+| Explicit cast/annotation | ✅ Allowed | ✅ Allowed (opt-out) |
+| Spread into new object | ✅ Allowed | ✅ Allowed (new object) |
+
+**Why this is principled**:
+1. **Respects structural typing**: Interfaces and classes are open (width subtyping allowed)
+2. **Respects intent**: Object literals are implicitly exact definitions
+3. **Closes the loophole**: Prevents accidental data loss through the bypass
+4. **Provides opt-out**: Explicit annotations/casts allow widening when intentional
 
 ### 1.4 Critical Design Constraints
 
@@ -1018,6 +1102,17 @@ Based on architectural review, these are the key risks to monitor:
 | **Clear diagnostics** | TS9xxx codes explain unsoundness caught |
 | **Gradual adoption** | Per-file `// @ts-sound` pragma support |
 | **Documentation** | Every caught unsoundness documented with examples |
+
+### Sound Mode Features
+
+| Feature | TypeScript Behavior | Sound Mode Fix |
+|---------|--------------------| ---------------|
+| **Covariant arrays** | `Animal[] = Dog[]` ✅ | ❌ TS9002: Mutable array covariance |
+| **Method bivariance** | Bivariant params ✅ | ❌ TS9003: Contravariant params required |
+| **Any escape** | `any` silences errors | ❌ TS9004: `any` doesn't bypass structure |
+| **Excess property bypass** | Via intermediate var ✅ | ❌ TS9001: Sticky freshness catches |
+| **Enum-number** | `enum E { A }; let n: number = E.A` ✅ | ❌ TS9005: Enum is not number |
+| **Index signature** | Missing index okay | ❌ TS9006: Index signature required |
 
 ---
 
