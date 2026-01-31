@@ -132,20 +132,24 @@ else
         trap "rm -f $TEMP_OUTPUT" EXIT
         
         echo "   Running full conformance test suite..."
-        if ! "$ROOT_DIR/conformance/run.sh" > "$TEMP_OUTPUT" 2>&1; then
+        if ! "$ROOT_DIR/conformance/run.sh" --pass-rate-only > "$TEMP_OUTPUT" 2>&1; then
             echo "❌ Conformance tests failed to run"
             cat "$TEMP_OUTPUT" | tail -20
             exit 1
         fi
         
-        # Extract current pass rate
-        PASS_LINE=$(grep -E "^Pass Rate:" "$TEMP_OUTPUT" | tail -1)
-        if [[ -z "$PASS_LINE" ]]; then
+        # Extract current pass rate from the marked output
+        CURRENT_CONFORMANCE=$(sed -n '/===PASS_RATE_START===/,/===PASS_RATE_END===/p' "$TEMP_OUTPUT" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if [[ -z "$CURRENT_CONFORMANCE" ]]; then
+            # Fallback: try to find Pass Rate line directly
+            PASS_LINE=$(grep -E "^Pass Rate:" "$TEMP_OUTPUT" | tail -1)
+            CURRENT_CONFORMANCE=$(echo "$PASS_LINE" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        fi
+        
+        if [[ -z "$CURRENT_CONFORMANCE" ]]; then
             echo "❌ Could not extract pass rate from conformance output"
             exit 1
         fi
-        
-        CURRENT_CONFORMANCE=$(echo "$PASS_LINE" | grep -oE '[0-9]+\.[0-9]+' | head -1)
         echo "   Current: ${CURRENT_CONFORMANCE}%"
         
         # Compare using bc for floating point comparison

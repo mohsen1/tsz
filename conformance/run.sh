@@ -152,6 +152,8 @@ OPTIONS:
     -v, --verbose       Show detailed output for each test
     --print-test        Show detailed info for filtered tests (use with --filter)
                         Displays: file content, directives, TSC expected, tsz actual
+    --pass-rate-only    Output pass rate percentage only (for scripts/CI)
+                        Outputs: ===PASS_RATE_START===\n85.3\n===PASS_RATE_END===
     -q, --quiet         Minimal output (only summary)
     --json              Output results as JSON (implies --quiet)
 
@@ -734,6 +736,7 @@ main() {
     local filter=""
     local print_test=false
     local dump_results=""
+    local pass_rate_only=false
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -800,6 +803,9 @@ main() {
                 ;;
             --dump-results)
                 dump_results="$SCRIPT_DIR/.tsc-cache/test-results.json"
+                ;;
+            --pass-rate-only)
+                pass_rate_only=true
                 ;;
 
             # Execution
@@ -878,19 +884,58 @@ main() {
     fi
 
     # Run tests based on mode
-    case "$mode" in
-        server)
-            run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose" "$filter" "$print_test" "$dump_results"
-            ;;
-        wasm)
-            local use_wasm=true
-            run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
-            ;;
-        native)
-            local use_wasm=false
-            run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
-            ;;
-    esac
+    local exit_code=0
+    
+    if [[ "$pass_rate_only" == "true" ]]; then
+        # Capture output to extract pass rate
+        local temp_output
+        temp_output=$(mktemp)
+        trap "rm -f $temp_output" EXIT
+        
+        case "$mode" in
+            server)
+                run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose" "$filter" "$print_test" "$dump_results" 2>&1 | tee "$temp_output"
+                exit_code=${PIPESTATUS[0]}
+                ;;
+            wasm)
+                local use_wasm=true
+                run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose" 2>&1 | tee "$temp_output"
+                exit_code=${PIPESTATUS[0]}
+                ;;
+            native)
+                local use_wasm=false
+                run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose" 2>&1 | tee "$temp_output"
+                exit_code=${PIPESTATUS[0]}
+                ;;
+        esac
+        
+        # Extract and print only the pass rate
+        local pass_line
+        pass_line=$(grep -E "^Pass Rate:" "$temp_output" | tail -1)
+        if [[ -n "$pass_line" ]]; then
+            echo ""
+            echo "===PASS_RATE_START==="
+            echo "$pass_line" | grep -oE '[0-9]+\.[0-9]+'
+            echo "===PASS_RATE_END==="
+        fi
+        
+        rm -f "$temp_output"
+        exit $exit_code
+    else
+        case "$mode" in
+            server)
+                run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose" "$filter" "$print_test" "$dump_results"
+                ;;
+            wasm)
+                local use_wasm=true
+                run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
+                ;;
+            native)
+                local use_wasm=false
+                run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
+                ;;
+        esac
+    fi
 }
 
 # ==============================================================================
