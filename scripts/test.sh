@@ -63,9 +63,9 @@ done
 # Delegate to conformance runner
 if [[ "$CONFORMANCE_TEST" == true ]]; then
     if [[ -n "$CONFORMANCE_CATEGORY" ]]; then
-        exec "$ROOT_DIR/conformance/run-conformance.sh" --category="$CONFORMANCE_CATEGORY"
+        exec "$ROOT_DIR/scripts/conformance/run-conformance.sh" --category="$CONFORMANCE_CATEGORY"
     else
-        exec "$ROOT_DIR/conformance/run-conformance.sh"
+        exec "$ROOT_DIR/scripts/conformance/run-conformance.sh"
     fi
 fi
 

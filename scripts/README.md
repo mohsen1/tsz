@@ -12,20 +12,20 @@ node scripts/help.mjs
 ./scripts/test.sh
 
 # Run conformance tests (500 tests)
-./conformance/run-conformance.sh
+./scripts/conformance/run.sh
 
 # Run with options
-./conformance/run-conformance.sh --max=100           # Fewer tests
-./conformance/run-conformance.sh --all               # All tests
-./conformance/run-conformance.sh --verbose           # Detailed output
-./conformance/run-conformance.sh --category=compiler # Compiler tests only
+./scripts/conformance/run.sh --max=100           # Fewer tests
+./scripts/conformance/run.sh --all               # All tests
+./scripts/conformance/run.sh --verbose           # Detailed output
+./scripts/conformance/run.sh --category=compiler # Compiler tests only
 ```
 
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `conformance/run-conformance.sh` | Run conformance tests |
+| `scripts/conformance/run.sh` | Run conformance tests |
 | `scripts/test.sh` | Run Rust unit tests |
 | `scripts/bench.sh` | Run benchmarks |
 | `scripts/build-wasm.sh` | Build WASM module |

@@ -1053,7 +1053,7 @@ async function printTestDetails(
  */
 export async function runServerConformanceTests(config: ServerRunnerConfig = {}): Promise<TestStats> {
   const __dirname = path.dirname(new URL(import.meta.url).pathname);
-  const ROOT_DIR = path.resolve(__dirname, '../..');
+  const ROOT_DIR = path.resolve(__dirname, '../../..');
 
   const maxTests = config.maxTests ?? Infinity;
   const workerCount = config.workers ?? 8;
@@ -1087,9 +1087,9 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     log(`\n  The conformance runner requires a TSC baseline cache to compare against.`, colors.yellow);
     log(`  Without it, tests can only pass if tsz produces zero errors.\n`, colors.yellow);
     log(`  Generate the cache first:`, colors.bold);
-    log(`    cd conformance && node dist/generate-cache.js\n`, colors.cyan);
+    log(`    cd scripts/conformance && node dist/generate-cache.js\n`, colors.cyan);
     log(`  Or use the run.sh helper:`, colors.bold);
-    log(`    bash conformance/run.sh cache generate\n`, colors.cyan);
+    log(`    bash scripts/conformance/run.sh cache generate\n`, colors.cyan);
     process.exit(2);
   }
   const cacheEntries = tscCache.entries;

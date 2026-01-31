@@ -20,7 +20,6 @@ ignore_patterns:
   - ".github/**"
   - "scripts/**"
   - "pkg/**"
-  - "conformance/**"
   - "*.wasm"
   - "*.lock"
 

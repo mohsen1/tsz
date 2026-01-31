@@ -22,7 +22,7 @@ fn main() {
     // Skip generation if lib-assets already exist and not forced
     if version_file.exists() && !force {
         println!("cargo:rerun-if-changed=src/lib-assets/lib_version.json");
-        println!("cargo:rerun-if-changed=conformance/typescript-versions.json");
+        println!("cargo:rerun-if-changed=scripts/conformance/typescript-versions.json");
         return;
     }
 
@@ -70,5 +70,5 @@ fn main() {
 
     // Tell Cargo to rerun if these files change
     println!("cargo:rerun-if-changed=scripts/generate-lib-assets.mjs");
-    println!("cargo:rerun-if-changed=conformance/typescript-versions.json");
+    println!("cargo:rerun-if-changed=scripts/conformance/typescript-versions.json");
 }

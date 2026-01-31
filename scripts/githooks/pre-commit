@@ -13,7 +13,7 @@ set -e
 SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
 
 # Get root directory
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 
 echo "🔧 Pre-commit checks..."
 
@@ -132,7 +132,7 @@ else
         trap "rm -f $TEMP_OUTPUT" EXIT
         
         echo "   Running full conformance test suite..."
-        if ! "$ROOT_DIR/conformance/run.sh" --pass-rate-only > "$TEMP_OUTPUT" 2>&1; then
+        if ! "$ROOT_DIR/scripts/conformance/run.sh" --pass-rate-only > "$TEMP_OUTPUT" 2>&1; then
             echo "❌ Conformance tests failed to run"
             cat "$TEMP_OUTPUT" | tail -20
             exit 1
@@ -180,7 +180,7 @@ else
             echo "   Please fix the regression before committing."
             echo ""
             echo "   To investigate:"
-            echo "     ./conformance/run.sh --filter=<pattern> --print-test"
+            echo "     ./scripts/conformance/run.sh --filter=<pattern> --print-test"
             echo ""
             echo "   To bypass (not recommended):"
             echo "     TSZ_SKIP_CONFORMANCE=1 git commit ..."

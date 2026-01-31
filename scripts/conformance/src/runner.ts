@@ -14,7 +14,7 @@ import { fileURLToPath } from 'url';
 import { loadTscCache, type CacheEntry } from './tsc-cache.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '../..');
+const ROOT_DIR = path.resolve(__dirname, '../../..');
 
 interface RunnerConfig {
   wasmPkgPath: string;
