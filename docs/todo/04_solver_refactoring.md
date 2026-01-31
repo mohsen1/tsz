@@ -9,7 +9,7 @@
 | Phase | Status | Description |
 |-------|--------|-------------|
 | Phase 1 | ✅ COMPLETE | Bug fixes for cycle detection |
-| Phase 2 | DEFERRED | Salsa prerequisites (future work) |
+| Phase 2 | SUBSTANTIALLY COMPLETE | Salsa prerequisites + QueryCache memoization |
 | Phase 3 | ✅ COMPLETE | Judge trait and integration |
 | Phase 4 | PARTIAL | DefId infra + checker integration done, enum/namespace blocked |
 | Phase 5 | ✅ COMPLETE | TypeKey audit and partial migration |
@@ -27,13 +27,19 @@ All bug fixes implemented and tested.
 
 ---
 
-## Phase 2: Salsa Prerequisites - IN PROGRESS
+## Phase 2: Salsa Prerequisites - SUBSTANTIALLY COMPLETE
 
 This phase prepares for future Salsa integration.
 
-- [ ] Refactor CheckerContext to use trait-based database
 - [x] Remove FreshnessTracker from Solver ✅
 - [x] Remove RefCell caches from Evaluator ✅
+- [x] Fix `salsa_db.rs` to compile with salsa 0.16 API ✅
+- [x] Add `query_db: Option<&dyn QueryDatabase>` to SubtypeChecker, TypeEvaluator, CompatChecker, CheckerContext ✅
+- [x] Wire QueryCache into all entry points (parallel.rs, driver.rs, project.rs, tsz_server) ✅
+- [x] Route evaluate_type through QueryDatabase memoization ✅
+- [x] Route recursive check_subtype through QueryCache memoization ✅
+- [x] Consolidate CompatChecker configuration via `configure_compat_checker` helper ✅
+- [ ] Refactor CheckerContext to use `&dyn QueryDatabase` instead of `&TypeInterner` (partial: dual-field approach done)
 
 ### Task 3: Remove RefCell from TypeEvaluator ✅
 
@@ -61,6 +67,58 @@ This phase prepares for future Salsa integration.
 - `src/solver/judge.rs` - evaluator instantiation
 - `src/checker/state_type_environment.rs` - evaluator instantiation
 - `src/solver/tests/evaluate_tests.rs` - test declarations
+
+### Task 4: Fix salsa_db.rs to compile with salsa 0.16 ✅
+
+**Completed**: `salsa_db.rs` used non-existent `salsa::DatabaseStruct` API. Fixed to use
+correct salsa 0.16 pattern: `#[salsa::database(SolverStorage)]` + `Storage<Self>`.
+
+- Added `Debug` impl for `TypeInterner` (required by Salsa inputs)
+- Fixed all method calls from `self.storage.interner_ref()` to `self.interner_ref()` (trait method)
+- Added missing `QueryDatabase` trait impls (`get_index_signatures`, `is_nullish_type`, `remove_nullish`)
+- All 9 salsa tests pass with `--features experimental_salsa`
+
+### Task 5: QueryCache memoization pipeline ✅
+
+**Completed**: Full memoization pipeline from entry points through to SubtypeChecker internals.
+
+**Architecture**:
+```
+Entry point (parallel.rs / driver.rs / project.rs / tsz_server)
+  → creates QueryCache(&type_interner)
+  → sets checker.ctx.set_query_db(&query_cache)
+  → CheckerContext.configure_compat_checker() propagates to CompatChecker + SubtypeChecker
+  → SubtypeChecker.check_subtype() checks cache before structural comparison
+  → SubtypeChecker.evaluate_type() routes through QueryDatabase when available
+  → Results cached back into QueryCache for cross-checker reuse
+```
+
+**Key changes**:
+- `SubtypeChecker`, `TypeEvaluator`, `CompatChecker`, `CheckerContext` all have `query_db: Option<&dyn QueryDatabase>`
+- `QueryDatabase` trait gains `lookup_subtype_cache`/`insert_subtype_cache` with no-op defaults
+- `QueryCache` overrides these with `RwLock<FxHashMap>` caching
+- `check_subtype()` consults cache after fast paths, caches True/False results (not Provisional)
+- `evaluate_type()` routes through `db.evaluate_type()` when query_db is available
+- All 14 CompatChecker creation sites in checker use `configure_compat_checker` helper
+
+**Files modified**:
+- `src/solver/db.rs` - QueryDatabase trait + QueryCache impl
+- `src/solver/subtype.rs` - cache lookup/insert in check_subtype
+- `src/solver/subtype_rules/functions.rs` - evaluate_type routing
+- `src/solver/subtype_rules/generics.rs` - evaluate_type routing
+- `src/solver/evaluate.rs` - query_db field
+- `src/solver/compat.rs` - query_db propagation
+- `src/checker/context.rs` - query_db field + configure_compat_checker
+- `src/checker/assignability_checker.rs` - use configure_compat_checker (5 sites)
+- `src/checker/call_checker.rs` - use configure_compat_checker (1 site)
+- `src/checker/error_reporter.rs` - use configure_compat_checker (1 site)
+- `src/checker/generic_checker.rs` - use configure_compat_checker (2 sites)
+- `src/checker/state_type_environment.rs` - use configure_compat_checker (4 sites)
+- `src/checker/type_computation_complex.rs` - use configure_compat_checker (2 sites)
+- `src/parallel.rs` - QueryCache creation + wiring
+- `src/cli/driver.rs` - QueryCache creation + wiring
+- `src/lsp/project.rs` - QueryCache creation + wiring
+- `src/bin/tsz_server/main.rs` - QueryCache creation + wiring (2 sites)
 
 ---
 
@@ -192,9 +250,11 @@ Remaining 65 TypeKey matches are:
 
 ## Future Work
 
-1. **Phase 2**: Complete Salsa prerequisites when Salsa integration begins
-2. **Phase 4.4**: Complete namespace/enum migration when binder integration is addressed
-3. **Sound mode docs**: Add usage examples and documentation
+1. **Phase 2 remaining**: Replace `CheckerContext.types: &TypeInterner` with `&dyn QueryDatabase` (currently uses dual-field approach with both `types` and `query_db`)
+2. **Phase 4.4**: Complete namespace/enum SymbolRef removal when binder integration is addressed
+3. **Salsa full integration**: Route recursive `check_subtype` calls through Salsa (currently uses QueryCache; Salsa would add coinductive cycle recovery via `#[salsa::cycle]`)
+4. **Sound mode docs**: Add usage examples and documentation
+5. **Performance benchmarking**: Measure QueryCache hit rates and memoization impact
 
 ---
 
