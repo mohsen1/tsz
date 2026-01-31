@@ -2833,17 +2833,30 @@ impl Server {
             let provider = FoldingRangeProvider::new(&arena, &line_map, &source_text);
             let ranges = provider.get_folding_ranges(root);
 
+            // Pre-compute line lengths for offset calculation
+            let lines: Vec<&str> = source_text.lines().collect();
+
             let body: Vec<serde_json::Value> = ranges
                 .iter()
                 .map(|fr| {
+                    // Compute end offset: length of the end line + 1 (1-based)
+                    let end_line_len = lines
+                        .get(fr.end_line as usize)
+                        .map(|l| l.len() as u32)
+                        .unwrap_or(0);
+                    let start_line_len = lines
+                        .get(fr.start_line as usize)
+                        .map(|l| l.len() as u32)
+                        .unwrap_or(0);
+
                     let mut span = serde_json::json!({
                         "textSpan": {
                             "start": { "line": fr.start_line + 1, "offset": 1 },
-                            "end": { "line": fr.end_line + 1, "offset": 1 },
+                            "end": { "line": fr.end_line + 1, "offset": end_line_len + 1 },
                         },
                         "hintSpan": {
                             "start": { "line": fr.start_line + 1, "offset": 1 },
-                            "end": { "line": fr.start_line + 1, "offset": 1 },
+                            "end": { "line": fr.start_line + 1, "offset": start_line_len + 1 },
                         },
                         "bannerText": "...",
                         "autoCollapse": false,
