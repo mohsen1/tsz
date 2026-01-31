@@ -1600,9 +1600,9 @@ impl<'a> CheckerState<'a> {
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
         let object_type = self.ctx.types.object(properties);
 
-        // Mark object literal as fresh for excess property checking
-        // Freshness is removed when the object is assigned to a variable
-        self.ctx.freshness_tracker.mark_fresh(object_type);
+        // NOTE: Freshness is now tracked SYNTACTICALLY in is_syntactically_fresh()
+        // rather than by TypeId. This fixes the "Zombie Freshness" bug where
+        // structurally identical object literals incorrectly shared freshness state.
 
         object_type
     }

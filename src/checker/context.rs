@@ -14,7 +14,7 @@ use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
 use crate::solver::def::{DefId, DefinitionStore};
-use crate::solver::{FreshnessTracker, PropertyInfo, TypeEnvironment, TypeId, TypeInterner};
+use crate::solver::{PropertyInfo, TypeEnvironment, TypeId, TypeInterner};
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
@@ -426,10 +426,9 @@ pub struct CheckerContext<'a> {
 
     /// Whether type resolution fuel was exhausted (for timeout detection).
     pub fuel_exhausted: RefCell<bool>,
-
-    /// Freshness tracker for object literal excess property checking.
-    /// Tracks which object literals are "fresh" and should trigger excess property checks.
-    pub freshness_tracker: FreshnessTracker,
+    // NOTE: Freshness is now tracked SYNTACTICALLY via is_syntactically_fresh() in CheckerState.
+    // This fixes the "Zombie Freshness" bug where structurally identical object literals
+    // incorrectly shared freshness state due to TypeId interning.
 }
 
 /// Context for a lib file (arena + binder) for global type resolution.
@@ -516,7 +515,6 @@ impl<'a> CheckerContext<'a> {
             inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
-            freshness_tracker: FreshnessTracker::new(),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
@@ -595,7 +593,6 @@ impl<'a> CheckerContext<'a> {
             inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
-            freshness_tracker: FreshnessTracker::new(),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
@@ -676,7 +673,6 @@ impl<'a> CheckerContext<'a> {
             inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
-            freshness_tracker: FreshnessTracker::new(),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
@@ -756,7 +752,6 @@ impl<'a> CheckerContext<'a> {
             inside_closure_depth: 0,
             type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
-            freshness_tracker: FreshnessTracker::new(),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
