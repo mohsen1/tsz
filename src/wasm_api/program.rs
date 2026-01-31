@@ -85,6 +85,7 @@ impl TsCompilerOptions {
             allow_synthetic_default_imports: false,
             allow_unreachable_code: false,
             no_property_access_from_index_signature: false,
+            sound_mode: false,
         }
     }
 }

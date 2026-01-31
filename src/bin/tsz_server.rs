@@ -1428,18 +1428,19 @@ impl Server {
             );
             let completion_result = provider.get_completion_result(root, position)?;
 
-            let entries: Vec<serde_json::Value> = completion_result.entries
+            let entries: Vec<serde_json::Value> = completion_result
+                .entries
                 .iter()
                 .map(|item| {
                     let kind = Self::completion_kind_to_str(item.kind);
                     // Map internal sort_text to tsserver's SortText format
                     let tsserver_sort_text = match item.sort_text.as_deref() {
-                        Some("0") => "11",  // LOCAL_DECLARATION -> LocationPriority
-                        Some("1") => "11",  // MEMBER -> LocationPriority
-                        Some("2") => "11",  // TYPE_DECLARATION -> LocationPriority
-                        Some("3") => "16",  // AUTO_IMPORT -> AutoImportSuggestions
-                        Some("5") => "15",  // KEYWORD -> GlobalsOrKeywords
-                        _ => "11",           // Default to LocationPriority
+                        Some("0") => "11", // LOCAL_DECLARATION -> LocationPriority
+                        Some("1") => "11", // MEMBER -> LocationPriority
+                        Some("2") => "11", // TYPE_DECLARATION -> LocationPriority
+                        Some("3") => "16", // AUTO_IMPORT -> AutoImportSuggestions
+                        Some("5") => "15", // KEYWORD -> GlobalsOrKeywords
+                        _ => "11",         // Default to LocationPriority
                     };
                     let mut entry = serde_json::json!({
                         "name": item.label,
@@ -3225,6 +3226,7 @@ impl Server {
             allow_unreachable_code: options.allow_unreachable_code.unwrap_or(false),
             no_property_access_from_index_signature: options
                 .no_property_access_from_index_signature,
+            sound_mode: false, // Sound mode not yet exposed in server protocol
         }
     }
 }

@@ -17,10 +17,10 @@ use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
 use crate::parser::node::{NodeAccess, NodeArena};
 use crate::parser::syntax_kind_ext;
+use crate::scanner::SyntaxKind;
 use crate::solver::{
     ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, TypeKey, apparent_primitive_members,
 };
-use crate::scanner::SyntaxKind;
 
 /// The kind of completion item, matching tsserver's ScriptElementKind values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -658,8 +658,6 @@ impl<'a> Completions<'a> {
         )
     }
 
-
-
     /// Check if the cursor is inside a context where completions should not be offered,
     /// such as inside string literals (non-module-specifier), comments, or regex literals.
     fn is_in_no_completion_context(&self, offset: u32) -> bool {
@@ -673,9 +671,12 @@ impl<'a> Completions<'a> {
 
         // Scan backwards to find context
         let i = offset as usize;
-        
+
         // Check for line comments: if we find // before offset on same line, we're in a comment
-        let line_start = self.source_text[..i].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let line_start = self.source_text[..i]
+            .rfind('\n')
+            .map(|p| p + 1)
+            .unwrap_or(0);
         let line_prefix = &self.source_text[line_start..i];
         if line_prefix.contains("//") {
             // Check that the // is not inside a string
@@ -689,7 +690,7 @@ impl<'a> Completions<'a> {
                 return true;
             }
         }
-        
+
         // Check for block comments: scan backwards for /* without matching */
         if let Some(block_start) = self.source_text[..i].rfind("/*") {
             let after_block = &self.source_text[block_start + 2..i];
@@ -697,7 +698,7 @@ impl<'a> Completions<'a> {
                 return true;
             }
         }
-        
+
         // Check if we're inside a string literal using the AST
         let node_idx = find_node_at_offset(self.arena, offset);
         if !node_idx.is_none() {
@@ -709,23 +710,25 @@ impl<'a> Completions<'a> {
                     if let Some(ext) = self.arena.get_extended(node_idx) {
                         let parent = self.arena.get(ext.parent);
                         if let Some(p) = parent {
-                            if p.kind == syntax_kind_ext::IMPORT_DECLARATION 
+                            if p.kind == syntax_kind_ext::IMPORT_DECLARATION
                                 || p.kind == syntax_kind_ext::EXPORT_DECLARATION
-                                || p.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE {
+                                || p.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                            {
                                 return false; // Module specifier - allow completions
                             }
                         }
                     }
                     return true; // Regular string literal - no completions
                 }
-                // No-substitution template literal 
+                // No-substitution template literal
                 if kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
                     return true;
                 }
                 // Template head/middle/tail (inside template literal parts, not expressions)
                 if kind == SyntaxKind::TemplateHead as u16
                     || kind == SyntaxKind::TemplateMiddle as u16
-                    || kind == SyntaxKind::TemplateTail as u16 {
+                    || kind == SyntaxKind::TemplateTail as u16
+                {
                     return true;
                 }
                 // Regular expression literal
@@ -879,7 +882,11 @@ impl<'a> Completions<'a> {
                     let decl_node = if !symbol.value_declaration.is_none() {
                         symbol.value_declaration
                     } else {
-                        symbol.declarations.first().copied().unwrap_or(NodeIndex::NONE)
+                        symbol
+                            .declarations
+                            .first()
+                            .copied()
+                            .unwrap_or(NodeIndex::NONE)
                     };
                     if !decl_node.is_none() {
                         let doc = jsdoc_for_node(self.arena, root, decl_node, self.source_text);
@@ -913,7 +920,8 @@ impl<'a> Completions<'a> {
         if inside_func {
             if !seen_names.contains("arguments") {
                 seen_names.insert("arguments".to_string());
-                let mut item = CompletionItem::new("arguments".to_string(), CompletionItemKind::Variable);
+                let mut item =
+                    CompletionItem::new("arguments".to_string(), CompletionItemKind::Variable);
                 item.sort_text = Some(sort_priority::LOCAL_DECLARATION.to_string());
                 completions.push(item);
             }
