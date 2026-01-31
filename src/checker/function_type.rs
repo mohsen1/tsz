@@ -458,7 +458,17 @@ impl<'a> CheckerState<'a> {
             }
 
             self.push_return_type(return_type);
-            self.check_statement(body);
+            // Skip body statement checking for function declarations.
+            // Function declarations are checked via check_function_declaration (in
+            // state_checking_members.rs) which correctly maintains the full type
+            // parameter scope chain for nested functions.  get_type_of_function can
+            // be called lazily (e.g. via get_type_of_symbol) outside the enclosing
+            // function's scope, so it would only have its own type params - not the
+            // outer function's - causing false TS2304 "Cannot find name" errors for
+            // outer type parameters like T/U in nested generics.
+            if !is_function_declaration {
+                self.check_statement(body);
+            }
             self.pop_return_type();
 
             if pushed_this_type {
