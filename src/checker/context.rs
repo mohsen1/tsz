@@ -13,6 +13,7 @@ use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
+use crate::solver::def::{DefId, DefinitionStore};
 use crate::solver::{FreshnessTracker, PropertyInfo, TypeEnvironment, TypeId, TypeInterner};
 
 /// Compiler options for type checking.
@@ -344,6 +345,15 @@ pub struct CheckerContext<'a> {
     /// Used by the evaluator to expand Application types.
     pub type_env: RefCell<TypeEnvironment>,
 
+    // --- DefId Migration Infrastructure ---
+    /// Storage for type definitions (interfaces, classes, type aliases).
+    /// Part of the DefId migration to decouple Solver from Binder.
+    pub definition_store: DefinitionStore,
+
+    /// Mapping from Binder SymbolId to Solver DefId.
+    /// Used during migration to avoid creating duplicate DefIds for the same symbol.
+    pub symbol_to_def: FxHashMap<SymbolId, DefId>,
+
     /// Abstract constructor types (TypeIds) produced for abstract classes.
     pub abstract_constructor_types: FxHashSet<TypeId>,
 
@@ -485,6 +495,8 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
+            definition_store: DefinitionStore::new(),
+            symbol_to_def: FxHashMap::default(),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -562,6 +574,8 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
+            definition_store: DefinitionStore::new(),
+            symbol_to_def: FxHashMap::default(),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -641,6 +655,8 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
+            definition_store: DefinitionStore::new(),
+            symbol_to_def: FxHashMap::default(),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -719,6 +735,8 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
+            definition_store: DefinitionStore::new(),
+            symbol_to_def: FxHashMap::default(),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -816,6 +834,80 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: self.protected_constructor_types,
             private_constructor_types: self.private_constructor_types,
         }
+    }
+
+    // =========================================================================
+    // DefId Migration Helpers
+    // =========================================================================
+
+    /// Get or create a DefId for a symbol.
+    ///
+    /// If the symbol already has a DefId, return it.
+    /// Otherwise, create a new DefId and store the mapping.
+    ///
+    /// This is used during the migration from SymbolRef to DefId.
+    /// Eventually, all type references will use DefId directly.
+    pub fn get_or_create_def_id(&mut self, sym_id: SymbolId) -> DefId {
+        use crate::solver::def::DefinitionInfo;
+
+        if let Some(&def_id) = self.symbol_to_def.get(&sym_id) {
+            return def_id;
+        }
+
+        // Get symbol info to create DefinitionInfo
+        let Some(symbol) = self.binder.symbols.get(sym_id) else {
+            // Symbol not found - return invalid DefId
+            return DefId::INVALID;
+        };
+        let name = self.types.intern_string(&symbol.escaped_name);
+
+        // Determine DefKind from symbol flags
+        let kind = if (symbol.flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0 {
+            crate::solver::def::DefKind::TypeAlias
+        } else if (symbol.flags & crate::binder::symbol_flags::INTERFACE) != 0 {
+            crate::solver::def::DefKind::Interface
+        } else if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+            crate::solver::def::DefKind::Class
+        } else if (symbol.flags & crate::binder::symbol_flags::ENUM) != 0 {
+            crate::solver::def::DefKind::Enum
+        } else {
+            // Default to TypeAlias for other symbols
+            crate::solver::def::DefKind::TypeAlias
+        };
+
+        // Create a placeholder DefinitionInfo - body will be set lazily
+        // Get span from the first declaration if available
+        let span = symbol.declarations.first().map(|n| (n.0, n.0));
+
+        let info = DefinitionInfo {
+            kind,
+            name,
+            type_params: Vec::new(), // Will be populated when type is resolved
+            body: None,              // Lazy: computed on first access
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            file_id: Some(symbol.decl_file_idx),
+            span,
+        };
+
+        let def_id = self.definition_store.register(info);
+        self.symbol_to_def.insert(sym_id, def_id);
+        def_id
+    }
+
+    /// Create a Lazy type reference from a symbol.
+    ///
+    /// This returns `TypeKey::Lazy(DefId)` for use in the new DefId system.
+    /// During migration, this is called alongside or instead of creating
+    /// `TypeKey::Ref(SymbolRef)`.
+    pub fn create_lazy_type_ref(&mut self, sym_id: SymbolId) -> TypeId {
+        use crate::solver::TypeKey;
+
+        let def_id = self.get_or_create_def_id(sym_id);
+        self.types.intern(TypeKey::Lazy(def_id))
     }
 
     /// Add an error diagnostic (with deduplication).
