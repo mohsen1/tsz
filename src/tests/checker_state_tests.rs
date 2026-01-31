@@ -29107,6 +29107,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             es_module_interop: false,
             allow_synthetic_default_imports: false,
             allow_unreachable_code: false,
+            sound_mode: false,
         },
     );
     assert!(

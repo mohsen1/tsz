@@ -51,6 +51,14 @@ pub struct CheckerOptions {
     pub allow_unreachable_code: bool,
     /// When true, require bracket notation for index signature property access (TS4111).
     pub no_property_access_from_index_signature: bool,
+    /// When true, enable Sound Mode for stricter type checking beyond TypeScript's defaults.
+    /// Sound Mode catches common unsoundness issues like:
+    /// - Mutable array covariance (TS9002)
+    /// - Method parameter bivariance (TS9003)
+    /// - `any` escapes (TS9004)
+    /// - Excess properties via sticky freshness (TS9001)
+    /// Activated via: `--sound` CLI flag or `// @ts-sound` pragma
+    pub sound_mode: bool,
 }
 
 /// ECMAScript target version

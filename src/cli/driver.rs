@@ -2018,6 +2018,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(val) = args.allow_unreachable_code {
         options.checker.allow_unreachable_code = val;
     }
+    if args.sound {
+        options.checker.sound_mode = true;
+    }
     if args.no_emit {
         options.no_emit = true;
     }

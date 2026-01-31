@@ -327,11 +327,7 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
         .iter()
         .filter_map(|p| {
             let path = p.to_path_buf();
-            if path.exists() {
-                Some(path)
-            } else {
-                None
-            }
+            if path.exists() { Some(path) } else { None }
         })
         .collect();
 

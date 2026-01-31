@@ -415,6 +415,13 @@ pub struct CliArgs {
     )]
     pub no_fallthrough_cases_in_switch: bool,
 
+    /// Enable Sound Mode for stricter type checking beyond TypeScript's defaults.
+    /// Catches common unsoundness like mutable array covariance, method bivariance,
+    /// `any` escapes, and excess properties via sticky freshness.
+    /// Uses TS9xxx diagnostic codes (TS9001-TS9008).
+    #[arg(long)]
+    pub sound: bool,
+
     /// Add 'undefined' to a type when accessed using an index.
     #[arg(
         long = "noUncheckedIndexedAccess",
