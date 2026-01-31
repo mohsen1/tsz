@@ -247,6 +247,8 @@ pub mod diagnostic_messages {
     pub const CANNOT_FIND_NAME_DID_YOU_MEAN: &str = "Cannot find name '{0}'. Did you mean '{1}'?";
     /// TS2583: Cannot find name - suggest changing target library
     pub const CANNOT_FIND_NAME_CHANGE_LIB: &str = "Cannot find name '{0}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.";
+    /// TS2584: Cannot find name - suggest including 'dom' lib
+    pub const CANNOT_FIND_NAME_CHANGE_TARGET_LIB: &str = "Cannot find name '{0}'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.";
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: &str =
         "An 'await' expression is only allowed within an async function.";
     pub const AWAIT_IN_PARAMETER_DEFAULT: &str =
@@ -391,6 +393,9 @@ pub mod diagnostic_codes {
     /// TS2583: Cannot find name '{0}'. Do you need to change your target library?
     /// Emitted when an ES2015+ global is referenced but the lib doesn't include it.
     pub const CANNOT_FIND_NAME_CHANGE_LIB: u32 = 2583;
+    /// TS2584: Cannot find name '{0}'. Do you need to change your target library?
+    /// Emitted when a DOM/ScriptHost global is referenced but the 'dom' lib isn't included.
+    pub const CANNOT_FIND_NAME_CHANGE_TARGET_LIB: u32 = 2584;
     pub const EXPECTED_ARGUMENTS: u32 = 2554; // Expected {0} arguments, but got {1}
     pub const EXPECTED_AT_LEAST_ARGUMENTS: u32 = 2555;
     pub const NO_OVERLOAD_MATCHES_CALL: u32 = 2769;

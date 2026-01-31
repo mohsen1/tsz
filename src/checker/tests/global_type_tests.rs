@@ -160,12 +160,14 @@ function foo(): Promise<void> {
 fn test_console_emits_ts2304_without_lib() {
     let diagnostics = check_without_lib(r#"console.log("hello");"#);
 
-    // Should emit TS2304 for console when lib.d.ts is not loaded
-    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    // Should emit TS2584 for console when lib.d.ts is not loaded
+    // (console is a known DOM global, so we suggest including 'dom' lib)
+    let ts2584_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2584).collect();
 
     assert!(
-        !ts2304_errors.is_empty(),
-        "Expected TS2304 error for console without lib.d.ts"
+        !ts2584_errors.is_empty(),
+        "Expected TS2584 error for console without lib.d.ts, got: {:?}",
+        diagnostics
     );
 }
 

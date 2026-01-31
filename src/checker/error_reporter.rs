@@ -778,6 +778,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Check if this is a known DOM/ScriptHost global that requires the 'dom' lib
+        // If so, emit TS2584 with a suggestion to include 'dom'
+        if is_known_dom_global(name) {
+            self.error_cannot_find_name_change_target_lib(name, idx);
+            return;
+        }
+
         // Try to find similar identifiers in scope for better error messages
         if let Some(suggestions) = self.find_similar_identifiers(name, idx)
             && !suggestions.is_empty()
@@ -846,6 +853,26 @@ impl<'a> CheckerState<'a> {
             let message = format_message(diagnostic_messages::CANNOT_FIND_NAME_CHANGE_LIB, &[name]);
             self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::CANNOT_FIND_NAME_CHANGE_LIB,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Report TS2584: Cannot find name 'X' - suggest including 'dom' lib.
+    ///
+    /// This error is emitted when a known DOM/ScriptHost global (console, window,
+    /// document, HTMLElement, etc.) is used but the 'dom' lib is not included.
+    pub fn error_cannot_find_name_change_target_lib(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message =
+                format_message(diagnostic_messages::CANNOT_FIND_NAME_CHANGE_TARGET_LIB, &[name]);
+            self.ctx.push_diagnostic(Diagnostic {
+                code: diagnostic_codes::CANNOT_FIND_NAME_CHANGE_TARGET_LIB,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -2237,5 +2264,57 @@ impl<'a> CheckerState<'a> {
     /// Report TS2803: Cannot assign to private method.
     pub fn report_private_method_not_writable(&mut self, prop_name: &str, idx: NodeIndex) {
         self.error_private_method_not_writable(prop_name, idx);
+    }
+}
+
+/// Check if a name is a known DOM or ScriptHost global that requires the 'dom' lib.
+/// These names are well-known browser/runtime APIs that tsc suggests including
+/// the 'dom' lib for when they can't be resolved (TS2584).
+fn is_known_dom_global(name: &str) -> bool {
+    match name {
+        // Console
+        "console"
+        // Window/Document
+        | "window" | "document" | "self"
+        // DOM elements
+        | "HTMLElement" | "HTMLDivElement" | "HTMLSpanElement" | "HTMLInputElement"
+        | "HTMLButtonElement" | "HTMLAnchorElement" | "HTMLImageElement"
+        | "HTMLCanvasElement" | "HTMLFormElement" | "HTMLSelectElement"
+        | "HTMLTextAreaElement" | "HTMLTableElement" | "HTMLMediaElement"
+        | "HTMLVideoElement" | "HTMLAudioElement"
+        // Core DOM interfaces
+        | "Element" | "Node" | "Document" | "Event" | "EventTarget"
+        | "NodeList" | "HTMLCollection" | "DOMTokenList"
+        // Common Web APIs
+        | "XMLHttpRequest" | "fetch" | "Request" | "Response" | "Headers"
+        | "URL" | "URLSearchParams"
+        | "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"
+        | "requestAnimationFrame" | "cancelAnimationFrame"
+        | "alert" | "confirm" | "prompt"
+        // Storage
+        | "localStorage" | "sessionStorage" | "Storage"
+        // Navigator/Location/History
+        | "navigator" | "Navigator" | "location" | "Location" | "history" | "History"
+        // Events
+        | "MouseEvent" | "KeyboardEvent" | "TouchEvent" | "FocusEvent"
+        | "CustomEvent" | "MessageEvent" | "ErrorEvent"
+        | "addEventListener" | "removeEventListener"
+        // Canvas/Media
+        | "CanvasRenderingContext2D" | "WebGLRenderingContext"
+        | "MediaStream" | "MediaRecorder"
+        // Workers/ServiceWorker
+        | "Worker" | "ServiceWorker" | "SharedWorker"
+        // Misc browser globals
+        | "MutationObserver" | "IntersectionObserver" | "ResizeObserver"
+        | "Performance" | "performance"
+        | "Blob" | "File" | "FileReader" | "FormData"
+        | "WebSocket" | "ClipboardEvent" | "DragEvent"
+        | "getComputedStyle" | "matchMedia"
+        | "DOMException" | "AbortController" | "AbortSignal"
+        | "TextEncoder" | "TextDecoder"
+        | "crypto" | "Crypto" | "SubtleCrypto"
+        | "queueMicrotask" | "structuredClone"
+        | "atob" | "btoa" => true,
+        _ => false,
     }
 }

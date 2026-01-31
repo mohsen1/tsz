@@ -10,6 +10,7 @@ use crate::parser::node::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeId, TypePredicateTarget};
+use crate::solver::types::TypeParamInfo;
 
 #[allow(dead_code)]
 impl<'a> CheckerState<'a> {
@@ -1604,6 +1605,12 @@ impl<'a> CheckerState<'a> {
         // Clone lib_contexts to allow access within the resolver closure
         let lib_contexts = self.ctx.lib_contexts.clone();
 
+        // Collect lowered types from ALL lib contexts that define this symbol.
+        // This is critical for interface merging across lib files - e.g. Array is
+        // defined in lib.es5.d.ts and augmented in lib.es2015.core.d.ts with
+        // methods like find(), findIndex(), etc.
+        let mut lib_types: Vec<TypeId> = Vec::new();
+
         for lib_ctx in &lib_contexts {
             // Look up the symbol in this lib file's file_locals
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
@@ -1637,18 +1644,30 @@ impl<'a> CheckerState<'a> {
                     );
                     // For interfaces, use all declarations (handles declaration merging)
                     if !symbol.declarations.is_empty() {
-                        lib_type_id =
-                            Some(lowering.lower_interface_declarations(&symbol.declarations));
-                        break;
+                        lib_types
+                            .push(lowering.lower_interface_declarations(&symbol.declarations));
+                        continue;
                     }
                     // For type aliases and other single-declaration types
                     let decl_idx = symbol.value_declaration;
                     if decl_idx.0 != u32::MAX {
-                        lib_type_id = Some(lowering.lower_type(decl_idx));
+                        lib_types.push(lowering.lower_type(decl_idx));
+                        // Type aliases don't merge across files, take the first one
                         break;
                     }
                 }
             }
+        }
+
+        // Merge all found types from different lib files using intersection
+        if lib_types.len() == 1 {
+            lib_type_id = Some(lib_types[0]);
+        } else if lib_types.len() > 1 {
+            let mut merged = lib_types[0];
+            for &ty in &lib_types[1..] {
+                merged = self.ctx.types.intersection2(merged, ty);
+            }
+            lib_type_id = Some(merged);
         }
 
         // Check for global augmentations in the current file that should merge with this type
@@ -1695,6 +1714,79 @@ impl<'a> CheckerState<'a> {
         }
 
         lib_type_id
+    }
+
+    /// Resolve a lib type by name and also return its type parameters.
+    /// Used by `register_boxed_types` for generic types like Array<T> to extract
+    /// the actual type parameters from the interface definition rather than
+    /// synthesizing fresh ones.
+    pub(crate) fn resolve_lib_type_with_params(
+        &mut self,
+        name: &str,
+    ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
+        use crate::parser::node::NodeAccess;
+        use crate::solver::{TypeLowering, types::is_compiler_managed_type};
+
+        let lib_contexts = self.ctx.lib_contexts.clone();
+
+        let mut lib_types: Vec<TypeId> = Vec::new();
+        let mut first_params: Option<Vec<TypeParamInfo>> = None;
+
+        for lib_ctx in &lib_contexts {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
+                    let arena_ref = lib_ctx.arena.as_ref();
+                    let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                        let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                        if is_compiler_managed_type(ident_name) {
+                            return None;
+                        }
+                        for ctx in &lib_contexts {
+                            if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                                return Some(found_sym.0);
+                            }
+                        }
+                        None
+                    };
+
+                    let lowering = TypeLowering::with_resolver(
+                        lib_ctx.arena.as_ref(),
+                        self.ctx.types,
+                        &resolver,
+                    );
+
+                    if !symbol.declarations.is_empty() {
+                        let (ty, params) = lowering
+                            .lower_interface_declarations_with_params(&symbol.declarations);
+                        lib_types.push(ty);
+                        // Take type params from the first definition (primary interface)
+                        if first_params.is_none() && !params.is_empty() {
+                            first_params = Some(params);
+                        }
+                        continue;
+                    }
+                    let decl_idx = symbol.value_declaration;
+                    if decl_idx.0 != u32::MAX {
+                        lib_types.push(lowering.lower_type(decl_idx));
+                        break;
+                    }
+                }
+            }
+        }
+
+        let lib_type_id = if lib_types.len() == 1 {
+            Some(lib_types[0])
+        } else if lib_types.len() > 1 {
+            let mut merged = lib_types[0];
+            for &ty in &lib_types[1..] {
+                merged = self.ctx.types.intersection2(merged, ty);
+            }
+            Some(merged)
+        } else {
+            None
+        };
+
+        (lib_type_id, first_params.unwrap_or_default())
     }
 
     /// Resolve an alias symbol to its target symbol.

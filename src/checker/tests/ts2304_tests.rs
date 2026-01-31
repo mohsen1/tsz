@@ -123,10 +123,12 @@ fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
 fn test_ts2304_emitted_for_console_without_lib() {
     let diagnostics = check_without_lib(r#"console.log("hello");"#);
 
-    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+    // console is a known DOM global, so TS2584 is emitted instead of TS2304
+    // (suggesting the user include the 'dom' lib)
+    let ts2584_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2584).collect();
     assert!(
-        !ts2304_errors.is_empty(),
-        "Expected TS2304 for console without lib.d.ts, got: {:?}",
+        !ts2584_errors.is_empty(),
+        "Expected TS2584 for console without lib.d.ts, got: {:?}",
         diagnostics
     );
 }
