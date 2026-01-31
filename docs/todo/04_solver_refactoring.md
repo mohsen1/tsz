@@ -11,7 +11,7 @@
 | Phase 1 | ✅ COMPLETE | Bug fixes for cycle detection |
 | Phase 2 | DEFERRED | Salsa prerequisites (future work) |
 | Phase 3 | ✅ COMPLETE | Judge trait and integration |
-| Phase 4 | PARTIAL | DefId infrastructure complete, migration partial |
+| Phase 4 | PARTIAL | DefId infra + checker integration done, enum/namespace blocked |
 | Phase 5 | ✅ COMPLETE | TypeKey audit and partial migration |
 | Phase 6 | ✅ COMPLETE | Sound mode implementation |
 
@@ -106,15 +106,25 @@ This phase prepares for future Salsa integration.
 - `TypeEnvironment` supports DefId -> TypeId storage
 - `type_literal_checker.rs` fully migrated to use Lazy(DefId)
 
-### 4.4 Remove Legacy SymbolRef Variants - BLOCKED
+### 4.4 Remove Legacy SymbolRef Variants - PARTIAL
 
-**Blockers** (require deeper binder integration):
-- Namespace/Module types: need export map population
-- Enum types: need enum member population
-- Cycle detection fallback: classes mid-resolution
+**Completed**:
+- ✅ DefId reverse mapping (`def_to_symbol` in CheckerContext)
+- ✅ Cycle detection fallback migrated from `Ref(SymbolRef)` to `Lazy(DefId)`
+- ✅ Namespace/enum types now register DefId mappings alongside Ref types
+- ✅ `resolve_qualified_name` handles both Ref and Lazy types
+- ✅ `ensure_refs_resolved` handles Lazy(DefId) types
+- ✅ `expand_type_application` handles Lazy base types
+- ✅ `ensure_application_symbols_resolved_inner` handles Lazy base types
+- ✅ Lazy variant added to `SymbolResolutionTraversalKind`
+- ✅ SubtypeChecker handles Lazy↔Lazy and Lazy↔structural subtype checks
+- ✅ DefinitionStore: get/set methods for exports, enum members, names
 
-**Status**: Infrastructure exists via `get_lazy_export()` and `get_lazy_enum_member()` 
-in TypeResolver, but actual population requires significant binder changes.
+**Remaining blockers** (namespace/enum types still use `Ref(SymbolRef)`):
+- Enum subtype checking (`check_ref_ref_subtype`, `check_ref_subtype`,
+  `check_to_ref_subtype`) extracts SymbolRef for nominal identity/flags
+- Namespace export lookup extracts SymbolRef to access binder symbol exports
+- Need Lazy equivalents in all ref-specific subtype paths before full migration
 
 ---
 
