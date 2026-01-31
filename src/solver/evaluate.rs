@@ -16,7 +16,6 @@ use crate::solver::instantiate::instantiate_generic;
 use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
@@ -47,17 +46,22 @@ pub const MAX_VISITING_SET_SIZE: usize = 10_000;
 pub const MAX_TOTAL_EVALUATIONS: u32 = 100_000;
 
 /// Type evaluator for meta-types.
+///
+/// # Salsa Preparation
+/// This struct uses `&mut self` methods instead of `RefCell` + `&self`.
+/// This makes the evaluator thread-safe (Send) and prepares for future
+/// Salsa integration where state is managed by the database runtime.
 pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     no_unchecked_indexed_access: bool,
-    cache: RefCell<FxHashMap<TypeId, TypeId>>,
-    visiting: RefCell<FxHashSet<TypeId>>,
-    depth: RefCell<u32>,
+    cache: FxHashMap<TypeId, TypeId>,
+    visiting: FxHashSet<TypeId>,
+    depth: u32,
     /// Total number of evaluate calls (iteration limit)
-    total_evaluations: RefCell<u32>,
+    total_evaluations: u32,
     /// Whether the recursion depth limit was exceeded
-    depth_exceeded: RefCell<bool>,
+    depth_exceeded: bool,
 }
 
 /// Array methods that return any (used for apparent type computation).
@@ -110,11 +114,11 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             interner,
             resolver: &NOOP,
             no_unchecked_indexed_access: false,
-            cache: RefCell::new(FxHashMap::default()),
-            visiting: RefCell::new(FxHashSet::default()),
-            depth: RefCell::new(0),
-            total_evaluations: RefCell::new(0),
-            depth_exceeded: RefCell::new(false),
+            cache: FxHashMap::default(),
+            visiting: FxHashSet::default(),
+            depth: 0,
+            total_evaluations: 0,
+            depth_exceeded: false,
         }
     }
 }
@@ -126,11 +130,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             interner,
             resolver,
             no_unchecked_indexed_access: false,
-            cache: RefCell::new(FxHashMap::default()),
-            visiting: RefCell::new(FxHashSet::default()),
-            depth: RefCell::new(0),
-            total_evaluations: RefCell::new(0),
-            depth_exceeded: RefCell::new(false),
+            cache: FxHashMap::default(),
+            visiting: FxHashSet::default(),
+            depth: 0,
+            total_evaluations: 0,
+            depth_exceeded: false,
         }
     }
 
@@ -163,13 +167,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Check if depth limit was exceeded.
     #[inline]
     pub(crate) fn is_depth_exceeded(&self) -> bool {
-        *self.depth_exceeded.borrow()
+        self.depth_exceeded
     }
 
     /// Set the depth exceeded flag.
     #[inline]
-    pub(crate) fn set_depth_exceeded(&self, value: bool) {
-        *self.depth_exceeded.borrow_mut() = value;
+    pub(crate) fn set_depth_exceeded(&mut self, value: bool) {
+        self.depth_exceeded = value;
     }
 
     /// Evaluate a type, resolving any meta-types if possible.
@@ -209,103 +213,92 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// - `instantiate.rs` - Has substitution logic for type parameters
     /// - `checker/state.rs:2900-2918` - Type alias resolution with type params
     /// - `lower.rs:856-868` - `lower_type_alias_declaration` with params
-    pub fn evaluate(&self, type_id: TypeId) -> TypeId {
+    pub fn evaluate(&mut self, type_id: TypeId) -> TypeId {
         // Fast path for intrinsics
         if type_id.is_intrinsic() {
             return type_id;
         }
 
         // Check if depth was already exceeded in a previous call
-        if *self.depth_exceeded.borrow() {
+        if self.depth_exceeded {
             return TypeId::ERROR;
         }
 
-        if let Some(&cached) = self.cache.borrow().get(&type_id) {
+        if let Some(&cached) = self.cache.get(&type_id) {
             return cached;
         }
 
         // Total evaluations limit to prevent infinite loops
-        {
-            let mut total = self.total_evaluations.borrow_mut();
-            *total += 1;
-            if *total > MAX_TOTAL_EVALUATIONS {
-                // Too many evaluations - return unevaluated to break out
-                self.cache.borrow_mut().insert(type_id, type_id);
-                return type_id;
-            }
+        self.total_evaluations += 1;
+        if self.total_evaluations > MAX_TOTAL_EVALUATIONS {
+            // Too many evaluations - return unevaluated to break out
+            self.cache.insert(type_id, type_id);
+            return type_id;
         }
 
         // Depth guard to prevent OOM from infinitely expanding types
         // Examples: interface AA<T extends AA<T>>, type SelfReference<T = SelfReference>
-        {
-            let mut depth = self.depth.borrow_mut();
-            *depth += 1;
-            if *depth > MAX_EVALUATE_DEPTH {
-                *depth -= 1;
-                drop(depth);
-                // Mark depth as exceeded and return ERROR to stop expansion
-                *self.depth_exceeded.borrow_mut() = true;
-                self.cache.borrow_mut().insert(type_id, TypeId::ERROR);
-                return TypeId::ERROR;
-            }
+        self.depth += 1;
+        if self.depth > MAX_EVALUATE_DEPTH {
+            self.depth -= 1;
+            // Mark depth as exceeded and return ERROR to stop expansion
+            self.depth_exceeded = true;
+            self.cache.insert(type_id, TypeId::ERROR);
+            return TypeId::ERROR;
         }
 
         let key = match self.interner.lookup(type_id) {
             Some(k) => k,
             None => {
-                *self.depth.borrow_mut() -= 1;
+                self.depth -= 1;
                 return type_id;
             }
         };
 
-        {
-            let mut visiting = self.visiting.borrow_mut();
-            // Memory safety: limit the visiting set size
-            if visiting.len() >= MAX_VISITING_SET_SIZE {
-                *self.depth.borrow_mut() -= 1;
-                self.cache.borrow_mut().insert(type_id, type_id);
-                return type_id;
+        // Memory safety: limit the visiting set size
+        if self.visiting.len() >= MAX_VISITING_SET_SIZE {
+            self.depth -= 1;
+            self.cache.insert(type_id, type_id);
+            return type_id;
+        }
+        if !self.visiting.insert(type_id) {
+            // Recursion guard for self-referential mapped/application types.
+            // Per TypeScript behavior, recursive mapped types evaluate to empty objects.
+            if matches!(key, TypeKey::Mapped(_)) {
+                self.depth -= 1;
+                let empty = self.interner.object(vec![]);
+                self.cache.insert(type_id, empty);
+                return empty;
             }
-            if !visiting.insert(type_id) {
-                // Recursion guard for self-referential mapped/application types.
-                // Per TypeScript behavior, recursive mapped types evaluate to empty objects.
-                if matches!(key, TypeKey::Mapped(_)) {
-                    drop(visiting);
-                    *self.depth.borrow_mut() -= 1;
-                    let empty = self.interner.object(vec![]);
-                    self.cache.borrow_mut().insert(type_id, empty);
-                    return empty;
-                }
-                *self.depth.borrow_mut() -= 1;
-                return type_id;
-            }
+            self.depth -= 1;
+            return type_id;
         }
 
         let result = match &key {
             TypeKey::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(*cond_id);
                 let result = self.evaluate_conditional(cond.as_ref());
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             TypeKey::IndexAccess(obj, idx) => {
                 let result = self.evaluate_index_access(*obj, *idx);
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             TypeKey::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(*mapped_id);
                 let result = self.evaluate_mapped(mapped.as_ref());
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             TypeKey::KeyOf(operand) => {
                 let result = self.evaluate_keyof(*operand);
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             TypeKey::TypeQuery(symbol) => {
@@ -316,20 +309,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Pass through unchanged if not resolved
                         type_id
                     };
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             TypeKey::Application(app_id) => {
                 let result = self.evaluate_application(*app_id);
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             TypeKey::TemplateLiteral(spans) => {
                 let result = self.evaluate_template_literal(*spans);
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             // Resolve Ref types to their structural form
@@ -340,8 +333,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         TypeId::ERROR
                     };
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             // Resolve Lazy(DefId) types to their structural form (Phase 4.3)
@@ -353,25 +346,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Lazy type not resolved - return ERROR
                         TypeId::ERROR
                     };
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             TypeKey::StringIntrinsic { kind, type_arg } => {
                 let result = self.evaluate_string_intrinsic(*kind, *type_arg);
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, result);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, result);
                 result
             }
             // Other types pass through unchanged
             _ => {
-                self.visiting.borrow_mut().remove(&type_id);
-                self.cache.borrow_mut().insert(type_id, type_id);
+                self.visiting.remove(&type_id);
+                self.cache.insert(type_id, type_id);
                 type_id
             }
         };
 
-        *self.depth.borrow_mut() -= 1;
+        self.depth -= 1;
         result
     }
 
@@ -382,7 +375,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// 2. Get the type parameters for the base symbol
     /// 3. If we have type params, instantiate the resolved type with args
     /// 4. Recursively evaluate the result
-    fn evaluate_application(&self, app_id: TypeApplicationId) -> TypeId {
+    fn evaluate_application(&mut self, app_id: TypeApplicationId) -> TypeId {
         let app = self.interner.type_application(app_id);
 
         // Look up the base type
@@ -401,11 +394,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
                     // Pre-expand type arguments that are TypeQuery or Application
-                    let expanded_args: Vec<TypeId> = app
-                        .args
-                        .iter()
-                        .map(|&arg| self.try_expand_type_arg(arg))
-                        .collect();
+                    let expanded_args = self.expand_type_args(&app.args);
 
                     // Instantiate the resolved type with the type arguments
                     let instantiated =
@@ -418,11 +407,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let extracted_params = self.extract_type_params_from_type(resolved);
                 if !extracted_params.is_empty() && extracted_params.len() == app.args.len() {
                     // Pre-expand type arguments
-                    let expanded_args: Vec<TypeId> = app
-                        .args
-                        .iter()
-                        .map(|&arg| self.try_expand_type_arg(arg))
-                        .collect();
+                    let expanded_args = self.expand_type_args(&app.args);
 
                     let instantiated = instantiate_generic(
                         self.interner,
@@ -445,11 +430,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
                     // Pre-expand type arguments that are TypeQuery or Application
-                    let expanded_args: Vec<TypeId> = app
-                        .args
-                        .iter()
-                        .map(|&arg| self.try_expand_type_arg(arg))
-                        .collect();
+                    let expanded_args = self.expand_type_args(&app.args);
 
                     // Instantiate the resolved type with the type arguments
                     let instantiated =
@@ -462,11 +443,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let extracted_params = self.extract_type_params_from_type(resolved);
                 if !extracted_params.is_empty() && extracted_params.len() == app.args.len() {
                     // Pre-expand type arguments
-                    let expanded_args: Vec<TypeId> = app
-                        .args
-                        .iter()
-                        .map(|&arg| self.try_expand_type_arg(arg))
-                        .collect();
+                    let expanded_args = self.expand_type_args(&app.args);
 
                     let instantiated = instantiate_generic(
                         self.interner,
@@ -481,6 +458,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // If we can't expand, return the original application
         self.interner.application(app.base, app.args.clone())
+    }
+
+    /// Expand type arguments by evaluating any that are TypeQuery or Application.
+    /// Uses a loop instead of closure to allow mutable self access.
+    fn expand_type_args(&mut self, args: &[TypeId]) -> Vec<TypeId> {
+        let mut expanded = Vec::with_capacity(args.len());
+        for &arg in args {
+            expanded.push(self.try_expand_type_arg(arg));
+        }
+        expanded
     }
 
     /// Extract type parameter infos from a type by scanning for TypeParameter types.
@@ -593,7 +580,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// NOTE: This method uses self.evaluate() for Application, Conditional, Mapped,
     /// and TemplateLiteral types to ensure recursion depth limits are enforced.
-    fn try_expand_type_arg(&self, arg: TypeId) -> TypeId {
+    fn try_expand_type_arg(&mut self, arg: TypeId) -> TypeId {
         let Some(key) = self.interner.lookup(arg) else {
             return arg;
         };
@@ -641,7 +628,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
 /// Convenience function for evaluating conditional types
 pub fn evaluate_conditional(interner: &dyn TypeDatabase, cond: &ConditionalType) -> TypeId {
-    let evaluator = TypeEvaluator::new(interner);
+    let mut evaluator = TypeEvaluator::new(interner);
     evaluator.evaluate_conditional(cond)
 }
 
@@ -651,7 +638,7 @@ pub fn evaluate_index_access(
     object_type: TypeId,
     index_type: TypeId,
 ) -> TypeId {
-    let evaluator = TypeEvaluator::new(interner);
+    let mut evaluator = TypeEvaluator::new(interner);
     evaluator.evaluate_index_access(object_type, index_type)
 }
 
@@ -669,19 +656,19 @@ pub fn evaluate_index_access_with_options(
 
 /// Convenience function for full type evaluation
 pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    let evaluator = TypeEvaluator::new(interner);
+    let mut evaluator = TypeEvaluator::new(interner);
     evaluator.evaluate(type_id)
 }
 
 /// Convenience function for evaluating mapped types
 pub fn evaluate_mapped(interner: &dyn TypeDatabase, mapped: &MappedType) -> TypeId {
-    let evaluator = TypeEvaluator::new(interner);
+    let mut evaluator = TypeEvaluator::new(interner);
     evaluator.evaluate_mapped(mapped)
 }
 
 /// Convenience function for evaluating keyof types
 pub fn evaluate_keyof(interner: &dyn TypeDatabase, operand: TypeId) -> TypeId {
-    let evaluator = TypeEvaluator::new(interner);
+    let mut evaluator = TypeEvaluator::new(interner);
     evaluator.evaluate_keyof(operand)
 }
 

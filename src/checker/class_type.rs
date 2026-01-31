@@ -464,7 +464,18 @@ impl<'a> CheckerState<'a> {
                 let base_sym_id = match self.resolve_heritage_symbol(expr_idx) {
                     Some(base_sym_id) => base_sym_id,
                     None => {
-                        // Can't resolve symbol - skip this base class
+                        // Can't resolve symbol (e.g., anonymous class expression like
+                        // `class extends class { a = 1 }`), try expression-based resolution
+                        if let Some(base_instance_type) =
+                            self.base_instance_type_from_expression(expr_idx, type_arguments)
+                        {
+                            self.merge_base_instance_properties(
+                                base_instance_type,
+                                &mut properties,
+                                &mut string_index,
+                                &mut number_index,
+                            );
+                        }
                         break;
                     }
                 };

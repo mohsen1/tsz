@@ -428,7 +428,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         }
 
         // Create evaluator and evaluate
-        let evaluator = TypeEvaluator::with_resolver(self.db, self.env);
+        let mut evaluator = TypeEvaluator::with_resolver(self.db, self.env);
         let result = evaluator.evaluate(type_id);
 
         // Cache the result

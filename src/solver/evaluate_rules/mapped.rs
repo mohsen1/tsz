@@ -17,6 +17,89 @@ pub(crate) struct MappedKeys {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Helper for key remapping in mapped types.
+    /// Returns Ok(Some(remapped)) if remapping succeeded,
+    /// Ok(None) if the key should be filtered (remapped to never),
+    /// Err(()) if we can't process and should return the original mapped type.
+    fn remap_key_type_for_mapped(
+        &mut self,
+        mapped: &MappedType,
+        key_type: TypeId,
+    ) -> Result<Option<TypeId>, ()> {
+        let Some(name_type) = mapped.name_type else {
+            return Ok(Some(key_type));
+        };
+
+        let mut subst = TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, key_type);
+        let remapped = instantiate_type(self.interner(), name_type, &subst);
+        let remapped = self.evaluate(remapped);
+        if remapped == TypeId::NEVER {
+            return Ok(None);
+        }
+        Ok(Some(remapped))
+    }
+
+    /// Helper to get property modifiers for a given key in a source object.
+    fn get_property_modifiers_for_key(
+        &self,
+        source_object: Option<TypeId>,
+        key_name: Atom,
+    ) -> (bool, bool) {
+        if let Some(source_obj) = source_object {
+            if let Some(TypeKey::Object(shape_id)) = self.interner().lookup(source_obj) {
+                let shape = self.interner().object_shape(shape_id);
+                for prop in &shape.properties {
+                    if prop.name == key_name {
+                        return (prop.optional, prop.readonly);
+                    }
+                }
+            } else if let Some(TypeKey::ObjectWithIndex(shape_id)) =
+                self.interner().lookup(source_obj)
+            {
+                let shape = self.interner().object_shape(shape_id);
+                for prop in &shape.properties {
+                    if prop.name == key_name {
+                        return (prop.optional, prop.readonly);
+                    }
+                }
+            }
+        }
+        // Default modifiers when we can't determine
+        (false, false)
+    }
+
+    /// Helper to compute modifiers for a mapped type property.
+    fn get_mapped_modifiers(
+        &self,
+        mapped: &MappedType,
+        is_homomorphic: bool,
+        source_object: Option<TypeId>,
+        key_name: Atom,
+    ) -> (bool, bool) {
+        let source_mods = self.get_property_modifiers_for_key(source_object, key_name);
+
+        let optional = match mapped.optional_modifier {
+            Some(MappedModifier::Add) => true,
+            Some(MappedModifier::Remove) => false,
+            None => {
+                // For homomorphic types with no explicit modifier, preserve original
+                if is_homomorphic { source_mods.0 } else { false }
+            }
+        };
+
+        let readonly = match mapped.readonly_modifier {
+            Some(MappedModifier::Add) => true,
+            Some(MappedModifier::Remove) => false,
+            None => {
+                // For homomorphic types with no explicit modifier, preserve original
+                if is_homomorphic { source_mods.1 } else { false }
+            }
+        };
+
+        (optional, readonly)
+    }
+
     /// Evaluate a mapped type: { [K in Keys]: Template }
     ///
     /// Algorithm:
@@ -25,7 +108,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///    - Substitute K into the template type
     ///    - Apply readonly/optional modifiers
     /// 3. Construct a new object type with the resulting properties
-    pub fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+    pub fn evaluate_mapped(&mut self, mapped: &MappedType) -> TypeId {
         // Check if depth was already exceeded
         if self.is_depth_exceeded() {
             return TypeId::ERROR;
@@ -68,76 +151,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None
         };
 
-        let remap_key_type = |key_type: TypeId| -> Result<Option<TypeId>, ()> {
-            let Some(name_type) = mapped.name_type else {
-                return Ok(Some(key_type));
-            };
-
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, key_type);
-            let remapped = instantiate_type(self.interner(), name_type, &subst);
-            let remapped = self.evaluate(remapped);
-            if remapped == TypeId::NEVER {
-                return Ok(None);
-            }
-            Ok(Some(remapped))
-        };
-
-        // Helper to get property modifiers for a given key
-        let get_property_modifiers = |key_name: Atom| -> (bool, bool) {
-            if let Some(source_obj) = source_object {
-                if let Some(TypeKey::Object(shape_id)) = self.interner().lookup(source_obj) {
-                    let shape = self.interner().object_shape(shape_id);
-                    for prop in &shape.properties {
-                        if prop.name == key_name {
-                            return (prop.optional, prop.readonly);
-                        }
-                    }
-                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) =
-                    self.interner().lookup(source_obj)
-                {
-                    let shape = self.interner().object_shape(shape_id);
-                    for prop in &shape.properties {
-                        if prop.name == key_name {
-                            return (prop.optional, prop.readonly);
-                        }
-                    }
-                }
-            }
-            // Default modifiers when we can't determine
-            (false, false)
-        };
-
-        let get_modifiers_for_key = |_key_type: TypeId, key_name: Atom| -> (bool, bool) {
-            let optional = match mapped.optional_modifier {
-                Some(MappedModifier::Add) => true,
-                Some(MappedModifier::Remove) => false,
-                None => {
-                    // For homomorphic types with no explicit modifier, preserve original
-                    if is_homomorphic {
-                        get_property_modifiers(key_name).0
-                    } else {
-                        false
-                    }
-                }
-            };
-
-            let readonly = match mapped.readonly_modifier {
-                Some(MappedModifier::Add) => true,
-                Some(MappedModifier::Remove) => false,
-                None => {
-                    // For homomorphic types with no explicit modifier, preserve original
-                    if is_homomorphic {
-                        get_property_modifiers(key_name).1
-                    } else {
-                        false
-                    }
-                }
-            };
-
-            (optional, readonly)
-        };
-
         // Build the resulting object properties
         let mut properties = Vec::new();
 
@@ -152,7 +165,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let key_literal = self
                 .interner()
                 .intern(TypeKey::Literal(LiteralValue::String(key_name)));
-            let remapped = match remap_key_type(key_literal) {
+            let remapped = match self.remap_key_type_for_mapped(mapped, key_literal) {
                 Ok(Some(remapped)) => remapped,
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(mapped.clone()),
@@ -175,7 +188,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
-            let (optional, readonly) = get_modifiers_for_key(key_literal, key_name);
+            let (optional, readonly) =
+                self.get_mapped_modifiers(mapped, is_homomorphic, source_object, key_name);
 
             properties.push(PropertyInfo {
                 name: remapped_name,
@@ -188,7 +202,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let string_index = if key_set.has_string {
-            match remap_key_type(TypeId::STRING) {
+            match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
                 Ok(Some(remapped)) => {
                     if remapped != TypeId::STRING {
                         return self.interner().mapped(mapped.clone());
@@ -200,8 +214,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 
                     // Get modifiers for string index
-                    let (idx_optional, idx_readonly) =
-                        get_modifiers_for_key(key_type, self.interner().intern_string(""));
+                    let empty_atom = self.interner().intern_string("");
+                    let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
+                        mapped,
+                        is_homomorphic,
+                        source_object,
+                        empty_atom,
+                    );
                     if idx_optional {
                         value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
                     }
@@ -219,7 +238,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         let number_index = if key_set.has_number {
-            match remap_key_type(TypeId::NUMBER) {
+            match self.remap_key_type_for_mapped(mapped, TypeId::NUMBER) {
                 Ok(Some(remapped)) => {
                     if remapped != TypeId::NUMBER {
                         return self.interner().mapped(mapped.clone());
@@ -231,8 +250,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 
                     // Get modifiers for number index
-                    let (idx_optional, idx_readonly) =
-                        get_modifiers_for_key(key_type, self.interner().intern_string(""));
+                    let empty_atom = self.interner().intern_string("");
+                    let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
+                        mapped,
+                        is_homomorphic,
+                        source_object,
+                        empty_atom,
+                    );
                     if idx_optional {
                         value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
                     }
@@ -261,7 +285,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
-    fn evaluate_keyof_or_constraint(&self, constraint: TypeId) -> TypeId {
+    fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
         if let Some(TypeKey::Conditional(cond_id)) = self.interner().lookup(constraint) {
             let cond = self.interner().conditional_type(cond_id);
             return self.evaluate_conditional(cond.as_ref());

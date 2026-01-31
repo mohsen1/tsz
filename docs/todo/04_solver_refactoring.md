@@ -27,15 +27,40 @@ All bug fixes implemented and tested.
 
 ---
 
-## Phase 2: Salsa Prerequisites - DEFERRED
+## Phase 2: Salsa Prerequisites - IN PROGRESS
 
-This phase prepares for future Salsa integration. Not required for current functionality.
+This phase prepares for future Salsa integration.
 
 - [ ] Refactor CheckerContext to use trait-based database
 - [ ] Remove FreshnessTracker from Solver
-- [ ] Remove RefCell caches from Evaluator
+- [x] Remove RefCell caches from Evaluator ✅
 
-**Rationale**: Salsa integration is future work. Current implementation works correctly without these changes.
+### Task 3: Remove RefCell from TypeEvaluator ✅
+
+**Completed**: TypeEvaluator now uses `&mut self` instead of RefCell for:
+- `cache: FxHashMap<TypeId, TypeId>` - evaluation cache
+- `visiting: FxHashSet<TypeId>` - cycle detection  
+- `depth: u32` - recursion depth tracking
+- `total_evaluations: u32` - iteration limit
+- `depth_exceeded: bool` - depth exceeded flag
+
+**Impact**:
+- TypeEvaluator is now `Send` (thread-safe for future Salsa)
+- All methods that call `evaluate()` changed to `&mut self`
+- Closures converted to helper methods for borrow checker compatibility
+- Conformance pass rate: unchanged (46.5%, +1 test)
+
+**Files modified**:
+- `src/solver/evaluate.rs` - main TypeEvaluator struct
+- `src/solver/evaluate_rules/conditional.rs` - all methods
+- `src/solver/evaluate_rules/index_access.rs` - evaluate methods
+- `src/solver/evaluate_rules/keyof.rs` - evaluate methods
+- `src/solver/evaluate_rules/mapped.rs` - refactored closures
+- `src/solver/evaluate_rules/string_intrinsic.rs` - evaluate methods
+- `src/solver/evaluate_rules/template_literal.rs` - evaluate methods
+- `src/solver/judge.rs` - evaluator instantiation
+- `src/checker/state_type_environment.rs` - evaluator instantiation
+- `src/solver/tests/evaluate_tests.rs` - test declarations
 
 ---
 

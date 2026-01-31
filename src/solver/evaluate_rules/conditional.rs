@@ -19,7 +19,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// 3. If true -> return true_type
     /// 4. If false (disjoint) -> return false_type
     /// 5. If ambiguous (unresolved type param) -> return deferred conditional
-    pub fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
+    pub fn evaluate_conditional(&mut self, cond: &ConditionalType) -> TypeId {
         let check_type = self.evaluate(cond.check_type);
         let extends_type = self.evaluate(cond.extends_type);
 
@@ -206,7 +206,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Distribute a conditional type over a union.
     /// (A | B) extends U ? X : Y -> (A extends U ? X : Y) | (B extends U ? X : Y)
     pub(crate) fn distribute_conditional(
-        &self,
+        &mut self,
         members: &[TypeId],
         original_check_type: TypeId,
         extends_type: TypeId,
@@ -267,7 +267,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Handle array extends pattern: T extends (infer U)[] ? ...
     fn eval_conditional_array_infer(
-        &self,
+        &mut self,
         cond: &ConditionalType,
         check_unwrapped: TypeId,
         info: TypeParamInfo,
@@ -362,7 +362,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Handle tuple extends pattern: T extends [infer U] ? ...
     fn eval_conditional_tuple_infer(
-        &self,
+        &mut self,
         cond: &ConditionalType,
         check_unwrapped: TypeId,
         extends_elem: &TupleElement,
@@ -462,7 +462,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Handle object extends pattern: T extends { prop: infer U } ? ...
     fn eval_conditional_object_infer(
-        &self,
+        &mut self,
         cond: &ConditionalType,
         check_unwrapped: TypeId,
         extends_shape_id: ObjectShapeId,
@@ -536,7 +536,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Handle object property infer pattern
     fn eval_conditional_object_prop_infer(
-        &self,
+        &mut self,
         cond: &ConditionalType,
         check_unwrapped: TypeId,
         prop_name: crate::interner::Atom,
@@ -647,7 +647,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Handle nested object infer pattern
     fn eval_conditional_object_nested_infer(
-        &self,
+        &mut self,
         cond: &ConditionalType,
         check_unwrapped: TypeId,
         outer_name: crate::interner::Atom,

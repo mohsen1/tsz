@@ -15,7 +15,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate string manipulation intrinsic types (Uppercase, Lowercase, Capitalize, Uncapitalize)
     /// These distribute over unions and transform string literal types
     pub(crate) fn evaluate_string_intrinsic(
-        &self,
+        &mut self,
         kind: StringIntrinsicKind,
         type_arg: TypeId,
     ) -> TypeId {
@@ -116,7 +116,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Helper to recursively evaluate string intrinsic while respecting depth limits.
     pub(crate) fn recurse_string_intrinsic(
-        &self,
+        &mut self,
         kind: StringIntrinsicKind,
         type_arg: TypeId,
     ) -> TypeId {

@@ -9972,7 +9972,7 @@ fn test_index_access_resolves_ref() {
     let ref_type = interner.reference(sym);
     let key_x = interner.literal_string("x");
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate_index_access(ref_type, key_x);
     assert_eq!(result, TypeId::NUMBER);
 }
@@ -10888,7 +10888,7 @@ fn test_keyof_resolves_ref() {
     env.insert(sym, obj);
 
     let ref_type = interner.reference(sym);
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate_keyof(ref_type);
 
     let expected = interner.union(vec![
@@ -11474,7 +11474,7 @@ fn test_object_trifecta_keyof_object_interface() {
     env.insert(sym, object_interface);
 
     let ref_type = interner.reference(sym);
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate_keyof(ref_type);
     let key = interner
         .lookup(result)
@@ -15226,7 +15226,7 @@ fn test_application_ref_expansion_box_string() {
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
     // Evaluate the Application type
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_string);
 
     // Expected: { value: string }
@@ -15325,7 +15325,7 @@ fn test_application_ref_expansion_reducer_function() {
     env.insert_with_params(SymbolRef(1), reducer_body, vec![s_param, a_param]);
 
     // Evaluate the Application type
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(reducer_number_action);
 
     // Expected: (state: number | undefined, action: AnyAction) => number
@@ -15418,7 +15418,7 @@ fn test_application_ref_expansion_nested() {
     env.insert_with_params(SymbolRef(2), promise_body, vec![t_param]);
 
     // Evaluate
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(promise_box_string);
 
     // Expected: { result: { value: string } }
@@ -15494,7 +15494,7 @@ fn test_application_ref_expansion_with_defaults() {
         vec![t_param.clone(), d_param.clone()],
     );
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
 
     // Evaluate Case 1
     let result1 = evaluator.evaluate(optional_string);
@@ -15564,7 +15564,7 @@ fn test_application_ref_expansion_with_constraints() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), numeric_box_body, vec![t_param.clone()]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
 
     // Evaluate valid case
     let result_valid = evaluator.evaluate(numeric_box_42);
@@ -15649,7 +15649,7 @@ fn test_application_ref_expansion_with_never_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_never);
 
     // Expected: { value: never }
@@ -15709,7 +15709,7 @@ fn test_application_ref_expansion_with_unknown_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_unknown);
 
     // Expected: { value: unknown }
@@ -15769,7 +15769,7 @@ fn test_application_ref_expansion_with_any_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_any);
 
     // Expected: { value: any }
@@ -15830,7 +15830,7 @@ fn test_application_ref_expansion_with_union_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_union);
 
     // Expected: { value: string | number }
@@ -15868,7 +15868,7 @@ fn test_application_non_ref_base_passthrough() {
     // Set up empty resolver
     let env = TypeEnvironment::new();
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(weird_application);
 
     // Non-Ref base should pass through unchanged
@@ -15937,7 +15937,7 @@ fn test_application_ref_expansion_recursive() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), list_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(list_string);
 
     // Expected: { value: string, next: List<string> | null }
@@ -16021,7 +16021,7 @@ fn test_application_ref_expansion_with_intersection_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_intersection);
 
     // Expected: { value: string & { length: number } }
@@ -16100,7 +16100,7 @@ fn test_application_ref_expansion_multi_param() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), map_body, vec![k_param, v_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(map_string_number);
 
     // Expected: { key: string, value: number }
@@ -16176,7 +16176,7 @@ fn test_application_ref_expansion_with_conditional_body() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), conditional_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
 
     let result_string = evaluator.evaluate(is_string_string);
     let result_number = evaluator.evaluate(is_string_number);
@@ -16251,7 +16251,7 @@ fn test_application_ref_expansion_with_tuple_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_tuple);
 
     // Expected: { value: [string, number] }
@@ -16302,7 +16302,7 @@ fn test_application_ref_expansion_with_array_body() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), array_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(array_of_string);
 
     // Expected: string[]
@@ -16355,7 +16355,7 @@ fn test_application_ref_expansion_with_readonly_property() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), readonly_box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(readonly_box_number);
 
     // Expected: { readonly value: number }
@@ -16415,7 +16415,7 @@ fn test_application_ref_expansion_with_optional_property() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), optional_box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(optional_box_string);
 
     // Expected: { value?: string }
@@ -16486,7 +16486,7 @@ fn test_application_ref_expansion_with_method() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), with_method_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(with_method_boolean);
 
     // Expected method type: () => boolean
@@ -16565,7 +16565,7 @@ fn test_application_ref_expansion_with_rest_param() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), varargs_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(varargs_string);
 
     // Expected: (...args: string[]) => void
@@ -16632,7 +16632,7 @@ fn test_application_ref_expansion_with_index_signature() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), dict_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(dict_number);
 
     // Expected: { [key: string]: number }
@@ -16693,7 +16693,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), numeric_dict_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(numeric_dict_string);
 
     // Expected: { [index: number]: string }
@@ -16757,7 +16757,7 @@ fn test_application_ref_expansion_with_literal_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_hello);
 
     // Expected: { value: "hello" }
@@ -16820,7 +16820,7 @@ fn test_application_ref_expansion_with_numeric_literal_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_42);
 
     // Expected: { value: 42 }
@@ -16888,7 +16888,7 @@ fn test_application_ref_expansion_with_multiple_refs_to_same_param() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), pair_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(pair_string);
 
     // Expected: { first: string; second: string }
@@ -16961,7 +16961,7 @@ fn test_application_ref_expansion_with_boolean_literal_arg() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_true);
 
     // Expected: { value: true }
@@ -17021,7 +17021,7 @@ fn test_application_ref_expansion_with_union_body() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), either_body, vec![l_param, r_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(either_string_number);
 
     // Expected: string | number
@@ -17093,7 +17093,7 @@ fn test_application_ref_expansion_with_intersection_body() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), both_body, vec![a_param, b_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(both_xy);
 
     // Expected: {x: number} & {y: string}
@@ -17157,7 +17157,7 @@ fn test_application_ref_expansion_with_this_param() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), bound_method_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(bound_method_obj);
 
     // Expected: (this: {x: number}) => void
@@ -17224,7 +17224,7 @@ fn test_application_ref_expansion_with_optional_param() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), optional_fn_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(optional_fn_string);
 
     // Expected: (x?: string) => string
@@ -17283,7 +17283,7 @@ fn test_application_ref_expansion_with_readonly_array_body() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), readonly_array_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(readonly_array_number);
 
     // Expected: readonly number[]
@@ -17348,7 +17348,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), config_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(config_number);
 
     // Expected: { readonly id: string; value?: number }
@@ -17437,7 +17437,7 @@ fn test_application_ref_expansion_with_callable_body() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), callback_body, vec![t_param, r_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(callback_string_bool);
 
     // Expected: { (arg: string): boolean }
@@ -17524,7 +17524,7 @@ fn test_application_ref_expansion_with_construct_signature() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), constructor_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(constructor_obj);
 
     // Expected: { new (): {x: number} }
@@ -17601,7 +17601,7 @@ fn test_application_ref_expansion_with_deeply_nested_param() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), wrapper_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(wrapper_string);
 
     // Expected inner object: { value: string }
@@ -28136,7 +28136,7 @@ fn test_recursive_type_simple_tree() {
     let mut env = TypeEnvironment::new();
     env.insert(SymbolRef(1), tree_body);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(tree_ref);
 
     // Verify the tree structure was evaluated (produces Object type)
@@ -28208,7 +28208,7 @@ fn test_recursive_type_linked_list() {
     let mut env = TypeEnvironment::new();
     env.insert_with_params(SymbolRef(1), list_body, vec![t_param]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(list_string);
 
     // Verify the list structure was evaluated (produces Object type)
@@ -28780,7 +28780,7 @@ fn test_mutually_recursive_types_request_response() {
 
     // Evaluate Request<string>
     let request_string = interner.application(request_ref, vec![TypeId::STRING]);
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(request_string);
 
     match interner.lookup(result).unwrap() {
@@ -28991,7 +28991,7 @@ fn test_depth_limited_recursion_level_1() {
     let mut env = TypeEnvironment::new();
     env.insert(SymbolRef(1), node_body);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(node_ref);
 
     // Should expand one level, keeping inner Node as reference
@@ -29122,7 +29122,7 @@ fn test_depth_limited_recursion_max_expansion() {
     let mut env = TypeEnvironment::new();
     env.insert(SymbolRef(1), infinite_body);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(infinite_ref);
 
     // Should not hang - evaluator limits expansion depth
@@ -29171,7 +29171,7 @@ fn test_depth_limited_recursion_path_tracking() {
     env.insert(SymbolRef(1), a_body);
     env.insert(SymbolRef(2), b_body);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(a_ref);
 
     // Should handle circular reference without infinite loop
@@ -30109,7 +30109,7 @@ fn test_typeof_variable_reference_basic() {
     env.insert(sym, TypeId::NUMBER);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, TypeId::NUMBER);
@@ -30146,7 +30146,7 @@ fn test_typeof_variable_reference_object_type() {
     env.insert(sym, obj);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, obj);
@@ -30166,7 +30166,7 @@ fn test_typeof_variable_reference_array_type() {
     env.insert(sym, string_array);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, string_array);
@@ -30185,7 +30185,7 @@ fn test_typeof_imported_value_basic() {
     env.insert(imported_sym, TypeId::BOOLEAN);
 
     let type_query = interner.intern(TypeKey::TypeQuery(imported_sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, TypeId::BOOLEAN);
@@ -30222,7 +30222,7 @@ fn test_typeof_imported_value_complex() {
     env.insert(imported_sym, config_type);
 
     let type_query = interner.intern(TypeKey::TypeQuery(imported_sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, config_type);
@@ -30255,7 +30255,7 @@ fn test_typeof_function_type() {
     env.insert(sym, fn_type);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, fn_type);
@@ -30296,7 +30296,7 @@ fn test_typeof_function_multiple_params() {
     env.insert(sym, fn_type);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, fn_type);
@@ -30316,7 +30316,7 @@ fn test_typeof_const_string_literal() {
     env.insert(sym, hello_literal);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, hello_literal);
@@ -30336,7 +30336,7 @@ fn test_typeof_const_number_literal() {
     env.insert(sym, num_literal);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, num_literal);
@@ -30380,7 +30380,7 @@ fn test_typeof_const_tuple_readonly() {
     env.insert(sym, readonly_tuple);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, readonly_tuple);
@@ -30421,7 +30421,7 @@ fn test_typeof_const_object_readonly() {
     env.insert(sym, readonly_obj);
 
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     assert_eq!(result, readonly_obj);
@@ -30438,7 +30438,7 @@ fn test_typeof_unresolved_passes_through() {
     let unknown_sym = SymbolRef(999);
     let type_query = interner.intern(TypeKey::TypeQuery(unknown_sym));
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
     // Should return the TypeQuery unchanged since symbol isn't resolved
@@ -30462,7 +30462,7 @@ fn test_typeof_in_union() {
     let query_y = interner.intern(TypeKey::TypeQuery(sym_y));
     let union = interner.union(vec![query_x, query_y]);
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(union);
 
     // Should evaluate to string | number - verify by checking it's a union containing string and number
@@ -30514,7 +30514,7 @@ fn test_typeof_in_keyof() {
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
     let keyof = interner.intern(TypeKey::KeyOf(type_query));
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(keyof);
 
     // Should resolve to "a" | "b"
@@ -30557,7 +30557,7 @@ fn test_typeof_indexed_access() {
     let type_query = interner.intern(TypeKey::TypeQuery(sym));
     let key_a = interner.literal_string("a");
 
-    let evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate_index_access(type_query, key_a);
 
     assert_eq!(result, TypeId::NUMBER);
