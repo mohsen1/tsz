@@ -2734,8 +2734,12 @@ impl ParserState {
         self.parse_expected(SyntaxKind::StaticKeyword);
 
         // Parse the block body with static block context (where 'await' is reserved)
+        // IMPORTANT: Static blocks create a fresh execution context - they do NOT inherit
+        // async/generator context from enclosing functions. Clear those flags.
         self.parse_expected(SyntaxKind::OpenBraceToken);
         let saved_flags = self.context_flags;
+        // Clear async/generator flags and set static block flag
+        self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
         self.context_flags |= CONTEXT_FLAG_STATIC_BLOCK;
         let statements = self.parse_statements();
         self.context_flags = saved_flags;

@@ -659,9 +659,40 @@ impl ParserState {
                 )
             }
             SyntaxKind::AwaitKeyword => {
-                // Only parse as await expression if we're in an async context AND NOT in a parameter default
-                // Parameter defaults are evaluated in the parent scope, not the async function body
-                if !self.in_async_context() || self.in_parameter_default_context() {
+                // Check if 'await' is followed by an expression
+                let snapshot = self.scanner.save_state();
+                let current_token = self.current_token;
+                self.next_token(); // consume 'await'
+                let next_token = self.token();
+                self.scanner.restore_state(snapshot);
+                self.current_token = current_token;
+
+                let has_following_expression = !matches!(
+                    next_token,
+                    SyntaxKind::SemicolonToken
+                        | SyntaxKind::CloseBracketToken
+                        | SyntaxKind::CommaToken
+                        | SyntaxKind::ColonToken
+                        | SyntaxKind::EqualsGreaterThanToken
+                        | SyntaxKind::CloseParenToken
+                        | SyntaxKind::EndOfFileToken
+                        | SyntaxKind::CloseBraceToken
+                );
+
+                // In static block context with a following expression, but NOT in an async context
+                // (i.e., directly in the static block, not in a nested async function),
+                // emit TS18037 and parse as await expression for correct AST structure
+                if self.in_static_block_context()
+                    && !self.in_async_context()
+                    && has_following_expression
+                {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'await' expression cannot be used inside a class static block.",
+                        diagnostic_codes::AWAIT_IN_STATIC_BLOCK,
+                    );
+                    // Fall through to parse as await expression
+                } else if !self.in_async_context() || self.in_parameter_default_context() {
                     // In parameter default context of non-async functions, 'await' should always be treated as identifier
                     if self.in_parameter_default_context() && !self.in_async_context() {
                         // Parse 'await' as regular identifier in parameter defaults of non-async functions
@@ -688,25 +719,6 @@ impl ParserState {
                     //   await;  // Error: Expression expected (in static blocks)
                     //   await (1);  // Error: Expression expected (in static blocks)
                     //   async (a = await => x) => {}  // Error: Expression expected (before arrow)
-
-                    // Look ahead to see what token comes after 'await'
-                    let snapshot = self.scanner.save_state();
-                    let current_token = self.current_token;
-                    self.next_token(); // consume 'await'
-                    let next_token = self.token();
-                    self.scanner.restore_state(snapshot);
-                    self.current_token = current_token;
-
-                    let has_following_expression = !matches!(
-                        next_token,
-                        SyntaxKind::SemicolonToken
-                            | SyntaxKind::CloseBracketToken
-                            | SyntaxKind::CommaToken
-                            | SyntaxKind::ColonToken
-                            | SyntaxKind::EqualsGreaterThanToken
-                            | SyntaxKind::CloseParenToken
-                            | SyntaxKind::EndOfFileToken
-                    );
 
                     // Special case: Don't emit TS1109 for 'await' in computed property names like { [await]: foo }
                     // In this context, 'await' is used as an identifier and CloseBracketToken is expected
@@ -746,11 +758,48 @@ impl ParserState {
                 )
             }
             SyntaxKind::YieldKeyword => {
-                // Outside a generator context, 'yield' is a regular identifier,
-                // not a yield expression. This mirrors how 'await' is handled
-                // outside async contexts.
-                // e.g., function f(yield = yield) {} -- 'yield' is an identifier here
-                if !self.in_generator_context() {
+                // Check if 'yield' is followed by an expression
+                let snapshot = self.scanner.save_state();
+                let current_token = self.current_token;
+                self.next_token(); // consume 'yield'
+                // Check for asterisk (yield*)
+                let has_asterisk = self.is_token(SyntaxKind::AsteriskToken);
+                if has_asterisk {
+                    self.next_token();
+                }
+                let next_token = self.token();
+                self.scanner.restore_state(snapshot);
+                self.current_token = current_token;
+
+                let has_following_expression = !matches!(
+                    next_token,
+                    SyntaxKind::SemicolonToken
+                        | SyntaxKind::CloseBracketToken
+                        | SyntaxKind::CommaToken
+                        | SyntaxKind::ColonToken
+                        | SyntaxKind::CloseParenToken
+                        | SyntaxKind::CloseBraceToken
+                        | SyntaxKind::EndOfFileToken
+                );
+
+                // In static block context with a following expression, but NOT in a generator context
+                // (i.e., directly in the static block, not in a nested generator function),
+                // emit TS1163 and parse as yield expression for correct AST structure
+                if self.in_static_block_context()
+                    && !self.in_generator_context()
+                    && (has_following_expression || has_asterisk)
+                {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "A 'yield' expression is only allowed in a generator body.",
+                        diagnostic_codes::YIELD_EXPRESSION_ONLY_IN_GENERATOR,
+                    );
+                    // Fall through to parse as yield expression
+                } else if !self.in_generator_context() {
+                    // Outside a generator context, 'yield' is a regular identifier,
+                    // not a yield expression. This mirrors how 'await' is handled
+                    // outside async contexts.
+                    // e.g., function f(yield = yield) {} -- 'yield' is an identifier here
                     let start_pos = self.token_pos();
                     let end_pos = self.token_end();
                     let atom = self.scanner.get_token_atom();
