@@ -648,6 +648,12 @@ impl<'a> Completions<'a> {
     /// Check if the cursor is inside a context where completions should not be offered,
     /// such as inside string literals (non-module-specifier), comments, or regex literals.
     fn is_in_no_completion_context(&self, offset: u32) -> bool {
+        // Check if we're at an identifier definition location first - this works
+        // even when offset == source_text.len() (cursor at end of file).
+        if self.is_at_definition_location(offset) {
+            return true;
+        }
+
         // Check if we're inside a string literal, comment, or regex by examining
         // the source text character context around the offset.
         let bytes = self.source_text.as_bytes();
@@ -753,6 +759,542 @@ impl<'a> Completions<'a> {
             }
         }
 
+        false
+    }
+
+    /// Check if the cursor is at a position where a new identifier is being defined.
+    /// At these locations, completions should not be offered because the user is
+    /// typing a new name, not referencing an existing one.
+    fn is_at_definition_location(&self, offset: u32) -> bool {
+        // Use the full text up to cursor (including trailing whitespace)
+        let text = &self.source_text[..offset as usize];
+
+        // Strategy: look at what's right before the cursor. We need to handle:
+        // 1. "var |" - cursor after keyword + space
+        // 2. "var a|" - cursor after keyword + partial identifier
+        // 3. "var a, |" - cursor after comma in declaration list
+        // 4. "function foo(|" - cursor at parameter position
+
+        // First, check the untrimmed text for trailing whitespace patterns
+        // (cursor is after space following a keyword)
+        let trimmed = text.trim_end();
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        // Extract the last word from trimmed text
+        let last_word_start = trimmed
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let last_word = &trimmed[last_word_start..];
+
+        // Check if we have whitespace after the last word (before cursor)
+        let has_trailing_ws = text.len() > trimmed.len();
+
+        let definition_keywords = [
+            "var", "let", "const", "function", "class", "interface", "type", "enum",
+            "namespace", "module", "infer",
+        ];
+
+        // Helper to check whole-word boundary
+        let is_whole_word = |text: &str, kw: &str| -> bool {
+            if !text.ends_with(kw) {
+                return false;
+            }
+            let kw_start = text.len() - kw.len();
+            kw_start == 0 || {
+                let c = text.as_bytes()[kw_start - 1];
+                !c.is_ascii_alphanumeric() && c != b'_' && c != b'$'
+            }
+        };
+
+        // Case 1: "keyword |" - cursor after keyword + whitespace
+        if has_trailing_ws && definition_keywords.iter().any(|kw| is_whole_word(trimmed, kw)) {
+            return true;
+        }
+
+        // Case 2: "keyword partialId|" - cursor while typing identifier after keyword
+        if !has_trailing_ws && !last_word.is_empty() {
+            let before_word = trimmed[..last_word_start].trim_end();
+            if definition_keywords.iter().any(|kw| is_whole_word(before_word, kw)) {
+                return true;
+            }
+            // "function* name|" - generator function name
+            if before_word.ends_with('*') {
+                let before_star = before_word[..before_word.len() - 1].trim_end();
+                if is_whole_word(before_star, "function") {
+                    return true;
+                }
+            }
+            // "...name|" in parameter list - rest parameter
+            if before_word.ends_with("...") && self.is_in_parameter_list(offset) {
+                return true;
+            }
+        }
+
+        // The text before the cursor (or before the partial identifier being typed)
+        let check_before = if has_trailing_ws { trimmed } else { trimmed[..last_word_start].trim_end() };
+
+        // Case 3: comma in declarations: "var a, |", "function f(a, |", "<T, |"
+        if check_before.ends_with(',') {
+            // Try AST-based detection first, then text-based fallback
+            if self.is_in_variable_declaration_list(offset)
+                || self.text_looks_like_var_declaration_list(check_before)
+            {
+                return true;
+            }
+            if self.is_in_parameter_list(offset)
+                || self.text_looks_like_parameter_list(check_before)
+            {
+                return true;
+            }
+            if self.is_in_type_parameter_list(offset)
+                || self.text_looks_like_type_param_list(check_before)
+            {
+                return true;
+            }
+        }
+
+        // Case 4: function parameter names at opening paren: "function foo(|"
+        if check_before.ends_with('(') {
+            if self.is_in_parameter_list(offset)
+                || self.text_looks_like_parameter_list(check_before)
+            {
+                return true;
+            }
+        }
+
+        // Case 4b: "...name" in parameter list - rest parameter
+        if has_trailing_ws && trimmed.ends_with("...") && self.is_in_parameter_list(offset) {
+            return true;
+        }
+
+        // Case 5: catch clause: "catch (|" or "catch (x|"
+        if check_before.ends_with("catch(") || check_before.ends_with("catch (") {
+            return true;
+        }
+        if !has_trailing_ws && !last_word.is_empty() {
+            let before_word_trimmed = trimmed[..last_word_start].trim_end();
+            if before_word_trimmed.ends_with("catch(") || before_word_trimmed.ends_with("catch (") {
+                return true;
+            }
+        }
+
+        // Case 6: type parameter list opener: "class A<|", "interface B<|"
+        if check_before.ends_with('<') {
+            if self.is_in_type_parameter_list(offset)
+                || self.text_looks_like_type_param_opener(check_before)
+            {
+                return true;
+            }
+        }
+
+        // Case 7: enum member position
+        if self.is_in_enum_member_position(offset) {
+            return true;
+        }
+
+        // Case 8: destructuring binding: "let { |" or "let [|"
+        if self.is_in_binding_pattern_definition(offset) {
+            return true;
+        }
+
+        false
+    }
+
+    /// Text-based heuristic to detect if we're in a var/let/const declaration list
+    /// after a comma. This is a fallback for when the AST-based check fails due to
+    /// parser error recovery.
+    fn text_looks_like_var_declaration_list(&self, text_before_comma: &str) -> bool {
+        // Find the most recent var/let/const keyword by scanning backward.
+        // Check that there's no statement boundary (`;`, `{`, `}`) between
+        // the keyword and the comma that isn't inside a nested expression.
+        let bytes = text_before_comma.as_bytes();
+        let keywords: &[&str] = &["var ", "let ", "const "];
+
+        for kw in keywords {
+            // Search backward for this keyword
+            let mut search_from = text_before_comma.len();
+            while let Some(pos) = text_before_comma[..search_from].rfind(kw) {
+                // Check word boundary before keyword
+                if pos > 0 {
+                    let c = bytes[pos - 1];
+                    if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+                        search_from = pos;
+                        continue;
+                    }
+                }
+                // Check no unbalanced statement boundaries between keyword and comma
+                let between = &text_before_comma[pos + kw.len()..];
+                let mut brace_depth: i32 = 0;
+                let mut paren_depth: i32 = 0;
+                let mut bracket_depth: i32 = 0;
+                let mut has_boundary = false;
+                for &b in between.as_bytes() {
+                    match b {
+                        b'{' => brace_depth += 1,
+                        b'}' => {
+                            brace_depth -= 1;
+                            if brace_depth < 0 { has_boundary = true; break; }
+                        }
+                        b'(' => paren_depth += 1,
+                        b')' => paren_depth -= 1,
+                        b'[' => bracket_depth += 1,
+                        b']' => bracket_depth -= 1,
+                        b';' if brace_depth == 0 && paren_depth == 0 => {
+                            has_boundary = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                if !has_boundary && brace_depth == 0 {
+                    return true;
+                }
+                search_from = pos;
+            }
+        }
+        false
+    }
+
+    /// Text-based heuristic to detect if cursor is in a function/method parameter list.
+    /// Only matches clearly identifiable declaration patterns to avoid false positives
+    /// with function calls.
+    fn text_looks_like_parameter_list(&self, text_before: &str) -> bool {
+        // Scan backward for an unmatched '('
+        let mut paren_depth: i32 = 0;
+        let bytes = text_before.as_bytes();
+        for i in (0..bytes.len()).rev() {
+            match bytes[i] {
+                b')' => paren_depth += 1,
+                b'(' => {
+                    if paren_depth == 0 {
+                        // Found unmatched '(' - check what's before it
+                        let before_paren = text_before[..i].trim_end();
+                        if before_paren.is_empty() {
+                            return false;
+                        }
+                        let last_char = before_paren.as_bytes()[before_paren.len() - 1];
+                        if last_char.is_ascii_alphanumeric()
+                            || last_char == b'_'
+                            || last_char == b'$'
+                        {
+                            let word_start = before_paren
+                                .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                                .map(|p| p + 1)
+                                .unwrap_or(0);
+                            let word = &before_paren[word_start..];
+                            let before_word = before_paren[..word_start].trim_end();
+                            // "function foo(" or "function* foo("
+                            if before_word.ends_with("function")
+                                || before_word.ends_with("function*")
+                            {
+                                return true;
+                            }
+                            // "constructor(" pattern
+                            if word == "constructor" {
+                                return true;
+                            }
+                        }
+                        // Could also have type params: "function foo<T>(" or "class.method<T>( "
+                        if last_char == b'>' {
+                            // Scan back past the type params to find identifier
+                            let mut angle_depth: i32 = 0;
+                            for j in (0..before_paren.len()).rev() {
+                                match before_paren.as_bytes()[j] {
+                                    b'>' => angle_depth += 1,
+                                    b'<' => {
+                                        angle_depth -= 1;
+                                        if angle_depth == 0 {
+                                            let before_angle =
+                                                before_paren[..j].trim_end();
+                                            if !before_angle.is_empty() {
+                                                let ws = before_angle
+                                                    .rfind(|c: char| {
+                                                        !c.is_alphanumeric()
+                                                            && c != '_'
+                                                            && c != '$'
+                                                    })
+                                                    .map(|p| p + 1)
+                                                    .unwrap_or(0);
+                                                let bw = before_angle[..ws].trim_end();
+                                                if bw.ends_with("function")
+                                                    || bw.ends_with("function*")
+                                                {
+                                                    return true;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        return false;
+                    }
+                    paren_depth -= 1;
+                }
+                b';' | b'{' | b'}' if paren_depth == 0 => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Text-based heuristic to detect if cursor is after a comma in a type parameter list.
+    /// Looks for an unmatched '<' preceded by a type-parameterizable declaration.
+    fn text_looks_like_type_param_list(&self, text_before: &str) -> bool {
+        // Scan backward for an unmatched '<'
+        let mut angle_depth: i32 = 0;
+        let bytes = text_before.as_bytes();
+        for i in (0..bytes.len()).rev() {
+            match bytes[i] {
+                b'>' => angle_depth += 1,
+                b'<' => {
+                    if angle_depth == 0 {
+                        // Found unmatched '<' - check if it's a type param opener
+                        return Self::text_before_angle_is_type_param(
+                            &text_before[..i],
+                        );
+                    }
+                    angle_depth -= 1;
+                }
+                b';' | b'{' | b'}' => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Text-based heuristic to detect if '<' at end of text opens a type parameter list.
+    /// Pattern: "class A<", "interface B<", "function C<", "type D<", "f<" (method)
+    fn text_looks_like_type_param_opener(&self, text_ending_with_angle: &str) -> bool {
+        let before_angle = text_ending_with_angle[..text_ending_with_angle.len() - 1].trim_end();
+        Self::text_before_angle_is_type_param(before_angle)
+    }
+
+    fn text_before_angle_is_type_param(before_angle: &str) -> bool {
+        if before_angle.is_empty() {
+            return false;
+        }
+        let last_char = before_angle.as_bytes()[before_angle.len() - 1];
+        if !last_char.is_ascii_alphanumeric() && last_char != b'_' && last_char != b'$' {
+            return false;
+        }
+        let word_start = before_angle
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let before_word = before_angle[..word_start].trim_end();
+        let type_param_keywords = ["class", "interface", "function", "type"];
+        // "class A<", "interface B<", etc.
+        for kw in &type_param_keywords {
+            if before_word.ends_with(kw) {
+                let kw_start = before_word.len() - kw.len();
+                if kw_start == 0
+                    || {
+                        let c = before_word.as_bytes()[kw_start - 1];
+                        !c.is_ascii_alphanumeric() && c != b'_' && c != b'$'
+                    }
+                {
+                    return true;
+                }
+            }
+        }
+        // Method in class body: any identifier followed by '<' could be a method
+        // type parameter. Check if inside a class body by looking for '{' balance.
+        // For simplicity, if we see an unbalanced '{' before the word, it could be
+        // inside a class/interface body.
+        let mut brace_depth: i32 = 0;
+        for &b in before_word.as_bytes().iter().rev() {
+            match b {
+                b'}' => brace_depth += 1,
+                b'{' => {
+                    brace_depth -= 1;
+                    if brace_depth < 0 {
+                        // Inside a block - could be class body
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Check if offset is inside a destructuring binding pattern in a declaration
+    fn is_in_binding_pattern_definition(&self, offset: u32) -> bool {
+        let node_idx = find_node_at_offset(self.arena, offset);
+        let start = if node_idx.is_none() && offset > 0 {
+            find_node_at_offset(self.arena, offset - 1)
+        } else {
+            node_idx
+        };
+        let mut current = start;
+        let mut in_binding_pattern = false;
+        let mut depth = 0;
+        while !current.is_none() && depth < 50 {
+            if let Some(node) = self.arena.get(current) {
+                if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                {
+                    in_binding_pattern = true;
+                }
+                if in_binding_pattern
+                    && (node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                        || node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                        || node.kind == syntax_kind_ext::PARAMETER)
+                {
+                    return true;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                if ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+        false
+    }
+
+    /// Check if offset is inside a var/let/const declaration list (for comma detection)
+    fn is_in_variable_declaration_list(&self, offset: u32) -> bool {
+        let node_idx = find_node_at_offset(self.arena, offset);
+        let start = if node_idx.is_none() && offset > 0 {
+            find_node_at_offset(self.arena, offset - 1)
+        } else {
+            node_idx
+        };
+        let mut current = start;
+        let mut depth = 0;
+        while !current.is_none() && depth < 50 {
+            if let Some(node) = self.arena.get(current) {
+                if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    || node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                {
+                    return true;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                if ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+        false
+    }
+
+    /// Check if offset is inside a parameter list
+    fn is_in_parameter_list(&self, offset: u32) -> bool {
+        let node_idx = find_node_at_offset(self.arena, offset);
+        let start = if node_idx.is_none() && offset > 0 {
+            find_node_at_offset(self.arena, offset - 1)
+        } else {
+            node_idx
+        };
+        let mut current = start;
+        let mut depth = 0;
+        while !current.is_none() && depth < 50 {
+            if let Some(node) = self.arena.get(current) {
+                if node.kind == syntax_kind_ext::PARAMETER {
+                    return true;
+                }
+                // Stop at function boundary
+                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
+                    || node.kind == syntax_kind_ext::CONSTRUCTOR
+                {
+                    return false;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                if ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+        false
+    }
+
+    /// Check if offset is in a type parameter list `<T, U>`
+    fn is_in_type_parameter_list(&self, offset: u32) -> bool {
+        let node_idx = find_node_at_offset(self.arena, offset);
+        let start = if node_idx.is_none() && offset > 0 {
+            find_node_at_offset(self.arena, offset - 1)
+        } else {
+            node_idx
+        };
+        let mut current = start;
+        let mut depth = 0;
+        while !current.is_none() && depth < 50 {
+            if let Some(node) = self.arena.get(current) {
+                if node.kind == syntax_kind_ext::TYPE_PARAMETER {
+                    return true;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                if ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+        false
+    }
+
+    /// Check if offset is at an enum member name position
+    fn is_in_enum_member_position(&self, offset: u32) -> bool {
+        let node_idx = find_node_at_offset(self.arena, offset);
+        let start = if node_idx.is_none() && offset > 0 {
+            find_node_at_offset(self.arena, offset - 1)
+        } else {
+            node_idx
+        };
+        let mut current = start;
+        let mut depth = 0;
+        while !current.is_none() && depth < 50 {
+            if let Some(node) = self.arena.get(current) {
+                if node.kind == syntax_kind_ext::ENUM_MEMBER {
+                    return true;
+                }
+                if node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                    // Check if cursor is after `{` (member position)
+                    let text_before = &self.source_text[node.pos as usize..offset as usize];
+                    if text_before.contains('{') {
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                if ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
         false
     }
 
