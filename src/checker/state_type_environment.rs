@@ -507,7 +507,12 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        match classify_for_property_access_resolution(self.ctx.types, type_id) {
+        // Recursion depth check to prevent stack overflow
+        if !self.ctx.enter_recursion() {
+            return type_id;
+        }
+
+        let result = match classify_for_property_access_resolution(self.ctx.types, type_id) {
             PropertyAccessResolutionKind::Ref(sym_ref) => {
                 let sym_id = SymbolId(sym_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -520,9 +525,12 @@ impl<'a> CheckerState<'a> {
                     {
                         let ctor_type = self.get_class_constructor_type(class_idx, class_data);
                         if ctor_type == type_id {
+                            self.ctx.leave_recursion();
                             return type_id;
                         }
-                        return self.resolve_type_for_property_access_inner(ctor_type, visited);
+                        let r = self.resolve_type_for_property_access_inner(ctor_type, visited);
+                        self.ctx.leave_recursion();
+                        return r;
                     }
 
                     // Handle aliases to namespaces/modules (e.g., export { Namespace } from './file')
@@ -541,8 +549,10 @@ impl<'a> CheckerState<'a> {
                             // Get the type of the target namespace/module
                             let target_type = self.get_type_of_symbol(target_sym_id);
                             if target_type != type_id {
-                                return self
+                                let r = self
                                     .resolve_type_for_property_access_inner(target_type, visited);
+                                self.ctx.leave_recursion();
+                                return r;
                             }
                         }
                     }
@@ -556,6 +566,7 @@ impl<'a> CheckerState<'a> {
                     {
                         // For namespace references, we want to allow accessing its members
                         // so we return the type as-is (it will be resolved in resolve_namespace_value_member)
+                        self.ctx.leave_recursion();
                         return type_id;
                     }
 
@@ -565,9 +576,12 @@ impl<'a> CheckerState<'a> {
                         && let Some(enum_object) = self.enum_object_type(sym_id)
                     {
                         if enum_object != type_id {
-                            return self
-                                .resolve_type_for_property_access_inner(enum_object, visited);
+                            let r =
+                                self.resolve_type_for_property_access_inner(enum_object, visited);
+                            self.ctx.leave_recursion();
+                            return r;
                         }
+                        self.ctx.leave_recursion();
                         return enum_object;
                     }
                 }
@@ -632,15 +646,17 @@ impl<'a> CheckerState<'a> {
                 self.resolve_type_for_property_access_inner(inner, visited)
             }
             PropertyAccessResolutionKind::FunctionLike => {
-                let expanded = self.apply_function_interface_for_property_access(type_id);
-                if expanded == type_id {
-                    type_id
-                } else {
-                    self.resolve_type_for_property_access_inner(expanded, visited)
-                }
+                // Apply Function interface to get properties like call/apply/bind.
+                // Do NOT recurse into the expanded type: intersection2(T, Function)
+                // produces a NEW TypeId each time, so the visited set can't catch
+                // the loop — each iteration allocates another intersection, causing OOM.
+                self.apply_function_interface_for_property_access(type_id)
             }
             PropertyAccessResolutionKind::Resolved => type_id,
-        }
+        };
+
+        self.ctx.leave_recursion();
+        result
     }
 
     /// Get keyof a type - extract the keys of an object type.
@@ -999,6 +1015,12 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Vec<crate::solver::TypeParamInfo> {
+        // Recursion depth check: prevent stack overflow from circular generic defaults
+        // (e.g. type A<T = B> = T; type B<T = A> = T;)
+        if !self.ctx.enter_recursion() {
+            return Vec::new();
+        }
+
         if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
@@ -1009,7 +1031,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.file_name.clone(),
                 self.ctx.compiler_options.clone(), // use current compiler options
             );
-            return checker.get_type_params_for_symbol(sym_id);
+            let result = checker.get_type_params_for_symbol(sym_id);
+            self.ctx.leave_recursion();
+            return result;
         }
 
         // Use get_symbol_globally to find symbols in lib files and other files
@@ -1020,7 +1044,10 @@ impl<'a> CheckerState<'a> {
                 symbol.value_declaration,
                 symbol.declarations.clone(),
             ),
-            None => return Vec::new(),
+            None => {
+                self.ctx.leave_recursion();
+                return Vec::new();
+            }
         };
 
         // Type alias - get type parameters from declaration
@@ -1036,6 +1063,7 @@ impl<'a> CheckerState<'a> {
             {
                 let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
                 self.pop_type_parameters(updates);
+                self.ctx.leave_recursion();
                 return params;
             }
         }
@@ -1053,6 +1081,7 @@ impl<'a> CheckerState<'a> {
             {
                 let (params, updates) = self.push_type_parameters(&class.type_parameters);
                 self.pop_type_parameters(updates);
+                self.ctx.leave_recursion();
                 return params;
             }
         }
@@ -1070,10 +1099,12 @@ impl<'a> CheckerState<'a> {
             {
                 let (params, updates) = self.push_type_parameters(&iface.type_parameters);
                 self.pop_type_parameters(updates);
+                self.ctx.leave_recursion();
                 return params;
             }
         }
 
+        self.ctx.leave_recursion();
         Vec::new()
     }
 

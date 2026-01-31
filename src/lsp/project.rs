@@ -3,6 +3,7 @@
 //! This provides a lightweight home for parsed files, binders, and line maps so
 //! LSP features can be extended across multiple files.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::time::{Duration, Instant};
 

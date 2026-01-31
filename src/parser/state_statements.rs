@@ -93,6 +93,8 @@ impl ParserState {
         let mut statements = Vec::new();
 
         while !self.is_token(SyntaxKind::EndOfFileToken) {
+            let pos_before = self.token_pos();
+
             // If we see a closing brace at the top level, report error 1128
             if self.is_token(SyntaxKind::CloseBraceToken) {
                 // Only emit error if we haven't already emitted one at this position
@@ -128,6 +130,13 @@ impl ParserState {
                 self.resync_after_error();
             }
 
+            // Safety: if position didn't advance, force-skip the current token
+            // to prevent infinite loop when resync returns at a sync point
+            // that parse_statement can't handle
+            if self.token_pos() == pos_before && !self.is_token(SyntaxKind::EndOfFileToken) {
+                self.next_token();
+            }
+
             // Safety: break on Unknown tokens to avoid infinite loop
             if self.is_token(SyntaxKind::Unknown) {
                 break;
@@ -146,6 +155,8 @@ impl ParserState {
         while !self.is_token(SyntaxKind::EndOfFileToken)
             && !self.is_token(SyntaxKind::CloseBraceToken)
         {
+            let pos_before = self.token_pos();
+
             let stmt = self.parse_statement();
             if !stmt.is_none() {
                 statements.push(stmt);
@@ -163,6 +174,16 @@ impl ParserState {
                 }
                 // Resync to next statement boundary to continue parsing
                 self.resync_after_error();
+            }
+
+            // Safety: if position didn't advance, force-skip the current token
+            // to prevent infinite loop when resync returns at a sync point
+            // that parse_statement can't handle
+            if self.token_pos() == pos_before
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+            {
+                self.next_token();
             }
 
             // Safety: break on Unknown tokens to avoid infinite loop
