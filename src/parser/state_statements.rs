@@ -2489,10 +2489,13 @@ impl ParserState {
                 })
             });
 
-            // Set context flags for async method body
+            // Set context flags for async/generator method body
             let saved_flags = self.context_flags;
             if is_async {
                 self.context_flags |= CONTEXT_FLAG_ASYNC;
+            }
+            if asterisk_token {
+                self.context_flags |= CONTEXT_FLAG_GENERATOR;
             }
 
             // Parse body
