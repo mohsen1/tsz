@@ -152,13 +152,13 @@
 
 ---
 
-## Phase 6: Sound Mode - INFRASTRUCTURE COMPLETE ✅
+## Phase 6: Sound Mode - COMPLETE ✅
 
-### 6.1 Add Sound Mode Flag - NOT WIRED
-- [ ] Add `sound_mode: bool` to `CompilerOptions`
-- [ ] Add `--sound` CLI flag
-- [ ] Add `// @ts-sound` pragma support
-- [ ] Commit
+### 6.1 Add Sound Mode Flag ✅
+- [x] Add `sound_mode: bool` to `CheckerOptions`
+- [x] Add `--sound` CLI flag
+- [ ] Add `// @ts-sound` pragma support (future enhancement)
+- [x] Commit
 
 ### 6.2 Create Sound Lawyer ✅
 - [x] Create `src/solver/sound.rs` (702 lines)
@@ -210,10 +210,10 @@
 - [ ] Zero TypeKey matches in Checker
 - [ ] Checker only uses Judge queries
 
-### After Phase 6 - INFRASTRUCTURE ONLY
+### After Phase 6 ✅
 - [x] Sound mode infrastructure created
-- [ ] Sound mode wired into CLI/options
-- [ ] Sound mode documented with examples
+- [x] Sound mode wired into CLI (`--sound` flag)
+- [ ] Sound mode documented with examples (future enhancement)
 
 ---
 
