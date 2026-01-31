@@ -52,6 +52,7 @@ pub mod intersection_type;
 pub mod iterable_checker;
 pub mod jsx;
 pub mod jsx_checker;
+pub mod judge_integration;
 pub mod literal_type;
 pub mod module_checker;
 pub mod module_resolution;
