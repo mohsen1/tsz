@@ -30,6 +30,12 @@ fn main() {
         println!("cargo:rustc-cfg=ci");
     }
 
+    // Allow tests to run locally when TSZ_ALLOW_LOCAL_TESTS is set
+    // This is for development convenience when Docker is not available
+    if env::var("TSZ_ALLOW_LOCAL_TESTS").is_ok() {
+        println!("cargo:rustc-cfg=in_docker");
+    }
+
     // Auto-generate when lib-assets are missing or LIB_ASSETS_FORCE is set
     let force = env::var("LIB_ASSETS_FORCE").is_ok();
 

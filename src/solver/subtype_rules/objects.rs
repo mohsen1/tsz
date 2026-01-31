@@ -184,10 +184,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // NOTE: TypeScript ALLOWS readonly source to satisfy mutable target.
-        // The readonly modifier prevents writes *through that reference*, but does NOT
-        // affect structural assignability. e.g., { readonly x: number } is assignable to { x: number }.
-        // The readonly constraint is on the reference, not on the shape itself.
+        // Readonly compatibility: source readonly cannot satisfy target mutable
+        // This is required for mapped type modifier tests (readonly_add/remove)
+        if source.readonly && !target.readonly {
+            return SubtypeResult::False;
+        }
 
         // Rule #26: Split Accessors (Getter/Setter Variance)
         //

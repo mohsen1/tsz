@@ -367,10 +367,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Error types ARE compatible to suppress cascading errors
-        // This treats ERROR as more permissive than Any to avoid error storms
+        // Error types are NOT compatible with other types (except themselves)
+        // This prevents "error poisoning" where unresolved types mask real errors
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return SubtypeResult::True;
+            return SubtypeResult::False;
         }
 
         // =========================================================================
@@ -512,6 +512,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Union target: source must be subtype of at least one member
             (_, TypeKey::Union(members)) => {
+                // Special case: deferred keyof (keyof T where T is a type parameter)
+                // is always a subtype of string | number | symbol
+                if let TypeKey::KeyOf(_) = source_key {
+                    if self.is_keyof_subtype_of_string_number_symbol_union(*members) {
+                        return SubtypeResult::True;
+                    }
+                }
+
                 // Check if source is a subtype of ANY union member
                 let member_list = self.interner.type_list(*members);
                 for &member in member_list.iter() {
@@ -1007,6 +1015,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             _ => SubtypeResult::False,
         }
     }
+
+    /// Check if a deferred keyof type is a subtype of string | number | symbol.
+    /// This handles the case where `keyof T` (T is a type parameter) should be
+    /// considered a subtype of `string | number | symbol` because in TypeScript,
+    /// keyof always produces a subtype of those three types.
+    fn is_keyof_subtype_of_string_number_symbol_union(
+        &self,
+        members: TypeListId,
+    ) -> bool {
+        let member_list = self.interner.type_list(members);
+        // Check if the union contains string, number, and symbol
+        let mut has_string = false;
+        let mut has_number = false;
+        let mut has_symbol = false;
+        for &member in member_list.iter() {
+            if member == TypeId::STRING {
+                has_string = true;
+            } else if member == TypeId::NUMBER {
+                has_number = true;
+            } else if member == TypeId::SYMBOL {
+                has_symbol = true;
+            }
+        }
+        has_string && has_number && has_symbol
+    }
 }
 
 // =============================================================================
@@ -1043,9 +1076,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source == TypeId::NEVER {
             return None;
         }
-        // ERROR types should NOT produce diagnostics - suppress cascading errors
+        // ERROR types should produce ErrorType failure reason
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return None;
+            return Some(SubtypeFailureReason::ErrorType {
+                source_type: source,
+                target_type: target,
+            });
         }
 
         // Look up the type keys

@@ -20615,10 +20615,8 @@ fn test_return_type_generic_function() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: Generic function ReturnType extraction not fully implemented.
     // Expected: U (the type parameter) for ReturnType of <U>(x: U) => U
-    // Current: returns never because fixed-param functions don't match rest-param pattern.
-    assert_eq!(result, TypeId::NEVER);
+    assert_eq!(result, u_param);
 }
 
 /// Test ReturnType<T> with an overloaded function (Callable type with multiple signatures).
@@ -20696,10 +20694,8 @@ fn test_return_type_overloaded_function() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: Callable type inference not fully implemented yet.
     // TypeScript uses the last overload signature for ReturnType, so expect boolean.
-    // Current behavior: returns never because Callable doesn't match Function pattern.
-    assert_eq!(result, TypeId::NEVER);
+    assert_eq!(result, TypeId::BOOLEAN);
 }
 
 /// Test ReturnType<T> with a function that has a type predicate.

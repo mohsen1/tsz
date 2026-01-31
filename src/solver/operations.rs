@@ -1498,10 +1498,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             match source.name.cmp(&target.name) {
                 std::cmp::Ordering::Equal => {
                     self.constrain_types(ctx, var_map, source.type_id, target.type_id);
-                    if !target.readonly
-                        && (source.write_type != source.type_id
-                            || target.write_type != target.type_id)
-                    {
+                    // Check write type compatibility for mutable targets
+                    // A readonly source cannot satisfy a mutable target
+                    if !target.readonly {
+                        // If source is readonly but target is mutable, this is a mismatch
+                        // We constrain with ERROR to signal the failure
+                        if source.readonly {
+                            self.constrain_types(ctx, var_map, TypeId::ERROR, target.write_type);
+                        }
                         self.constrain_types(ctx, var_map, target.write_type, source.write_type);
                     }
                     source_idx += 1;
@@ -1511,9 +1515,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     source_idx += 1;
                 }
                 std::cmp::Ordering::Greater => {
+                    // Target property is missing from source
+                    // For optional properties, we still need to collect constraints
+                    // to properly infer type parameters (e.g., {} satisfies {a?: T})
+                    if target.optional {
+                        // Use undefined as the lower bound for missing optional properties
+                        self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id);
+                    }
                     target_idx += 1;
                 }
             }
+        }
+
+        // Handle remaining target properties that are missing from source
+        while target_idx < target_props.len() {
+            let target = &target_props[target_idx];
+            if target.optional {
+                // Use undefined as the lower bound for missing optional properties
+                self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id);
+            }
+            target_idx += 1;
         }
     }
 

@@ -3027,9 +3027,9 @@ fn test_infer_generic_optional_property_missing() {
     let arg = interner.object(Vec::new());
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
-    // NOTE: Returns ERROR because {} doesn't satisfy {a?: T} in current assignability logic
-    // TODO: Empty objects should be assignable to objects with only optional properties
-    assert_eq!(result, TypeId::ERROR);
+    // Missing optional property infers undefined for T
+    // (an optional property that doesn't exist has value undefined)
+    assert_eq!(result, TypeId::UNDEFINED);
 }
 
 #[test]

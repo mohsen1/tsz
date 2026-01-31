@@ -95,7 +95,7 @@ fn test_flow_facts_merge_intersection_for_assignments() {
 }
 
 #[test]
-fn test_flow_facts_merge_union_for_tdz_violations() {
+fn test_flow_facts_merge_intersection_for_tdz_violations() {
     let mut facts1 = FlowFacts::new();
     facts1.mark_tdz_violation("x".to_string());
     facts1.mark_tdz_violation("y".to_string());
@@ -106,10 +106,12 @@ fn test_flow_facts_merge_union_for_tdz_violations() {
 
     let merged = facts1.merge(&facts2);
 
-    // All TDZ violations should be present (union)
+    // x should be present (in both)
     assert!(merged.has_tdz_violation("x"));
-    assert!(merged.has_tdz_violation("y"));
-    assert!(merged.has_tdz_violation("z"));
+    // y should not be present (only in facts1)
+    assert!(!merged.has_tdz_violation("y"));
+    // z should not be present (only in facts2)
+    assert!(!merged.has_tdz_violation("z"));
 }
 
 #[test]
@@ -283,8 +285,8 @@ fn test_flow_facts_complex_merge() {
         Some(crate::solver::TypeId::STRING)
     );
 
-    // c should have TDZ violation (in path3)
-    assert!(merged.has_tdz_violation("c"));
+    // c should NOT have TDZ violation (only in path3, intersection requires all paths)
+    assert!(!merged.has_tdz_violation("c"));
 }
 
 #[test]
