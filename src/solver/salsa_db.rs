@@ -6,52 +6,99 @@
 //! The salsa implementation coexists with the legacy TypeInterner, allowing
 //! for gradual migration and testing.
 
+use crate::checker::context::CheckerOptions;
 use crate::interner::Atom;
 use crate::solver::intern::TypeInterner;
+use crate::solver::subtype::TypeEnvironment;
 use crate::solver::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, IntrinsicKind, MappedType, MappedTypeId, ObjectShape, ObjectShapeId,
-    PropertyInfo, PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement,
-    TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
+    FunctionShapeId, MappedType, MappedTypeId, ObjectShape, ObjectShapeId, PropertyInfo,
+    PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
+    TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
 };
 use std::sync::Arc;
+
+/// Configuration for subtype checking, stored as a Salsa input.
+///
+/// This allows Salsa to track when configuration changes and invalidate
+/// cached subtype results accordingly.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SubtypeConfig {
+    pub strict_function_types: bool,
+    pub strict_null_checks: bool,
+    pub exact_optional_property_types: bool,
+    pub no_unchecked_indexed_access: bool,
+}
+
+impl Default for SubtypeConfig {
+    fn default() -> Self {
+        SubtypeConfig {
+            strict_function_types: false,
+            strict_null_checks: true,
+            exact_optional_property_types: false,
+            no_unchecked_indexed_access: false,
+        }
+    }
+}
+
+impl SubtypeConfig {
+    /// Create a SubtypeConfig from CheckerOptions.
+    pub fn from_checker_options(options: &CheckerOptions) -> Self {
+        SubtypeConfig {
+            strict_function_types: options.strict_function_types,
+            strict_null_checks: options.strict_null_checks,
+            exact_optional_property_types: options.exact_optional_property_types,
+            no_unchecked_indexed_access: options.no_unchecked_indexed_access,
+        }
+    }
+}
 
 // Re-export Salsa for use in the solver
 pub use salsa;
 
-/// The Salsa database structure.
+/// The Salsa query group for the solver.
 ///
-/// This holds all the inputs and implements the query group.
+/// This holds all the inputs and defines the memoized queries.
 #[salsa::query_group(SolverStorage)]
-pub trait SolverDatabase {
+pub trait SolverDatabase: salsa::Database {
     /// Get the underlying type interner (input).
     #[salsa::input]
     fn interner_ref(&self) -> Arc<TypeInterner>;
 
+    /// Get the type environment for resolving Ref/Lazy types (input).
+    #[salsa::input]
+    fn type_environment(&self) -> Arc<TypeEnvironment>;
+
+    /// Get the subtype checking configuration (input).
+    #[salsa::input]
+    fn subtype_config(&self) -> SubtypeConfig;
+
     /// Look up a type by its ID (memoized query).
-    fn lookup(&self, id: TypeId) -> Option<TypeKey>;
+    fn lookup_query(&self, id: TypeId) -> Option<TypeKey>;
 
     /// Intern a string atom (memoized query).
     fn intern_string_query(&self, s: String) -> Atom;
 
     /// Resolve an atom to its string value (memoized query).
-    fn resolve_atom(&self, atom: Atom) -> String;
+    fn resolve_atom_query(&self, atom: Atom) -> String;
 
     /// Get a type list by ID (memoized query).
     fn type_list_query(&self, id: TypeListId) -> Arc<[TypeId]>;
 
-    /// Evaluate a type (memoized query).
-    fn evaluate_type(&self, type_id: TypeId) -> TypeId;
+    /// Evaluate a type (memoized query with cycle recovery).
+    #[salsa::cycle(evaluate_type_recover)]
+    fn evaluate_type_query(&self, type_id: TypeId) -> TypeId;
 
-    /// Check if a type is a subtype of another (memoized query).
-    fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool;
+    /// Check if a type is a subtype of another (memoized query with cycle recovery).
+    #[salsa::cycle(is_subtype_of_recover)]
+    fn is_subtype_of_query(&self, source: TypeId, target: TypeId) -> bool;
 }
 
-/// Implementation of solver queries.
-///
-/// Each query function uses the interner to perform its computation,
-/// with Salsa providing automatic memoization and incremental recomputation.
-fn lookup(db: &dyn SolverDatabase, id: TypeId) -> Option<TypeKey> {
+// =============================================================================
+// Query implementations
+// =============================================================================
+
+fn lookup_query(db: &dyn SolverDatabase, id: TypeId) -> Option<TypeKey> {
     db.interner_ref().lookup(id)
 }
 
@@ -59,7 +106,7 @@ fn intern_string_query(db: &dyn SolverDatabase, s: String) -> Atom {
     db.interner_ref().intern_string(&s)
 }
 
-fn resolve_atom(db: &dyn SolverDatabase, atom: Atom) -> String {
+fn resolve_atom_query(db: &dyn SolverDatabase, atom: Atom) -> String {
     db.interner_ref().resolve_atom(atom)
 }
 
@@ -67,14 +114,48 @@ fn type_list_query(db: &dyn SolverDatabase, id: TypeListId) -> Arc<[TypeId]> {
     db.interner_ref().type_list(id)
 }
 
-fn evaluate_type(db: &dyn SolverDatabase, type_id: TypeId) -> TypeId {
-    // Use the evaluator from the evaluate module
-    // The evaluator will use the interner through the TypeDatabase trait
-    crate::solver::evaluate::evaluate_type(db.interner_ref().as_ref(), type_id)
+fn evaluate_type_query(db: &dyn SolverDatabase, type_id: TypeId) -> TypeId {
+    let interner = db.interner_ref();
+    let env = db.type_environment();
+    let mut evaluator =
+        crate::solver::evaluate::TypeEvaluator::with_resolver(interner.as_ref(), env.as_ref());
+    evaluator.evaluate(type_id)
 }
 
-fn is_subtype_of(db: &dyn SolverDatabase, source: TypeId, target: TypeId) -> bool {
-    crate::solver::subtype::is_subtype_of(db.interner_ref().as_ref(), source, target)
+fn is_subtype_of_query(db: &dyn SolverDatabase, source: TypeId, target: TypeId) -> bool {
+    let interner = db.interner_ref();
+    let env = db.type_environment();
+    let config = db.subtype_config();
+    let mut checker =
+        crate::solver::subtype::SubtypeChecker::with_resolver(interner.as_ref(), env.as_ref());
+    checker.strict_function_types = config.strict_function_types;
+    checker.strict_null_checks = config.strict_null_checks;
+    checker.exact_optional_property_types = config.exact_optional_property_types;
+    checker.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+    checker.is_subtype_of(source, target)
+}
+
+// =============================================================================
+// Cycle recovery functions
+// =============================================================================
+
+/// Cycle recovery for subtype checking: coinductive/greatest fixed point.
+fn is_subtype_of_recover(
+    _db: &dyn SolverDatabase,
+    _cycle: &[String],
+    _source: &TypeId,
+    _target: &TypeId,
+) -> bool {
+    true
+}
+
+/// Cycle recovery for type evaluation: identity.
+fn evaluate_type_recover(
+    _db: &dyn SolverDatabase,
+    _cycle: &[String],
+    type_id: &TypeId,
+) -> TypeId {
+    *type_id
 }
 
 /// Concrete Salsa database implementation.
