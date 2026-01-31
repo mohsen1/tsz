@@ -134,8 +134,8 @@ async function withTimeout<T>(
 }
 
 // Dynamic timeout: starts at 500ms, adapts to 10x average test time
-const INITIAL_TIMEOUT_MS = 10000;
-const MIN_TIMEOUT_MS = 10000;
+const INITIAL_TIMEOUT_MS = 200;   // Start with 200ms - most tests complete in <20ms
+const MIN_TIMEOUT_MS = 200;       // Never go below 200ms
 const MAX_TIMEOUT_MS = 60000;
 const TIMEOUT_MULTIPLIER = 10;
 
@@ -1188,8 +1188,17 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     let testTimeSum = 0;
     let testTimeCount = 0;
     let currentTimeout = INITIAL_TIMEOUT_MS;
+    let consecutiveTimeouts = 0;
+    let consecutiveOom = 0;
+    const FAST_TIMEOUT_MS = 200; // When many timeouts, use fast timeout
 
     const getDynamicTimeout = (): number => {
+      // If we're seeing many consecutive timeouts/OOM, use fast timeout
+      // This prevents workers from being blocked for 10s on each bad test
+      if (consecutiveTimeouts >= 3 || consecutiveOom >= 3) {
+        return FAST_TIMEOUT_MS;
+      }
+      
       if (testTimeCount < 10) return INITIAL_TIMEOUT_MS; // Need samples first
       const avg = testTimeSum / testTimeCount;
       const dynamic = Math.round(avg * TIMEOUT_MULTIPLIER);
@@ -1199,10 +1208,22 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     const recordTestTime = (ms: number): void => {
       testTimeSum += ms;
       testTimeCount++;
+      consecutiveTimeouts = 0; // Reset on successful test
+      consecutiveOom = 0;
       // Update timeout every 50 tests for stability
       if (testTimeCount % 50 === 0) {
         currentTimeout = getDynamicTimeout();
       }
+    };
+    
+    const recordTimeout = (): void => {
+      consecutiveTimeouts++;
+      currentTimeout = getDynamicTimeout();
+    };
+    
+    const recordOom = (): void => {
+      consecutiveOom++;
+      currentTimeout = getDynamicTimeout();
     };
 
     // Progress bar state (time-throttled for smooth updates)
@@ -1302,6 +1323,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
           stats.timedOut++;
           stats.failed++;
           stats.timedOutTests.push(relativePath);
+          recordTimeout(); // Track for adaptive timeout
           if (verbose) log(`[timeout] ${relativePath}`, colors.yellow);
           return;
         }
@@ -1311,6 +1333,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
           stats.oom++;
           stats.failed++;
           stats.oomTests.push(relativePath);
+          recordOom(); // Track for adaptive timeout
           if (verbose) log(`[oom] ${relativePath}`, colors.yellow);
           return;
         }
