@@ -353,17 +353,10 @@ impl<'a> CheckerState<'a> {
                             base_type_params = params;
                             base_param_updates = updates;
 
-                            // Guard against recursion when interface extends class
-                            if !self.ctx.class_instance_resolution_set.insert(base_sym_id) {
-                                // Recursion detected; use a type reference fallback
-                                use crate::solver::SymbolRef;
-                                base_type =
-                                    Some(self.ctx.types.reference(SymbolRef(base_sym_id.0)));
-                            } else {
-                                base_type =
-                                    Some(self.get_class_instance_type(base_decl_idx, base_class));
-                                self.ctx.class_instance_resolution_set.remove(&base_sym_id);
-                            }
+                            // get_class_instance_type_inner has its own cycle detection
+                            // via class_instance_resolution_set, so just call it directly.
+                            base_type =
+                                Some(self.get_class_instance_type(base_decl_idx, base_class));
                             break;
                         }
                     }
@@ -391,18 +384,10 @@ impl<'a> CheckerState<'a> {
                                 base_type_params = params;
                                 base_param_updates = updates;
 
-                                // Guard against recursion when interface extends class
-                                if !self.ctx.class_instance_resolution_set.insert(base_sym_id) {
-                                    // Recursion detected; use a type reference fallback
-                                    use crate::solver::SymbolRef;
-                                    base_type =
-                                        Some(self.ctx.types.reference(SymbolRef(base_sym_id.0)));
-                                } else {
-                                    base_type = Some(
-                                        self.get_class_instance_type(base_decl_idx, base_class),
-                                    );
-                                    self.ctx.class_instance_resolution_set.remove(&base_sym_id);
-                                }
+                                // get_class_instance_type_inner has its own cycle detection
+                                // via class_instance_resolution_set, so just call it directly.
+                                base_type =
+                                    Some(self.get_class_instance_type(base_decl_idx, base_class));
                             }
                         }
                     }
