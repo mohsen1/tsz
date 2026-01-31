@@ -203,17 +203,17 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: conformance/package.json
+          cache-dependency-path: scripts/conformance/package.json
 
       - name: Install conformance dependencies
-        run: cd conformance && npm install
+        run: cd scripts/conformance && npm install
 
       - name: Fetch TypeScript conformance tests
         run: git submodule update --init --depth 1 -- TypeScript || echo "No TypeScript submodule"
 
       - name: Run conformance tests (quick)
         run: |
-          cd conformance
+          cd scripts/conformance
           timeout 600 bash run.sh --max=500 --workers=4 || {
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then

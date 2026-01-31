@@ -54,13 +54,13 @@ done
 cd "$ROOT_DIR"
 
 # Get TypeScript version
-TS_VERSION=$(node -e "const v = require('./conformance/typescript-versions.json'); const m = Object.values(v.mappings)[0]; console.log(m?.npm || v.default?.npm || 'unknown')")
+TS_VERSION=$(node -e "const v = require('./scripts/conformance/typescript-versions.json'); const m = Object.values(v.mappings)[0]; console.log(m?.npm || v.default?.npm || 'unknown')")
 echo "TypeScript version: $TS_VERSION"
 echo ""
 
 # Build update-readme tool
 echo "Building update-readme tool..."
-cd conformance
+cd scripts/conformance
 npm run build --silent 2>/dev/null || npm run build
 cd "$ROOT_DIR"
 
@@ -80,7 +80,7 @@ if [ "$RUN_CONFORMANCE" = true ]; then
     echo ""
 
     echo "Running conformance tests..."
-    OUTPUT=$(./conformance/run.sh $MAX_TESTS --workers=$WORKERS 2>&1) || true
+    OUTPUT=$(./scripts/conformance/run.sh $MAX_TESTS --workers=$WORKERS 2>&1) || true
     echo "$OUTPUT"
 
     if echo "$OUTPUT" | grep -q "Pass Rate:"; then
@@ -91,7 +91,7 @@ if [ "$RUN_CONFORMANCE" = true ]; then
         echo ""
         echo "Conformance: $CONF_PASSED/$CONF_TOTAL tests passed ($CONF_PASS_RATE%)"
 
-        cd conformance
+        cd scripts/conformance
         node dist/update-readme.js \
             --passed="$CONF_PASSED" \
             --total="$CONF_TOTAL" \
@@ -133,7 +133,7 @@ if [ "$RUN_FOURSLASH" = true ]; then
         echo ""
         echo "Fourslash: $FS_PASSED/$FS_TOTAL tests ($FS_PASS_RATE%)"
 
-        cd conformance
+        cd scripts/conformance
         node dist/update-readme.js \
             --fourslash \
             --passed="$FS_PASSED" \

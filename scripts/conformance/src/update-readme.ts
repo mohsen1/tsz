@@ -19,9 +19,9 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '../..');
+const ROOT_DIR = path.resolve(__dirname, '../../..');
 const README_PATH = path.join(ROOT_DIR, 'README.md');
-const TS_VERSIONS_PATH = path.join(ROOT_DIR, 'conformance/typescript-versions.json');
+const TS_VERSIONS_PATH = path.join(ROOT_DIR, 'scripts/conformance/typescript-versions.json');
 
 interface ProgressStats {
   passed: number;

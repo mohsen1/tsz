@@ -55,10 +55,10 @@ cargo build
 ./scripts/test.sh
 
 # Conformance tests (fast iteration)
-./conformance/run.sh --server --max=1000
+./scripts/conformance/run.sh --server --max=1000
 
 # Conformance tests (verify WASM)
-./conformance/run.sh --wasm --max=1000
+./scripts/conformance/run.sh --wasm --max=1000
 
 # Linting
 cargo clippy -- -D warnings
@@ -107,12 +107,12 @@ Available presets: `--solver`, `--checker`, `--binder`, `--parser`, `--emitter`,
 Use the following sequence to get things done:
 
 1. Look at docs/todo for list to To-dos. 
-2. Run ./conformance/run.sh to get a good pictue of what's failing
+2. Run ./scripts/conformance/run.sh to get a good pictue of what's failing
 3. Pick the highest-impact task and execute it. Prefer "the biggest bang for the buck". Goal is to improve conformance pass rate
 4. Use scripts/ask-gemini.mjs to ask a few questions from various angles to help you write code
 5. Write code with full respect for the existing codebase and architecture. Always check with documentation and architecture.
 6. Use ask-gemini for a code review.
-7. Verify with `./conformance/run.sh`, mark done work in todo documents, commit and push.
+7. Verify with `./scripts/conformance/run.sh`, mark done work in todo documents, commit and push.
 
 ### IMPORTANT:
 - ALWAYS USE ask-gemini.mjs to ask questions. Non-negotiable.

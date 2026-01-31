@@ -5,7 +5,7 @@
       "Bash(wasm-pack build:*)",
       "Bash(npm run conformance:*)",
       "Bash(node:*)",
-      "Bash(./conformance/run-conformance.sh:*)"
+      "Bash(./scripts/conformance/run.sh:*)"
     ]
   }
 }
