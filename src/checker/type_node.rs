@@ -129,8 +129,31 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Type query (typeof X) - returns the type of X
             k if k == syntax_kind_ext::TYPE_QUERY => self.get_type_from_type_query(idx),
 
-            // Default case - unknown node kind is an error
-            _ => TypeId::ERROR,
+            // Fall back to TypeLowering for type nodes not handled above
+            // (conditional types, mapped types, indexed access types, etc.)
+            _ => {
+                use crate::solver::TypeLowering;
+
+                let type_param_bindings: Vec<(crate::interner::Atom, TypeId)> = self
+                    .ctx
+                    .type_parameter_scope
+                    .iter()
+                    .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
+                    .collect();
+
+                let type_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
+                let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
+                let mut lowering = TypeLowering::with_resolvers(
+                    self.ctx.arena,
+                    self.ctx.types,
+                    &type_resolver,
+                    &value_resolver,
+                );
+                if !type_param_bindings.is_empty() {
+                    lowering = lowering.with_type_param_bindings(type_param_bindings);
+                }
+                lowering.lower_type(idx)
+            }
         }
     }
 
