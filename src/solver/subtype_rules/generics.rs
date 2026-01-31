@@ -358,8 +358,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Returns None if the mapped type cannot be expanded (unresolvable constraint).
     pub(crate) fn try_expand_mapped(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
         use crate::solver::{
-            LiteralValue, MappedModifier, PropertyInfo, TypeSubstitution, evaluate_type,
-            instantiate_type,
+            LiteralValue, MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type,
         };
 
         let mapped = self.interner.mapped_type(mapped_id);
@@ -424,7 +423,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             subst.insert(mapped.type_param.name, key_literal);
 
             let instantiated_type = instantiate_type(self.interner, mapped.template, &subst);
-            let property_type = evaluate_type(self.interner, instantiated_type);
+            let property_type = self.evaluate_type(instantiated_type);
 
             // Determine modifiers based on mapped type configuration
             let (original_optional, original_readonly) = get_original_modifiers(key_name);
