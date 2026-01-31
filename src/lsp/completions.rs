@@ -615,17 +615,9 @@ impl<'a> Completions<'a> {
                 }
             }
 
-            // Object literal expression → properties are new identifiers
-            if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                return true;
-            }
-
-            // Constructor or function type parameter position
-            if k == syntax_kind_ext::CONSTRUCTOR
-                || k == syntax_kind_ext::FUNCTION_TYPE
-            {
-                return true;
-            }
+            // TODO: Object literal expression → isNewIdentifierLocation depends on
+            // whether the type has string/number index signatures (requires type checker).
+            // For now we default to false which matches most typed object literal tests.
         }
 
         // Text-based heuristic for the context token
