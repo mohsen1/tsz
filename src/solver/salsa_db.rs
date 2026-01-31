@@ -162,41 +162,34 @@ fn evaluate_type_recover(
 ///
 /// This struct wraps the Salsa runtime and provides the TypeDatabase trait
 /// for compatibility with existing solver code.
+#[salsa::database(SolverStorage)]
 pub struct SalsaDatabase {
-    /// The underlying Salsa database runtime
-    storage: salsa::DatabaseStruct<SolverDatabase>,
+    /// The underlying Salsa storage
+    storage: salsa::Storage<SalsaDatabase>,
 }
 
 impl SalsaDatabase {
     /// Create a new Salsa database with the given interner.
     pub fn new(interner: Arc<TypeInterner>) -> Self {
-        let mut storage = salsa::DatabaseStruct::default();
-        storage.set_interner_ref(interner);
-        SalsaDatabase { storage }
-    }
-
-    /// Get the underlying Salsa database for direct query access.
-    pub fn salsa_db(&self) -> &SolverDatabase {
-        &self.storage
+        let mut db = SalsaDatabase {
+            storage: Default::default(),
+        };
+        db.set_interner_ref(interner);
+        db.set_type_environment(Arc::new(TypeEnvironment::default()));
+        db.set_subtype_config(SubtypeConfig::default());
+        db
     }
 
     /// Clear all cached query results and reset with a new interner.
     pub fn clear(&mut self, interner: Arc<TypeInterner>) {
-        self.storage = salsa::DatabaseStruct::default();
-        self.storage.set_interner_ref(interner);
+        self.storage = Default::default();
+        self.set_interner_ref(interner);
+        self.set_type_environment(Arc::new(TypeEnvironment::default()));
+        self.set_subtype_config(SubtypeConfig::default());
     }
 }
 
-/// Implement salsa::Database for our storage.
-impl salsa::Database for SalsaDatabase {
-    fn salsa_storage(&self) -> &salsa::DatabaseStruct<SolverDatabase> {
-        &self.storage
-    }
-
-    fn salsa_storage_mut(&mut self) -> &mut salsa::DatabaseStruct<SolverDatabase> {
-        &mut self.storage
-    }
-}
+impl salsa::Database for SalsaDatabase {}
 
 /// Implement the TypeDatabase trait for SalsaDatabase.
 ///
@@ -204,151 +197,149 @@ impl salsa::Database for SalsaDatabase {
 /// enabling gradual migration from the legacy TypeInterner to Salsa.
 impl crate::solver::db::TypeDatabase for SalsaDatabase {
     fn intern(&self, key: TypeKey) -> TypeId {
-        self.storage.interner_ref().intern(key)
+        self.interner_ref().intern(key)
     }
 
     fn lookup(&self, id: TypeId) -> Option<TypeKey> {
-        self.storage.lookup(id)
+        self.lookup_query(id)
     }
 
     fn intern_string(&self, s: &str) -> Atom {
-        self.storage.intern_string_query(s.to_string())
+        self.intern_string_query(s.to_string())
     }
 
     fn resolve_atom(&self, atom: Atom) -> String {
-        self.storage.resolve_atom(atom)
+        self.resolve_atom_query(atom)
     }
 
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str> {
-        self.storage.interner_ref().resolve_atom_ref(atom)
+        self.interner_ref().resolve_atom_ref(atom)
     }
 
     fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
-        self.storage.type_list_query(id)
+        self.type_list_query(id)
     }
 
     fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
-        self.storage.interner_ref().tuple_list(id)
+        self.interner_ref().tuple_list(id)
     }
 
     fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
-        self.storage.interner_ref().template_list(id)
+        self.interner_ref().template_list(id)
     }
 
     fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
-        self.storage.interner_ref().object_shape(id)
+        self.interner_ref().object_shape(id)
     }
 
     fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
-        self.storage
-            .interner_ref()
+        self.interner_ref()
             .object_property_index(shape_id, name)
     }
 
     fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
-        self.storage.interner_ref().function_shape(id)
+        self.interner_ref().function_shape(id)
     }
 
     fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
-        self.storage.interner_ref().callable_shape(id)
+        self.interner_ref().callable_shape(id)
     }
 
     fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
-        self.storage.interner_ref().conditional_type(id)
+        self.interner_ref().conditional_type(id)
     }
 
     fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
-        self.storage.interner_ref().mapped_type(id)
+        self.interner_ref().mapped_type(id)
     }
 
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
-        self.storage.interner_ref().type_application(id)
+        self.interner_ref().type_application(id)
     }
 
     fn literal_string(&self, value: &str) -> TypeId {
-        self.storage.interner_ref().literal_string(value)
+        self.interner_ref().literal_string(value)
     }
 
     fn literal_number(&self, value: f64) -> TypeId {
-        self.storage.interner_ref().literal_number(value)
+        self.interner_ref().literal_number(value)
     }
 
     fn literal_boolean(&self, value: bool) -> TypeId {
-        self.storage.interner_ref().literal_boolean(value)
+        self.interner_ref().literal_boolean(value)
     }
 
     fn literal_bigint(&self, value: &str) -> TypeId {
-        self.storage.interner_ref().literal_bigint(value)
+        self.interner_ref().literal_bigint(value)
     }
 
     fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId {
-        self.storage
-            .interner_ref()
+        self.interner_ref()
             .literal_bigint_with_sign(negative, digits)
     }
 
     fn union(&self, members: Vec<TypeId>) -> TypeId {
-        self.storage.interner_ref().union(members)
+        self.interner_ref().union(members)
     }
 
     fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
-        self.storage.interner_ref().union2(left, right)
+        self.interner_ref().union2(left, right)
     }
 
     fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
-        self.storage.interner_ref().union3(first, second, third)
+        self.interner_ref().union3(first, second, third)
     }
 
     fn intersection(&self, members: Vec<TypeId>) -> TypeId {
-        self.storage.interner_ref().intersection(members)
+        self.interner_ref().intersection(members)
     }
 
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
-        self.storage.interner_ref().intersection2(left, right)
+        self.interner_ref().intersection2(left, right)
     }
 
     fn array(&self, element: TypeId) -> TypeId {
-        self.storage.interner_ref().array(element)
+        self.interner_ref().array(element)
     }
 
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
-        self.storage.interner_ref().tuple(elements)
+        self.interner_ref().tuple(elements)
     }
 
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
-        self.storage.interner_ref().object(properties)
+        self.interner_ref().object(properties)
     }
 
     fn object_with_index(&self, shape: ObjectShape) -> TypeId {
-        self.storage.interner_ref().object_with_index(shape)
+        self.interner_ref().object_with_index(shape)
     }
 
     fn function(&self, shape: FunctionShape) -> TypeId {
-        self.storage.interner_ref().function(shape)
+        self.interner_ref().function(shape)
     }
 
     fn callable(&self, shape: CallableShape) -> TypeId {
-        self.storage.interner_ref().callable(shape)
+        self.interner_ref().callable(shape)
     }
 
     fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId {
-        self.storage.interner_ref().template_literal(spans)
+        self.interner_ref().template_literal(spans)
     }
 
     fn conditional(&self, conditional: ConditionalType) -> TypeId {
-        self.storage.interner_ref().conditional(conditional)
+        self.interner_ref().conditional(conditional)
     }
 
     fn mapped(&self, mapped: MappedType) -> TypeId {
-        self.storage.interner_ref().mapped(mapped)
+        self.interner_ref().mapped(mapped)
     }
 
     fn reference(&self, symbol: SymbolRef) -> TypeId {
-        self.storage.interner_ref().reference(symbol)
+        self.interner_ref().reference(symbol)
     }
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
-        self.storage.interner_ref().application(base, args)
+        self.interner_ref().application(base, args)
     }
 }
 
@@ -359,17 +350,31 @@ impl crate::solver::db::QueryDatabase for SalsaDatabase {
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
-        self.storage.evaluate_type(type_id)
+        self.evaluate_type_query(type_id)
     }
 
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
-        self.storage.is_subtype_of(source, target)
+        self.is_subtype_of_query(source, target)
+    }
+
+    fn get_index_signatures(&self, type_id: TypeId) -> crate::solver::IndexInfo {
+        self.interner_ref().get_index_signatures(type_id)
+    }
+
+    fn is_nullish_type(&self, type_id: TypeId) -> bool {
+        crate::solver::narrowing::is_nullish_type(self.interner_ref().as_ref(), type_id)
+    }
+
+    fn remove_nullish(&self, type_id: TypeId) -> TypeId {
+        crate::solver::narrowing::remove_nullish(self.interner_ref().as_ref(), type_id)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solver::db::{QueryDatabase, TypeDatabase};
+    use crate::solver::types::IntrinsicKind;
 
     /// Test that SalsaDatabase can be created and basic queries work.
     #[test]
@@ -420,8 +425,11 @@ mod tests {
         // string is a subtype of any
         assert!(db.is_subtype_of(TypeId::STRING, TypeId::ANY));
 
-        // any is not a subtype of string
-        assert!(!db.is_subtype_of(TypeId::ANY, TypeId::STRING));
+        // any is assignable to string (TypeScript: any is both top and bottom)
+        assert!(db.is_subtype_of(TypeId::ANY, TypeId::STRING));
+
+        // number is not a subtype of string
+        assert!(!db.is_subtype_of(TypeId::NUMBER, TypeId::STRING));
     }
 
     /// Test string interning query.
