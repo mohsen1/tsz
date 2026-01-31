@@ -2998,12 +2998,10 @@ impl Server {
         let mut checker = CheckerState::new(
             &arena,
             &binder,
-            &type_interner,
+            &query_cache,
             file_path.to_string(),
             checker_options,
         );
-
-        checker.ctx.set_query_db(&query_cache);
 
         if !all_contexts.is_empty() {
             checker.ctx.set_lib_contexts(all_contexts);
@@ -3142,12 +3140,10 @@ impl Server {
             let mut checker = CheckerState::new(
                 &bound.arena,
                 &bound.binder,
-                &type_interner,
+                &query_cache,
                 bound.name.clone(),
                 checker_options.clone(),
             );
-
-            checker.ctx.set_query_db(&query_cache);
 
             if !all_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(all_contexts.clone());

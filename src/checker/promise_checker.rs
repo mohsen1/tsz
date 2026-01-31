@@ -530,7 +530,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true for the null type, undefined type, or unions that only
     /// contain null and/or undefined.
     pub fn is_null_or_undefined_only(&self, return_type: TypeId) -> bool {
-        solver_narrowing::is_definitely_nullish(self.ctx.types, return_type)
+        solver_narrowing::is_definitely_nullish(self.ctx.types.as_type_database(), return_type)
     }
 
     // Note: The `lower_type_with_bindings` helper method remains in state.rs

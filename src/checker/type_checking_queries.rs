@@ -876,7 +876,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> (Option<TypeId>, Option<TypeId>) {
-        crate::solver::split_nullish_type(&self.ctx.types, type_id)
+        crate::solver::split_nullish_type(self.ctx.types.as_type_database(), type_id)
     }
 
     /// Report an error for possibly nullish object access.

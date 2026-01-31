@@ -451,7 +451,7 @@ impl ProjectFile {
             CheckerState::with_cache(
                 self.parser.get_arena(),
                 &self.binder,
-                &self.type_interner,
+                &query_cache,
                 file_name,
                 cache,
                 compiler_options,
@@ -460,13 +460,12 @@ impl ProjectFile {
             CheckerState::new(
                 self.parser.get_arena(),
                 &self.binder,
-                &self.type_interner,
+                &query_cache,
                 file_name,
                 compiler_options,
             )
         };
 
-        checker.ctx.set_query_db(&query_cache);
         checker.check_source_file(self.root);
 
         let diagnostics = checker

@@ -1281,7 +1281,7 @@ fn collect_diagnostics(
             CheckerState::with_cache(
                 &file.arena,
                 &binder,
-                &program.type_interner,
+                &query_cache,
                 file.file_name.clone(),
                 cached,
                 compiler_options,
@@ -1290,12 +1290,11 @@ fn collect_diagnostics(
             CheckerState::new(
                 &file.arena,
                 &binder,
-                &program.type_interner,
+                &query_cache,
                 file.file_name.clone(),
                 compiler_options,
             )
         };
-        checker.ctx.set_query_db(&query_cache);
         checker.ctx.report_unresolved_imports = true;
         // Set lib contexts for global symbol resolution (console, Array, Promise, etc.)
         if !lib_contexts.is_empty() {
