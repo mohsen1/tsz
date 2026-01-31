@@ -6,7 +6,7 @@
  */
 
 const commands = {
-  "Conformance Tests (Docker - SAFE)": {
+  "Conformance Tests": {
     "Run 500 tests": "./conformance/run-conformance.sh",
     "Run 100 tests": "./conformance/run-conformance.sh --max=100",
     "Run all tests": "./conformance/run-conformance.sh --all",
@@ -14,13 +14,13 @@ const commands = {
     "Verbose output": "./conformance/run-conformance.sh --verbose",
   },
   
-  "Rust Unit Tests (Docker)": {
+  "Rust Unit Tests": {
     "Run all tests": "./scripts/test.sh",
     "Run specific test": "./scripts/test.sh test_name",
     "Run benchmarks": "./scripts/test.sh --bench",
   },
   
-  "Single File Debugging (⚠️ Host)": {
+  "Single File Debugging": {
     "Test single file": "node scripts/run-single-test.mjs path/to/test.ts",
     "Validate WASM": "node scripts/validate-wasm.mjs",
   },
@@ -49,7 +49,7 @@ Object.entries(commands).forEach(([category, cmds]) => {
 });
 
 console.log(`╔══════════════════════════════════════════════════════════╗
-║  ⚠️  Always use Docker scripts for conformance tests!    ║
-║  Direct execution can cause OOM/hangs on your machine.   ║
+║  Scripts apply resource limits (memory, timeout) to      ║
+║  protect the host from runaway tests.                    ║
 ╚══════════════════════════════════════════════════════════╝
 `);

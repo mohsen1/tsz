@@ -85,7 +85,7 @@ echo "✅ Clippy passed"
 # Re-add files modified by fmt/clippy
 git add -u
 
-# 3. Run targeted unit tests (--no-sandbox for speed, Docker used in CI)
+# 3. Run targeted unit tests
 echo "3️⃣  Tests..."
 
 # Extract module names for targeted test filtering

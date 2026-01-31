@@ -51,7 +51,7 @@ match self.types.lookup(type_id) {
 # Build
 cargo build
 
-# Unit tests (use Docker wrapper)
+# Unit tests
 ./scripts/test.sh
 
 # Conformance tests (fast iteration)

@@ -28,7 +28,6 @@ required-features = ["cli"]
 [features]
 default = ["cli"]
 cli = []
-enforce_docker_tests = []
 experimental_salsa = []
 embedded_libs = []    # Embed lib.d.ts files in binary (not needed - libs load from disk)
 preparsed_libs = ["embedded_libs"]  # Pre-parsed lib loading (requires embedded_libs)
