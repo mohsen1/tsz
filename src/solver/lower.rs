@@ -877,8 +877,19 @@ impl<'a> TypeLowering<'a> {
     }
 
     pub fn lower_interface_declarations(&self, declarations: &[NodeIndex]) -> TypeId {
+        self.lower_interface_declarations_with_params(declarations).0
+    }
+
+    /// Lower interface declarations and also return the collected type parameters.
+    /// This is needed when registering generic lib types (e.g. Array<T>) so that
+    /// the actual type parameters from the interface definition are used rather
+    /// than synthesizing fresh ones that may have different TypeIds.
+    pub fn lower_interface_declarations_with_params(
+        &self,
+        declarations: &[NodeIndex],
+    ) -> (TypeId, Vec<TypeParamInfo>) {
         if declarations.is_empty() {
-            return TypeId::ERROR;
+            return (TypeId::ERROR, Vec::new());
         }
 
         let mut parts = InterfaceParts::new();
@@ -899,13 +910,15 @@ impl<'a> TypeLowering<'a> {
         }
 
         if !found {
-            return TypeId::ERROR;
+            return (TypeId::ERROR, Vec::new());
         }
 
-        if let Some(params) = type_params {
+        let collected_params = if let Some(params) = type_params {
             self.push_type_param_scope();
-            let _ = self.collect_type_parameters(params);
-        }
+            self.collect_type_parameters(params)
+        } else {
+            Vec::new()
+        };
 
         for &decl_idx in declarations {
             let Some(node) = self.arena.get(decl_idx) else {
@@ -921,7 +934,7 @@ impl<'a> TypeLowering<'a> {
             self.pop_type_param_scope();
         }
 
-        self.finish_interface_parts(parts)
+        (self.finish_interface_parts(parts), collected_params)
     }
 
     pub fn lower_type_alias_declaration(&self, alias: &TypeAliasData) -> TypeId {

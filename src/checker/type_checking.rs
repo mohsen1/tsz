@@ -2430,8 +2430,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_missing_global_types(&mut self) {
         use crate::lib_loader;
 
-        // Core global types that TypeScript requires when --noLib is used
-        // These are fundamental types that should always exist unless explicitly disabled
+        // Core global types that TypeScript requires.
+        // These are fundamental types that should always exist unless explicitly disabled.
         const CORE_GLOBAL_TYPES: &[&str] = &[
             "Array",
             "Boolean",
@@ -2447,10 +2447,9 @@ impl<'a> CheckerState<'a> {
         let has_lib = self.ctx.has_lib_loaded();
 
         // Only emit TS2318 errors when:
-        // - no_lib is false (user expects lib files)
-        // - AND lib files are not loaded
-        // When no_lib is true, the user explicitly opted out of lib files,
-        // so we shouldn't emit errors for missing global types.
+        // - no_lib is false (user expects lib files to be loaded)
+        // - AND lib files are not loaded (something went wrong with lib loading)
+        // When no_lib is true, the user explicitly opted out of lib files.
         if !has_lib && !self.ctx.no_lib() {
             for &type_name in CORE_GLOBAL_TYPES {
                 // Check if the type is declared in the current file
@@ -2478,7 +2477,7 @@ impl<'a> CheckerState<'a> {
     /// hardcoded lists. For example, "foo".length will look up the String interface
     /// from lib.d.ts and find the length property there.
     pub(crate) fn register_boxed_types(&mut self) {
-        use crate::solver::types::{IntrinsicKind, TypeParamInfo};
+        use crate::solver::types::IntrinsicKind;
 
         // Only register if lib files are loaded
         if !self.ctx.has_lib_loaded() {
@@ -2492,15 +2491,13 @@ impl<'a> CheckerState<'a> {
         let boolean_type = self.resolve_lib_type_by_name("Boolean");
         let symbol_type = self.resolve_lib_type_by_name("Symbol");
         let bigint_type = self.resolve_lib_type_by_name("BigInt");
-        let array_type = self.resolve_lib_type_by_name("Array");
+        let object_type = self.resolve_lib_type_by_name("Object");
+        let function_type = self.resolve_lib_type_by_name("Function");
 
-        // Create type parameter info for Array<T> - the Array interface has one type parameter "T"
-        let t_atom = self.ctx.types.intern_string("T");
-        let array_type_params = vec![TypeParamInfo {
-            name: t_atom,
-            constraint: None,
-            default: None,
-        }];
+        // For Array<T>, extract the actual type parameters from the interface definition
+        // rather than synthesizing fresh ones. This ensures the T used in Array's method
+        // signatures has the same TypeId as the T registered in TypeEnvironment.
+        let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
 
         // 2. Populate the environment
         // We use try_borrow_mut to be safe, though at this stage it should be free
@@ -2519,6 +2516,12 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(ty) = bigint_type {
                 env.set_boxed_type(IntrinsicKind::Bigint, ty);
+            }
+            if let Some(ty) = object_type {
+                env.set_boxed_type(IntrinsicKind::Object, ty);
+            }
+            if let Some(ty) = function_type {
+                env.set_boxed_type(IntrinsicKind::Function, ty);
             }
             // Register the Array<T> interface for array property resolution
             if let Some(ty) = array_type {
