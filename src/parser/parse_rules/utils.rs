@@ -328,6 +328,11 @@ pub fn is_literal(token: SyntaxKind) -> bool {
 }
 
 /// Look ahead to check if "namespace"/"module" starts a declaration.
+///
+/// After `namespace`/`module`, a declaration follows if the next token is:
+/// - An identifier or keyword (e.g., `namespace Foo`, `namespace global`, `namespace string`)
+/// - A string literal (e.g., `module "foo"`)
+/// - An open brace (e.g., `module { }` - anonymous, but should be parsed as module)
 pub fn look_ahead_is_module_declaration(
     scanner: &mut ScannerState,
     current_token: SyntaxKind,
@@ -335,8 +340,8 @@ pub fn look_ahead_is_module_declaration(
     look_ahead_is(scanner, current_token, |token| {
         matches!(
             token,
-            SyntaxKind::Identifier | SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken
-        )
+            SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken
+        ) || is_identifier_or_keyword(token)
     })
 }
 
