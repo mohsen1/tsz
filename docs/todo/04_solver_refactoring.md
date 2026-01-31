@@ -117,7 +117,7 @@ in type lowering) can now proceed.
 - [x] Update all TypeKey pattern matches across solver
 - [x] Commit
 
-### 4.3 Migrate Lowering - FULL INFRASTRUCTURE COMPLETE ✅
+### 4.3 Migrate Lowering - PARTIAL MIGRATION COMPLETE ✅
 - [x] Add `DefinitionStore` to `CheckerContext`
 - [x] Add `symbol_to_def: FxHashMap<SymbolId, DefId>` mapping
 - [x] Add `get_or_create_def_id()` helper method
@@ -126,14 +126,20 @@ in type lowering) can now proceed.
 - [x] Add `TypeEnvironment.insert_def()` for DefId -> TypeId storage
 - [x] Add `TypeEvaluator` handling for `TypeKey::Lazy` in evaluation
 - [x] Add `register_resolved_type()` helper for dual SymbolRef/DefId mapping
-- [ ] Update type_literal_checker to use `create_lazy_type_ref()` for interfaces
-- [ ] Update type_literal_checker to use `create_lazy_type_ref()` for classes
-- [ ] Update type_literal_checker to use `create_lazy_type_ref()` for type aliases
-- [ ] Run conformance tests after each change
-- [ ] Commit
+- [x] Update all type resolution sites to register DefId mappings
+- [x] Update type_literal_checker to use `create_lazy_type_ref()` for interfaces
+- [x] Update type_literal_checker to use `create_lazy_type_ref()` for classes
+- [x] Update type_literal_checker to use `create_lazy_type_ref()` for type aliases
+- [x] Run conformance tests after each change
+- [x] Commit
 
-**Status**: Infrastructure is ready. Actual migration requires updating call sites
-to use `create_lazy_type_ref()` and `register_resolved_type()`, then testing.
+**Remaining Blockers** (require special handling):
+- Namespace/Module types: use `get_symbol_ref()` for exports map lookup
+- Enum types: use `get_symbol_ref()` for enum member resolution
+- Cycle detection fallback: classes mid-resolution not in TypeEnvironment yet
+
+These sites still use `TypeKey::Ref(SymbolRef)` because they need special
+symbol-based lookups that aren't supported by the TypeEnvironment alone.
 
 ### 4.4 Remove Legacy SymbolRef Variants - NOT STARTED
 - [ ] Remove `TypeKey::Ref(SymbolRef)` after all uses migrated
