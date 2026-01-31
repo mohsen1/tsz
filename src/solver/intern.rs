@@ -1264,6 +1264,7 @@ impl TypeInterner {
 
     /// Check if two property types are disjoint (Rule #21: Intersection Reduction).
     /// Returns true if the intersection of these types would be never.
+    #[allow(dead_code)]
     fn property_types_disjoint(&self, left: TypeId, right: TypeId) -> bool {
         // Same type is not disjoint
         if left == right {
