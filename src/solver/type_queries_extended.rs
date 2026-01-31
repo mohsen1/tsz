@@ -1819,6 +1819,30 @@ pub fn get_symbol_ref(
     }
 }
 
+/// Get the DefId from a Lazy type.
+pub fn get_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::solver::def::DefId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Lazy(def_id)) => Some(def_id),
+        _ => None,
+    }
+}
+
+/// Get the symbol ref or DefId from a Ref or Lazy type.
+/// Returns (Option<SymbolRef>, Option<DefId>) - one or the other will be Some.
+pub fn get_type_identity(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> (
+    Option<crate::solver::types::SymbolRef>,
+    Option<crate::solver::def::DefId>,
+) {
+    match db.lookup(type_id) {
+        Some(TypeKey::Ref(sym_ref)) => (Some(sym_ref), None),
+        Some(TypeKey::Lazy(def_id)) => (None, Some(def_id)),
+        _ => (None, None),
+    }
+}
+
 /// Get the mapped type ID if the type is a Mapped type.
 pub fn get_mapped_type_id(
     db: &dyn TypeDatabase,
@@ -1865,6 +1889,8 @@ pub enum SymbolResolutionTraversalKind {
     },
     /// Ref type - resolve the symbol
     Ref(crate::solver::types::SymbolRef),
+    /// Lazy(DefId) type - resolve via DefId
+    Lazy(crate::solver::def::DefId),
     /// Type parameter - recurse into constraint/default
     TypeParameter {
         constraint: Option<TypeId>,
@@ -1915,6 +1941,7 @@ pub fn classify_for_symbol_resolution_traversal(
             }
         }
         TypeKey::Ref(sym_ref) => SymbolResolutionTraversalKind::Ref(sym_ref),
+        TypeKey::Lazy(def_id) => SymbolResolutionTraversalKind::Lazy(def_id),
         TypeKey::TypeParameter(param) | TypeKey::Infer(param) => {
             SymbolResolutionTraversalKind::TypeParameter {
                 constraint: param.constraint,

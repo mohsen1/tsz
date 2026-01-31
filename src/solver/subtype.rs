@@ -444,6 +444,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    pub(crate) fn resolve_lazy_type(&self, type_id: TypeId) -> TypeId {
+        match self.interner.lookup(type_id) {
+            Some(TypeKey::Lazy(def_id)) => self
+                .resolver
+                .resolve_lazy(def_id, self.interner)
+                .unwrap_or(type_id),
+            _ => type_id,
+        }
+    }
+
     /// Check if `source` is a subtype of `target`.
     /// This is the main entry point for subtype checking.
     pub fn is_subtype_of(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -989,6 +999,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Source is structural, target is Ref - resolve and check
             (_, TypeKey::Ref(t_sym)) => self.check_to_ref_subtype(source, target, t_sym),
+
+            // Lazy(DefId) types - same DefId means same type
+            (TypeKey::Lazy(s_def), TypeKey::Lazy(t_def)) => {
+                if s_def == t_def {
+                    SubtypeResult::True
+                } else {
+                    // Different DefIds - try to resolve both and compare structurally
+                    let s_resolved = self.resolve_lazy_type(source);
+                    let t_resolved = self.resolve_lazy_type(target);
+                    if s_resolved != source || t_resolved != target {
+                        self.check_subtype(s_resolved, t_resolved)
+                    } else {
+                        SubtypeResult::False
+                    }
+                }
+            }
+
+            // Source is Lazy, target is structural - resolve and check
+            (TypeKey::Lazy(_), _) => {
+                let resolved = self.resolve_lazy_type(source);
+                if resolved != source {
+                    self.check_subtype(resolved, target)
+                } else {
+                    SubtypeResult::False
+                }
+            }
+
+            // Source is structural, target is Lazy - resolve and check
+            (_, TypeKey::Lazy(_)) => {
+                let resolved = self.resolve_lazy_type(target);
+                if resolved != target {
+                    self.check_subtype(source, resolved)
+                } else {
+                    SubtypeResult::False
+                }
+            }
 
             // Index access types
             (TypeKey::IndexAccess(s_obj, s_idx), TypeKey::IndexAccess(t_obj, t_idx)) => {
