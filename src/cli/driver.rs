@@ -37,11 +37,60 @@ use crate::parser::syntax_kind_ext;
 use crate::solver::{TypeFormatter, TypeId};
 use rustc_hash::{FxHashMap, FxHasher};
 
+/// Reason why a file was included in compilation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileInclusionReason {
+    /// File specified as a root file (CLI argument or files list)
+    RootFile,
+    /// File matched by include pattern in tsconfig
+    IncludePattern(String),
+    /// File imported from another file
+    ImportedFrom(PathBuf),
+    /// File is a lib file (e.g., lib.es2020.d.ts)
+    LibFile,
+    /// Type reference from another file
+    TypeReference(PathBuf),
+    /// Referenced in a /// <reference> directive
+    TripleSlashReference(PathBuf),
+}
+
+impl std::fmt::Display for FileInclusionReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FileInclusionReason::RootFile => write!(f, "Root file specified"),
+            FileInclusionReason::IncludePattern(pattern) => {
+                write!(f, "Matched by include pattern '{}'", pattern)
+            }
+            FileInclusionReason::ImportedFrom(path) => {
+                write!(f, "Imported from '{}'", path.display())
+            }
+            FileInclusionReason::LibFile => write!(f, "Library file"),
+            FileInclusionReason::TypeReference(path) => {
+                write!(f, "Type reference from '{}'", path.display())
+            }
+            FileInclusionReason::TripleSlashReference(path) => {
+                write!(f, "Referenced from '{}'", path.display())
+            }
+        }
+    }
+}
+
+/// Information about an included file
+#[derive(Debug, Clone)]
+pub struct FileInfo {
+    /// Path to the file
+    pub path: PathBuf,
+    /// Why this file was included
+    pub reasons: Vec<FileInclusionReason>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CompilationResult {
     pub diagnostics: Vec<Diagnostic>,
     pub emitted_files: Vec<PathBuf>,
     pub files_read: Vec<PathBuf>,
+    /// Files with their inclusion reasons (for --explainFiles)
+    pub file_infos: Vec<FileInfo>,
 }
 
 #[derive(Default)]
@@ -237,7 +286,16 @@ impl CompilationCache {
 }
 
 pub fn compile(args: &CliArgs, cwd: &Path) -> Result<CompilationResult> {
-    compile_inner(args, cwd, None, None, None)
+    compile_inner(args, cwd, None, None, None, None)
+}
+
+/// Compile a specific project by config path (used for --build mode with project references)
+pub fn compile_project(
+    args: &CliArgs,
+    cwd: &Path,
+    config_path: &Path,
+) -> Result<CompilationResult> {
+    compile_inner(args, cwd, None, None, None, Some(config_path))
 }
 
 pub(crate) fn compile_with_cache(
@@ -245,7 +303,7 @@ pub(crate) fn compile_with_cache(
     cwd: &Path,
     cache: &mut CompilationCache,
 ) -> Result<CompilationResult> {
-    compile_inner(args, cwd, Some(cache), None, None)
+    compile_inner(args, cwd, Some(cache), None, None, None)
 }
 
 pub(crate) fn compile_with_cache_and_changes(
@@ -266,7 +324,7 @@ pub(crate) fn compile_with_cache_and_changes(
     }
 
     cache.invalidate_paths(canonical_paths.iter().cloned());
-    let result = compile_inner(args, cwd, Some(cache), Some(&canonical_paths), None)?;
+    let result = compile_inner(args, cwd, Some(cache), Some(&canonical_paths), None, None)?;
 
     let exports_changed = canonical_paths
         .iter()
@@ -297,6 +355,7 @@ pub(crate) fn compile_with_cache_and_changes(
         Some(cache),
         Some(changed_paths),
         Some(&dependents),
+        None,
     )
 }
 
@@ -306,9 +365,14 @@ fn compile_inner(
     mut cache: Option<&mut CompilationCache>,
     changed_paths: Option<&[PathBuf]>,
     forced_dirty_paths: Option<&HashSet<PathBuf>>,
+    explicit_config_path: Option<&Path>,
 ) -> Result<CompilationResult> {
     let cwd = canonicalize_or_owned(cwd);
-    let tsconfig_path = resolve_tsconfig_path(&cwd, args.project.as_deref())?;
+    let tsconfig_path = if let Some(path) = explicit_config_path {
+        Some(path.to_path_buf())
+    } else {
+        resolve_tsconfig_path(&cwd, args.project.as_deref())?
+    };
     let config = load_config(tsconfig_path.as_deref())?;
 
     let mut resolved = resolve_compiler_options(
@@ -377,6 +441,9 @@ fn compile_inner(
     // Collect all files that were read (including dependencies) before sources is moved
     let mut files_read: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
     files_read.sort();
+
+    // Build file info with inclusion reasons
+    let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
     let lib_paths: Vec<PathBuf> = if resolved.checker.no_lib || disable_default_libs {
@@ -459,7 +526,64 @@ fn compile_inner(
         diagnostics,
         emitted_files,
         files_read,
+        file_infos,
     })
+}
+
+/// Build file info with inclusion reasons
+fn build_file_infos(
+    sources: &[SourceEntry],
+    root_file_paths: &[PathBuf],
+    args: &CliArgs,
+    config: Option<&crate::cli::config::TsConfig>,
+    _base_dir: &Path,
+) -> Vec<FileInfo> {
+    let root_set: std::collections::HashSet<_> = root_file_paths.iter().collect();
+    let cli_files: std::collections::HashSet<_> = args.files.iter().collect();
+
+    // Get include patterns if available
+    let include_patterns = config
+        .and_then(|c| c.include.as_ref())
+        .map(|patterns| patterns.join(", "))
+        .unwrap_or_else(|| "**/*".to_string());
+
+    sources
+        .iter()
+        .map(|source| {
+            let mut reasons = Vec::new();
+
+            // Check if it's a CLI-specified file
+            if cli_files.iter().any(|f| source.path.ends_with(f)) {
+                reasons.push(FileInclusionReason::RootFile);
+            }
+            // Check if it's a lib file (based on filename pattern)
+            else if is_lib_file(&source.path) {
+                reasons.push(FileInclusionReason::LibFile);
+            }
+            // Check if it's a root file from discovery
+            else if root_set.contains(&source.path) {
+                reasons.push(FileInclusionReason::IncludePattern(
+                    include_patterns.clone(),
+                ));
+            }
+            // Otherwise it was likely imported (we don't track precise imports yet)
+            else {
+                reasons.push(FileInclusionReason::ImportedFrom(PathBuf::from("<import>")));
+            }
+
+            FileInfo {
+                path: source.path.clone(),
+                reasons,
+            }
+        })
+        .collect()
+}
+
+/// Check if a file is a TypeScript library file
+fn is_lib_file(path: &Path) -> bool {
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+    file_name.starts_with("lib.") && file_name.ends_with(".d.ts")
 }
 
 struct SourceMeta {
