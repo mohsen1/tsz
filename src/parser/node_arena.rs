@@ -1218,12 +1218,20 @@ impl NodeArena {
 
     /// Add a try statement node
     pub fn add_try(&mut self, kind: u16, pos: u32, end: u32, data: TryData) -> NodeIndex {
+        let try_block = data.try_block;
+        let catch_clause = data.catch_clause;
+        let finally_block = data.finally_block;
         let data_index = self.try_data.len() as u32;
         self.try_data.push(data);
         let index = self.nodes.len() as u32;
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+
+        let parent = NodeIndex(index);
+        self.set_parent(try_block, parent);
+        self.set_parent(catch_clause, parent);
+        self.set_parent(finally_block, parent);
+        parent
     }
 
     /// Add a catch clause node
