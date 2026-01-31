@@ -1033,12 +1033,15 @@ impl NodeArena {
         end: u32,
         data: DecoratorData,
     ) -> NodeIndex {
+        let expression = data.expression;
         let data_index = self.decorators.len() as u32;
         self.decorators.push(data);
         let index = self.nodes.len() as u32;
         self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
-        NodeIndex(index)
+        let parent = NodeIndex(index);
+        self.set_parent(expression, parent);
+        parent
     }
 
     /// Add a heritage clause node
