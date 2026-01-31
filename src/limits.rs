@@ -31,6 +31,13 @@ pub const MAX_EXPR_CHECK_DEPTH: u32 = 500;
 /// Prevents infinite recursion in recursive generic types like `type Foo<T> = Foo<Foo<T>>`.
 pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
 
+/// Maximum depth for general checker recursion guards.
+/// Used by enter_recursion/leave_recursion on checker functions like
+/// get_construct_type_from_type, type_reference_symbol_type, etc.
+/// Each guarded cycle adds ~7-14 stack frames; depth 50 ≈ 350-700 frames (~0.7 MB),
+/// well within the 8 MB default stack.
+pub const MAX_CHECKER_RECURSION_DEPTH: u32 = 50;
+
 /// Maximum depth for function call resolution.
 /// Prevents infinite recursion when resolving overloaded function calls.
 pub const MAX_CALL_DEPTH: u32 = 20;
