@@ -1,8 +1,8 @@
-# WASM Emitter Benchmarks
+# Benchmarks
 
 ## Overview
 
-This document describes the benchmark suite for the TypeScript → Rust/WASM emitter.
+This document describes the benchmark suite for the tsz compiler.
 All benchmarks use [Criterion.rs](https://github.com/bheisler/criterion.rs) for statistical analysis.
 
 ## Running Benchmarks
@@ -23,7 +23,7 @@ All benchmarks use [Criterion.rs](https://github.com/bheisler/criterion.rs) for 
 
 ## Emitter Benchmarks
 
-Located in: `wasm/benches/emitter_bench.rs`
+Located in: `benches/emitter_bench.rs`
 
 ### 1. `emit_simple`
 - **Purpose**: Baseline emitter performance on trivial code
@@ -114,7 +114,7 @@ Criterion automatically detects performance regressions:
 
 ### Adding New Benchmarks
 
-1. Add test function to `wasm/benches/emitter_bench.rs`
+1. Add test function to `benches/emitter_bench.rs`
 2. Follow naming convention: `bench_emit_<feature>`
 3. Use `black_box()` to prevent compiler optimization
 4. Add to `criterion_group!` macro

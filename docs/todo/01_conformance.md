@@ -26,9 +26,6 @@
 - Pass rate: ~47.9% (2000 tests)
 - Key issue categories identified below
 
-### Fixed Issues
-- [x] TS1242: Abstract modifier on constructors - now correctly reports error
-
 ### Top Extra Errors (false positives we emit)
 | Code | Count | Description | Root Cause |
 |------|-------|-------------|------------|
