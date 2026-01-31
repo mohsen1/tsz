@@ -1434,6 +1434,7 @@ impl<'a> FlowGraphBuilder<'a> {
 mod tests {
     use super::*;
     use crate::parser::ParserState;
+    use crate::parser::state::{CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR};
 
     #[test]
     fn test_flow_graph_builder_basic() {
@@ -1734,6 +1735,7 @@ console.log(x);
 "#;
 
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.context_flags |= CONTEXT_FLAG_GENERATOR; // Set generator context for parsing
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1852,6 +1854,7 @@ console.log(x);
 "#;
 
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.context_flags |= CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR; // Set async and generator context
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1980,6 +1983,7 @@ console.log(x);
 "#;
 
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.context_flags |= CONTEXT_FLAG_GENERATOR; // Set generator context for parsing
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2020,6 +2024,7 @@ yield 3;
 "#;
 
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.context_flags |= CONTEXT_FLAG_GENERATOR; // Set generator context for parsing
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();

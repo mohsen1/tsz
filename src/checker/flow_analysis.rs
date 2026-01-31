@@ -1663,16 +1663,22 @@ impl<'a> CheckerState<'a> {
     ///
     /// This performs flow-sensitive analysis to determine if a variable
     /// has been assigned on all code paths leading to the usage point.
-    ///
-    /// NOTE: Currently returns true to reduce false positives in conformance tests.
-    /// A proper implementation would perform flow-sensitive analysis to track
-    /// assignments on all code paths. This is a known limitation.
-    pub(crate) fn is_definitely_assigned_at(&self, _idx: NodeIndex) -> bool {
-        // TODO: Implement proper flow-sensitive definite assignment analysis
-        // For now, return true to avoid excessive TS2454 errors in conformance tests.
-        // This means we may miss some real "use before assignment" errors, but
-        // significantly reduces false positives compared to always returning false.
-        true
+    pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
+        // Get the flow node for this identifier usage
+        let flow_node = match self.ctx.binder.get_node_flow(idx) {
+            Some(flow) => flow,
+            None => return true, // No flow info - assume assigned to avoid false positives
+        };
+
+        // Create a flow analyzer and check definite assignment
+        let analyzer = FlowAnalyzer::with_node_types(
+            self.ctx.arena,
+            self.ctx.binder,
+            self.ctx.types,
+            &self.ctx.node_types,
+        );
+
+        analyzer.is_definitely_assigned(idx, flow_node)
     }
 
     // =========================================================================

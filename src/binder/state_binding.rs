@@ -2029,6 +2029,10 @@ impl BinderState {
                             self.bind_expression(arena, arg);
                         }
                     }
+                    // Create CALL flow node for all call expressions
+                    let flow = self.create_flow_call(idx);
+                    self.current_flow = flow;
+                    // Also create ARRAY_MUTATION flow node if it's an array mutation
                     if self.is_array_mutation_call(arena, idx) {
                         let flow = self.create_flow_array_mutation(idx);
                         self.current_flow = flow;
