@@ -1699,7 +1699,8 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::GENERIC_TYPE_REQUIRES_ARGS,
                 &[name, &required_count.to_string()],
             );
-            self.ctx.diagnostics.push(Diagnostic {
+            // Use push_diagnostic for deduplication - same type may be resolved multiple times
+            self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS,
                 category: DiagnosticCategory::Error,
                 message_text: message,
