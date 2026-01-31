@@ -2089,6 +2089,13 @@ impl<'a> CheckerState<'a> {
         self.ctx.compiler_options.strict_function_types
     }
 
+    pub(crate) fn resolve_allow_unreachable_code_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@allowunreachablecode") {
+            return value;
+        }
+        self.ctx.compiler_options.allow_unreachable_code
+    }
+
     // =========================================================================
     // Duplicate Declaration Resolution
     // =========================================================================
