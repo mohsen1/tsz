@@ -788,7 +788,8 @@ impl Server {
             "suggestionDiagnosticsSync" => self.handle_suggestion_diagnostics_sync(seq, &request),
             "geterr" => self.handle_geterr(seq, &request),
             "geterrForProject" => self.handle_geterr_for_project(seq, &request),
-            "navtree" | "navbar" => self.handle_navtree(seq, &request),
+            "navtree" => self.handle_navtree(seq, &request),
+            "navbar" => self.handle_navbar(seq, &request),
             "navto" | "navTo" | "navto-full" | "navTo-full" => self.handle_navto(seq, &request),
             "documentHighlights" => self.handle_document_highlights(seq, &request),
             "rename" | "rename-full" => self.handle_rename(seq, &request),
@@ -1794,22 +1795,148 @@ impl Server {
             let child_items: Vec<serde_json::Value> =
                 symbols.iter().map(symbol_to_navtree).collect();
 
+            // Compute the end span based on source text length
+            let total_lines = source_text.lines().count();
+            let last_line_len = source_text.lines().last().map(|l| l.len()).unwrap_or(0);
             Some(serde_json::json!({
-                "text": "<module>",
-                "kind": "module",
+                "text": "<global>",
+                "kind": "script",
                 "childItems": child_items,
-                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
+                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}}],
             }))
         })();
         self.stub_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({
-                "text": "<module>",
-                "kind": "module",
+                "text": "<global>",
+                "kind": "script",
                 "childItems": [],
                 "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
             }))),
+        )
+    }
+
+    fn handle_navbar(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
+            let symbols = provider.get_document_symbols(root);
+
+            fn symbol_to_navbar_item(
+                sym: &wasm::lsp::document_symbols::DocumentSymbol,
+                indent: usize,
+                items: &mut Vec<serde_json::Value>,
+            ) {
+                let kind = match sym.kind {
+                    wasm::lsp::document_symbols::SymbolKind::File => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Module => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Namespace => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Class => "class",
+                    wasm::lsp::document_symbols::SymbolKind::Method => "method",
+                    wasm::lsp::document_symbols::SymbolKind::Property => "property",
+                    wasm::lsp::document_symbols::SymbolKind::Field => "property",
+                    wasm::lsp::document_symbols::SymbolKind::Constructor => "constructor",
+                    wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
+                    wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
+                    wasm::lsp::document_symbols::SymbolKind::Function => "function",
+                    wasm::lsp::document_symbols::SymbolKind::Variable => "var",
+                    wasm::lsp::document_symbols::SymbolKind::Constant => "const",
+                    wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                    wasm::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
+                    _ => "unknown",
+                };
+                let child_items: Vec<serde_json::Value> = sym
+                    .children
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "text": c.name,
+                            "kind": match c.kind {
+                                wasm::lsp::document_symbols::SymbolKind::Function => "function",
+                                wasm::lsp::document_symbols::SymbolKind::Class => "class",
+                                wasm::lsp::document_symbols::SymbolKind::Method => "method",
+                                wasm::lsp::document_symbols::SymbolKind::Property => "property",
+                                wasm::lsp::document_symbols::SymbolKind::Variable => "var",
+                                wasm::lsp::document_symbols::SymbolKind::Constant => "const",
+                                wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
+                                wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
+                                wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                                _ => "unknown",
+                            },
+                        })
+                    })
+                    .collect();
+                items.push(serde_json::json!({
+                    "text": sym.name,
+                    "kind": kind,
+                    "childItems": child_items,
+                    "indent": indent,
+                    "spans": [{
+                        "start": {
+                            "line": sym.range.start.line + 1,
+                            "offset": sym.range.start.character + 1,
+                        },
+                        "end": {
+                            "line": sym.range.end.line + 1,
+                            "offset": sym.range.end.character + 1,
+                        },
+                    }],
+                }));
+                for child in &sym.children {
+                    symbol_to_navbar_item(child, indent + 1, items);
+                }
+            }
+
+            let mut items = Vec::new();
+            // Root item
+            let total_lines = source_text.lines().count();
+            let last_line_len = source_text.lines().last().map(|l| l.len()).unwrap_or(0);
+            let child_items: Vec<serde_json::Value> = symbols
+                .iter()
+                .map(|sym| {
+                    serde_json::json!({
+                        "text": sym.name,
+                        "kind": match sym.kind {
+                            wasm::lsp::document_symbols::SymbolKind::Function => "function",
+                            wasm::lsp::document_symbols::SymbolKind::Class => "class",
+                            wasm::lsp::document_symbols::SymbolKind::Method => "method",
+                            wasm::lsp::document_symbols::SymbolKind::Property => "property",
+                            wasm::lsp::document_symbols::SymbolKind::Variable => "var",
+                            wasm::lsp::document_symbols::SymbolKind::Constant => "const",
+                            wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
+                            wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
+                            wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                            _ => "unknown",
+                        },
+                    })
+                })
+                .collect();
+            items.push(serde_json::json!({
+                "text": "<global>",
+                "kind": "script",
+                "childItems": child_items,
+                "indent": 0,
+                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}}],
+            }));
+            // Flatten children
+            for sym in &symbols {
+                symbol_to_navbar_item(sym, 1, &mut items);
+            }
+            Some(serde_json::json!(items))
+        })();
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!([{
+                "text": "<global>",
+                "kind": "script",
+                "childItems": [],
+                "indent": 0,
+                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
+            }]))),
         )
     }
 
