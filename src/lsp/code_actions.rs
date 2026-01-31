@@ -2728,3 +2728,268 @@ impl ImportRemoval {
         }
     }
 }
+
+// =============================================================================
+// Code Fix Info (for getCodeFixes protocol)
+// =============================================================================
+
+/// Information about a code fix, matching the TypeScript protocol format.
+/// This is used by the tsserver protocol handler to return code fixes.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeFixInfo {
+    /// The internal name of the code fix (e.g., "spelling", "import", "unusedIdentifier").
+    pub fix_name: String,
+    /// Human-readable description of the fix.
+    pub description: String,
+    /// The file changes to apply.
+    pub changes: Vec<CodeFixFileChange>,
+    /// Optional commands to run after applying the fix.
+    pub commands: Vec<serde_json::Value>,
+    /// An identifier for fix-all support (e.g., "fixSpelling").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_id: Option<String>,
+    /// Human-readable description of the fix-all action.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_all_description: Option<String>,
+}
+
+/// A file change in a code fix.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeFixFileChange {
+    pub file_name: String,
+    pub text_changes: Vec<CodeFixTextChange>,
+}
+
+/// A text change within a file.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeFixTextChange {
+    pub start: CodeFixPosition,
+    pub end: CodeFixPosition,
+    pub new_text: String,
+}
+
+/// A position in the tsserver protocol (1-based line/offset).
+#[derive(Debug, Clone, Serialize)]
+pub struct CodeFixPosition {
+    pub line: u32,
+    pub offset: u32,
+}
+
+/// Mapping from TypeScript diagnostic error codes to code fix metadata.
+/// This provides the fix_name, fix_id, and description templates for common fixes.
+pub struct CodeFixRegistry;
+
+impl CodeFixRegistry {
+    /// Get code fixes applicable for a given error code.
+    /// Returns a list of (fix_name, fix_id, description_template, fix_all_description) tuples.
+    pub fn fixes_for_error_code(error_code: u32) -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+        match error_code {
+            // === fixSpelling ===
+            // Property '{0}' does not exist on type '{1}'. Did you mean '{2}'?
+            2551 |
+            // Cannot find name '{0}'. Did you mean '{1}'?
+            2552 |
+            // Could not find name '{0}'. Did you mean '{1}'?
+            2839 |
+            // Cannot find namespace '{0}'. Did you mean '{1}'?
+            2833 |
+            // '{0}' has no exported member named '{1}'. Did you mean '{2}'?
+            2724 => {
+                vec![("spelling", "fixSpelling", "Change spelling", "Fix all detected spelling errors")]
+            }
+
+            // === import (fixMissingImport) ===
+            // Cannot find name '{0}'.
+            2304 |
+            // Cannot find namespace '{0}'.
+            2503 |
+            // '{0}' only refers to a type, but is being used as a value here.
+            2693 |
+            // Cannot find name '{0}'. Do you need to change your target library?
+            2583 => {
+                vec![
+                    ("import", "fixMissingImport", "Add import", "Add all missing imports"),
+                    // Also addMissingMember for 2304
+                    ("addMissingMember", "fixMissingMember", "Add missing member", "Add all missing members"),
+                ]
+            }
+
+            // === fixUnusedIdentifier ===
+            // '{0}' is declared but its value is never read.
+            6133 |
+            // '{0}' is declared but never used.  
+            6196 |
+            // Property '{0}' is declared but its value is never read.
+            6138 |
+            // All imports in import declaration are unused.
+            6192 |
+            // All destructured elements are unused.
+            6198 |
+            // All variables are unused.
+            6199 |
+            // All type parameters are unused.
+            6205 => {
+                vec![("unusedIdentifier", "unusedIdentifier_delete", "Remove unused declaration", "Delete all unused declarations")]
+            }
+
+            // === fixAddMissingMember ===
+            // Property '{0}' does not exist on type '{1}'.
+            2339 |
+            // Property '{0}' is missing in type '{1}' but required in type '{2}'.
+            2741 => {
+                vec![
+                    ("addMissingMember", "fixMissingMember", "Add missing member", "Add all missing members"),
+                    ("spelling", "fixSpelling", "Change spelling", "Fix all detected spelling errors"),
+                ]
+            }
+
+            // === fixAwaitInSyncFunction ===
+            // 'await' expressions are only allowed within async functions...
+            1308 |
+            // 'await' expressions are only allowed at top level of a module...
+            1375 |
+            // 'for await' loops are only allowed within async functions...
+            1103 => {
+                vec![("fixAwaitInSyncFunction", "fixAwaitInSyncFunction", "Add async modifier to containing function", "Add all missing async modifiers")]
+            }
+
+            // === fixOverrideModifier ===
+            // This member cannot have an 'override' modifier because it is not declared in the base class
+            4114 |
+            // This member must have an 'override' modifier because it overrides a member in base class
+            4113 => {
+                vec![("fixOverrideModifier", "fixAddOverrideModifier", "Add 'override' modifier", "Add all missing 'override' modifiers")]
+            }
+
+            // === fixClassIncorrectlyImplementsInterface ===
+            // Class '{0}' incorrectly implements interface '{1}'.
+            2420 => {
+                vec![("fixClassIncorrectlyImplementsInterface", "fixClassIncorrectlyImplementsInterface", "Implement interface", "Implement all unimplemented interfaces")]
+            }
+
+            // === fixClassDoesntImplementInheritedAbstractMember ===
+            // Non-abstract class '{0}' does not implement inherited abstract member...
+            2515 |
+            2654 => {
+                vec![("fixClassDoesntImplementInheritedAbstractMember", "fixClassDoesntImplementInheritedAbstractMember", "Implement inherited abstract class", "Implement all inherited abstract classes")]
+            }
+
+            // === addMissingAsync ===
+            // The return type of an async function must be Promise  
+            2705 |
+            // Type 'X' is not assignable to type 'Promise<Y>'  
+            2322 => {
+                vec![("addMissingAsync", "addMissingAsync", "Add async modifier", "Add all missing async modifiers")]
+            }
+
+            // === fixReturnTypeInAsyncFunction ===
+            // The return type of an async function or method must be the global Promise<T> type
+            2697 => {
+                vec![("fixReturnTypeInAsyncFunction", "fixReturnTypeInAsyncFunction", "Fix return type", "Fix all incorrect return types")]
+            }
+
+            // === fixMissingCallParentheses ===
+            // This condition will always return true since this function is always defined
+            2774 => {
+                vec![("fixMissingCallParentheses", "fixMissingCallParentheses", "Add missing call parentheses", "Add all missing call parentheses")]
+            }
+
+            // === fixConvertToMappedObjectType ===  
+            // An index signature parameter type cannot be a literal type or generic type.
+            1337 => {
+                vec![("fixConvertToMappedObjectType", "fixConvertToMappedObjectType", "Convert to mapped object type", "Convert all to mapped object types")]
+            }
+
+            // === fixStrictClassInitialization ===
+            // Property '{0}' has no initializer and is not definitely assigned in the constructor.
+            2564 => {
+                vec![
+                    ("addMissingPropertyDefiniteAssignmentAssertions", "addMissingPropertyDefiniteAssignmentAssertions", "Add definite assignment assertion", "Add all missing definite assignment assertions"),
+                    ("addMissingPropertyUndefinedType", "addMissingPropertyUndefinedType", "Add undefined type", "Add undefined type to all missing properties"),
+                    ("addMissingPropertyInitializer", "addMissingPropertyInitializer", "Add initializer", "Add initializers to all uninitialized properties"),
+                ]
+            }
+
+            // === fixEnableExperimentalDecorators ===
+            1219 => {
+                vec![("fixEnableExperimentalDecorators", "fixEnableExperimentalDecorators", "Enable experimental decorators", "Enable experimental decorators")]
+            }
+
+            // === fixExpectedComma ===
+            // ';' expected. (but actually a comma should be used)
+            1005 => {
+                vec![("fixExpectedComma", "fixExpectedComma", "Replace with comma", "Replace all expected commas")]
+            }
+
+            // === fixAddMissingConstraint ===
+            // Type parameter '{0}' has a circular constraint
+            2313 |
+            // Type '{0}' is not assignable to type '{1}' with constraint '{2}'.
+            2344 => {
+                vec![("addMissingConstraint", "addMissingConstraint", "Add missing constraint", "Add all missing constraints")]
+            }
+
+            // === fixUnreachableCode ===
+            // Unreachable code detected.
+            7027 => {
+                vec![("fixUnreachableCode", "fixUnreachableCode", "Remove unreachable code", "Remove all unreachable code")]
+            }
+
+            // === fixAddMissingNewOperator ===
+            // Value of type '{0}' is not callable. Did you mean to include 'new'?
+            2348 => {
+                vec![("fixAddMissingNewOperator", "fixAddMissingNewOperator", "Add missing 'new' operator", "Add all missing 'new' operators")]
+            }
+
+            // === fixCannotFindModule ===
+            // Cannot find module '{0}' or its corresponding type declarations.
+            2307 => {
+                vec![("fixCannotFindModule", "fixCannotFindModule", "Install missing types", "Install all missing type packages")]
+            }
+
+            // === fixReturnTypeInAsyncFunction / inferFromUsage ===
+            // Function lacks ending return statement and return type does not include 'undefined'.
+            2366 => {
+                vec![("inferFromUsage", "inferFromUsage", "Infer type from usage", "Infer all types from usage")]
+            }
+
+            // === fixNaNEquality ===
+            // This condition will always return '{0}'.
+            2845 => {
+                vec![("fixNaNEquality", "fixNaNEquality", "Use Number.isNaN()", "Use Number.isNaN() in all comparisons")]
+            }
+
+            _ => vec![],
+        }
+    }
+
+    /// Get all error codes that have registered code fixes.
+    pub fn supported_error_codes() -> Vec<u32> {
+        vec![
+            2551, 2552, 2839, 2833, 2724,     // fixSpelling
+            2304, 2503, 2693, 2583,             // import
+            6133, 6196, 6138, 6192, 6198, 6199, 6205, // fixUnusedIdentifier
+            2339, 2741,                         // fixAddMissingMember
+            1308, 1375, 1103,                   // fixAwaitInSyncFunction
+            4114, 4113,                         // fixOverrideModifier
+            2420,                               // fixClassIncorrectlyImplementsInterface
+            2515, 2654,                         // fixClassDoesntImplementInheritedAbstractMember
+            2705, 2322,                         // addMissingAsync
+            2697,                               // fixReturnTypeInAsyncFunction
+            2774,                               // fixMissingCallParentheses
+            1337,                               // fixConvertToMappedObjectType
+            2564,                               // fixStrictClassInitialization
+            1219,                               // fixEnableExperimentalDecorators
+            1005,                               // fixExpectedComma
+            2313, 2344,                         // fixAddMissingConstraint
+            7027,                               // fixUnreachableCode
+            2348,                               // fixAddMissingNewOperator
+            2307,                               // fixCannotFindModule
+            2366,                               // inferFromUsage
+            2845,                               // fixNaNEquality
+        ]
+    }
+}

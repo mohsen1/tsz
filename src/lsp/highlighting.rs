@@ -3,12 +3,17 @@
 //! Provides "highlight all occurrences" functionality that shows all
 //! references to the symbol at the cursor position, distinguishing
 //! between reads (references) and writes (assignments).
+//!
+//! Also supports keyword highlighting for matching control flow keywords:
+//! if/else, try/catch/finally, switch/case/default, while/do.
 
 use crate::binder::BinderState;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::references::FindReferences;
-use crate::parser::NodeIndex;
+use crate::lsp::utils::find_node_at_offset;
 use crate::parser::node::NodeArena;
+use crate::parser::{syntax_kind_ext, NodeIndex};
+use crate::scanner::SyntaxKind;
 
 /// The kind of highlight - distinguishes between reads and writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -91,12 +96,22 @@ impl<'a> DocumentHighlightProvider<'a> {
     ///
     /// Returns a list of all occurrences of the symbol, each with a range
     /// and optionally a kind (read/write) to distinguish the access pattern.
+    ///
+    /// If the cursor is on a control flow keyword (if, else, try, catch, etc.),
+    /// this returns matching keyword highlights instead.
     pub fn get_document_highlights(
         &self,
         root: NodeIndex,
         position: Position,
     ) -> Option<Vec<DocumentHighlight>> {
-        // Use FindReferences to get all occurrences
+        // First, check if we're on a keyword that should trigger keyword highlighting
+        if let Some(kw_highlights) = self.get_keyword_highlights(position) {
+            if !kw_highlights.is_empty() {
+                return Some(kw_highlights);
+            }
+        }
+
+        // Use FindReferences with detailed info for AST-based write detection
         let finder = FindReferences::new(
             self.arena,
             self.binder,
@@ -105,9 +120,28 @@ impl<'a> DocumentHighlightProvider<'a> {
             self.source_text,
         );
 
+        // Try the detailed path first for proper write access detection
+        if let Some(detailed_refs) = finder.find_references_detailed(root, position) {
+            let highlights: Vec<DocumentHighlight> = detailed_refs
+                .into_iter()
+                .map(|ref_info| {
+                    let kind = if ref_info.is_write_access {
+                        Some(DocumentHighlightKind::Write)
+                    } else {
+                        Some(DocumentHighlightKind::Read)
+                    };
+                    DocumentHighlight::new(ref_info.location.range, kind)
+                })
+                .collect();
+
+            if !highlights.is_empty() {
+                return Some(highlights);
+            }
+        }
+
+        // Fallback: use simple find_references with text-based heuristic detection
         let locations = finder.find_references(root, position)?;
 
-        // Convert locations to highlights with read/write detection
         let highlights: Vec<DocumentHighlight> = locations
             .into_iter()
             .map(|loc| {
@@ -123,10 +157,622 @@ impl<'a> DocumentHighlightProvider<'a> {
         }
     }
 
-    /// Detect whether a reference is a read or write.
+    /// Get keyword highlights for matching control flow keywords.
     ///
-    /// This is a heuristic-based approach that checks the surrounding
-    /// context to determine if the identifier is being read or written.
+    /// When the cursor is on a keyword like `if`, this returns highlights
+    /// for the matching `else` (and vice versa). Similarly for try/catch/finally,
+    /// switch/case/default, and while/do.
+    fn get_keyword_highlights(&self, position: Position) -> Option<Vec<DocumentHighlight>> {
+        let offset = self.line_map.position_to_offset(position, self.source_text)?;
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        let node = self.arena.get(node_idx)?;
+        let _kind = node.kind;
+
+        // Check if this is a keyword token or if we're inside a statement that
+        // starts with a keyword at our cursor position
+        let keyword_kind = self.get_keyword_at_offset(offset);
+
+        if keyword_kind.is_none() {
+            return None;
+        }
+
+        let kw = keyword_kind.unwrap();
+
+        match kw {
+            SyntaxKind::IfKeyword | SyntaxKind::ElseKeyword => {
+                self.highlight_if_else(node_idx, offset)
+            }
+            SyntaxKind::TryKeyword | SyntaxKind::CatchKeyword | SyntaxKind::FinallyKeyword => {
+                self.highlight_try_catch_finally(node_idx, offset)
+            }
+            SyntaxKind::SwitchKeyword | SyntaxKind::CaseKeyword | SyntaxKind::DefaultKeyword => {
+                self.highlight_switch_case(node_idx, offset)
+            }
+            SyntaxKind::WhileKeyword | SyntaxKind::DoKeyword => {
+                self.highlight_while_do(node_idx, offset)
+            }
+            SyntaxKind::ReturnKeyword => {
+                self.highlight_return(node_idx, offset)
+            }
+            SyntaxKind::BreakKeyword | SyntaxKind::ContinueKeyword => {
+                self.highlight_break_continue(node_idx, offset)
+            }
+            _ => None,
+        }
+    }
+
+    /// Determine the keyword at the given offset by checking the source text.
+    fn get_keyword_at_offset(&self, offset: u32) -> Option<SyntaxKind> {
+        let src = self.source_text;
+        let off = offset as usize;
+
+        // Try to read a keyword-like word starting at or around the offset
+        // We look for a word boundary and then check if it's a keyword
+        let start = self.find_word_start(off);
+        let end = self.find_word_end(off);
+
+        if start >= end || end > src.len() {
+            return None;
+        }
+
+        let word = &src[start..end];
+
+        match word {
+            "if" => Some(SyntaxKind::IfKeyword),
+            "else" => Some(SyntaxKind::ElseKeyword),
+            "try" => Some(SyntaxKind::TryKeyword),
+            "catch" => Some(SyntaxKind::CatchKeyword),
+            "finally" => Some(SyntaxKind::FinallyKeyword),
+            "switch" => Some(SyntaxKind::SwitchKeyword),
+            "case" => Some(SyntaxKind::CaseKeyword),
+            "default" => Some(SyntaxKind::DefaultKeyword),
+            "while" => Some(SyntaxKind::WhileKeyword),
+            "do" => Some(SyntaxKind::DoKeyword),
+            "return" => Some(SyntaxKind::ReturnKeyword),
+            "break" => Some(SyntaxKind::BreakKeyword),
+            "continue" => Some(SyntaxKind::ContinueKeyword),
+            _ => None,
+        }
+    }
+
+    fn find_word_start(&self, offset: usize) -> usize {
+        let bytes = self.source_text.as_bytes();
+        let mut start = offset;
+        while start > 0 && (bytes[start - 1] as char).is_alphanumeric() || (start > 0 && bytes[start - 1] == b'_') {
+            start -= 1;
+        }
+        start
+    }
+
+    fn find_word_end(&self, offset: usize) -> usize {
+        let bytes = self.source_text.as_bytes();
+        let len = bytes.len();
+        let mut end = offset;
+        while end < len && ((bytes[end] as char).is_alphanumeric() || bytes[end] == b'_') {
+            end += 1;
+        }
+        end
+    }
+
+    /// Create a Range for a keyword of known length at the given byte offset.
+    fn keyword_range(&self, offset: u32, keyword_len: u32) -> Range {
+        let start = self.line_map.offset_to_position(offset, self.source_text);
+        let end = self.line_map.offset_to_position(offset + keyword_len, self.source_text);
+        Range::new(start, end)
+    }
+
+    /// Find the parent if-statement for a node near the given offset.
+    fn find_enclosing_if_statement(&self, _node_idx: NodeIndex, offset: u32) -> Option<NodeIndex> {
+        // Walk all nodes to find the if statement that contains this offset
+        // and whose keyword is at or near this offset
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind == syntax_kind_ext::IF_STATEMENT
+                && node.pos <= offset
+                && node.end > offset
+            {
+                // Check if the "if" keyword is at the start of this node
+                let keyword_start = self.skip_whitespace_forward(node.pos as usize) as u32;
+                if keyword_start == offset || (keyword_start <= offset && offset < keyword_start + 2) {
+                    return Some(NodeIndex(i as u32));
+                }
+            }
+        }
+        // Fallback: find the tightest if statement containing offset
+        let mut best = NodeIndex::NONE;
+        let mut best_len = u32::MAX;
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind == syntax_kind_ext::IF_STATEMENT
+                && node.pos <= offset
+                && node.end > offset
+            {
+                let len = node.end - node.pos;
+                if len < best_len {
+                    best_len = len;
+                    best = NodeIndex(i as u32);
+                }
+            }
+        }
+        if best.is_some() { Some(best) } else { None }
+    }
+
+    /// Find the enclosing try statement for a node near the given offset.
+    fn find_enclosing_try_statement(&self, offset: u32) -> Option<NodeIndex> {
+        let mut best = NodeIndex::NONE;
+        let mut best_len = u32::MAX;
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind == syntax_kind_ext::TRY_STATEMENT
+                && node.pos <= offset
+                && node.end > offset
+            {
+                let len = node.end - node.pos;
+                if len < best_len {
+                    best_len = len;
+                    best = NodeIndex(i as u32);
+                }
+            }
+        }
+        if best.is_some() { Some(best) } else { None }
+    }
+
+    /// Find the enclosing switch statement for a node near the given offset.
+    fn find_enclosing_switch_statement(&self, offset: u32) -> Option<NodeIndex> {
+        let mut best = NodeIndex::NONE;
+        let mut best_len = u32::MAX;
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind == syntax_kind_ext::SWITCH_STATEMENT
+                && node.pos <= offset
+                && node.end > offset
+            {
+                let len = node.end - node.pos;
+                if len < best_len {
+                    best_len = len;
+                    best = NodeIndex(i as u32);
+                }
+            }
+        }
+        if best.is_some() { Some(best) } else { None }
+    }
+
+    /// Skip whitespace forward from an offset and return the new offset.
+    fn skip_whitespace_forward(&self, offset: usize) -> usize {
+        let bytes = self.source_text.as_bytes();
+        let mut i = offset;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        i
+    }
+
+    /// Highlight if/else keyword pairs.
+    ///
+    /// When on `if`, highlights the matching `else` (and `else if` chains).
+    /// When on `else`, highlights the matching `if`.
+    fn highlight_if_else(&self, _node_idx: NodeIndex, offset: u32) -> Option<Vec<DocumentHighlight>> {
+        // Find the if-statement that directly owns this keyword
+        let if_stmt_idx = self.find_owning_if_statement(offset)?;
+        let if_node = self.arena.get(if_stmt_idx)?;
+        let if_data = self.arena.get_if_statement(if_node)?;
+
+        let mut highlights = Vec::new();
+
+        // Highlight the "if" keyword at the start of this statement
+        let if_kw_offset = self.skip_whitespace_forward(if_node.pos as usize) as u32;
+        highlights.push(DocumentHighlight::text(self.keyword_range(if_kw_offset, 2)));
+
+        // If there's an else clause, highlight the "else" keyword
+        if !if_data.else_statement.is_none() {
+            if let Some(else_node) = self.arena.get(if_data.else_statement) {
+                // The "else" keyword appears between the then statement end
+                // and the else statement start
+                let then_node = self.arena.get(if_data.then_statement);
+                if let Some(then) = then_node {
+                    let search_start = then.end as usize;
+                    let search_end = else_node.end as usize;
+                    if let Some(else_offset) = self.find_keyword_in_range(search_start, search_end, "else") {
+                        highlights.push(DocumentHighlight::text(self.keyword_range(else_offset as u32, 4)));
+                    }
+                }
+            }
+        }
+
+        if highlights.len() <= 1 {
+            // Only the "if" keyword, no matching else - still return it
+            // but only if we're actually on the if keyword
+            return if highlights.is_empty() { None } else { Some(highlights) };
+        }
+
+        Some(highlights)
+    }
+
+    /// Find the if statement that "owns" the keyword at the given offset.
+    /// This handles both the `if` keyword and the `else` keyword.
+    fn find_owning_if_statement(&self, offset: u32) -> Option<NodeIndex> {
+        let word_start = self.find_word_start(offset as usize);
+        let word_end = self.find_word_end(offset as usize);
+        let word = &self.source_text[word_start..word_end];
+
+        if word == "else" {
+            // Find the if-statement whose else branch contains this offset
+            // The else keyword is between the then-statement end and else-statement start
+            for (i, node) in self.arena.nodes.iter().enumerate() {
+                if node.kind == syntax_kind_ext::IF_STATEMENT {
+                    if let Some(if_data) = self.arena.get_if_statement(node) {
+                        if !if_data.else_statement.is_none() {
+                            if let Some(then_node) = self.arena.get(if_data.then_statement) {
+                                // Check if the "else" keyword is between then.end and else.start
+                                let then_end = then_node.end as usize;
+                                if let Some(else_kw_off) = self.find_keyword_in_range(then_end, node.end as usize, "else") {
+                                    if else_kw_off == word_start {
+                                        return Some(NodeIndex(i as u32));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return None;
+        }
+
+        if word == "if" {
+            // Find the if-statement whose "if" keyword is at this position
+            for (i, node) in self.arena.nodes.iter().enumerate() {
+                if node.kind == syntax_kind_ext::IF_STATEMENT {
+                    let kw_start = self.skip_whitespace_forward(node.pos as usize);
+                    if kw_start == word_start {
+                        return Some(NodeIndex(i as u32));
+                    }
+                }
+            }
+            return None;
+        }
+
+        None
+    }
+
+    /// Highlight try/catch/finally keyword groups.
+    fn highlight_try_catch_finally(&self, _node_idx: NodeIndex, offset: u32) -> Option<Vec<DocumentHighlight>> {
+        // Find the innermost try statement
+        let try_idx = self.find_owning_try_statement(offset)?;
+        let try_node = self.arena.get(try_idx)?;
+        let try_data = self.arena.get_try(try_node)?;
+
+        let mut highlights = Vec::new();
+
+        // Highlight the "try" keyword
+        let try_kw_offset = self.skip_whitespace_forward(try_node.pos as usize) as u32;
+        highlights.push(DocumentHighlight::text(self.keyword_range(try_kw_offset, 3)));
+
+        // Highlight "catch" if present
+        if !try_data.catch_clause.is_none() {
+            if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
+                let catch_kw_offset = self.skip_whitespace_forward(catch_node.pos as usize) as u32;
+                highlights.push(DocumentHighlight::text(self.keyword_range(catch_kw_offset, 5)));
+            }
+        }
+
+        // Highlight "finally" if present
+        if !try_data.finally_block.is_none() {
+            if let Some(finally_node) = self.arena.get(try_data.finally_block) {
+                // The "finally" keyword is right before the finally block
+                // We need to search backward from the block start
+                let search_start = if !try_data.catch_clause.is_none() {
+                    if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
+                        catch_node.end as usize
+                    } else {
+                        try_data.try_block.0 as usize
+                    }
+                } else if let Some(try_block) = self.arena.get(try_data.try_block) {
+                    try_block.end as usize
+                } else {
+                    try_node.pos as usize
+                };
+
+                if let Some(finally_kw_offset) = self.find_keyword_in_range(search_start, finally_node.end as usize, "finally") {
+                    highlights.push(DocumentHighlight::text(self.keyword_range(finally_kw_offset as u32, 7)));
+                }
+            }
+        }
+
+        if highlights.is_empty() {
+            None
+        } else {
+            Some(highlights)
+        }
+    }
+
+    /// Find the try statement that owns the keyword at the given offset.
+    fn find_owning_try_statement(&self, offset: u32) -> Option<NodeIndex> {
+        let word_start = self.find_word_start(offset as usize);
+        let word_end = self.find_word_end(offset as usize);
+        let word = &self.source_text[word_start..word_end];
+
+        // For "try" keyword, find the try statement starting at this position
+        if word == "try" {
+            for (i, node) in self.arena.nodes.iter().enumerate() {
+                if node.kind == syntax_kind_ext::TRY_STATEMENT {
+                    let kw_start = self.skip_whitespace_forward(node.pos as usize);
+                    if kw_start == word_start {
+                        return Some(NodeIndex(i as u32));
+                    }
+                }
+            }
+            return None;
+        }
+
+        // For "catch" keyword, find the try statement that has a catch clause at this position
+        if word == "catch" {
+            for (i, node) in self.arena.nodes.iter().enumerate() {
+                if node.kind == syntax_kind_ext::TRY_STATEMENT {
+                    if let Some(try_data) = self.arena.get_try(node) {
+                        if !try_data.catch_clause.is_none() {
+                            if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
+                                let catch_kw_start = self.skip_whitespace_forward(catch_node.pos as usize);
+                                if catch_kw_start == word_start {
+                                    return Some(NodeIndex(i as u32));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return None;
+        }
+
+        // For "finally" keyword, find the try statement that has a finally block
+        if word == "finally" {
+            for (i, node) in self.arena.nodes.iter().enumerate() {
+                if node.kind == syntax_kind_ext::TRY_STATEMENT {
+                    if let Some(try_data) = self.arena.get_try(node) {
+                        if !try_data.finally_block.is_none() {
+                            // Check if the finally keyword is within this try statement
+                            if node.pos <= offset && node.end > offset {
+                                // Verify the finally keyword position
+                                let search_start = if !try_data.catch_clause.is_none() {
+                                    if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
+                                        catch_node.end as usize
+                                    } else {
+                                        node.pos as usize
+                                    }
+                                } else if let Some(try_block) = self.arena.get(try_data.try_block) {
+                                    try_block.end as usize
+                                } else {
+                                    node.pos as usize
+                                };
+                                if let Some(finally_kw) = self.find_keyword_in_range(
+                                    search_start,
+                                    node.end as usize,
+                                    "finally",
+                                ) {
+                                    if finally_kw == word_start {
+                                        return Some(NodeIndex(i as u32));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return None;
+        }
+
+        None
+    }
+
+    /// Highlight switch/case/default keyword groups.
+    fn highlight_switch_case(&self, _node_idx: NodeIndex, offset: u32) -> Option<Vec<DocumentHighlight>> {
+        let switch_idx = self.find_owning_switch_statement(offset)?;
+        let switch_node = self.arena.get(switch_idx)?;
+        let switch_data = self.arena.get_switch(switch_node)?;
+
+        let mut highlights = Vec::new();
+
+        // Highlight the "switch" keyword
+        let switch_kw_offset = self.skip_whitespace_forward(switch_node.pos as usize) as u32;
+        highlights.push(DocumentHighlight::text(self.keyword_range(switch_kw_offset, 6)));
+
+        // Highlight all case/default clauses in the case block
+        if let Some(case_block_node) = self.arena.get(switch_data.case_block) {
+            if let Some(block_data) = self.arena.get_block(case_block_node) {
+                for &clause_idx in &block_data.statements.nodes {
+                    if let Some(clause_node) = self.arena.get(clause_idx) {
+                        let kw_offset = self.skip_whitespace_forward(clause_node.pos as usize) as u32;
+                        if clause_node.kind == syntax_kind_ext::CASE_CLAUSE {
+                            highlights.push(DocumentHighlight::text(self.keyword_range(kw_offset, 4)));
+                        } else if clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE {
+                            highlights.push(DocumentHighlight::text(self.keyword_range(kw_offset, 7)));
+                        }
+                    }
+                }
+            }
+        }
+
+        if highlights.is_empty() {
+            None
+        } else {
+            Some(highlights)
+        }
+    }
+
+    /// Find the switch statement that owns the keyword at the given offset.
+    fn find_owning_switch_statement(&self, offset: u32) -> Option<NodeIndex> {
+        let word_start = self.find_word_start(offset as usize);
+        let word_end = self.find_word_end(offset as usize);
+        let word = &self.source_text[word_start..word_end];
+
+        if word == "switch" {
+            for (i, node) in self.arena.nodes.iter().enumerate() {
+                if node.kind == syntax_kind_ext::SWITCH_STATEMENT {
+                    let kw_start = self.skip_whitespace_forward(node.pos as usize);
+                    if kw_start == word_start {
+                        return Some(NodeIndex(i as u32));
+                    }
+                }
+            }
+            return None;
+        }
+
+        // For case/default, find the enclosing switch statement
+        if word == "case" || word == "default" {
+            // Find the case/default clause at this offset
+            for node in self.arena.nodes.iter() {
+                if (node.kind == syntax_kind_ext::CASE_CLAUSE || node.kind == syntax_kind_ext::DEFAULT_CLAUSE)
+                    && node.pos <= offset
+                    && node.end > offset
+                {
+                    let kw_start = self.skip_whitespace_forward(node.pos as usize);
+                    if kw_start == word_start {
+                        // Now find the parent switch statement
+                        return self.find_enclosing_switch_statement(offset);
+                    }
+                }
+            }
+            return None;
+        }
+
+        None
+    }
+
+    /// Highlight while/do keyword pairs.
+    fn highlight_while_do(&self, _node_idx: NodeIndex, offset: u32) -> Option<Vec<DocumentHighlight>> {
+        let word_start = self.find_word_start(offset as usize);
+        let word_end = self.find_word_end(offset as usize);
+        let word = &self.source_text[word_start..word_end];
+
+        if word == "while" {
+            // Check if this is a do-while's "while" or a standalone while
+            // For do-while, the "while" comes after the do-block
+            if let Some(do_stmt_idx) = self.find_do_while_for_while_keyword(word_start) {
+                // This is the "while" of a do-while loop
+                let do_node = self.arena.get(do_stmt_idx)?;
+                let mut highlights = Vec::new();
+
+                let do_kw_offset = self.skip_whitespace_forward(do_node.pos as usize) as u32;
+                highlights.push(DocumentHighlight::text(self.keyword_range(do_kw_offset, 2)));
+                highlights.push(DocumentHighlight::text(self.keyword_range(word_start as u32, 5)));
+
+                return Some(highlights);
+            }
+
+            // Standalone while loop - just highlight the "while" keyword
+            let mut highlights = Vec::new();
+            highlights.push(DocumentHighlight::text(self.keyword_range(word_start as u32, 5)));
+            return Some(highlights);
+        }
+
+        if word == "do" {
+            // Find the do-while statement
+            for node in self.arena.nodes.iter() {
+                if node.kind == syntax_kind_ext::DO_STATEMENT {
+                    let kw_start = self.skip_whitespace_forward(node.pos as usize);
+                    if kw_start == word_start {
+                        let mut highlights = Vec::new();
+                        highlights.push(DocumentHighlight::text(self.keyword_range(word_start as u32, 2)));
+
+                        // Find the matching "while" keyword
+                        if let Some(loop_data) = self.arena.get_loop(node) {
+                            if let Some(stmt_node) = self.arena.get(loop_data.statement) {
+                                if let Some(while_kw) = self.find_keyword_in_range(
+                                    stmt_node.end as usize,
+                                    node.end as usize,
+                                    "while",
+                                ) {
+                                    highlights.push(DocumentHighlight::text(self.keyword_range(while_kw as u32, 5)));
+                                }
+                            }
+                        }
+
+                        return Some(highlights);
+                    }
+                }
+            }
+            return None;
+        }
+
+        None
+    }
+
+    /// Find a do-while statement whose "while" keyword is at the given position.
+    fn find_do_while_for_while_keyword(&self, while_kw_start: usize) -> Option<NodeIndex> {
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind == syntax_kind_ext::DO_STATEMENT {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    if let Some(stmt_node) = self.arena.get(loop_data.statement) {
+                        if let Some(while_kw) = self.find_keyword_in_range(
+                            stmt_node.end as usize,
+                            node.end as usize,
+                            "while",
+                        ) {
+                            if while_kw == while_kw_start {
+                                return Some(NodeIndex(i as u32));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Highlight return keyword.
+    fn highlight_return(&self, _node_idx: NodeIndex, offset: u32) -> Option<Vec<DocumentHighlight>> {
+        let word_start = self.find_word_start(offset as usize);
+        let mut highlights = Vec::new();
+        highlights.push(DocumentHighlight::text(self.keyword_range(word_start as u32, 6)));
+        Some(highlights)
+    }
+
+    /// Highlight break/continue keywords.
+    fn highlight_break_continue(&self, _node_idx: NodeIndex, offset: u32) -> Option<Vec<DocumentHighlight>> {
+        let word_start = self.find_word_start(offset as usize);
+        let word_end = self.find_word_end(offset as usize);
+        let word = &self.source_text[word_start..word_end];
+
+        let kw_len = word.len() as u32;
+        let mut highlights = Vec::new();
+        highlights.push(DocumentHighlight::text(self.keyword_range(word_start as u32, kw_len)));
+        Some(highlights)
+    }
+
+    /// Find a keyword string within a byte range of the source text.
+    fn find_keyword_in_range(&self, start: usize, end: usize, keyword: &str) -> Option<usize> {
+        let src = self.source_text;
+        let search_area = src.get(start..end)?;
+        let kw_len = keyword.len();
+
+        // Find the keyword, making sure it's at a word boundary
+        let mut search_from = 0;
+        while search_from < search_area.len() {
+            if let Some(pos) = search_area[search_from..].find(keyword) {
+                let abs_pos = start + search_from + pos;
+                let rel_end = search_from + pos + kw_len;
+
+                // Check word boundaries
+                let at_word_start = search_from + pos == 0
+                    || !src.as_bytes().get(abs_pos - 1).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
+                let at_word_end = rel_end >= search_area.len()
+                    || !search_area.as_bytes().get(rel_end).is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
+
+                if at_word_start && at_word_end {
+                    return Some(abs_pos);
+                }
+
+                search_from += pos + 1;
+            } else {
+                break;
+            }
+        }
+
+        None
+    }
+
+    /// Detect whether a reference is a read or write (fallback text-based heuristic).
+    ///
+    /// This is used as a fallback when AST-based detection is not available.
     fn detect_access_kind(&self, range: Range) -> Option<DocumentHighlightKind> {
         let start_offset = self
             .line_map
@@ -170,8 +816,6 @@ impl<'a> DocumentHighlightProvider<'a> {
 
     /// Check if the identifier is in a write context (assignment).
     fn is_write_context(&self, before: &str, after: &str) -> bool {
-        // Trim both leading and trailing whitespace from the before-context
-        // so that `"let y = "` becomes `"let y ="` for correct ends_with checks.
         let before_trimmed = before.trim();
 
         // Check for assignment operators (=, :=, etc.)
@@ -204,7 +848,6 @@ impl<'a> DocumentHighlightProvider<'a> {
         }
 
         // Check for variable declaration keywords (var, let, const)
-        // Also handles: function, class, interface, type, enum, import, catch
         let before_trimmed_lower = before_trimmed.to_lowercase();
         let words: Vec<&str> = before_trimmed_lower.split_whitespace().collect();
         if !words.is_empty() {
@@ -224,10 +867,8 @@ impl<'a> DocumentHighlightProvider<'a> {
             }
         }
 
-        // Check for for-in / for-of loop variables: `for (const x of ...)` or `for (x of ...)`
-        // The before context for the loop variable may end with `(` after stripping keywords
+        // Check for for-in / for-of loop variables
         if before_trimmed.ends_with('(') {
-            // Check if the line looks like a for loop: `for (`
             let prefix = before_trimmed.trim_end_matches('(').trim_end();
             if prefix.ends_with("for") {
                 return true;
@@ -242,13 +883,11 @@ impl<'a> DocumentHighlightProvider<'a> {
             }
         }
 
-        // Check for object/array literal property (identifier:) or (identifier?)
-        // Covers: `{ identifier:`, `[ identifier,`, and after commas
+        // Check for object/array literal property
         if before_trimmed.ends_with('{')
             || before_trimmed.ends_with('[')
             || before_trimmed.ends_with(',')
         {
-            // Only true if followed by : or ? (object property pattern)
             let after_trimmed = after.trim_start();
             if after_trimmed.starts_with(':') || after_trimmed.starts_with('?') {
                 return true;
@@ -256,10 +895,7 @@ impl<'a> DocumentHighlightProvider<'a> {
         }
 
         // Check for destructuring assignment pattern
-        // { identifier } = ... or { identifier, ... } = ...
-        // [ identifier ] = ... or [ identifier, ... ] = ...
         if before_trimmed.ends_with('{') || (before_trimmed.ends_with(',') && after.contains('}')) {
-            // Check if the after context contains a closing brace followed by =
             let after_trimmed = after.trim_start();
             if after_trimmed.starts_with('}')
                 || after_trimmed.starts_with(',')
@@ -304,6 +940,18 @@ mod highlighting_tests {
     use crate::binder::BinderState;
     use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
+
+    /// Helper to create a provider from source text.
+    fn make_provider(source: &str) -> (ParserState, BinderState, NodeIndex) {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        {
+            let arena = parser.get_arena();
+            binder.bind_source_file(arena, root);
+        }
+        (parser, binder, root)
+    }
 
     #[test]
     fn test_document_highlight_simple_variable() {
@@ -474,7 +1122,6 @@ mod highlighting_tests {
     #[test]
     fn test_write_context_simple_assignment() {
         let src = "let x = 1;";
-        // before = "x = ", after context irrelevant
         assert!(test_is_write(src, "x = ", "1;"));
     }
 
@@ -501,7 +1148,6 @@ mod highlighting_tests {
     #[test]
     fn test_triple_equals_is_not_write() {
         let src = "if (x === y) {}";
-        // before "y" is "x === ", after is ") {}"
         assert!(
             !test_is_write(src, "x === ", ") {}"),
             "=== should NOT be detected as a write"
@@ -538,7 +1184,6 @@ mod highlighting_tests {
     #[test]
     fn test_arrow_is_not_write() {
         let src = "const f = (x) => x + 1;";
-        // before the body "x" after arrow is " x + 1;"
         assert!(
             !test_is_write(src, "(x) => ", "+ 1;"),
             "=> should NOT be detected as assignment"
@@ -579,7 +1224,6 @@ mod highlighting_tests {
     #[test]
     fn test_for_loop_variable_is_write() {
         let src = "let items = []; for (let x of items) {}";
-        // before "x" is "for (", after is " of items) {}"
         assert!(
             test_is_write(src, "for (", " of items) {}"),
             "for-of loop variable should be a write"
@@ -600,7 +1244,6 @@ mod highlighting_tests {
     #[test]
     fn test_object_destructuring_property_with_colon() {
         let src = "const { a: b } = obj;";
-        // before "a" is "{ ", after is ": b } = obj;"
         assert!(
             test_is_write(src, "{ ", ": b } = obj;"),
             "Object destructuring property should be a write"
@@ -610,7 +1253,6 @@ mod highlighting_tests {
     #[test]
     fn test_array_destructuring_first_element() {
         let src = "const [a, b] = arr;";
-        // before "a" is "[", after is ", b] = arr;"
         assert!(
             test_is_write(src, "[", ", b] = arr;"),
             "Array destructuring element should be a write"
@@ -684,5 +1326,364 @@ mod highlighting_tests {
             !test_is_write(src, "x + ", ";"),
             "Addition operand should not be a write"
         );
+    }
+
+    // ---- NEW TESTS: AST-based write detection ----
+
+    #[test]
+    fn test_highlight_write_access_via_ast() {
+        // Test that variable declarations are detected as writes via the AST path
+        let source = "let x = 1;\nx = 2;\nconsole.log(x);\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        let pos = Position::new(0, 4); // 'x' in declaration
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find highlights");
+        let highlights = highlights.unwrap();
+
+        // Should have 3 occurrences: declaration, assignment, read
+        assert!(highlights.len() >= 3, "Should have at least 3 highlights, got {}", highlights.len());
+
+        // Check that we have both write and read kinds
+        let has_write = highlights.iter().any(|h| h.kind == Some(DocumentHighlightKind::Write));
+        let has_read = highlights.iter().any(|h| h.kind == Some(DocumentHighlightKind::Read));
+        assert!(has_write, "Should have at least one write highlight");
+        assert!(has_read, "Should have at least one read highlight");
+    }
+
+    #[test]
+    fn test_highlight_function_declaration_is_write() {
+        // Function name should be marked as write at declaration
+        let source = "function greet() {}\ngreet();\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        let pos = Position::new(0, 9); // 'greet' in function declaration
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some());
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 2, "Should have at least 2 highlights");
+
+        // First occurrence (declaration) should be write, second (call) should be read
+        let has_write = highlights.iter().any(|h| h.kind == Some(DocumentHighlightKind::Write));
+        let has_read = highlights.iter().any(|h| h.kind == Some(DocumentHighlightKind::Read));
+        assert!(has_write, "Declaration should be a write");
+        assert!(has_read, "Call should be a read");
+    }
+
+    #[test]
+    fn test_highlight_parameter_is_write() {
+        // Function parameter should be marked as write at declaration
+        let source = "function add(a: number, b: number) {\n  return a + b;\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        let pos = Position::new(0, 13); // 'a' in parameter
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find highlights for parameter 'a'");
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 2, "Should have at least 2 highlights (param + usage)");
+
+        let has_write = highlights.iter().any(|h| h.kind == Some(DocumentHighlightKind::Write));
+        assert!(has_write, "Parameter declaration should be a write");
+    }
+
+    #[test]
+    fn test_highlight_multiple_reads() {
+        // Variable used multiple times should have multiple read highlights
+        let source = "let val = 10;\nlet a = val;\nlet b = val;\nlet c = val;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        let pos = Position::new(0, 4); // 'val' in declaration
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some());
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 4, "Should have at least 4 highlights (1 write + 3 reads), got {}", highlights.len());
+
+        let write_count = highlights.iter().filter(|h| h.kind == Some(DocumentHighlightKind::Write)).count();
+        let read_count = highlights.iter().filter(|h| h.kind == Some(DocumentHighlightKind::Read)).count();
+        assert!(write_count >= 1, "Should have at least 1 write");
+        assert!(read_count >= 3, "Should have at least 3 reads, got {}", read_count);
+    }
+
+    // ---- NEW TESTS: Keyword highlighting ----
+
+    #[test]
+    fn test_highlight_if_keyword() {
+        let source = "if (true) {\n  console.log('yes');\n} else {\n  console.log('no');\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        // Highlight 'if' keyword at (0, 0)
+        let pos = Position::new(0, 0);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find keyword highlights for 'if'");
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 2, "Should highlight both 'if' and 'else', got {}", highlights.len());
+    }
+
+    #[test]
+    fn test_highlight_else_keyword() {
+        let source = "if (true) {\n  console.log('yes');\n} else {\n  console.log('no');\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        // Highlight 'else' keyword at line 2
+        let pos = Position::new(2, 2);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find keyword highlights for 'else'");
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 2, "Should highlight both 'if' and 'else', got {}", highlights.len());
+    }
+
+    #[test]
+    fn test_highlight_try_catch_finally_keywords() {
+        let source = "try {\n  foo();\n} catch (e) {\n  bar();\n} finally {\n  baz();\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        // Highlight 'try' keyword at (0, 0)
+        let pos = Position::new(0, 0);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find keyword highlights for 'try'");
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 2, "Should highlight try/catch/finally keywords, got {}", highlights.len());
+    }
+
+    #[test]
+    fn test_highlight_catch_keyword() {
+        let source = "try {\n  foo();\n} catch (e) {\n  bar();\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        // Highlight 'catch' keyword at line 2
+        let pos = Position::new(2, 2);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find keyword highlights for 'catch'");
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 2, "Should highlight try and catch, got {}", highlights.len());
+    }
+
+    #[test]
+    fn test_highlight_switch_case_default_keywords() {
+        let source = "switch (x) {\n  case 1:\n    break;\n  case 2:\n    break;\n  default:\n    break;\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        // Highlight 'switch' keyword at (0, 0)
+        let pos = Position::new(0, 0);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find keyword highlights for 'switch'");
+        let highlights = highlights.unwrap();
+        // Should highlight: switch, case, case, default = 4
+        assert!(highlights.len() >= 4, "Should highlight switch + all case/default, got {}", highlights.len());
+    }
+
+    #[test]
+    fn test_highlight_while_keyword() {
+        let source = "while (true) {\n  break;\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        // Highlight 'while' keyword at (0, 0)
+        let pos = Position::new(0, 0);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find keyword highlights for 'while'");
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 1, "Should have at least 1 highlight for 'while'");
+    }
+
+    #[test]
+    fn test_highlight_do_while_keywords() {
+        let source = "do {\n  foo();\n} while (true);\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        // Highlight 'do' keyword at (0, 0)
+        let pos = Position::new(0, 0);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find keyword highlights for 'do'");
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 2, "Should highlight both 'do' and 'while', got {}", highlights.len());
+    }
+
+    // ---- NEW TESTS: keyword highlighting edge cases ----
+
+    #[test]
+    fn test_highlight_if_without_else() {
+        // An if without else should still highlight the "if" keyword
+        let source = "if (true) {\n  foo();\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        let pos = Position::new(0, 0);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find highlight for lone 'if'");
+        let highlights = highlights.unwrap();
+        assert_eq!(highlights.len(), 1, "Should have exactly 1 highlight for 'if' without else");
+    }
+
+    #[test]
+    fn test_highlight_try_without_finally() {
+        // try/catch without finally
+        let source = "try {\n  foo();\n} catch (e) {\n  bar();\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        let pos = Position::new(0, 0);
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some());
+        let highlights = highlights.unwrap();
+        assert_eq!(highlights.len(), 2, "Should highlight 'try' and 'catch', got {}", highlights.len());
+    }
+
+    #[test]
+    fn test_highlight_return_keyword() {
+        let source = "function f() {\n  return 1;\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        let pos = Position::new(1, 2); // 'return' keyword
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find highlight for 'return'");
+        let highlights = highlights.unwrap();
+        assert!(highlights.len() >= 1, "Should have at least 1 highlight for 'return'");
+    }
+
+    #[test]
+    fn test_highlight_case_from_case_keyword() {
+        // When on a "case" keyword, should highlight all cases + switch
+        let source = "switch (x) {\n  case 1:\n    break;\n  default:\n    break;\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        let pos = Position::new(1, 2); // 'case' keyword
+        let highlights = provider.get_document_highlights(root, pos);
+
+        assert!(highlights.is_some(), "Should find keyword highlights for 'case'");
+        let highlights = highlights.unwrap();
+        // Should highlight: switch, case, default = 3
+        assert!(highlights.len() >= 3, "Should highlight switch + case + default, got {}", highlights.len());
     }
 }

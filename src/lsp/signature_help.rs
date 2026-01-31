@@ -18,21 +18,33 @@ use crate::solver::{FunctionShape, TypeId, TypeInterner, TypeKey};
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParameterInformation {
-    /// The label of this parameter (e.g., "x: number")
+    /// The name of this parameter (e.g., "x")
+    pub name: String,
+    /// The display label of this parameter (e.g., "x: number")
     pub label: String,
     /// The documentation for this parameter
     pub documentation: Option<String>,
+    /// Whether this parameter is optional
+    pub is_optional: bool,
+    /// Whether this parameter is a rest parameter
+    pub is_rest: bool,
 }
 
 /// Represents a single signature (overload).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SignatureInformation {
-    /// The label of the signature (e.g., "add(x: number, y: number): number")
+    /// The full label of the signature (e.g., "add(x: number, y: number): number")
     pub label: String,
+    /// The prefix display text (e.g., "add(" or "add<T>(")
+    pub prefix: String,
+    /// The suffix display text (e.g., "): number")
+    pub suffix: String,
     /// The documentation for this signature
     pub documentation: Option<String>,
     /// The parameters of this signature
     pub parameters: Vec<ParameterInformation>,
+    /// Whether this signature is variadic (has rest parameter)
+    pub is_variadic: bool,
 }
 
 /// The response for a signature help request.
@@ -232,8 +244,11 @@ impl<'a> SignatureHelpProvider<'a> {
             (checker.get_type_of_node(call_expr.expression), access_docs)
         };
 
-        // 6. Extract signatures from the type
-        let mut signatures = self.get_signatures_from_type(callee_type, &checker, call_kind);
+        // 6. Resolve the callee name for display
+        let callee_name = self.resolve_callee_name(call_expr.expression, call_kind);
+
+        // 7. Extract signatures from the type
+        let mut signatures = self.get_signatures_from_type(callee_type, &checker, call_kind, &callee_name);
 
         if let Some(docs) = docs {
             self.apply_signature_docs(&mut signatures, &docs);
@@ -259,6 +274,29 @@ impl<'a> SignatureHelpProvider<'a> {
             active_signature,
             active_parameter,
         })
+    }
+
+    /// Resolve the name of the callee for display in signature help.
+    /// For `foo(...)` returns "foo", for `obj.method(...)` returns "method",
+    /// for `new Foo(...)` returns "Foo".
+    fn resolve_callee_name(&self, expr_idx: NodeIndex, _call_kind: CallKind) -> String {
+        if let Some(node) = self.arena.get(expr_idx) {
+            // Direct identifier: foo(...)
+            if node.kind == SyntaxKind::Identifier as u16 {
+                if let Some(name) = self.arena.get_identifier_text(expr_idx) {
+                    return name.to_string();
+                }
+            }
+            // Property access: obj.method(...)
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    if let Some(name) = self.arena.get_identifier_text(access.name_or_argument) {
+                        return name.to_string();
+                    }
+                }
+            }
+        }
+        String::new()
     }
 
     /// Walk up the AST to find the call expression containing the cursor.
@@ -407,6 +445,7 @@ impl<'a> SignatureHelpProvider<'a> {
         type_id: TypeId,
         checker: &CheckerState,
         call_kind: CallKind,
+        callee_name: &str,
     ) -> Vec<SignatureCandidate> {
         let key = match self.interner.lookup(type_id) {
             Some(k) => k,
@@ -417,7 +456,7 @@ impl<'a> SignatureHelpProvider<'a> {
             // Single function signature
             TypeKey::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
-                vec![self.signature_candidate(&shape, checker, false)]
+                vec![self.signature_candidate(&shape, checker, false, callee_name)]
             }
             // Overloaded signatures
             TypeKey::Callable(shape_id) => {
@@ -441,7 +480,7 @@ impl<'a> SignatureHelpProvider<'a> {
                             is_constructor: false,
                             is_method: false,
                         };
-                        sigs.push(self.signature_candidate(&func_shape, checker, false));
+                        sigs.push(self.signature_candidate(&func_shape, checker, false, callee_name));
                     }
                 }
                 if include_construct {
@@ -456,7 +495,7 @@ impl<'a> SignatureHelpProvider<'a> {
                             is_constructor: true,
                             is_method: false,
                         };
-                        sigs.push(self.signature_candidate(&func_shape, checker, true));
+                        sigs.push(self.signature_candidate(&func_shape, checker, true, callee_name));
                     }
                 }
                 sigs
@@ -466,7 +505,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 let members = self.interner.type_list(members);
                 let mut sigs = Vec::new();
                 for &member in members.iter() {
-                    sigs.extend(self.get_signatures_from_type(member, checker, call_kind));
+                    sigs.extend(self.get_signatures_from_type(member, checker, call_kind, callee_name));
                 }
                 sigs
             }
@@ -480,14 +519,35 @@ impl<'a> SignatureHelpProvider<'a> {
         shape: &FunctionShape,
         checker: &CheckerState,
         is_constructor: bool,
+        callee_name: &str,
     ) -> SignatureInformation {
         let mut parameters = Vec::new();
 
-        // 1. Parameters
+        // Build type parameters string for generics
+        let type_params_str = if !shape.type_params.is_empty() {
+            let tp_parts: Vec<String> = shape
+                .type_params
+                .iter()
+                .map(|tp| {
+                    let name = checker.ctx.types.resolve_atom(tp.name);
+                    if let Some(constraint) = tp.constraint {
+                        format!("{} extends {}", name, checker.format_type(constraint))
+                    } else {
+                        name
+                    }
+                })
+                .collect();
+            format!("<{}>", tp_parts.join(", "))
+        } else {
+            String::new()
+        };
+
+        // Build parameters
         let mut param_labels = Vec::new();
-        if let Some(this_type) = shape.this_type {
-            param_labels.push(format!("this: {}", checker.format_type(this_type)));
-        }
+        // Note: we do NOT include `this` parameter in user-visible params
+        // because tsserver also excludes it from the signature help display.
+
+        let has_rest = shape.params.iter().any(|p| p.rest);
 
         for param in &shape.params {
             let name = param
@@ -500,27 +560,40 @@ impl<'a> SignatureHelpProvider<'a> {
 
             let param_label = format!("{}{}{}: {}", rest, name, optional, type_str);
             parameters.push(ParameterInformation {
+                name: name.clone(),
                 label: param_label.clone(),
                 documentation: None,
+                is_optional: param.optional,
+                is_rest: param.rest,
             });
 
             param_labels.push(param_label);
         }
 
-        // 3. Return Type
+        // Build prefix and suffix
         let return_type_str = checker.format_type(shape.return_type);
-        let prefix = if is_constructor { "new (" } else { "(" };
+        let prefix = if is_constructor {
+            format!("{}{}(", callee_name, type_params_str)
+        } else {
+            format!("{}{}(", callee_name, type_params_str)
+        };
+        let suffix = format!("): {}", return_type_str);
+
+        // Build full label: prefix + params joined by ", " + suffix
         let label = format!(
-            "{}{}): {}",
+            "{}{}{}",
             prefix,
             param_labels.join(", "),
-            return_type_str
+            suffix,
         );
 
         SignatureInformation {
             label,
+            prefix,
+            suffix,
             documentation: None,
             parameters,
+            is_variadic: has_rest,
         }
     }
 
@@ -529,6 +602,7 @@ impl<'a> SignatureHelpProvider<'a> {
         shape: &FunctionShape,
         checker: &CheckerState,
         is_constructor: bool,
+        callee_name: &str,
     ) -> SignatureCandidate {
         let (required_params, total_params, has_rest) = self.signature_meta(&shape.params);
         let param_names = shape
@@ -537,7 +611,7 @@ impl<'a> SignatureHelpProvider<'a> {
             .map(|param| param.name.map(|atom| checker.ctx.types.resolve_atom(atom)))
             .collect();
         SignatureCandidate {
-            info: self.format_signature(shape, checker, is_constructor),
+            info: self.format_signature(shape, checker, is_constructor, callee_name),
             required_params,
             total_params,
             has_rest,
