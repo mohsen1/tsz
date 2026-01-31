@@ -301,11 +301,25 @@ function patchSessionClient(SessionClient) {
 
     proto.getSmartSelectionRange = function(fileName, position) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
-        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
-        // Use selectionRange which is already handled by tsz-server
+        // selectionRange command expects locations array, not line/offset directly
+        const args = { file: fileName, locations: [{ line: lineOffset.line, offset: lineOffset.offset }] };
         const request = this.processRequest("selectionRange", args);
         const response = this.processResponse(request);
-        return response.body || undefined;
+        if (!response.body || !Array.isArray(response.body) || response.body.length === 0) {
+            return undefined;
+        }
+        // Convert server format {textSpan: {start, end}, parent: ...} to
+        // LS API format {textSpan: {start, length}, parent: ...}
+        const convertRange = (range) => {
+            if (!range || !range.textSpan) return undefined;
+            const start = this.lineOffsetToPosition(fileName, range.textSpan.start);
+            const end = this.lineOffsetToPosition(fileName, range.textSpan.end);
+            return {
+                textSpan: { start, length: end - start },
+                parent: range.parent ? convertRange(range.parent) : undefined,
+            };
+        };
+        return convertRange(response.body[0]);
     };
 
     proto.getSyntacticClassifications = function(fileName, span) {
