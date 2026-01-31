@@ -399,7 +399,7 @@ parse_args() {
 
             --dry-run)         CFG_DRY_RUN=true ;;
 
-            # Accept but ignore removed Docker flags for backwards compat
+            # Accept and ignore legacy flags
             --docker|--no-docker|--no-sandbox) ;;
 
             -*)                die "Unknown option: $1 (use --help for usage)" ;;

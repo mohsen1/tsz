@@ -20,7 +20,7 @@ try {
         console.log('WASM module loaded successfully\n');
     } else {
         console.log('WASM module not found at:', wasmPath);
-        console.log('Build WASM first: docker run --rm -v path/to/wasm:/wasm rust:latest ...');
+        console.log('Build WASM first: ./scripts/build-wasm.sh');
         process.exit(1);
     }
 } catch (e) {

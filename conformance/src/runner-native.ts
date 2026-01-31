@@ -3,7 +3,7 @@
  * Native Binary Conformance Test Runner
  *
  * Spawns the native tsz binary for each test instead of loading WASM.
- * Faster execution, but no Docker isolation.
+ * Faster execution by spawning the native binary directly.
  */
 
 import * as path from 'path';

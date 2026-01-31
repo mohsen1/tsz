@@ -83,7 +83,7 @@ export function loadTscCache(rootDir: string): TscCacheData | null {
       return null;
     }
 
-    // Validate SHA if git is available (skip in Docker where git isn't present)
+    // Validate SHA if git is available
     const currentSha = getTypeScriptSha(rootDir);
     if (currentSha && data.typescriptSha !== currentSha) {
       console.log('TypeScript submodule updated:');

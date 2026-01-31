@@ -60,8 +60,6 @@ yarn.lock
 /*.py
 /*.rs
 /*.md
-Dockerfile
-Dockerfile.*
 
 
 # Claude Code Plugins - ignore everything in .claude except local settings
