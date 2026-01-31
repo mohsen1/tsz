@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+# prepare-commit-msg hook for tsz
+# Automatically appends conformance pass rate to commit messages
+#
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="$2"  # message, template, merge, squash, or empty
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFORMANCE_FILE="$ROOT_DIR/.conformance-value"
+
+# Skip for merge commits or when amending
+[[ "$COMMIT_SOURCE" == "merge" ]] && exit 0
+[[ "$COMMIT_SOURCE" == "squash" ]] && exit 0
+
+# Skip if TSZ_SKIP_HOOKS is set
+[[ "${TSZ_SKIP_HOOKS:-}" == "1" ]] && exit 0
+
+# Check if we have a conformance value from the pre-commit hook
+if [[ -f "$CONFORMANCE_FILE" ]]; then
+    CONFORMANCE=$(cat "$CONFORMANCE_FILE")
+    
+    # Check if the commit message already has a conformance line
+    if ! grep -qE '^CURRENT_CONFORMANCE_PASS_RATE:' "$COMMIT_MSG_FILE"; then
+        # Append conformance to the commit message
+        echo "" >> "$COMMIT_MSG_FILE"
+        echo "CURRENT_CONFORMANCE_PASS_RATE: ${CONFORMANCE}%" >> "$COMMIT_MSG_FILE"
+    fi
+    
+    # Clean up the temp file
+    rm -f "$CONFORMANCE_FILE"
+fi
+
+exit 0
