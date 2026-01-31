@@ -180,8 +180,12 @@ pub const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
 pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) interner: &'a dyn TypeDatabase,
     pub(crate) resolver: &'a R,
-    /// Active subtype pairs being checked (for cycle detection)
+    /// Active subtype pairs being checked (for cycle detection at TypeId level)
     pub(crate) in_progress: HashSet<(TypeId, TypeId)>,
+    /// Active SymbolRef pairs being checked (for DefId-level cycle detection)
+    /// This catches cycles in Ref types before they're resolved, preventing
+    /// infinite expansion of recursive type aliases and interfaces.
+    pub(crate) seen_refs: HashSet<(SymbolRef, SymbolRef)>,
     /// Current recursion depth (for stack overflow prevention)
     pub(crate) depth: u32,
     /// Total number of check_subtype calls (iteration limit)
@@ -230,6 +234,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             interner,
             resolver: &NOOP,
             in_progress: HashSet::new(),
+            seen_refs: HashSet::new(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,
@@ -254,6 +259,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             interner,
             resolver,
             in_progress: HashSet::new(),
+            seen_refs: HashSet::new(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,
@@ -315,9 +321,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Internal subtype check with cycle detection
+    ///
+    /// # Cycle Detection Strategy (Coinductive Semantics)
+    ///
+    /// This function implements coinductive cycle handling for recursive types.
+    /// The key insight is that we must check for cycles BEFORE evaluation to handle
+    /// "expansive" types like `type Deep<T> = { next: Deep<Box<T>> }` that produce
+    /// fresh TypeIds on each evaluation.
+    ///
+    /// The algorithm:
+    /// 1. Fast paths (identity, any, unknown, never)
+    /// 2. **Cycle detection FIRST** (before evaluation!)
+    /// 3. Meta-type evaluation (keyof, conditional, mapped, etc.)
+    /// 4. Structural comparison
+    ///
+    /// When a cycle is detected, we return `Provisional` (assumed true) which
+    /// implements greatest fixed point semantics - the correct behavior for
+    /// recursive type checking.
     pub fn check_subtype(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
         // =========================================================================
-        // Fast paths
+        // Fast paths (no cycle tracking needed)
         // =========================================================================
 
         // Same type is always a subtype of itself
@@ -345,28 +368,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // =========================================================================
-        // Meta-type evaluation (must happen before NEVER target check)
-        // =========================================================================
-        // Evaluate meta-types (KeyOf, Conditional, etc.) before the NEVER check
-        // because keyof {} = never, and we need to evaluate that first
-        let source_eval = self.evaluate_type(source);
-        let target_eval = self.evaluate_type(target);
-
-        // If evaluation changed anything, recurse with the simplified types
-        if source_eval != source || target_eval != target {
-            return self.check_subtype(source_eval, target_eval);
-        }
-
-        // =========================================================================
-        // Post-evaluation fast paths
-        // =========================================================================
-
-        // Nothing (except never) is assignable to never
-        if target == TypeId::NEVER {
-            return SubtypeResult::False;
-        }
-
         // Error types are NOT compatible with other types (except themselves)
         // This prevents "error poisoning" where unresolved types mask real errors
         if source == TypeId::ERROR || target == TypeId::ERROR {
@@ -380,9 +381,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.total_checks += 1;
         if self.total_checks > MAX_TOTAL_SUBTYPE_CHECKS {
             // Too many checks - likely in an infinite expansion scenario
-            // Return false to break out of the loop
+            // Return Provisional to indicate we can't determine the result
+            // This is safer than returning False which would incorrectly reject valid types
             self.depth_exceeded = true;
-            return SubtypeResult::False;
+            return SubtypeResult::Provisional;
         }
 
         // =========================================================================
@@ -390,15 +392,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =========================================================================
 
         if self.depth > MAX_SUBTYPE_DEPTH {
-            // Recursion too deep - mark as exceeded and return false to prevent stack overflow
+            // Recursion too deep - return Provisional instead of False
+            // This prevents incorrectly rejecting valid recursive types
             // The caller can check depth_exceeded to emit TS2589 diagnostic
-            // Note: This differs from coinductive cycle detection which returns Provisional
             self.depth_exceeded = true;
-            return SubtypeResult::False;
+            return SubtypeResult::Provisional;
         }
 
         // =========================================================================
-        // Cycle detection (coinduction)
+        // Cycle detection FIRST (coinduction) - BEFORE evaluation!
+        //
+        // Critical: This must happen BEFORE evaluate_type() to catch cycles
+        // in expansive types that produce fresh TypeIds on each evaluation.
+        // See docs/architecture/SOLVER_REFACTORING_PROPOSAL.md Section 2.1
         // =========================================================================
 
         let pair = (source, target);
@@ -420,16 +426,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Memory safety: limit the number of in-progress pairs to prevent unbounded growth
         if self.in_progress.len() >= MAX_IN_PROGRESS_PAIRS {
             // Too many pairs being tracked - likely pathological case
+            // Return Provisional instead of False to avoid incorrect rejections
             self.depth_exceeded = true;
-            return SubtypeResult::False;
+            return SubtypeResult::Provisional;
         }
 
-        // Mark as in-progress and increment depth
+        // Mark as in-progress BEFORE evaluation to catch expansive type cycles
         self.in_progress.insert(pair);
         self.depth += 1;
 
-        // Do the actual check
-        let result = self.check_subtype_inner(source, target);
+        // =========================================================================
+        // Meta-type evaluation (after cycle detection is set up)
+        // =========================================================================
+        // Evaluate meta-types (KeyOf, Conditional, etc.)
+        // Note: This happens AFTER cycle detection is set up, so expansive types
+        // that produce fresh TypeIds will be caught by the cycle detection above.
+        let source_eval = self.evaluate_type(source);
+        let target_eval = self.evaluate_type(target);
+
+        // If evaluation changed anything, recurse with the simplified types
+        // The cycle detection is already set up for the original pair
+        let result = if source_eval != source || target_eval != target {
+            self.check_subtype(source_eval, target_eval)
+        } else {
+            // =========================================================================
+            // Post-evaluation fast paths
+            // =========================================================================
+
+            // Nothing (except never) is assignable to never
+            if target == TypeId::NEVER {
+                SubtypeResult::False
+            } else {
+                // Do the actual structural check
+                self.check_subtype_inner(source, target)
+            }
+        };
 
         // Remove from in-progress and decrement depth
         self.depth -= 1;

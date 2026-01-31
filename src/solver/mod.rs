@@ -20,6 +20,7 @@ mod class_hierarchy;
 mod compat;
 mod contextual;
 mod db;
+pub mod def;
 mod diagnostics;
 pub mod element_access;
 mod evaluate;
@@ -31,6 +32,7 @@ mod infer;
 pub mod inheritance;
 mod instantiate;
 mod intern;
+pub mod judge;
 mod lawyer;
 mod lower;
 mod narrowing;
@@ -40,6 +42,7 @@ pub mod operations_property;
 // salsa_db is feature-gated until salsa API is updated
 #[cfg(feature = "experimental_salsa")]
 pub mod salsa_db;
+pub mod sound;
 mod subtype;
 mod subtype_rules;
 pub mod tracer;
@@ -58,6 +61,7 @@ pub use class_hierarchy::*;
 pub use compat::*;
 pub use contextual::*;
 pub use db::*;
+pub use def::*;
 pub use diagnostics::*;
 pub use element_access::*;
 pub use evaluate::*;
@@ -68,6 +72,7 @@ pub use infer::*;
 pub use inheritance::*;
 pub use instantiate::*;
 pub use intern::*;
+pub use judge::*;
 pub use lawyer::*;
 pub use lower::*;
 pub use narrowing::*;
@@ -75,6 +80,7 @@ pub use object_literal::*;
 pub use operations::*;
 #[cfg(feature = "experimental_salsa")]
 pub use salsa_db::*;
+pub use sound::*;
 pub use subtype::*;
 pub use types::*;
 pub use unsoundness_audit::*;
@@ -115,6 +121,9 @@ mod template_expansion_tests;
 mod type_law_tests;
 // types_tests: loaded from types.rs
 // union_tests: loaded from subtype.rs
+#[cfg(test)]
+#[path = "tests/solver_refactoring_tests.rs"]
+mod solver_refactoring_tests;
 #[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;
