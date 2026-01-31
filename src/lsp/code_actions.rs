@@ -2785,7 +2785,9 @@ pub struct CodeFixRegistry;
 impl CodeFixRegistry {
     /// Get code fixes applicable for a given error code.
     /// Returns a list of (fix_name, fix_id, description_template, fix_all_description) tuples.
-    pub fn fixes_for_error_code(error_code: u32) -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+    pub fn fixes_for_error_code(
+        error_code: u32,
+    ) -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
         match error_code {
             // === fixSpelling ===
             // Property '{0}' does not exist on type '{1}'. Did you mean '{2}'?
@@ -2976,27 +2978,27 @@ impl CodeFixRegistry {
     /// Get all error codes that have registered code fixes.
     pub fn supported_error_codes() -> Vec<u32> {
         vec![
-            2551, 2552, 2839, 2833, 2724,     // fixSpelling
-            2304, 2503, 2693, 2583,             // import
+            2551, 2552, 2839, 2833, 2724, // fixSpelling
+            2304, 2503, 2693, 2583, // import
             6133, 6196, 6138, 6192, 6198, 6199, 6205, // fixUnusedIdentifier
-            2339, 2741,                         // fixAddMissingMember
-            1308, 1359, 1432, 2773,              // fixAwaitInSyncFunction
-            4114, 4113,                         // fixOverrideModifier
-            2420,                               // fixClassIncorrectlyImplementsInterface
-            2515, 2654, 18052, 18053,            // fixClassDoesntImplementInheritedAbstractMember
-            2705, 2322,                         // addMissingAsync
-            2697,                               // fixReturnTypeInAsyncFunction
-            2774,                               // fixMissingCallParentheses
-            1337,                               // fixConvertToMappedObjectType
-            2564,                               // fixStrictClassInitialization
-            1219,                               // fixEnableExperimentalDecorators
-            1005,                               // fixExpectedComma
-            2313, 2344,                         // fixAddMissingConstraint
-            7027,                               // fixUnreachableCode
-            2348,                               // fixAddMissingNewOperator
-            2307,                               // fixCannotFindModule
-            2366,                               // inferFromUsage
-            2845,                               // fixNaNEquality
+            2339, 2741, // fixAddMissingMember
+            1308, 1359, 1432, 2773, // fixAwaitInSyncFunction
+            4114, 4113, // fixOverrideModifier
+            2420, // fixClassIncorrectlyImplementsInterface
+            2515, 2654, 18052, 18053, // fixClassDoesntImplementInheritedAbstractMember
+            2705, 2322, // addMissingAsync
+            2697, // fixReturnTypeInAsyncFunction
+            2774, // fixMissingCallParentheses
+            1337, // fixConvertToMappedObjectType
+            2564, // fixStrictClassInitialization
+            1219, // fixEnableExperimentalDecorators
+            1005, // fixExpectedComma
+            2313, 2344, // fixAddMissingConstraint
+            7027, // fixUnreachableCode
+            2348, // fixAddMissingNewOperator
+            2307, // fixCannotFindModule
+            2366, // inferFromUsage
+            2845, // fixNaNEquality
         ]
     }
 }

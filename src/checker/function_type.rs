@@ -676,7 +676,12 @@ impl<'a> CheckerState<'a> {
                     from_index_signature,
                 } => {
                     // Check for error 4111: property access from index signature
-                    if from_index_signature {
+                    if from_index_signature
+                        && self
+                            .ctx
+                            .compiler_options
+                            .no_property_access_from_index_signature
+                    {
                         use crate::checker::types::diagnostics::diagnostic_codes;
                         self.error_at_node(
                             access.name_or_argument,

@@ -1857,7 +1857,8 @@ impl Server {
                     if !seen_codes.insert(diag.code) {
                         continue;
                     }
-                    let fixes = wasm::lsp::code_actions::CodeFixRegistry::fixes_for_error_code(diag.code);
+                    let fixes =
+                        wasm::lsp::code_actions::CodeFixRegistry::fixes_for_error_code(diag.code);
                     for (fix_name, fix_id, description, fix_all_desc) in fixes {
                         all_fixes.push(serde_json::json!({
                             "fixName": fix_name,
@@ -1877,7 +1878,8 @@ impl Server {
 
             let mut all_fixes = Vec::new();
             for error_code in &error_codes {
-                let fixes = wasm::lsp::code_actions::CodeFixRegistry::fixes_for_error_code(*error_code);
+                let fixes =
+                    wasm::lsp::code_actions::CodeFixRegistry::fixes_for_error_code(*error_code);
                 for (fix_name, fix_id, description, fix_all_desc) in fixes {
                     all_fixes.push(serde_json::json!({
                         "fixName": fix_name,
@@ -3241,6 +3243,8 @@ impl Server {
                 .allow_synthetic_default_imports
                 .unwrap_or(options.es_module_interop),
             allow_unreachable_code: options.allow_unreachable_code.unwrap_or(false),
+            no_property_access_from_index_signature: options
+                .no_property_access_from_index_signature,
         }
     }
 }
@@ -3580,11 +3584,7 @@ mod tests {
         let end = value.get("end");
         assert!(end.is_some(), "{}: missing 'end' field", context);
         let end = end.unwrap();
-        assert!(
-            end.get("line").is_some(),
-            "{}: missing 'end.line'",
-            context
-        );
+        assert!(end.get("line").is_some(), "{}: missing 'end.line'", context);
         assert!(
             end.get("offset").is_some(),
             "{}: missing 'end.offset'",
@@ -3701,7 +3701,8 @@ mod tests {
         server.open_files.insert(
             "/test.ts".to_string(),
             "const x = 1;
-x;".to_string(),
+x;"
+            .to_string(),
         );
         let req = make_request(
             "definition",
@@ -3773,18 +3774,12 @@ x;".to_string(),
         // The navtree/navbar fallback must include a spans array so the harness
         // does not crash when iterating item.spans.
         let mut server = make_server();
-        let req = make_request(
-            "navtree",
-            serde_json::json!({"file": "/nonexistent.ts"}),
-        );
+        let req = make_request("navtree", serde_json::json!({"file": "/nonexistent.ts"}));
         let resp = server.handle_tsserver_request(req);
         assert!(resp.success);
         let body = resp.body.expect("navtree should return a body");
         let spans = body.get("spans");
-        assert!(
-            spans.is_some(),
-            "navtree fallback must have spans array"
-        );
+        assert!(spans.is_some(), "navtree fallback must have spans array");
         let spans_arr = spans.unwrap().as_array().expect("spans must be an array");
         assert!(
             !spans_arr.is_empty(),
@@ -3801,7 +3796,8 @@ x;".to_string(),
             "/test.ts".to_string(),
             "const x = 1;
 x;
-x;".to_string(),
+x;"
+            .to_string(),
         );
         let req = make_request(
             "references",
