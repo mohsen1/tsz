@@ -338,6 +338,18 @@ function patchSessionClient(SessionClient) {
         return [];
     };
 
+    // Override getSignatureHelpItems to return undefined when items are empty.
+    // The server always returns a body (processResponse requires it), but when
+    // the items array is empty, the harness expects undefined (no signature help).
+    const _origGetSignatureHelpItems = proto.getSignatureHelpItems;
+    proto.getSignatureHelpItems = function(fileName, position, options) {
+        const result = _origGetSignatureHelpItems.call(this, fileName, position, options);
+        if (result && result.items && result.items.length === 0) {
+            return undefined;
+        }
+        return result;
+    };
+
     proto.getNameOrDottedNameSpan = function(fileName, startPos, endPos) {
         return undefined;
     };
@@ -368,10 +380,25 @@ function patchSessionClient(SessionClient) {
     // Return safe stubs so tests that don't strictly need these objects can proceed.
 
     proto.getProgram = function() {
-        // Returns undefined - the fourslash harness guards against this
-        // with try/catch or null checks in most cases.
-        // TODO: Implement proper Program stub when compiler supports it
-        return undefined;
+        // Return a minimal Program stub so callers like
+        // ts.getPreEmitDiagnostics(languageService.getProgram()) don't crash.
+        // TODO: Implement proper Program when compiler supports it
+        if (!this._programStub) {
+            this._programStub = {
+                getCompilerOptions: function() { return {}; },
+                getTypeChecker: function() { return undefined; },
+                getSourceFile: function() { return undefined; },
+                getSourceFiles: function() { return []; },
+                getCurrentDirectory: function() { return "/"; },
+                getConfigFileParsingDiagnostics: function() { return []; },
+                getSemanticDiagnostics: function() { return []; },
+                getSyntacticDiagnostics: function() { return []; },
+                getGlobalDiagnostics: function() { return []; },
+                getDeclarationDiagnostics: function() { return []; },
+                emit: function() { return { emitSkipped: true, diagnostics: [], emittedFiles: [] }; },
+            };
+        }
+        return this._programStub;
     };
 
     proto.getCurrentProgram = function() {
