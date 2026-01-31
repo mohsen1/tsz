@@ -70,6 +70,202 @@ function patchTestState(FourSlash, TszAdapter) {
     };
 }
 
+/**
+ * Patch SessionClient to implement methods that throw "Not implemented"
+ * by routing them to tsz-server protocol commands.
+ */
+function patchSessionClient(SessionClient) {
+    const proto = SessionClient.prototype;
+
+    proto.getBreakpointStatementAtPosition = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("breakpointStatement", args);
+        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        if (!response.body) return undefined;
+        const { textSpan } = response.body;
+        return textSpan ? {
+            start: this.lineOffsetToPosition(fileName, textSpan.start),
+            length: this.lineOffsetToPosition(fileName, textSpan.end) - this.lineOffsetToPosition(fileName, textSpan.start),
+        } : undefined;
+    };
+
+    proto.getJsxClosingTagAtPosition = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("jsxClosingTag", args);
+        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        return response.body || undefined;
+    };
+
+    proto.isValidBraceCompletionAtPosition = function(fileName, position, openingBrace) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = {
+            file: fileName,
+            line: lineOffset.line,
+            offset: lineOffset.offset,
+            openingBrace: String.fromCharCode(openingBrace),
+        };
+        const request = this.processRequest("braceCompletion", args);
+        const response = this.processResponse(request);
+        return response.body;
+    };
+
+    proto.getSpanOfEnclosingComment = function(fileName, position, onlyMultiLine) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = {
+            file: fileName,
+            line: lineOffset.line,
+            offset: lineOffset.offset,
+            onlyMultiLine,
+        };
+        const request = this.processRequest("getSpanOfEnclosingComment", args);
+        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        if (!response.body) return undefined;
+        const { textSpan } = response.body;
+        return textSpan ? {
+            start: this.lineOffsetToPosition(fileName, textSpan.start),
+            length: this.lineOffsetToPosition(fileName, textSpan.end) - this.lineOffsetToPosition(fileName, textSpan.start),
+        } : undefined;
+    };
+
+    proto.getTodoComments = function(fileName, descriptors) {
+        const args = { file: fileName, descriptors };
+        const request = this.processRequest("todoComments", args);
+        const response = this.processResponse(request);
+        return response.body || [];
+    };
+
+    proto.getDocCommentTemplateAtPosition = function(fileName, position, options, formatOptions) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = {
+            file: fileName,
+            line: lineOffset.line,
+            offset: lineOffset.offset,
+            ...(options || {}),
+        };
+        const request = this.processRequest("docCommentTemplate", args);
+        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        return response.body || undefined;
+    };
+
+    proto.getIndentationAtPosition = function(fileName, position, options) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset, options };
+        const request = this.processRequest("indentation", args);
+        const response = this.processResponse(request);
+        return response.body;
+    };
+
+    proto.toggleLineComment = function(fileName, textRange) {
+        const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
+        const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
+        const args = {
+            file: fileName,
+            startLine: startLineOffset.line,
+            startOffset: startLineOffset.offset,
+            endLine: endLineOffset.line,
+            endOffset: endLineOffset.offset,
+        };
+        const request = this.processRequest("toggleLineComment", args);
+        const response = this.processResponse(request);
+        return (response.body || []).map(edit => this.convertCodeEditsToTextChange(fileName, edit));
+    };
+
+    proto.toggleMultilineComment = function(fileName, textRange) {
+        const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
+        const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
+        const args = {
+            file: fileName,
+            startLine: startLineOffset.line,
+            startOffset: startLineOffset.offset,
+            endLine: endLineOffset.line,
+            endOffset: endLineOffset.offset,
+        };
+        const request = this.processRequest("toggleMultilineComment", args);
+        const response = this.processResponse(request);
+        return (response.body || []).map(edit => this.convertCodeEditsToTextChange(fileName, edit));
+    };
+
+    proto.commentSelection = function(fileName, textRange) {
+        const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
+        const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
+        const args = {
+            file: fileName,
+            startLine: startLineOffset.line,
+            startOffset: startLineOffset.offset,
+            endLine: endLineOffset.line,
+            endOffset: endLineOffset.offset,
+        };
+        const request = this.processRequest("commentSelection", args);
+        const response = this.processResponse(request);
+        return (response.body || []).map(edit => this.convertCodeEditsToTextChange(fileName, edit));
+    };
+
+    proto.uncommentSelection = function(fileName, textRange) {
+        const startLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.pos);
+        const endLineOffset = this.positionToOneBasedLineOffset(fileName, textRange.end);
+        const args = {
+            file: fileName,
+            startLine: startLineOffset.line,
+            startOffset: startLineOffset.offset,
+            endLine: endLineOffset.line,
+            endOffset: endLineOffset.offset,
+        };
+        const request = this.processRequest("uncommentSelection", args);
+        const response = this.processResponse(request);
+        return (response.body || []).map(edit => this.convertCodeEditsToTextChange(fileName, edit));
+    };
+
+    proto.getSmartSelectionRange = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        // Use selectionRange which is already handled by tsz-server
+        const request = this.processRequest("selectionRange", args);
+        const response = this.processResponse(request);
+        return response.body || undefined;
+    };
+
+    proto.getSyntacticClassifications = function(fileName, span) {
+        return [];
+    };
+
+    proto.getSemanticClassifications = function(fileName, span) {
+        return [];
+    };
+
+    proto.getEncodedSyntacticClassifications = function(fileName, span) {
+        return { spans: [], endOfLineState: 0 };
+    };
+
+    proto.getCompilerOptionsDiagnostics = function() {
+        return [];
+    };
+
+    proto.getNameOrDottedNameSpan = function(fileName, startPos, endPos) {
+        return undefined;
+    };
+
+    // organizeImports - route to server protocol
+    proto.organizeImports = function(args, formatOptions) {
+        const request = this.processRequest("organizeImports", {
+            scope: { type: "file", args: { file: args.fileName } },
+        });
+        const response = this.processResponse(request);
+        return response.body || [];
+    };
+
+    // getEditsForFileRename - route to server protocol
+    proto.getEditsForFileRename = function(oldFilePath, newFilePath, formatOptions, preferences) {
+        const request = this.processRequest("getEditsForFileRename", {
+            oldFilePath,
+            newFilePath,
+        });
+        const response = this.processResponse(request);
+        return response.body || [];
+    };
+}
+
 function runSingleTest(FourSlash, Harness, testFile, testType) {
     const basePath = path.dirname(testFile);
     const content = Harness.IO.readFile(testFile);
@@ -118,6 +314,7 @@ async function main() {
     // Create adapter and patch TestState
     let TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
     patchTestState(FourSlash, TszAdapter);
+    patchSessionClient(SessionClient);
 
     const testType = 1; // FourSlashTestType.Server
 
