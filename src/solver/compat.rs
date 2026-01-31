@@ -1,6 +1,7 @@
 //! TypeScript compatibility layer for assignability rules.
 
 use crate::solver::diagnostics::SubtypeFailureReason;
+use crate::solver::db::QueryDatabase;
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::solver::types::{PropertyInfo, TypeId, TypeKey};
 use crate::solver::visitor::is_empty_object_type_db;
@@ -61,6 +62,8 @@ impl AssignabilityOverrideProvider for NoopOverrideProvider {
 /// for `any` propagation.
 pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
     interner: &'a dyn TypeDatabase,
+    /// Optional query database for Salsa-backed memoization.
+    query_db: Option<&'a dyn QueryDatabase>,
     subtype: SubtypeChecker<'a, R>,
     /// The "Lawyer" layer - handles nuanced rules for `any` propagation.
     lawyer: AnyPropagationRules,
@@ -79,6 +82,7 @@ impl<'a> CompatChecker<'a, NoopResolver> {
     pub fn new(interner: &'a dyn TypeDatabase) -> CompatChecker<'a, NoopResolver> {
         CompatChecker {
             interner,
+            query_db: None,
             subtype: SubtypeChecker::new(interner),
             lawyer: AnyPropagationRules::new(),
             // Default to false (legacy TypeScript behavior) for compatibility
@@ -99,6 +103,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         CompatChecker {
             interner,
+            query_db: None,
             subtype: SubtypeChecker::with_resolver(interner, resolver),
             lawyer: AnyPropagationRules::new(),
             // Default to false (legacy TypeScript behavior) for compatibility
@@ -110,6 +115,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             strict_subtype_checking: false,
             cache: FxHashMap::default(),
         }
+    }
+
+    /// Set the query database for Salsa-backed memoization.
+    /// Propagates to the internal SubtypeChecker.
+    pub fn set_query_db(&mut self, db: &'a dyn QueryDatabase) {
+        self.query_db = Some(db);
+        self.subtype.query_db = Some(db);
     }
 
     /// Configure strict function parameter checking.
