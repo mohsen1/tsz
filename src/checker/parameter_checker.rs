@@ -205,9 +205,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // If the parameter has modifiers, it's a parameter property
-            // which is only allowed in constructors
-            if param.modifiers.is_some() {
+            // If the parameter has parameter property modifiers (public/private/protected/readonly),
+            // it's a parameter property which is only allowed in constructors.
+            // Decorators on parameters are NOT parameter properties.
+            if self.has_parameter_property_modifier(&param.modifiers) {
                 self.error_at_node(
                     param_idx,
                     "A parameter property is only allowed in a constructor implementation.",
