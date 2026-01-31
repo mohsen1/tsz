@@ -3,18 +3,24 @@
 **Status**: Proposal  
 **Authors**: Architecture Review  
 **Date**: January 2026  
-**Version**: 2.0
+**Version**: 2.1 (Reviewed)
 
 ---
 
 ## Executive Summary
+
+**Goal**: TSZ is a **tsc drop-in replacement** with an optional **Sound Mode** for stricter type checking.
 
 This document proposes evolving the TSZ Solver into a **query-based type algebra engine** using Salsa for automatic memoization and cycle recovery. The key insight is that the existing **Judge/Lawyer architecture** provides the perfect foundation:
 
 - **Judge** (SubtypeChecker, TypeEvaluator): Pure set-theoretic computations → **Salsa queries**
 - **Lawyer** (CompatChecker): TypeScript-specific quirks → **Imperative wrapper**
 
-This separation enables a future **Sound Mode** where users can bypass the Lawyer entirely for strict, mathematically-correct type checking.
+This separation enables:
+1. **TSC Parity**: Lawyer ensures identical behavior to tsc (default mode)
+2. **Sound Mode**: Bypass Lawyer to use Judge directly (opt-in via `--sound`)
+3. **Performance**: Salsa caching makes repeated checks O(1)
+4. **Correctness**: Proper coinductive cycle handling fixes ~25% of conformance failures
 
 ### Current Problems
 
@@ -122,6 +128,146 @@ Sound Mode would catch issues TypeScript allows:
 - Method parameter bivariance
 - `any` as both top and bottom type
 - Enum to number assignability
+
+### 1.4 Critical Design Constraints
+
+Based on architectural review, these constraints are **non-negotiable**:
+
+#### Constraint 1: Inference Stays Outside Salsa
+
+The `InferenceContext` uses `ena` (Union-Find) for mutable unification variables. **This cannot be inside Salsa.**
+
+```
+    ┌─────────────────────────────────────────────┐
+    │              IMPERATIVE LAYER               │
+    │  ┌───────────────────────────────────────┐  │
+    │  │         InferenceContext (ena)        │  │
+    │  │  - Unification variables              │  │
+    │  │  - Mutable Union-Find                 │  │
+    │  │  - resolve_generic_call()             │  │
+    │  └───────────────┬───────────────────────┘  │
+    │                  │ queries                   │
+    │                  ▼                           │
+    │  ┌───────────────────────────────────────┐  │
+    │  │           Judge (Salsa DB)            │  │
+    │  │  - is_subtype() for bounds checking   │  │
+    │  │  - evaluate() for constraint solving  │  │
+    │  │  - Pure, cacheable, cycle-safe        │  │
+    │  └───────────────────────────────────────┘  │
+    └─────────────────────────────────────────────┘
+```
+
+**Rule**: The Judge can only verify fully instantiated types. Inference (solving for `T`) remains imperative, querying the Judge for bounds checks.
+
+#### Constraint 2: "Explain Slow" Pattern for Diagnostics
+
+Salsa memoizes return values, not side effects. Diagnostics are side effects.
+
+```rust
+// WRONG: Trying to cache diagnostics
+fn is_subtype(db: &dyn Judge, a: TypeId, b: TypeId) -> (bool, Vec<Diagnostic>) {
+    // Diagnostics would be cached forever - WRONG
+}
+
+// CORRECT: Separate fast check from slow explain
+impl Judge {
+    /// Fast, cached - returns bool only
+    fn is_subtype(&self, a: TypeId, b: TypeId) -> bool;
+}
+
+impl Lawyer {
+    /// If is_subtype returns false and we need diagnostics,
+    /// call this OUTSIDE Salsa to generate error messages
+    fn explain_subtype_failure(&self, a: TypeId, b: TypeId) -> SubtypeFailureReason;
+}
+```
+
+**Rule**: Judge returns `bool`. If `false` and diagnostics needed, Lawyer calls a separate non-Salsa `explain_*` function.
+
+#### Constraint 3: Classification APIs, Not Just Getters
+
+To achieve "zero TypeKey matches in Checker", the Judge must expose **classifiers**, not just getters.
+
+```rust
+// WRONG: Chatty API - Checker still has to decide
+let is_array = judge.is_array(t);
+let is_tuple = judge.is_tuple(t);
+let has_iterator = judge.has_symbol_iterator(t);
+// Checker reimplements iterable logic
+
+// CORRECT: Classifier API - Judge decides
+enum IterableKind { Array, Tuple, IteratorObject, AsyncIterable, NotIterable }
+fn classify_iterable(db: &dyn Judge, t: TypeId) -> IterableKind;
+
+enum CallableKind { Function, Constructor, Overloaded, NotCallable }
+fn classify_callable(db: &dyn Judge, t: TypeId) -> CallableKind;
+```
+
+**Rule**: If the Checker needs to branch on type structure, expose a classifier that returns an enum.
+
+#### Constraint 4: Pre-Merge Strategy for DefId
+
+Declaration merging (interfaces, namespaces) must be handled **before** the Judge sees the type.
+
+```rust
+// The query returns a PRE-MERGED view
+fn get_interface_members(db: &dyn Judge, def_id: DefId) -> Arc<Vec<PropertyInfo>> {
+    // Implementation finds ALL declarations for this DefId
+    // (including augmentations) and merges them BEFORE returning
+}
+```
+
+| Scenario | Strategy |
+|----------|----------|
+| Interface merging | Single DefId, merged body |
+| Class + Namespace | DefId's static members include namespace exports |
+| Module augmentation | `get_members(DefId)` includes augmentations implicitly |
+
+**Rule**: The Judge sees merged, complete types. Merging logic lives in the query implementation, not the caller.
+
+#### Constraint 5: Freshness Ownership
+
+Object literal "freshness" (for excess property checking) is **Lawyer's responsibility**.
+
+```rust
+pub struct Lawyer<'db> {
+    judge: &'db dyn Judge,
+    freshness: FreshnessTracker,  // Lawyer owns this
+}
+
+impl FreshnessTracker {
+    /// Mark a TypeId as "fresh" (just created from object literal)
+    fn mark_fresh(&mut self, type_id: TypeId);
+    
+    /// Check if a TypeId is still "fresh"
+    fn is_fresh(&self, type_id: TypeId) -> bool;
+    
+    /// Widen a type (lose freshness on assignment)
+    fn widen(&mut self, type_id: TypeId);
+}
+```
+
+**Rule**: Judge knows nothing about freshness. Lawyer tracks it and applies excess property checking.
+
+#### Constraint 6: Configuration as Salsa Input
+
+Compiler options (`strictNullChecks`, `strictFunctionTypes`) must be Salsa inputs, not implicit state.
+
+```rust
+#[salsa::query_group(JudgeStorage)]
+pub trait Judge {
+    #[salsa::input]
+    fn strict_null_checks(&self) -> bool;
+    
+    #[salsa::input]
+    fn strict_function_types(&self) -> bool;
+    
+    // Queries that depend on config will auto-invalidate when config changes
+    fn is_subtype(&self, source: TypeId, target: TypeId) -> bool;
+}
+```
+
+**Implication**: Changing `strict: true` invalidates the entire cache. This is correct behavior.
 
 ---
 
@@ -250,6 +396,14 @@ fn get_index_type(db: &dyn Judge, type_id: TypeId, key: TypeId) -> TypeId;
 
 #[salsa::query_group(JudgeStorage)]
 pub trait Judge: TypeDatabase {
+    // === Configuration Inputs ===
+    
+    #[salsa::input]
+    fn strict_null_checks(&self) -> bool;
+    
+    #[salsa::input]
+    fn strict_function_types(&self) -> bool;
+    
     // === Core Type Relations ===
     
     /// Structural subtype check with coinductive cycle recovery
@@ -269,25 +423,91 @@ pub trait Judge: TypeDatabase {
     #[salsa::cycle(recover_instantiate_cycle)]
     fn instantiate(&self, generic: TypeId, args: Vec<TypeId>) -> TypeId;
     
+    // === Type Classifiers (Checker uses these instead of TypeKey matching) ===
+    
+    /// Classify how a type can be iterated
+    fn classify_iterable(&self, type_id: TypeId) -> IterableKind;
+    
+    /// Classify how a type can be called
+    fn classify_callable(&self, type_id: TypeId) -> CallableKind;
+    
+    /// Get primitive behavior flags
+    fn classify_primitive(&self, type_id: TypeId) -> PrimitiveFlags;
+    
+    /// Classify truthiness for control flow
+    fn classify_truthiness(&self, type_id: TypeId) -> TruthinessResult;
+    
     // === Type Queries ===
     
     /// Get apparent type (unwrap type params, resolve constraints)
     fn apparent_type(&self, type_id: TypeId) -> TypeId;
     
-    /// Get members of a type
+    /// Get members of a type (handles merging internally)
     fn get_members(&self, type_id: TypeId) -> Arc<Vec<(Atom, TypeId)>>;
+    
+    /// Get a specific property type
+    fn get_property_type(&self, type_id: TypeId, name: Atom) -> Option<TypeId>;
     
     /// Get call signatures
     fn get_call_signatures(&self, type_id: TypeId) -> Arc<Vec<CallSignature>>;
     
+    /// Get construct signatures
+    fn get_construct_signatures(&self, type_id: TypeId) -> Arc<Vec<CallSignature>>;
+    
     /// Get index type: T[K]
     fn get_index_type(&self, object: TypeId, key: TypeId) -> TypeId;
     
+    /// Get index signature type (string or number indexer)
+    fn get_index_signature(&self, type_id: TypeId, kind: IndexKind) -> Option<TypeId>;
+    
     /// Get keyof: keyof T
     fn get_keyof(&self, type_id: TypeId) -> TypeId;
+    
+    /// Get narrowed type after type guard
+    fn get_narrowed_type(&self, original: TypeId, guard: TypeGuard) -> TypeId;
 }
 
-// Coinductive recovery functions
+// === Classification Enums ===
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IterableKind {
+    Array(TypeId),          // Array<T> - element type
+    Tuple,                  // [T, U, V]
+    String,                 // string (iterates chars)
+    IteratorObject,         // Has Symbol.iterator
+    AsyncIterable,          // Has Symbol.asyncIterator
+    NotIterable,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CallableKind {
+    Function,               // Regular function
+    Constructor,            // new-able
+    Overloaded(u32),        // Multiple signatures (count)
+    NotCallable,
+}
+
+bitflags! {
+    pub struct PrimitiveFlags: u32 {
+        const STRING_LIKE = 1 << 0;
+        const NUMBER_LIKE = 1 << 1;
+        const BOOLEAN_LIKE = 1 << 2;
+        const BIGINT_LIKE = 1 << 3;
+        const SYMBOL_LIKE = 1 << 4;
+        const VOID_LIKE = 1 << 5;
+        const NULLABLE = 1 << 6;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TruthinessResult {
+    AlwaysTruthy,
+    AlwaysFalsy,
+    Sometimes,              // Could be either
+}
+
+// === Coinductive recovery functions ===
+
 fn recover_subtype_cycle(_db: &dyn Judge, _cycle: &salsa::Cycle, _s: TypeId, _t: TypeId) -> bool {
     true  // Greatest Fixed Point: cycles are compatible
 }
@@ -562,56 +782,283 @@ Monitor these categories during migration:
 
 ---
 
-## 6. Open Questions
+## 6. Design Decisions
+
+> **Context**: TSZ is a tsc drop-in replacement. Sound Mode is an opt-in feature built on top.
 
 ### 6.1 Salsa Version
 
-- **Salsa 0.17** (current stable) vs **Salsa 2022** (new API)?
-- Salsa 2022 has better cycle handling but is still evolving.
+**Decision: Salsa 0.17 (stable)**
+
+| Option | Pros | Cons |
+|--------|------|------|
+| Salsa 0.17 | Stable, well-documented, production-ready | Older cycle API |
+| Salsa 2022 | Better cycle handling, newer patterns | Still evolving, breaking changes |
+
+**Rationale**: For a drop-in replacement, stability is paramount. Salsa 0.17's cycle recovery via `#[salsa::cycle]` is sufficient for our coinductive semantics. We can migrate to Salsa 2022 later when it stabilizes.
+
+**Action**: Use Salsa 0.17. Abstract cycle recovery behind our own traits so migration is localized.
 
 ### 6.2 DefId Scope
 
-- **Global** (cross-file, enables caching across compilations)
-- **Per-compilation** (simpler lifecycle, current choice)
+**Decision: Per-compilation with stable hashing for LSP**
+
+| Mode | DefId Strategy |
+|------|----------------|
+| CLI (`tsc` replacement) | Fresh DefIds per compilation (simple, matches tsc) |
+| LSP/Watch | Content-addressed DefIds (hash of declaration) for stability |
+
+**Rationale**: 
+- CLI mode must match tsc semantics exactly. Fresh DefIds per run is fine.
+- LSP needs stable IDs across edits for incremental updates. Use content-based hashing.
+
+```rust
+impl DefId {
+    /// CLI mode: sequential allocation
+    pub fn allocate_fresh(store: &DefinitionStore) -> DefId;
+    
+    /// LSP mode: content-addressed for stability
+    pub fn from_content_hash(name: Atom, file: FileId, span: Span) -> DefId;
+}
+```
 
 ### 6.3 Interface Merging
 
-- **Option A**: Single DefId for merged interface body
-- **Option B**: Multiple DefIds, merge at query time
+**Decision: Single DefId for merged interface (Option A)**
+
+**Rationale**: This matches tsc's conceptual model. A merged interface is ONE type, not multiple types stitched together.
+
+```typescript
+// These are ONE interface with ONE DefId
+interface User { name: string; }
+interface User { age: number; }
+
+// Conceptually: DefId(42) -> { name: string, age: number }
+```
+
+**Implementation**:
+1. Binder creates ONE symbol for merged declarations
+2. Lowering produces ONE DefId for that symbol
+3. `get_members(DefId)` query collects from all declarations
+
+**Edge case - Augmentation**:
+Module augmentations also merge into the same DefId. The query implementation must have global visibility of augmentations.
 
 ### 6.4 Incremental Checking
 
-Salsa enables incremental recomputation. How deeply to integrate?
-- **Minimal**: Use Salsa for caching within a compilation
-- **Full**: Use Salsa for cross-compilation incrementality (like rust-analyzer)
+**Decision: Two-tier approach**
+
+| Mode | Incrementality | Why |
+|------|----------------|-----|
+| CLI | **Minimal** (within compilation) | Match tsc behavior, predictable |
+| LSP | **Full** (cross-compilation) | Fast IDE response, rust-analyzer style |
+
+**CLI Mode (tsc replacement)**:
+- Salsa caches within a single `tsc` invocation
+- Each `tsc` run starts fresh (like tsc)
+- `--build` mode can reuse across project references
+
+**LSP Mode (IDE)**:
+- Full Salsa incrementality
+- Edit a file → only re-check affected types
+- Cross-file caching persists in memory
+
+```rust
+pub enum CompilationMode {
+    /// Fresh start, cache only within this run
+    Cli,
+    /// Persistent cache, incremental updates
+    Lsp { db: SalsaDatabase },
+}
+```
+
+### 6.5 Sound Mode Integration
+
+**Decision: Compiler flag with Lawyer bypass**
+
+```bash
+# Standard tsc-compatible mode (default)
+tsz check src/
+
+# Sound mode (opt-in)
+tsz check --sound src/
+```
+
+**Implementation**:
+```rust
+pub struct CompilerOptions {
+    // ... existing options ...
+    
+    /// Enable sound type checking (stricter than TypeScript)
+    pub sound_mode: bool,
+}
+
+impl CheckerState {
+    fn is_assignable(&self, source: TypeId, target: TypeId) -> bool {
+        if self.options.sound_mode {
+            // Bypass Lawyer, use Judge directly
+            self.judge.is_subtype(source, target)
+        } else {
+            // Standard TypeScript behavior
+            self.lawyer.is_assignable(source, target)
+        }
+    }
+}
+```
+
+**Sound Mode catches**:
+- Covariant array mutation: `let animals: Animal[] = dogs; animals.push(cat);`
+- Method parameter bivariance
+- `any` escaping structural checks
+- Enum-to-number unsoundness
+- Index signature unsoundness
+
+**Sound Mode diagnostics** use different error codes (TS9xxx) to distinguish from standard TypeScript errors.
+
+### 6.6 Error Compatibility
+
+**Decision: Exact error message matching for tsc mode**
+
+| Mode | Error Format |
+|------|--------------|
+| TypeScript | Exact tsc error codes and messages |
+| Sound | New error codes (TS9xxx) with explanations |
+
+**Rationale**: Drop-in replacement means identical error output. Users switching from tsc should see no difference.
+
+```rust
+impl Diagnostic {
+    /// Format for tsc compatibility
+    fn format_typescript(&self) -> String;
+    
+    /// Format for sound mode (more detailed)
+    fn format_sound(&self) -> String;
+}
+```
 
 ---
 
-## 7. Success Criteria
+## 7. Implementation Risks
+
+Based on architectural review, these are the key risks to monitor:
+
+### Risk A: Coinductive Cycle Topology (High)
+
+**Context**: TypeScript subtyping involves complex cycle patterns, including bivariant cross-recursion (`A <: B` triggers `B <: A`).
+
+**Risk**: Salsa's default cycle handling may not match our coinductive semantics perfectly.
+
+**Mitigation**:
+1. Extensive test suite for recursive types
+2. Verify bivariant cycles work correctly
+3. Consider Salsa 2022's improved cycle API
+
+### Risk B: Loss of Laziness (Medium)
+
+**Context**: Current checker resolves types very lazily. DefId generation may require eager scanning.
+
+**Risk**: If merging/augmentation requires global knowledge upfront, first-check latency may increase.
+
+**Mitigation**:
+1. Profile before/after for representative projects
+2. Consider two-phase: fast DefId allocation, lazy body resolution
+3. Accept some eagerness for correctness
+
+### Risk C: RefCell Elimination (Medium)
+
+**Context**: `evaluate.rs` uses `RefCell` for local caching. Salsa requires pure functions.
+
+**Risk**: Removing `RefCell` may require significant refactoring.
+
+**Mitigation**:
+1. Replace `RefCell` cache with Salsa memoization
+2. Pass recursion depth as query argument OR rely on Salsa cycle detection
+3. Ensure thread safety for parallel checking
+
+### Risk D: Error Type Propagation (Low)
+
+**Context**: `TypeId::ERROR` should silently propagate to prevent cascading errors.
+
+**Risk**: Salsa queries returning `ERROR` may trigger unnecessary diagnostics.
+
+**Mitigation**:
+1. Distinguish `Ok(TypeId::ERROR)` (silent) from query failure
+2. Checker suppresses diagnostics when source or target is `ERROR`
+3. Document error propagation rules
+
+---
+
+## 8. Success Criteria
+
+### Architecture Metrics
 
 | Metric | Current | Target |
 |--------|---------|--------|
 | Checker `TypeKey::` matches | 75+ | 0 |
 | `SymbolRef` in TypeKey | 4 variants | 0 |
-| Conformance pass rate | ~48% | ~55%+ |
+| Conformance pass rate | ~48% | 95%+ (tsc parity) |
 | Recursive type handling | Limits | Coinductive |
 | TS2589 accuracy | Returns `False` | Returns diagnostic |
+
+### TSC Drop-in Replacement Criteria
+
+| Requirement | Metric |
+|-------------|--------|
+| **Error parity** | Same error codes, same locations as tsc |
+| **Behavior parity** | Identical type inference results |
+| **CLI parity** | Same flags, same output format |
+| **Performance** | Faster than tsc (target: 2-5x) |
+| **Zero regressions** | Any tsc-valid code must pass tsz |
+
+### Sound Mode Criteria
+
+| Requirement | Metric |
+|-------------|--------|
+| **Opt-in only** | Zero impact when `--sound` not specified |
+| **Clear diagnostics** | TS9xxx codes explain unsoundness caught |
+| **Gradual adoption** | Per-file `// @ts-sound` pragma support |
+| **Documentation** | Every caught unsoundness documented with examples |
 
 ---
 
 ## Appendix A: Judge Queries Reference
 
+### Core Relations
+
 | Query | Input | Output | Cycle Recovery |
 |-------|-------|--------|----------------|
 | `is_subtype` | `(A, B)` | `bool` | `true` (coinductive) |
 | `are_identical` | `(A, B)` | `bool` | `true` (coinductive) |
+
+### Evaluation
+
+| Query | Input | Output | Cycle Recovery |
+|-------|-------|--------|----------------|
 | `evaluate` | `T` | `TypeId` | Identity (return input) |
 | `instantiate` | `(G, Args)` | `TypeId` | `Error` |
 | `apparent_type` | `T` | `TypeId` | Identity |
+
+### Classifiers (Replace TypeKey Matching)
+
+| Query | Input | Output | Purpose |
+|-------|-------|--------|---------|
+| `classify_iterable` | `T` | `IterableKind` | for-of, spread |
+| `classify_callable` | `T` | `CallableKind` | call expressions |
+| `classify_primitive` | `T` | `PrimitiveFlags` | binary ops |
+| `classify_truthiness` | `T` | `TruthinessResult` | control flow |
+
+### Property Access
+
+| Query | Input | Output | Cycle Recovery |
+|-------|-------|--------|----------------|
 | `get_members` | `T` | `Vec<(Atom, TypeId)>` | Empty |
+| `get_property_type` | `(T, name)` | `Option<TypeId>` | `None` |
 | `get_call_signatures` | `T` | `Vec<Signature>` | Empty |
+| `get_construct_signatures` | `T` | `Vec<Signature>` | Empty |
 | `get_index_type` | `(T, K)` | `TypeId` | `Error` |
+| `get_index_signature` | `(T, kind)` | `Option<TypeId>` | `None` |
 | `get_keyof` | `T` | `TypeId` | `never` |
+| `get_narrowed_type` | `(T, guard)` | `TypeId` | Identity |
 
 ---
 
@@ -627,7 +1074,161 @@ Salsa enables incremental recomputation. How deeply to integrate?
 
 ---
 
-## Appendix C: Comparison with Other Systems
+## Appendix C: "Explain Slow" Diagnostic Pattern
+
+The Lawyer provides diagnostic generation **outside** Salsa:
+
+```rust
+/// Structured failure reasons (not cached by Salsa)
+pub enum SubtypeFailureReason {
+    MissingProperty { name: Atom, in_type: TypeId },
+    PropertyTypeMismatch { 
+        name: Atom, 
+        expected: TypeId, 
+        actual: TypeId,
+        nested: Box<SubtypeFailureReason>,
+    },
+    SignatureMismatch {
+        kind: SignatureKind,
+        reason: Box<SubtypeFailureReason>,
+    },
+    ParameterCountMismatch { expected: usize, actual: usize },
+    ReturnTypeMismatch { expected: TypeId, actual: TypeId },
+    IndexSignatureMissing { kind: IndexKind },
+    UnionMemberMismatch { 
+        member_index: usize,
+        member_type: TypeId,
+        reason: Box<SubtypeFailureReason>,
+    },
+    CircularReference,
+    TypeTooComplex,
+}
+
+impl Lawyer {
+    /// Fast path: just check compatibility (cached by Judge)
+    pub fn is_assignable(&self, source: TypeId, target: TypeId) -> bool {
+        self.judge.is_subtype(source, target) || self.allows_ts_quirk(source, target)
+    }
+    
+    /// Slow path: generate detailed error (NOT cached)
+    pub fn explain_assignment_failure(
+        &self, 
+        source: TypeId, 
+        target: TypeId
+    ) -> SubtypeFailureReason {
+        // Re-run the check with tracing enabled
+        // This is only called when we need to display an error
+        self.trace_subtype_failure(source, target)
+    }
+}
+```
+
+### Checker Usage
+
+```rust
+impl CheckerState {
+    fn check_assignment(&mut self, source: TypeId, target: TypeId, span: Span) {
+        // Fast check (cached)
+        if self.lawyer.is_assignable(source, target) {
+            return;
+        }
+        
+        // Slow explain (only when error)
+        let reason = self.lawyer.explain_assignment_failure(source, target);
+        
+        // Convert to diagnostic with source location
+        let diagnostic = self.format_assignment_error(reason, span);
+        self.diagnostics.push(diagnostic);
+    }
+}
+```
+
+### Why This Pattern?
+
+| Approach | Cache Behavior | Problem |
+|----------|---------------|---------|
+| Return `(bool, Diagnostic)` | Diagnostic cached forever | Stale error messages |
+| Side-effect diagnostics | Not cached at all | Loss of memoization benefit |
+| **Explain Slow** | Bool cached, diagnostic fresh | Best of both worlds |
+
+---
+
+## Appendix D: Declaration Merging Strategy
+
+DefId must represent **merged** types. The query implementation handles merging, not the caller.
+
+### Interface Merging
+
+```typescript
+// File A
+interface User { name: string; }
+
+// File B  
+interface User { age: number; }
+```
+
+```rust
+// Both declarations map to SAME DefId
+let user_def_id = DefId(42);
+
+// Query returns MERGED members
+fn get_members(db: &dyn Judge, def_id: DefId) -> Arc<Vec<PropertyInfo>> {
+    // Implementation:
+    // 1. Find ALL declarations for this DefId
+    // 2. Collect members from each
+    // 3. Merge (later declarations override)
+    // 4. Return combined view
+}
+```
+
+### Class + Namespace Merging
+
+```typescript
+class Foo { x: number; }
+namespace Foo { export const y = 1; }
+```
+
+```rust
+// Static members include namespace exports
+fn get_static_members(db: &dyn Judge, class_def: DefId) -> Arc<Vec<PropertyInfo>> {
+    let class_statics = get_class_static_members(class_def);
+    let namespace_exports = get_namespace_exports(class_def);
+    merge(class_statics, namespace_exports)
+}
+```
+
+### Module Augmentation
+
+```typescript
+// node_modules/express/index.d.ts
+declare namespace Express { interface Request { } }
+
+// src/augment.d.ts
+declare namespace Express { 
+    interface Request { user: User; }  // Augmentation
+}
+```
+
+```rust
+// The Judge must see augmentations BEFORE queries
+fn get_interface_members(db: &dyn Judge, def_id: DefId) -> Arc<Vec<PropertyInfo>> {
+    let base_members = get_base_members(def_id);
+    let augmentations = db.get_augmentations_for(def_id);  // Global view needed
+    merge_all(base_members, augmentations)
+}
+```
+
+### Implementation Requirements
+
+| Requirement | Why |
+|-------------|-----|
+| Global augmentation registry | Must know all augmentations before querying |
+| DefId stability | Same logical type = same DefId across files |
+| Lazy but complete | Can defer merging, but must merge completely when accessed |
+
+---
+
+## Appendix E: Comparison with Other Systems
 
 | System | Type Engine | Cycle Handling | Caching |
 |--------|-------------|----------------|---------|
@@ -639,7 +1240,7 @@ Salsa enables incremental recomputation. How deeply to integrate?
 
 ---
 
-## Appendix D: References
+## Appendix F: References
 
 1. `docs/architecture/NORTH_STAR.md` - Target architecture
 2. `docs/aspirations/SOUND_MODE_ASPIRATIONS.md` - Sound Mode goals
