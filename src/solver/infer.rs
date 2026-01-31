@@ -1055,12 +1055,15 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        // Step 2: Try to find the best single type that satisfies all candidates
-        // Check if one type is a supertype of all others
-        for &candidate in &unique {
-            if self.is_suitable_common_type(candidate, &unique) {
-                return candidate;
+        // Step 2: Tournament reduction — O(N) to find candidate, O(N) to validate
+        let mut best = unique[0];
+        for &candidate in &unique[1..] {
+            if self.is_subtype(best, candidate) {
+                best = candidate;
             }
+        }
+        if self.is_suitable_common_type(best, &unique) {
+            return best;
         }
 
         // Step 3: Try to find a common base class for object types
