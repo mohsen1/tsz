@@ -912,21 +912,14 @@ impl<'a> CheckerState<'a> {
         // FIX: Also include lib symbols for proper property resolution
         // This ensures Error, Math, JSON, etc. can be resolved when accessed
         if !self.ctx.lib_contexts.is_empty() {
-            let lib_symbols_set: std::collections::BTreeSet<SymbolId> = self
-                .ctx
-                .lib_contexts
-                .iter()
-                .flat_map(|lib| {
-                    // Iterate over symbol IDs in lib binder
-                    (0..lib.binder.symbols.len())
-                        .map(|i| SymbolId(i as u32))
-                        .collect::<Vec<_>>()
-                })
-                .collect();
+            let existing: rustc_hash::FxHashSet<SymbolId> = symbols.iter().copied().collect();
 
-            for sym_id in lib_symbols_set {
-                if !symbols.contains(&sym_id) {
-                    symbols.push(sym_id);
+            for lib in &self.ctx.lib_contexts {
+                for i in 0..lib.binder.symbols.len() {
+                    let sym_id = SymbolId(i as u32);
+                    if !existing.contains(&sym_id) {
+                        symbols.push(sym_id);
+                    }
                 }
             }
         }
