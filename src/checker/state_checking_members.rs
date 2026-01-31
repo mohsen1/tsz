@@ -1356,6 +1356,16 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Error 1318: An abstract accessor cannot have an implementation
+        // Abstract accessors must not have a body
+        if !accessor.body.is_none() && self.has_abstract_modifier(&accessor.modifiers) {
+            self.error_at_node(
+                member_idx,
+                "An abstract accessor cannot have an implementation.",
+                diagnostic_codes::ABSTRACT_ACCESSOR_CANNOT_HAVE_IMPLEMENTATION,
+            );
+        }
+
         let is_getter = node.kind == syntax_kind_ext::GET_ACCESSOR;
         let has_type_annotation = is_getter && !accessor.type_annotation.is_none();
         let mut return_type = if is_getter {
