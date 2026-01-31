@@ -81,3 +81,6 @@ conformance/.tsc-cache
 
 # Debug tests
 tests/debug/
+
+# Pre-commit hook temp files
+.conformance-value

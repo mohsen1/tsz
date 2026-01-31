@@ -16,6 +16,7 @@
 mod apparent;
 mod application;
 pub mod binary_ops;
+mod class_hierarchy;
 mod compat;
 mod contextual;
 mod db;
@@ -53,6 +54,7 @@ pub use visitor::*;
 pub(crate) use apparent::*;
 pub use application::*;
 pub use binary_ops::*;
+pub use class_hierarchy::*;
 pub use compat::*;
 pub use contextual::*;
 pub use db::*;

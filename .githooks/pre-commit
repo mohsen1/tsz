@@ -1,13 +1,19 @@
 #!/bin/bash
 #
 # Pre-commit hook for tsz - OPTIMIZED FOR SPEED
-# Runs formatting, clippy, and targeted tests before commits
+# Runs formatting, clippy, targeted tests, and conformance regression check
 #
 
 set -e
 
 # Skip hook if TSZ_SKIP_HOOKS is set (for automated commits)
 [[ "${TSZ_SKIP_HOOKS:-}" == "1" ]] && exit 0
+
+# Skip conformance check if TSZ_SKIP_CONFORMANCE is set (for wip commits)
+SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
+
+# Get root directory
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "🔧 Pre-commit checks..."
 
@@ -101,5 +107,88 @@ else
     fi
 fi
 echo "✅ Tests passed"
+
+# ============================================================
+# 4. Conformance regression check
+# ============================================================
+if [[ "$SKIP_CONFORMANCE" == "1" ]]; then
+    echo "4️⃣  Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
+else
+    echo "4️⃣  Conformance regression check..."
+    
+    # Get the last recorded conformance from git history
+    LAST_CONFORMANCE=""
+    if LAST_CONFORMANCE=$("$ROOT_DIR/scripts/get-last-conformance.sh" 2>/dev/null); then
+        echo "   Last recorded: ${LAST_CONFORMANCE}%"
+    else
+        echo "   No previous conformance found in git history"
+        echo "   Skipping regression check (baseline will be set with this commit)"
+        SKIP_CONFORMANCE=1
+    fi
+    
+    if [[ "$SKIP_CONFORMANCE" != "1" ]]; then
+        # Run quick conformance check
+        TEMP_OUTPUT=$(mktemp)
+        trap "rm -f $TEMP_OUTPUT" EXIT
+        
+        echo "   Running quick conformance check..."
+        if ! "$ROOT_DIR/conformance/run.sh" --max=500 --workers=4 > "$TEMP_OUTPUT" 2>&1; then
+            echo "❌ Conformance tests failed to run"
+            cat "$TEMP_OUTPUT" | tail -20
+            exit 1
+        fi
+        
+        # Extract current pass rate
+        PASS_LINE=$(grep -E "^Pass Rate:" "$TEMP_OUTPUT" | tail -1)
+        if [[ -z "$PASS_LINE" ]]; then
+            echo "❌ Could not extract pass rate from conformance output"
+            exit 1
+        fi
+        
+        CURRENT_CONFORMANCE=$(echo "$PASS_LINE" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        echo "   Current: ${CURRENT_CONFORMANCE}%"
+        
+        # Compare using bc for floating point comparison
+        if command -v bc &>/dev/null; then
+            IS_REGRESSION=$(echo "$CURRENT_CONFORMANCE < $LAST_CONFORMANCE" | bc -l)
+        else
+            # Fallback: compare as integers (multiply by 10 to preserve one decimal)
+            CURRENT_INT=$(echo "$CURRENT_CONFORMANCE" | tr -d '.' | sed 's/^0*//')
+            LAST_INT=$(echo "$LAST_CONFORMANCE" | tr -d '.' | sed 's/^0*//')
+            [[ -z "$CURRENT_INT" ]] && CURRENT_INT=0
+            [[ -z "$LAST_INT" ]] && LAST_INT=0
+            if [[ "$CURRENT_INT" -lt "$LAST_INT" ]]; then
+                IS_REGRESSION=1
+            else
+                IS_REGRESSION=0
+            fi
+        fi
+        
+        if [[ "$IS_REGRESSION" == "1" ]]; then
+            echo ""
+            echo "❌ CONFORMANCE REGRESSION DETECTED!"
+            echo ""
+            echo "   Previous: ${LAST_CONFORMANCE}%"
+            echo "   Current:  ${CURRENT_CONFORMANCE}%"
+            echo "   Delta:    -$(echo "$LAST_CONFORMANCE - $CURRENT_CONFORMANCE" | bc -l 2>/dev/null || echo "?")%"
+            echo ""
+            echo "   Your changes caused a drop in conformance test pass rate."
+            echo "   Please fix the regression before committing."
+            echo ""
+            echo "   To investigate:"
+            echo "     ./conformance/run.sh --filter=<pattern> --print-test"
+            echo ""
+            echo "   To bypass (not recommended):"
+            echo "     TSZ_SKIP_CONFORMANCE=1 git commit ..."
+            echo ""
+            exit 1
+        fi
+        
+        echo "✅ Conformance: ${CURRENT_CONFORMANCE}% (no regression from ${LAST_CONFORMANCE}%)"
+        
+        # Store the conformance value for the commit-msg hook to pick up
+        echo "$CURRENT_CONFORMANCE" > "$ROOT_DIR/.conformance-value"
+    fi
+fi
 
 echo "✅ All checks passed!"

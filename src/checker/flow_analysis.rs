@@ -1466,6 +1466,7 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         // Check definite assignment for block-scoped variables without initializers
         if self.should_check_definite_assignment(sym_id, idx)
+            && !self.skip_definite_assignment_for_type(declared_type)
             && !self.is_definitely_assigned_at(idx)
         {
             // Report TS2454 error: Variable used before assignment
@@ -1572,6 +1573,24 @@ impl<'a> CheckerState<'a> {
     /// Definite assignment checking applies to:
     /// - Block-scoped variables (let/const) without initializers
     /// - Parameters in certain contexts
+    /// Check if definite assignment checking should be skipped for a given type.
+    /// TypeScript skips TS2454 when the declared type is `any`, `unknown`, or includes `undefined`.
+    pub(crate) fn skip_definite_assignment_for_type(&self, declared_type: TypeId) -> bool {
+        use crate::solver::TypeId;
+        use crate::solver::type_contains_undefined;
+
+        // Skip for any/unknown/error - these types allow uninitialized usage
+        if declared_type == TypeId::ANY
+            || declared_type == TypeId::UNKNOWN
+            || declared_type == TypeId::ERROR
+        {
+            return true;
+        }
+
+        // Skip if the type includes undefined or void (uninitialized variables are undefined)
+        type_contains_undefined(self.ctx.types, declared_type)
+    }
+
     /// - Not in ambient contexts
     /// - Not in type-only positions
     pub(crate) fn should_check_definite_assignment(
@@ -1624,14 +1643,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Skip definite assignment checks in ambient declarations (declare const/let).
-        // Walk up the parent chain to find the variable statement/list and inspect modifiers.
+        // Walk up the parent chain to check:
+        // 1. Skip definite assignment checks in ambient declarations (declare const/let)
+        // 2. Skip for module/global-level variables (TypeScript only checks function-local variables)
         let mut current = decl_id;
-        for _ in 0..5 {
+        let mut found_function_scope = false;
+        for _ in 0..50 {
             let Some(info) = self.ctx.arena.node_info(current) else {
                 break;
             };
             if let Some(node) = self.ctx.arena.get(current) {
+                // Check for ambient declarations
                 if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                     || node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                 {
@@ -1647,6 +1669,24 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+
+                // Check if we're inside a function scope
+                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
+                    || node.kind == syntax_kind_ext::CONSTRUCTOR
+                    || node.kind == syntax_kind_ext::GET_ACCESSOR
+                    || node.kind == syntax_kind_ext::SET_ACCESSOR
+                {
+                    found_function_scope = true;
+                    break;
+                }
+
+                // If we reached the source file, this is a module-level variable
+                if node.kind == syntax_kind_ext::SOURCE_FILE {
+                    return false;
+                }
             }
 
             current = info.parent;
@@ -1655,7 +1695,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Variable without initializer - should be checked for definite assignment
+        // Only check definite assignment for function-local variables
+        if !found_function_scope {
+            return false;
+        }
+
+        // Variable without initializer inside function scope - should be checked
         true
     }
 
