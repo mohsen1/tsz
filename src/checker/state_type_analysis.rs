@@ -825,16 +825,36 @@ impl<'a> CheckerState<'a> {
             // This can happen during recursive type resolution (e.g., class inheritance).
             // If we can't borrow, skip the cache update - the type is still computed correctly.
             if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                // Get the DefId if one exists (Phase 4.3 migration)
+                let def_id = self.ctx.symbol_to_def.get(&sym_id).copied();
+
                 if let Some((instance_type, class_params)) = class_env_entry {
                     if class_params.is_empty() {
                         env.insert(SymbolRef(sym_id.0), instance_type);
+                        // Also register with DefId for Lazy type resolution
+                        if let Some(def_id) = def_id {
+                            env.insert_def(def_id, instance_type);
+                        }
                     } else {
-                        env.insert_with_params(SymbolRef(sym_id.0), instance_type, class_params);
+                        env.insert_with_params(
+                            SymbolRef(sym_id.0),
+                            instance_type,
+                            class_params.clone(),
+                        );
+                        if let Some(def_id) = def_id {
+                            env.insert_def_with_params(def_id, instance_type, class_params);
+                        }
                     }
                 } else if type_params.is_empty() {
                     env.insert(SymbolRef(sym_id.0), result);
+                    if let Some(def_id) = def_id {
+                        env.insert_def(def_id, result);
+                    }
                 } else {
-                    env.insert_with_params(SymbolRef(sym_id.0), result, type_params);
+                    env.insert_with_params(SymbolRef(sym_id.0), result, type_params.clone());
+                    if let Some(def_id) = def_id {
+                        env.insert_def_with_params(def_id, result, type_params);
+                    }
                 }
             }
         }
