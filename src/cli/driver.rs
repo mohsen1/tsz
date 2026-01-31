@@ -965,61 +965,39 @@ fn load_lib_files_for_contexts(
     _target: crate::emitter::ScriptTarget,
 ) -> Vec<LibContext> {
     use crate::binder::BinderState;
-    use crate::cli::config::{extract_lib_references, resolve_lib_files};
     use crate::parser::ParserState;
     use rayon::prelude::*;
-    use std::collections::{HashSet, VecDeque};
+    use std::collections::HashSet;
     use std::sync::Arc;
 
-    // Phase 1: Collect all lib files and their content (sequential due to dependencies)
-    let mut lib_contents: Vec<(String, String)> = Vec::new();
-    let mut loaded_lib_names = HashSet::new();
-    let mut pending_libs = VecDeque::new();
+    // Deduplicate lib paths by file stem (lib name)
+    // resolve_lib_files already resolved all /// <reference lib="..." /> directives,
+    // so we just need to dedupe and read the files.
+    let mut seen_libs = HashSet::new();
+    let unique_lib_paths: Vec<_> = lib_files
+        .iter()
+        .filter(|path| {
+            let lib_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.strip_prefix("lib."))
+                .and_then(|s| s.strip_suffix(".generated"))
+                .unwrap_or_else(|| path.file_stem().and_then(|s| s.to_str()).unwrap_or(""));
+            path.exists() && seen_libs.insert(lib_name.to_string())
+        })
+        .collect();
 
-    // Initially add the specified lib files to the queue
-    for lib_path in lib_files {
-        if lib_path.exists() {
-            pending_libs.push_back(lib_path.clone());
-        }
-    }
+    // Read all lib files in PARALLEL (major speedup - eliminates sequential I/O bottleneck)
+    let lib_contents: Vec<(String, String)> = unique_lib_paths
+        .into_par_iter()
+        .filter_map(|lib_path| {
+            let source_text = std::fs::read_to_string(lib_path).ok()?;
+            let file_name = lib_path.to_string_lossy().to_string();
+            Some((file_name, source_text))
+        })
+        .collect();
 
-    // Collect all lib content, resolving /// <reference lib="..." /> directives
-    while let Some(lib_path) = pending_libs.pop_front() {
-        let lib_name = lib_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| s.strip_prefix("lib."))
-            .and_then(|s| s.strip_suffix(".generated"))
-            .unwrap_or_else(|| lib_path.file_stem().and_then(|s| s.to_str()).unwrap_or(""));
-
-        if !loaded_lib_names.insert(lib_name.to_string()) {
-            continue;
-        }
-
-        let source_text = match std::fs::read_to_string(&lib_path) {
-            Ok(content) => content,
-            Err(_) => continue,
-        };
-
-        // Extract referenced libs BEFORE storing content
-        let referenced_libs = extract_lib_references(&source_text);
-
-        let file_name = lib_path.to_string_lossy().to_string();
-        lib_contents.push((file_name, source_text));
-
-        // Queue referenced libs
-        for ref_lib in referenced_libs {
-            if let Ok(ref_paths) = resolve_lib_files(std::slice::from_ref(&ref_lib)) {
-                for ref_path in ref_paths {
-                    if !loaded_lib_names.contains(ref_lib.as_str()) && ref_path.exists() {
-                        pending_libs.push_back(ref_path);
-                    }
-                }
-            }
-        }
-    }
-
-    // Phase 2: Parse and bind all libs in parallel for faster startup
+    // Parse and bind all libs in parallel
     let lib_contexts: Vec<LibContext> = lib_contents
         .into_par_iter()
         .filter_map(|(file_name, source_text)| {
