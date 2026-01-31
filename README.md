@@ -21,7 +21,7 @@ test suite against it.
 Currently targeting `TypeScript`@`6.0.0-dev.20260116`
 
 ```
-Progress: [█████████░░░░░░░░░░░] 44.0% (5,441 / 12,379 tests)
+Progress: [█████████░░░░░░░░░░░] 46.6% (5,767 / 12,379 tests)
 ```
 <!-- CONFORMANCE_END -->
 
