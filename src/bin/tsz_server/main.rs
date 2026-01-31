@@ -1771,6 +1771,7 @@ impl Server {
                     wasm::lsp::document_symbols::SymbolKind::Constant => "const",
                     wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
                     wasm::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
+                    wasm::lsp::document_symbols::SymbolKind::Struct => "type",
                     _ => "unknown",
                 };
                 let children: Vec<serde_json::Value> =
@@ -1846,6 +1847,7 @@ impl Server {
                     wasm::lsp::document_symbols::SymbolKind::Constant => "const",
                     wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
                     wasm::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
+                    wasm::lsp::document_symbols::SymbolKind::Struct => "type",
                     _ => "unknown",
                 };
                 let child_items: Vec<serde_json::Value> = sym
@@ -1864,6 +1866,7 @@ impl Server {
                                 wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
                                 wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
                                 wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                                wasm::lsp::document_symbols::SymbolKind::Struct => "type",
                                 _ => "unknown",
                             },
                         })
@@ -2901,12 +2904,69 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // docCommentTemplate returns DocCommandTemplateResponse or undefined
-        // When we can't determine the right template, return no body (undefined).
-        // The client expects expectEmptyBody=true for this command, so a body
-        // would cause "Unexpected non-empty response body" errors.
-        // TODO: Implement actual JSDoc template generation based on function signatures
-        self.stub_response(seq, request, None)
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let _line = request.arguments.get("line")?.as_u64()? as usize;
+            let _offset = request.arguments.get("offset")?.as_u64().unwrap_or(1);
+            let source_text = self.open_files.get(file)?;
+
+            // Find the next non-whitespace content after the cursor position
+            // to determine if we're before a documentable declaration.
+            let line_map = LineMap::build(source_text);
+            let position = Self::tsserver_to_lsp_position(_line as u32, _offset as u32);
+            let offset = line_map.position_to_offset(position, source_text)? as usize;
+
+            // Look at what follows - find next non-whitespace line
+            let rest = &source_text[offset..];
+            let trimmed = rest.trim_start();
+
+            // Check if cursor is before a documentable declaration
+            let is_documentable = trimmed.starts_with("function ")
+                || trimmed.starts_with("class ")
+                || trimmed.starts_with("interface ")
+                || trimmed.starts_with("type ")
+                || trimmed.starts_with("enum ")
+                || trimmed.starts_with("namespace ")
+                || trimmed.starts_with("module ")
+                || trimmed.starts_with("export ")
+                || trimmed.starts_with("const ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("var ")
+                || trimmed.starts_with("abstract ")
+                || trimmed.starts_with("async ")
+                || trimmed.starts_with("public ")
+                || trimmed.starts_with("private ")
+                || trimmed.starts_with("protected ")
+                || trimmed.starts_with("static ")
+                || trimmed.starts_with("readonly ")
+                || trimmed.starts_with("get ")
+                || trimmed.starts_with("set ")
+                // method-like: identifier followed by (
+                || trimmed.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+
+            if !is_documentable {
+                return None;
+            }
+
+            // Basic template: /** */
+            // TODO: Parse function parameters and generate @param tags
+            Some(serde_json::json!({
+                "newText": "/** */",
+                "caretOffset": 3
+            }))
+        })();
+
+        // Always return a body so processResponse(request) works.
+        // When no template, return {newText: "", caretOffset: 0} which
+        // is truthy for processResponse but signals "no template" to adapter.
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!({
+                "newText": "",
+                "caretOffset": 0
+            }))),
+        )
     }
 
     fn handle_indentation(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
