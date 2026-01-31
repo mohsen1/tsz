@@ -3,244 +3,79 @@
 # TSZ Conformance Test Runner
 # ===========================
 #
-# A unified script for running TypeScript conformance tests against the tsz compiler.
-# Supports multiple execution modes: WASM in Docker, native binary in Docker, or native
-# binary directly on the host.
-#
 # Usage: ./run.sh [command] [options]
 #
 # Examples:
-#   ./run.sh                          # Run with defaults (WASM + Docker, 500 tests)
-#   ./run.sh --all                    # Run all tests
-#   ./run.sh --native --no-docker     # Run native binary without Docker (macOS)
+#   ./run.sh                          # Run with defaults (server mode, all tests)
+#   ./run.sh --all                    # Run all tests (same as default)
+#   ./run.sh --native --no-docker     # Run native binary without Docker
 #   ./run.sh --max=100 --verbose      # Run 100 tests with verbose output
 #   ./run.sh cache generate           # Generate TSC cache for faster runs
 #   ./run.sh single path/to/test.ts   # Run a single test file
 #
 # For full help: ./run.sh --help
-#
 
 set -euo pipefail
 
-# ==============================================================================
-# Signal Handling (Ctrl+C)
-# ==============================================================================
+# =============================================================================
+# Signal Handling
+# =============================================================================
 
-# Track child PIDs for cleanup
 CHILD_PIDS=()
 DOCKER_CONTAINER_NAME=""
 
 cleanup() {
     local exit_code=$?
-    echo "" # Newline after ^C
-
-    # Stop Docker container if running
+    echo ""
     if [[ -n "$DOCKER_CONTAINER_NAME" ]]; then
-        echo "Stopping Docker container..."
         docker stop "$DOCKER_CONTAINER_NAME" 2>/dev/null || true
         docker rm -f "$DOCKER_CONTAINER_NAME" 2>/dev/null || true
     fi
-
-    # Kill any child processes
     for pid in "${CHILD_PIDS[@]:-}"; do
         kill -TERM "$pid" 2>/dev/null || true
     done
-    # Kill any node processes we spawned
     pkill -P $$ 2>/dev/null || true
     exit $exit_code
 }
 
-# Trap signals
 trap cleanup INT TERM EXIT
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
+# =============================================================================
+# Paths & Colors
+# =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DOCKER_IMAGE="tsz-conformance"
 
-# Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[0;33m'
-    BLUE='\033[0;34m'
-    CYAN='\033[0;36m'
-    BOLD='\033[1m'
-    DIM='\033[2m'
-    RESET='\033[0m'
+    RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[0;33m'
+    BLUE='\033[0;34m' CYAN='\033[0;36m' BOLD='\033[1m'
+    DIM='\033[2m' RESET='\033[0m'
 else
     RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' RESET=''
 fi
 
-# ==============================================================================
-# Auto-install Git Hooks
-# ==============================================================================
+# =============================================================================
+# Global Config (set by parse_args)
+# =============================================================================
 
-install_hooks_if_needed() {
-    # Check if we're in a git repository
-    if ! git -C "$ROOT_DIR" rev-parse --git-dir &>/dev/null; then
-        return 0
-    fi
-    
-    # Check if hooks are already configured
-    local current_hooks_path
-    current_hooks_path=$(git -C "$ROOT_DIR" config core.hooksPath 2>/dev/null || echo "")
-    
-    if [[ "$current_hooks_path" != ".githooks" ]]; then
-        echo -e "${YELLOW}⚠${RESET}  Git hooks not configured. Installing..."
-        git -C "$ROOT_DIR" config core.hooksPath .githooks
-        
-        # Make hooks executable
-        chmod +x "$ROOT_DIR/.githooks/"* 2>/dev/null || true
-        
-        echo -e "${GREEN}✓${RESET}  Git hooks installed (pre-commit + conformance check)"
-        echo ""
-    fi
-}
+CFG_MODE="server"
+CFG_DOCKER=false
+CFG_MAX=99999
+CFG_WORKERS=""
+CFG_TIMEOUT=600
+CFG_CATEGORIES="conformance,compiler"
+CFG_VERBOSE=false
+CFG_FILTER=""
+CFG_PRINT_TEST=false
+CFG_DUMP_RESULTS=""
+CFG_PASS_RATE_ONLY=false
+CFG_DRY_RUN=false
 
-# Install hooks at startup (silent if already installed)
-install_hooks_if_needed
-
-# ==============================================================================
-# Help System
-# ==============================================================================
-
-show_help() {
-    cat << 'EOF'
-TSZ Conformance Test Runner
-===========================
-
-USAGE:
-    ./run.sh [command] [options]
-    ./run.sh [options]
-
-COMMANDS:
-    (default)       Run conformance tests with the configured options
-    cache           Manage TSC result cache (see CACHE COMMANDS below)
-    single <file>   Run a single test file and show detailed output
-    help            Show this help message
-
-CACHE COMMANDS:
-    cache generate  Generate/update TSC cache (speeds up subsequent runs)
-    cache status    Show cache status and statistics
-    cache clear     Clear the TSC cache
-
-OPTIONS:
-    Execution Mode:
-    --server            Use tsz-server (persistent process, default - fastest)
-    --wasm              Use WASM module (slower, but good isolation)
-    --native            Use native binary spawned per test (legacy mode)
-    --docker            Run inside Docker container (provides isolation)
-    --no-docker         Run directly on host (default with --server)
-
-    Test Selection:
-    --all               Run all available tests (same as default)
-    --max=N             Maximum number of tests to run (default: all)
-    --category=CAT      Test categories to run, comma-separated
-                        Options: conformance, compiler, projects
-                        Default: conformance,compiler,projects
-    --filter=PATTERN    Only run tests matching pattern (substring match)
-
-    Execution:
-    --workers=N         Number of parallel workers (default: auto-detect)
-    --timeout=SECS      Test timeout in seconds (default: 600 for normal, 3600 for --all)
-
-    Output:
-    -v, --verbose       Show detailed output for each test
-    --print-test        Show detailed info for filtered tests (use with --filter)
-                        Displays: file content, directives, TSC expected, tsz actual
-    --pass-rate-only    Output pass rate percentage only (for scripts/CI)
-                        Outputs: ===PASS_RATE_START===\n85.3\n===PASS_RATE_END===
-    -q, --quiet         Minimal output (only summary)
-    --json              Output results as JSON (implies --quiet)
-
-    Other:
-    -h, --help          Show this help message
-    --version           Show version information
-    --dry-run           Show what would be run without executing
-
-EXAMPLES:
-    # Quick test run with defaults (WASM + Docker, 500 tests)
-    ./run.sh
-
-    # Run all tests with native binary (macOS - no Docker)
-    ./run.sh --native --no-docker --all --workers=8
-
-    # Run compiler tests only, verbose output
-    ./run.sh --category=compiler --verbose
-
-    # Run specific number of tests with WASM
-    ./run.sh --wasm --max=1000
-
-    # Generate cache for faster subsequent runs
-    ./run.sh cache generate
-
-    # Test a single file
-    ./run.sh single TypeScript/tests/cases/conformance/types/tuple/test.ts
-
-EXECUTION MODES:
-    The runner supports multiple execution modes:
-
-    1. Server Mode (default, fastest)
-       - Builds tsz-server binary
-       - Keeps libs cached in memory
-       - 5-10x faster than spawn-per-test
-       - Uses stdin/stdout JSON protocol
-
-    2. WASM + Docker (safest)
-       - Builds WASM module with wasm-pack
-       - Runs tests inside Docker container
-       - Best isolation from infinite loops/OOM
-       - Cross-platform compatible
-
-    3. WASM + No Docker
-       - Builds WASM module
-       - Runs directly on host
-       - Good isolation (WASM sandbox)
-
-    4. Native + No Docker (legacy)
-       - Spawns native binary per test
-       - Slower due to process overhead
-       - ⚠️  No isolation - infinite loops can hang your system
-
-CONFIGURATION:
-    The script respects .cargo/config.toml settings:
-    - target-dir: Uses .target/ instead of target/ if configured
-
-    Environment variables:
-    - TSZ_BINARY: Override path to native binary
-    - RUST_LOG: Set logging level for native binary (debug, trace, etc.)
-
-FILES:
-    conformance/
-    ├── run.sh              This script
-    ├── src/                TypeScript runner source
-    ├── dist/               Compiled runner
-    ├── .tsc-cache/         TSC result cache
-    └── package.json        Node.js dependencies
-
-EXIT CODES:
-    0    All tests passed
-    1    Some tests failed or crashed
-    2    Invalid arguments or configuration error
-    124  Timeout exceeded
-
-EOF
-}
-
-show_version() {
-    echo "TSZ Conformance Test Runner v1.0.0"
-    echo "Rust: $(rustc --version 2>/dev/null || echo 'not installed')"
-    echo "Node: $(node --version 2>/dev/null || echo 'not installed')"
-    echo "Docker: $(docker --version 2>/dev/null || echo 'not installed')"
-}
-
-# ==============================================================================
-# Utility Functions
-# ==============================================================================
+# =============================================================================
+# Logging & Utilities
+# =============================================================================
 
 log_info()    { echo -e "${BLUE}ℹ${RESET}  $*"; }
 log_success() { echo -e "${GREEN}✓${RESET}  $*"; }
@@ -248,35 +83,26 @@ log_warning() { echo -e "${YELLOW}⚠${RESET}  $*"; }
 log_error()   { echo -e "${RED}✗${RESET}  $*" >&2; }
 log_step()    { echo -e "${CYAN}→${RESET}  $*"; }
 
-die() {
-    log_error "$@"
-    exit 2
-}
+die() { log_error "$@"; exit 2; }
 
-# Detect number of CPU cores
 detect_cores() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
         sysctl -n hw.ncpu
     elif [[ -f /proc/cpuinfo ]]; then
-        grep -c ^processor /proc/cpuinfo
+        nproc
     else
         echo 4
     fi
 }
 
-# Check if a command exists
 require_cmd() {
-    if ! command -v "$1" &>/dev/null; then
-        die "Required command not found: $1"
-    fi
+    command -v "$1" &>/dev/null || die "Required command not found: $1"
 }
 
-# Get target directory from cargo config
 get_target_dir() {
     local config_file="$ROOT_DIR/.cargo/config.toml"
     if [[ -f "$config_file" ]]; then
         local dir
-        # Parse: target-dir = ".target"
         dir=$(grep -E '^target-dir' "$config_file" 2>/dev/null | awk -F'"' '{print $2}')
         if [[ -n "$dir" ]]; then
             echo "$ROOT_DIR/$dir"
@@ -286,49 +112,33 @@ get_target_dir() {
     echo "$ROOT_DIR/target"
 }
 
-# ==============================================================================
+# =============================================================================
 # Build Functions
-# ==============================================================================
+# =============================================================================
 
 build_wasm() {
     log_step "Building WASM module..."
-    cd "$ROOT_DIR"
-    
-    if ! command -v wasm-pack &>/dev/null; then
-        die "wasm-pack not found. Install with: cargo install wasm-pack"
-    fi
-    
-    wasm-pack build --target nodejs --out-dir pkg --release
+    require_cmd wasm-pack
+    (cd "$ROOT_DIR" && wasm-pack build --target nodejs --out-dir pkg --release)
     log_success "WASM module built"
-    # Lib files are embedded in the binary (no copy needed).
 }
 
 build_native() {
     log_step "Building native binary..."
-    cd "$ROOT_DIR"
-
     require_cmd cargo
-    cargo build --release --bin tsz
+    (cd "$ROOT_DIR" && cargo build --release --bin tsz)
     log_success "Native binary built"
-    # Lib files are embedded in the binary (no copy needed).
 }
 
 build_server() {
     log_step "Building tsz-server..."
-    cd "$ROOT_DIR"
-
     require_cmd cargo
-    cargo build --release --bin tsz-server
+    (cd "$ROOT_DIR" && cargo build --release --bin tsz-server)
     log_success "tsz-server built"
 }
 
 build_native_for_docker() {
     log_step "Building native binary for Linux (Docker)..."
-
-    # Build the binary inside Docker to avoid cross-compilation issues
-    # Use the host architecture for better performance on Apple Silicon
-    log_info "Building in Docker container..."
-
     docker run --rm \
         -v "$ROOT_DIR:/work:rw" \
         -w /work \
@@ -338,34 +148,26 @@ build_native_for_docker() {
             apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev >/dev/null 2>&1
             cargo build --release --bin tsz
         "
-
     log_success "Native binary for Linux built"
 }
 
 build_runner() {
     log_step "Building conformance runner..."
     cd "$SCRIPT_DIR"
-    
     if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/typescript" ]]; then
         npm install --silent 2>/dev/null || npm install
     fi
-    
     npm run build --silent 2>/dev/null || npm run build
     log_success "Runner built"
 }
 
-# ==============================================================================
+# =============================================================================
 # Docker Functions
-# ==============================================================================
+# =============================================================================
 
 check_docker() {
-    if ! command -v docker &>/dev/null; then
-        die "Docker not found. Install from: https://docs.docker.com/get-docker/"
-    fi
-    
-    if ! docker info &>/dev/null; then
-        die "Docker daemon not running. Start Docker Desktop or run: sudo systemctl start docker"
-    fi
+    command -v docker &>/dev/null || die "Docker not found. Install from: https://docs.docker.com/get-docker/"
+    docker info &>/dev/null || die "Docker daemon not running. Start Docker Desktop or run: sudo systemctl start docker"
 }
 
 ensure_docker_image() {
@@ -380,184 +182,252 @@ DOCKERFILE
     log_success "Docker image ready"
 }
 
-# ==============================================================================
-# Cache Commands
-# ==============================================================================
+# =============================================================================
+# Output
+# =============================================================================
 
-cmd_cache() {
-    local subcmd="${1:-status}"
-    
-    build_runner
-    
-    case "$subcmd" in
-        generate)
-            log_step "Generating TSC cache..."
-            cd "$SCRIPT_DIR"
-            node dist/generate-cache.js
-            ;;
-        status)
-            cd "$SCRIPT_DIR"
-            node dist/generate-cache.js --status
-            ;;
-        clear)
-            log_step "Clearing TSC cache..."
-            cd "$SCRIPT_DIR"
-            node dist/generate-cache.js --clear
-            log_success "Cache cleared"
-            ;;
-        *)
-            die "Unknown cache command: $subcmd (use: generate, status, clear)"
-            ;;
-    esac
-}
-
-# ==============================================================================
-# Single Test Command
-# ==============================================================================
-
-cmd_single() {
-    local test_file="$1"
-    
-    if [[ -z "$test_file" ]]; then
-        die "Usage: ./run.sh single <path/to/test.ts>"
-    fi
-    
-    if [[ ! -f "$test_file" ]] && [[ ! -f "$ROOT_DIR/$test_file" ]]; then
-        die "Test file not found: $test_file"
-    fi
-    
-    # Resolve to absolute path
-    if [[ ! "$test_file" = /* ]]; then
-        if [[ -f "$ROOT_DIR/$test_file" ]]; then
-            test_file="$ROOT_DIR/$test_file"
-        else
-            test_file="$(pwd)/$test_file"
-        fi
-    fi
-    
-    build_native
-    
-    local target_dir
-    target_dir=$(get_target_dir)
-    local binary="$target_dir/release/tsz"
-    
-    echo ""
-    echo -e "${BOLD}Running: ${RESET}$test_file"
-    echo "─────────────────────────────────────────────────────────────"
-    echo ""
-    
-    cd "$ROOT_DIR"
-    "$binary" "$test_file" 2>&1 || true
-    
-    echo ""
-    echo "─────────────────────────────────────────────────────────────"
-}
-
-# ==============================================================================
-# Main Test Runner
-# ==============================================================================
-
-run_tests() {
-    local use_wasm="$1"
-    local use_docker="$2"
-    local max_tests="$3"
-    local workers="$4"
-    local timeout="$5"
-    local categories="$6"
-    local verbose="$7"
-    
-    # Validate mode combinations
-    if [[ "$use_docker" == "true" ]] && [[ "$use_wasm" == "false" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
-        echo ""
-        log_warning "Native binary + Docker may not work on macOS!"
-        echo ""
-        echo "  The macOS-compiled binary cannot run inside the Linux Docker container."
-        echo "  To use native mode with Docker, you need to build for Linux target."
-        echo ""
-        echo "  Options:"
-        echo "    1. Use --no-docker to run native binary directly (recommended)"
-        echo "    2. Use --wasm with Docker (platform-independent)"
-        echo "    3. Build for Linux: cargo build --release --target x86_64-unknown-linux-gnu"
-        echo ""
-        # Commented out to allow users to try it if they want
-        # exit 2
-    fi
-    
-    # Print banner
-    local mode_desc
-    if [[ "$use_wasm" == "true" ]]; then
-        mode_desc="WASM"
-    else
-        mode_desc="Native"
-    fi
-    if [[ "$use_docker" == "true" ]]; then
-        mode_desc="$mode_desc + Docker"
-    else
-        mode_desc="$mode_desc (direct)"
-    fi
-    
+print_banner() {
+    local mode_desc="$1"
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
     echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                          ${RESET}${CYAN}║${RESET}"
     echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
     echo -e "${CYAN}║${RESET}  Mode:       $(printf '%-48s' "$mode_desc")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$max_tests")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Workers:    $(printf '%-48s' "$workers")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Categories: $(printf '%-48s' "$categories")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Timeout:    $(printf '%-48s' "${timeout}s")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$CFG_MAX")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Workers:    $(printf '%-48s' "$CFG_WORKERS")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Categories: $(printf '%-48s' "$CFG_CATEGORIES")${CYAN}║${RESET}"
+    echo -e "${CYAN}║${RESET}  Timeout:    $(printf '%-48s' "${CFG_TIMEOUT}s")${CYAN}║${RESET}"
+    if [[ -n "$CFG_FILTER" ]]; then
+        echo -e "${CYAN}║${RESET}  Filter:     $(printf '%-48s' "$CFG_FILTER")${CYAN}║${RESET}"
+    fi
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
-    
-    # Build phase
+}
+
+# Run node runner with optional timeout, capturing exit code correctly.
+run_node() {
+    local exit_code=0
+    if command -v timeout &>/dev/null; then
+        timeout "${CFG_TIMEOUT}s" node --expose-gc dist/runner.js "$@" || {
+            exit_code=$?
+            if [[ $exit_code -eq 124 ]]; then
+                echo ""
+                log_warning "Tests timed out after ${CFG_TIMEOUT}s"
+            fi
+        }
+    else
+        node --expose-gc dist/runner.js "$@" || exit_code=$?
+    fi
+    return $exit_code
+}
+
+# =============================================================================
+# Help
+# =============================================================================
+
+show_help() {
+    cat << 'EOF'
+TSZ Conformance Test Runner
+
+USAGE:
+    ./run.sh [command] [options]
+
+COMMANDS:
+    (default)       Run conformance tests
+    cache           Manage TSC result cache (generate | status | clear)
+    single <file>   Run a single test file with detailed output
+    help            Show this help message
+
+OPTIONS:
+  Execution Mode:
+    --server            Persistent tsz-server process (default, fastest)
+    --wasm              WASM module (slower, good isolation)
+    --native            Native binary per test (legacy)
+    --docker            Run inside Docker container
+    --no-docker         Run directly on host (default with --server)
+
+  Test Selection:
+    --all               Run all tests (default)
+    --max=N             Maximum number of tests
+    --category=CAT      Categories: conformance,compiler,projects (default: conformance,compiler)
+    --filter=PATTERN    Only run tests matching pattern
+
+  Execution:
+    --workers=N         Parallel workers (default: auto-detect, capped at 8)
+    --timeout=SECS      Timeout in seconds (default: 600)
+
+  Output:
+    -v, --verbose       Detailed output per test
+    --print-test        Show file content, directives, expected vs actual (use with --filter)
+    --pass-rate-only    Output only pass rate percentage (for CI/scripts)
+    -q, --quiet         Minimal output
+    --json              JSON output (not yet implemented)
+    --dump-results=FILE Dump full results to JSON file
+
+  Other:
+    -h, --help          Show this help
+    --version           Show version info
+    --dry-run           Show config without running
+
+EXECUTION MODES:
+    Server (default)    Persistent process, libs cached in memory, 5-10x fastest
+    WASM + Docker       Best isolation, cross-platform, safest for CI
+    WASM (no Docker)    WASM sandbox without container overhead
+    Native (legacy)     Spawns binary per test, no isolation
+
+EXIT CODES:
+    0    All tests passed
+    1    Some tests failed
+    2    Configuration error
+    124  Timeout exceeded
+EOF
+}
+
+show_version() {
+    echo "TSZ Conformance Test Runner v1.0.0"
+    echo "Rust: $(rustc --version 2>/dev/null || echo 'not installed')"
+    echo "Node: $(node --version 2>/dev/null || echo 'not installed')"
+    echo "Docker: $(docker --version 2>/dev/null || echo 'not installed')"
+}
+
+# =============================================================================
+# Commands: cache, single
+# =============================================================================
+
+cmd_cache() {
+    local subcmd="${1:-status}"
+    build_runner
+    case "$subcmd" in
+        generate) log_step "Generating TSC cache..."; (cd "$SCRIPT_DIR" && node dist/generate-cache.js) ;;
+        status)   (cd "$SCRIPT_DIR" && node dist/generate-cache.js --status) ;;
+        clear)    log_step "Clearing TSC cache..."; (cd "$SCRIPT_DIR" && node dist/generate-cache.js --clear); log_success "Cache cleared" ;;
+        *)        die "Unknown cache command: $subcmd (use: generate, status, clear)" ;;
+    esac
+}
+
+cmd_single() {
+    local test_file="${1:-}"
+    [[ -z "$test_file" ]] && die "Usage: ./run.sh single <path/to/test.ts>"
+
+    # Resolve path
+    if [[ ! -f "$test_file" ]] && [[ -f "$ROOT_DIR/$test_file" ]]; then
+        test_file="$ROOT_DIR/$test_file"
+    elif [[ ! -f "$test_file" ]]; then
+        die "Test file not found: $test_file"
+    fi
+    [[ "$test_file" != /* ]] && test_file="$(pwd)/$test_file"
+
+    build_native
+
+    local binary
+    binary="$(get_target_dir)/release/tsz"
+
+    echo ""
+    echo -e "${BOLD}Running: ${RESET}$test_file"
+    echo "─────────────────────────────────────────────────────────────"
+    echo ""
+    (cd "$ROOT_DIR" && "$binary" "$test_file" 2>&1) || true
+    echo ""
+    echo "─────────────────────────────────────────────────────────────"
+}
+
+# =============================================================================
+# Run Modes
+# =============================================================================
+
+# Build runner args from global config.
+build_runner_args() {
+    local args="--max=$CFG_MAX --workers=$CFG_WORKERS --category=$CFG_CATEGORIES"
+    [[ "$CFG_VERBOSE" == "true" ]] && args="$args --verbose"
+    [[ -n "$CFG_FILTER" ]]        && args="$args --filter=$CFG_FILTER"
+    [[ "$CFG_PRINT_TEST" == "true" ]] && args="$args --print-test"
+    [[ -n "$CFG_DUMP_RESULTS" ]]  && args="$args --dump-results=$CFG_DUMP_RESULTS"
+    echo "$args"
+}
+
+run_server_mode() {
+    [[ "$CFG_PRINT_TEST" != "true" ]] && print_banner "Server (persistent)"
+
+    build_server
+    build_runner
+
+    [[ "$CFG_PRINT_TEST" != "true" ]] && { log_step "Starting tsz-server pool..."; echo ""; }
+
+    cd "$SCRIPT_DIR"
+    local target_dir
+    target_dir=$(get_target_dir)
+    export TSZ_SERVER_BINARY="$target_dir/release/tsz-server"
+    export TSZ_LIB_DIR="$ROOT_DIR/TypeScript/src/lib"
+
+    local args
+    args="$(build_runner_args) --server"
+
+    local exit_code=0
+    run_node $args || exit_code=$?
+
+    if [[ "$CFG_PRINT_TEST" != "true" ]]; then
+        echo ""
+        echo -e "${DIM}Tip: Use --filter=PATTERN --print-test to see detailed info for specific test failures${RESET}"
+    fi
+
+    return $exit_code
+}
+
+run_wasm_native_mode() {
+    local use_wasm="$1"
+    local mode_desc
+    if [[ "$use_wasm" == "true" ]]; then mode_desc="WASM"; else mode_desc="Native"; fi
+    if [[ "$CFG_DOCKER" == "true" ]]; then mode_desc="$mode_desc + Docker"; else mode_desc="$mode_desc (direct)"; fi
+
+    # Warn about macOS + native + docker
+    if [[ "$CFG_DOCKER" == "true" ]] && [[ "$use_wasm" == "false" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
+        log_warning "Native + Docker may not work on macOS (binary is macOS, container is Linux)."
+        echo "  Use --no-docker or --wasm instead."
+        echo ""
+    fi
+
+    print_banner "$mode_desc"
+
+    # Build
     if [[ "$use_wasm" == "true" ]]; then
         build_wasm
+    elif [[ "$CFG_DOCKER" == "true" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
+        build_native_for_docker
     else
-        if [[ "$use_docker" == "true" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
-            build_native_for_docker
-        else
-            build_native
-        fi
+        build_native
     fi
-    
     build_runner
-    
-    # Build runner args
-    local runner_args="--max=$max_tests --workers=$workers --category=$categories --wasm=$use_wasm"
-    if [[ "$verbose" == "true" ]]; then
-        runner_args="$runner_args --verbose"
-    fi
-    
-    if [[ "$use_docker" == "true" ]]; then
-        run_in_docker "$use_wasm" "$workers" "$timeout" "$runner_args"
+
+    local runner_args
+    runner_args="$(build_runner_args) --wasm=$use_wasm"
+
+    if [[ "$CFG_DOCKER" == "true" ]]; then
+        run_in_docker "$use_wasm" "$runner_args"
     else
-        run_direct "$use_wasm" "$timeout" "$runner_args"
+        run_direct "$use_wasm" "$runner_args"
     fi
 }
 
 run_in_docker() {
     local use_wasm="$1"
-    local workers="$2"
-    local timeout="$3"
-    local runner_args="$4"
-    
+    local runner_args="$2"
+
     check_docker
     ensure_docker_image
-    
-    # Calculate memory: ~3GB per worker for WASM (needs more headroom), minimum 8GB
-    local memory_gb=$(( workers * 3 ))
-    if (( memory_gb < 8 )); then memory_gb=8; fi
-    
-    log_step "Running tests in Docker (Memory: ${memory_gb}GB, CPUs: $workers)..."
+
+    local memory_gb=$(( CFG_WORKERS * 3 ))
+    (( memory_gb < 8 )) && memory_gb=8
+
+    log_step "Running tests in Docker (Memory: ${memory_gb}GB, CPUs: $CFG_WORKERS)..."
     echo ""
-    
+
     local mount_dir
     if [[ "$use_wasm" == "true" ]]; then
         mount_dir="$ROOT_DIR/pkg"
     else
         mount_dir="$(get_target_dir)"
     fi
-    
-    # Generate unique container name for cleanup
+
     DOCKER_CONTAINER_NAME="tsz-conformance-$$"
 
     docker run --rm \
@@ -565,7 +435,7 @@ run_in_docker() {
         --platform linux/arm64 \
         --memory="${memory_gb}g" \
         --memory-swap="${memory_gb}g" \
-        --cpus="$workers" \
+        --cpus="$CFG_WORKERS" \
         --pids-limit=1000 \
         -v "$mount_dir:/app/target:ro" \
         -v "$ROOT_DIR/pkg:/app/pkg:ro" \
@@ -578,338 +448,134 @@ run_in_docker() {
         "$DOCKER_IMAGE" sh -c "
             cd /app/conformance
             npm install --silent 2>/dev/null || true
-            timeout ${timeout}s node --expose-gc dist/runner.js $runner_args
+            timeout ${CFG_TIMEOUT}s node --expose-gc dist/runner.js $runner_args
             EXIT_CODE=\$?
-            if [ \$EXIT_CODE -eq 124 ]; then
-                echo ''
-                echo '⏱️  Tests timed out after ${timeout}s'
-            fi
+            [ \$EXIT_CODE -eq 124 ] && echo '' && echo 'Tests timed out after ${CFG_TIMEOUT}s'
             exit \$EXIT_CODE
         "
     local docker_exit=$?
-    DOCKER_CONTAINER_NAME=""  # Clear so cleanup doesn't try to stop it
+    DOCKER_CONTAINER_NAME=""
     return $docker_exit
 }
 
 run_direct() {
     local use_wasm="$1"
-    local timeout="$2"
-    local runner_args="$3"
-    
-    if [[ "$use_wasm" == "false" ]]; then
-        log_warning "Running without Docker isolation. Infinite loops may hang your system."
-        echo ""
-    fi
-    
+    local runner_args="$2"
+
+    [[ "$use_wasm" == "false" ]] && log_warning "No Docker isolation. Infinite loops may hang your system."
+
     log_step "Running tests..."
     echo ""
-    
     cd "$SCRIPT_DIR"
-    
-    # Set native binary path if using native mode
+
     if [[ "$use_wasm" == "false" ]]; then
-        local target_dir
-        if [[ "$use_docker" == "true" ]] && [[ "$OSTYPE" == "darwin"* ]]; then
-            target_dir="$ROOT_DIR/.target/linux"
-        else
-            target_dir=$(get_target_dir)
-        fi
-        export TSZ_BINARY="$target_dir/tsz"
+        export TSZ_BINARY="$(get_target_dir)/release/tsz"
     fi
-    
-    # Run with timeout
-    if command -v timeout &>/dev/null; then
-        timeout "${timeout}s" node --expose-gc dist/runner.js $runner_args || {
-            local exit_code=$?
-            if [[ $exit_code -eq 124 ]]; then
-                echo ""
-                log_warning "Tests timed out after ${timeout}s"
-            fi
-            return $exit_code
-        }
-    else
-        # macOS doesn't have timeout by default
-        node --expose-gc dist/runner.js $runner_args
-    fi
+
+    run_node $runner_args
 }
 
-run_server() {
-    local max_tests="$1"
-    local workers="$2"
-    local timeout="$3"
-    local categories="$4"
-    local verbose="$5"
-    local filter="${6:-}"
-    local print_test="${7:-false}"
-    local dump_results="${8:-}"
-
-    # Print banner (skip for print-test mode to keep output clean)
-    if [[ "$print_test" != "true" ]]; then
-        echo ""
-        echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-        echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                          ${RESET}${CYAN}║${RESET}"
-        echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-        echo -e "${CYAN}║${RESET}  Mode:       $(printf '%-48s' "Server (persistent)")${CYAN}║${RESET}"
-        echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$max_tests")${CYAN}║${RESET}"
-        echo -e "${CYAN}║${RESET}  Workers:    $(printf '%-48s' "$workers")${CYAN}║${RESET}"
-        echo -e "${CYAN}║${RESET}  Categories: $(printf '%-48s' "$categories")${CYAN}║${RESET}"
-        echo -e "${CYAN}║${RESET}  Timeout:    $(printf '%-48s' "${timeout}s")${CYAN}║${RESET}"
-        if [[ -n "$filter" ]]; then
-            echo -e "${CYAN}║${RESET}  Filter:     $(printf '%-48s' "$filter")${CYAN}║${RESET}"
-        fi
-        echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
-        echo ""
-    fi
-
-    build_server
-    build_runner
-
-    if [[ "$print_test" != "true" ]]; then
-        log_step "Starting tsz-server pool..."
-        echo ""
-    fi
-
-    cd "$SCRIPT_DIR"
-
-    # Set server binary path
-    local target_dir
-    target_dir=$(get_target_dir)
-    export TSZ_SERVER_BINARY="$target_dir/release/tsz-server"
-    export TSZ_LIB_DIR="$ROOT_DIR/TypeScript/src/lib"
-
-    # Build runner args
-    local runner_args="--max=$max_tests --workers=$workers --category=$categories --server"
-    if [[ "$verbose" == "true" ]]; then
-        runner_args="$runner_args --verbose"
-    fi
-    if [[ -n "$filter" ]]; then
-        runner_args="$runner_args --filter=$filter"
-    fi
-    if [[ "$print_test" == "true" ]]; then
-        runner_args="$runner_args --print-test"
-    fi
-    if [[ -n "$dump_results" ]]; then
-        runner_args="$runner_args --dump-results=$dump_results"
-    fi
-
-    # Run with timeout
-    local exit_code=0
-    if command -v timeout &>/dev/null; then
-        timeout "${timeout}s" node --expose-gc dist/runner.js $runner_args || {
-            exit_code=$?
-            if [[ $exit_code -eq 124 ]]; then
-                echo ""
-                log_warning "Tests timed out after ${timeout}s"
-            fi
-        }
-    else
-        # macOS doesn't have timeout by default
-        node --expose-gc dist/runner.js $runner_args || exit_code=$?
-    fi
-
-    # Show tip about --filter and --print-test if not already using --print-test
-    if [[ "$print_test" != "true" ]]; then
-        echo ""
-        echo -e "${DIM}Tip: Use --filter=PATTERN --print-test to see detailed info for specific test failures${RESET}"
-        echo -e "${DIM}     Example: ./run.sh --filter=inferTypes --print-test${RESET}"
-    fi
-
-    return $exit_code
+# Dispatch to the appropriate run mode.
+run_mode() {
+    case "$CFG_MODE" in
+        server) run_server_mode ;;
+        wasm)   run_wasm_native_mode true ;;
+        native) run_wasm_native_mode false ;;
+    esac
 }
 
-# ==============================================================================
+# =============================================================================
 # Argument Parsing
-# ==============================================================================
+# =============================================================================
 
-main() {
-    # Defaults - server mode is now the default (fastest)
-    local mode="server"  # server, wasm, native
-    local use_docker=false
-    local max_tests=99999  # Default: run all tests
-    local workers=""
-    local timeout=600
-    local categories="conformance,compiler"
-    local verbose=false
-    local dry_run=false
+parse_args() {
     local command=""
     local positional_args=()
-    local filter=""
-    local print_test=false
-    local dump_results=""
-    local pass_rate_only=false
-    
-    # Parse arguments
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            # Commands
-            help|--help|-h)
-                show_help
-                exit 0
-                ;;
-            --version)
-                show_version
-                exit 0
-                ;;
-            cache)
-                command="cache"
-                shift
-                positional_args+=("$@")
-                break
-                ;;
-            single)
-                command="single"
-                shift
-                positional_args+=("$@")
-                break
-                ;;
-            
-            # Mode options
-            --server)
-                mode="server"
-                use_docker=false  # Server mode doesn't use Docker
-                ;;
-            --wasm)
-                mode="wasm"
-                ;;
-            --native)
-                mode="native"
-                ;;
-            --docker)
-                use_docker=true
-                ;;
-            --no-docker|--no-sandbox)
-                use_docker=false
-                ;;
-            
-            # Test selection
-            --all)
-                max_tests=99999
-                timeout=3600
-                ;;
-            --max=*)
-                max_tests="${1#*=}"
-                ;;
-            --category=*)
-                categories="${1#*=}"
-                ;;
-            --filter=*)
-                filter="${1#*=}"
-                ;;
-            --print-test)
-                print_test=true
-                ;;
-            --dump-results=*)
-                dump_results="${1#*=}"
-                ;;
-            --dump-results)
-                dump_results="$SCRIPT_DIR/.tsc-cache/test-results.json"
-                ;;
-            --pass-rate-only)
-                pass_rate_only=true
-                ;;
+            help|--help|-h)    show_help; exit 0 ;;
+            --version)         show_version; exit 0 ;;
+            cache)             command="cache"; shift; positional_args+=("$@"); break ;;
+            single)            command="single"; shift; positional_args+=("$@"); break ;;
 
-            # Execution
-            --workers=*)
-                workers="${1#*=}"
-                ;;
-            --timeout=*)
-                timeout="${1#*=}"
-                ;;
-            
-            # Output
-            -v|--verbose)
-                verbose=true
-                ;;
-            -q|--quiet)
-                # TODO: Implement quiet mode
-                ;;
-            --json)
-                # TODO: Implement JSON output
-                log_warning "--json not yet implemented"
-                ;;
-            
-            # Other
-            --dry-run)
-                dry_run=true
-                ;;
-            
-            # Unknown
-            -*)
-                die "Unknown option: $1 (use --help for usage)"
-                ;;
-            *)
-                positional_args+=("$1")
-                ;;
+            --server)          CFG_MODE="server"; CFG_DOCKER=false ;;
+            --wasm)            CFG_MODE="wasm" ;;
+            --native)          CFG_MODE="native" ;;
+            --docker)          CFG_DOCKER=true ;;
+            --no-docker|--no-sandbox) CFG_DOCKER=false ;;
+
+            --all)             CFG_MAX=99999; CFG_TIMEOUT=3600 ;;
+            --max=*)           CFG_MAX="${1#*=}" ;;
+            --category=*)      CFG_CATEGORIES="${1#*=}" ;;
+            --filter=*)        CFG_FILTER="${1#*=}" ;;
+            --print-test)      CFG_PRINT_TEST=true ;;
+            --dump-results=*)  CFG_DUMP_RESULTS="${1#*=}" ;;
+            --dump-results)    CFG_DUMP_RESULTS="$SCRIPT_DIR/.tsc-cache/test-results.json" ;;
+            --pass-rate-only)  CFG_PASS_RATE_ONLY=true ;;
+
+            --workers=*)       CFG_WORKERS="${1#*=}" ;;
+            --timeout=*)       CFG_TIMEOUT="${1#*=}" ;;
+
+            -v|--verbose)      CFG_VERBOSE=true ;;
+            -q|--quiet)        ;; # TODO
+            --json)            log_warning "--json not yet implemented" ;;
+
+            --dry-run)         CFG_DRY_RUN=true ;;
+
+            -*)                die "Unknown option: $1 (use --help for usage)" ;;
+            *)                 positional_args+=("$1") ;;
         esac
         shift
     done
-    
-    # Auto-detect workers if not specified
-    if [[ -z "$workers" ]]; then
-        workers=$(detect_cores)
-        # Cap at reasonable number for default runs
-        if (( workers > 8 )) && (( max_tests < 1000 )); then
-            workers=8
+
+    # Auto-detect workers
+    if [[ -z "$CFG_WORKERS" ]]; then
+        CFG_WORKERS=$(detect_cores)
+        if (( CFG_WORKERS > 8 )) && (( CFG_MAX < 1000 )); then
+            CFG_WORKERS=8
         fi
-        # Cap WASM + Docker at 8 workers to prevent OOM (WASM needs ~3GB per worker)
-        if [[ "$mode" == "wasm" ]] && [[ "$use_docker" == "true" ]] && (( workers > 8 )); then
-            log_warning "Capping WASM+Docker workers to 8 (was $workers) to prevent OOM"
-            workers=8
+        if [[ "$CFG_MODE" == "wasm" ]] && [[ "$CFG_DOCKER" == "true" ]] && (( CFG_WORKERS > 8 )); then
+            log_warning "Capping WASM+Docker workers to 8 (was $CFG_WORKERS) to prevent OOM"
+            CFG_WORKERS=8
         fi
     fi
-    
-    # Handle commands
+
+    # Handle subcommands
     case "$command" in
-        cache)
-            cmd_cache "${positional_args[@]:-status}"
-            exit $?
-            ;;
-        single)
-            cmd_single "${positional_args[@]:-}"
-            exit $?
-            ;;
+        cache)  cmd_cache "${positional_args[@]:-status}"; exit $? ;;
+        single) cmd_single "${positional_args[@]:-}"; exit $? ;;
     esac
-    
-    # Dry run
-    if [[ "$dry_run" == "true" ]]; then
-        echo "Dry run - would execute:"
-        echo "  Mode: $mode"
-        echo "  Docker: $use_docker"
-        echo "  Max tests: $max_tests"
-        echo "  Workers: $workers"
-        echo "  Timeout: ${timeout}s"
-        echo "  Categories: $categories"
-        echo "  Verbose: $verbose"
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+main() {
+    parse_args "$@"
+
+    if [[ "$CFG_DRY_RUN" == "true" ]]; then
+        echo "Dry run — would execute:"
+        echo "  Mode:       $CFG_MODE"
+        echo "  Docker:     $CFG_DOCKER"
+        echo "  Max tests:  $CFG_MAX"
+        echo "  Workers:    $CFG_WORKERS"
+        echo "  Timeout:    ${CFG_TIMEOUT}s"
+        echo "  Categories: $CFG_CATEGORIES"
+        echo "  Verbose:    $CFG_VERBOSE"
+        [[ -n "$CFG_FILTER" ]] && echo "  Filter:     $CFG_FILTER"
         exit 0
     fi
 
-    # Run tests based on mode
-    local exit_code=0
-    
-    if [[ "$pass_rate_only" == "true" ]]; then
-        # Capture output to extract pass rate
+    if [[ "$CFG_PASS_RATE_ONLY" == "true" ]]; then
         local temp_output
         temp_output=$(mktemp)
         trap "rm -f $temp_output" EXIT
-        
-        case "$mode" in
-            server)
-                run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose" "$filter" "$print_test" "$dump_results" 2>&1 | tee "$temp_output"
-                exit_code=${PIPESTATUS[0]}
-                ;;
-            wasm)
-                local use_wasm=true
-                run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose" 2>&1 | tee "$temp_output"
-                exit_code=${PIPESTATUS[0]}
-                ;;
-            native)
-                local use_wasm=false
-                run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose" 2>&1 | tee "$temp_output"
-                exit_code=${PIPESTATUS[0]}
-                ;;
-        esac
-        
-        # Extract and print only the pass rate
+
+        run_mode 2>&1 | tee "$temp_output"
+        local exit_code=${PIPESTATUS[0]}
+
         local pass_line
         pass_line=$(grep -E "^Pass Rate:" "$temp_output" | tail -1)
         if [[ -n "$pass_line" ]]; then
@@ -918,28 +584,12 @@ main() {
             echo "$pass_line" | grep -oE '[0-9]+\.[0-9]+'
             echo "===PASS_RATE_END==="
         fi
-        
+
         rm -f "$temp_output"
         exit $exit_code
-    else
-        case "$mode" in
-            server)
-                run_server "$max_tests" "$workers" "$timeout" "$categories" "$verbose" "$filter" "$print_test" "$dump_results"
-                ;;
-            wasm)
-                local use_wasm=true
-                run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
-                ;;
-            native)
-                local use_wasm=false
-                run_tests "$use_wasm" "$use_docker" "$max_tests" "$workers" "$timeout" "$categories" "$verbose"
-                ;;
-        esac
     fi
-}
 
-# ==============================================================================
-# Entry Point
-# ==============================================================================
+    run_mode
+}
 
 main "$@"
