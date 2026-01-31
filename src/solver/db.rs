@@ -322,6 +322,17 @@ pub trait QueryDatabase: TypeDatabase {
         crate::solver::subtype::is_subtype_of(self.as_type_database(), source, target)
     }
 
+    /// Look up a cached subtype result for the given type pair.
+    /// Returns `None` if the result is not cached.
+    /// Default implementation returns `None` (no caching).
+    fn lookup_subtype_cache(&self, _source: TypeId, _target: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Cache a subtype result for the given type pair.
+    /// Default implementation is a no-op.
+    fn insert_subtype_cache(&self, _source: TypeId, _target: TypeId, _result: bool) {}
+
     fn new_inference_context(&self) -> crate::solver::infer::InferenceContext<'_> {
         crate::solver::infer::InferenceContext::new(self.as_type_database())
     }
@@ -691,6 +702,26 @@ impl QueryDatabase for QueryCache<'_> {
             }
         }
         result
+    }
+
+    fn lookup_subtype_cache(&self, source: TypeId, target: TypeId) -> Option<bool> {
+        let key = (source, target);
+        match self.subtype_cache.read() {
+            Ok(cache) => cache.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
+        }
+    }
+
+    fn insert_subtype_cache(&self, source: TypeId, target: TypeId, result: bool) {
+        let key = (source, target);
+        match self.subtype_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(key, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, result);
+            }
+        }
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
