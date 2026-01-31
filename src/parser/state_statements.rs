@@ -16,6 +16,9 @@ impl ParserState {
     pub fn parse_source_file(&mut self) -> NodeIndex {
         let start_pos = 0u32;
 
+        // Skip shebang (#!) if present at start of file
+        self.scanner.scan_shebang_trivia();
+
         // Initialize scanner
         self.next_token();
 
