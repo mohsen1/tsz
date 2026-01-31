@@ -290,7 +290,8 @@ pub struct TypeInterner {
     template_lists: ConcurrentSliceInterner<TemplateSpan>,
     object_shapes: ConcurrentValueInterner<ObjectShape>,
     /// Object property maps: lazily initialized DashMap
-    object_property_maps: OnceLock<DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>>,
+    object_property_maps:
+        OnceLock<DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>>,
     function_shapes: ConcurrentValueInterner<FunctionShape>,
     callable_shapes: ConcurrentValueInterner<CallableShape>,
     conditional_types: ConcurrentValueInterner<ConditionalType>,
@@ -325,8 +326,11 @@ impl TypeInterner {
 
     /// Get the object property maps, initializing on first access
     #[inline]
-    fn get_object_property_maps(&self) -> &DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher> {
-        self.object_property_maps.get_or_init(|| DashMap::with_hasher(FxBuildHasher))
+    fn get_object_property_maps(
+        &self,
+    ) -> &DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher> {
+        self.object_property_maps
+            .get_or_init(|| DashMap::with_hasher(FxBuildHasher))
     }
 
     /// Intern a string into an Atom.

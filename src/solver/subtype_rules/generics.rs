@@ -42,6 +42,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - Performance: Avoids expensive member-by-member comparison
     /// - Correctness: Properly handles private/protected members (nominal, not structural)
     /// - Recursive types: Breaks cycles in class inheritance (e.g., `class Box { next: Box }`)
+    ///
+    /// # DefId-Level Cycle Detection
+    ///
+    /// This function implements cycle detection at the SymbolRef level (analogous to DefId)
+    /// to catch recursive types before resolution. This prevents infinite expansion of
+    /// types like:
+    /// - `type List<T> = { head: T; tail: List<T> }`
+    /// - `interface Recursive { self: Recursive }`
+    ///
+    /// When we detect that we're comparing the same (source_sym, target_sym) pair that
+    /// we're already checking, we return `Provisional` (assumed true) which implements
+    /// coinductive semantics.
     pub(crate) fn check_ref_ref_subtype(
         &mut self,
         source: TypeId,
@@ -49,9 +61,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         s_sym: &SymbolRef,
         t_sym: &SymbolRef,
     ) -> SubtypeResult {
+        // Identity check: same symbol is always a subtype of itself
         if s_sym == t_sym {
             return SubtypeResult::True;
         }
+
+        // =======================================================================
+        // DefId-level cycle detection (before resolution!)
+        //
+        // This catches cycles in recursive type aliases and interfaces at the
+        // symbol level, preventing infinite expansion. We check this BEFORE
+        // resolving the symbols to their structural forms.
+        // =======================================================================
+        let ref_pair = (*s_sym, *t_sym);
+        if self.seen_refs.contains(&ref_pair) {
+            // We're in a cycle at the symbol level - return provisional true
+            // This implements coinductive semantics for recursive types
+            return SubtypeResult::Provisional;
+        }
+
+        // Also check the reversed pair for bivariant cross-recursion
+        let reversed_ref_pair = (*t_sym, *s_sym);
+        if self.seen_refs.contains(&reversed_ref_pair) {
+            return SubtypeResult::Provisional;
+        }
+
+        // Mark this pair as being checked
+        self.seen_refs.insert(ref_pair);
 
         // O(1) nominal class subtype checking using InheritanceGraph
         // This short-circuits expensive structural checks for class inheritance
@@ -68,6 +104,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                 if graph.is_derived_from(s_sid, t_sid) {
                     // O(1) bitset check: source is a subclass of target
+                    self.seen_refs.remove(&ref_pair);
                     return SubtypeResult::True;
                 }
 
@@ -79,7 +116,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let s_resolved = self.resolver.resolve_ref(*s_sym, self.interner);
         let t_resolved = self.resolver.resolve_ref(*t_sym, self.interner);
-        self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved)
+        let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
+
+        // Remove from seen set after checking
+        self.seen_refs.remove(&ref_pair);
+
+        result
     }
 
     /// Check TypeQuery to TypeQuery subtype with optional identity shortcut.
