@@ -156,45 +156,82 @@ const wide: { x: number; y: number } = point3d as { x: number; y: number };  // 
 
 **Implementation**:
 
+> ⚠️ **Critical**: Freshness must be tracked by **AST node**, not by **TypeId**!
+> 
+> Because `TypeInterner` deduplicates structurally identical types, tracking freshness
+> by `TypeId` causes "Zombie Freshness" - unrelated literals with the same shape
+> would share freshness state, breaking tsc compatibility.
+
 ```rust
-pub struct FreshnessTracker {
-    /// Legacy TS mode: fresh only at creation
-    fresh_types: FxHashSet<TypeId>,
-    /// Sound mode: fresh until explicit annotation
-    sticky_fresh_types: FxHashSet<TypeId>,
-    sound_mode: bool,
+/// TypeScript Mode: Syntactic freshness (matches tsc exactly)
+/// Fresh = the expression IS an ObjectLiteralExpression (or wrapped in parens)
+/// Not fresh = the expression is a variable reference, property access, etc.
+fn is_fresh_expression(expr: &Expression) -> bool {
+    match expr {
+        Expression::ObjectLiteral(_) => true,
+        Expression::Parenthesized(inner) => is_fresh_expression(inner),
+        Expression::AsExpression(inner, _) => is_fresh_expression(inner),
+        _ => false,  // Variables, calls, property access = NOT fresh
+    }
 }
 
-impl FreshnessTracker {
-    /// Object literal created
-    pub fn mark_fresh(&mut self, type_id: TypeId) {
-        self.fresh_types.insert(type_id);
-        if self.sound_mode {
-            self.sticky_fresh_types.insert(type_id);
-        }
+/// Sound Mode: Track freshness through data flow
+pub struct StickyFreshnessTracker {
+    /// Map from variable SymbolId to whether it holds a "sticky fresh" value
+    fresh_bindings: FxHashMap<SymbolId, bool>,
+}
+
+impl StickyFreshnessTracker {
+    /// Variable initialized with object literal
+    pub fn mark_binding_fresh(&mut self, symbol: SymbolId) {
+        self.fresh_bindings.insert(symbol, true);
     }
     
-    /// Assignment to inferred variable (no annotation)
-    pub fn propagate_freshness(&mut self, source: TypeId, target: TypeId) {
-        if self.sound_mode && self.sticky_fresh_types.contains(&source) {
-            self.sticky_fresh_types.insert(target);  // Freshness propagates
-        }
+    /// Variable assigned to explicit type annotation
+    pub fn consume_freshness(&mut self, symbol: SymbolId) {
+        self.fresh_bindings.remove(&symbol);
     }
     
-    /// Assignment to explicit type annotation
-    pub fn consume_freshness(&mut self, type_id: TypeId) {
-        self.fresh_types.remove(&type_id);
-        self.sticky_fresh_types.remove(&type_id);  // Explicit annotation breaks seal
+    /// Check if variable reference is sticky fresh
+    pub fn is_binding_fresh(&self, symbol: SymbolId) -> bool {
+        self.fresh_bindings.get(&symbol).copied().unwrap_or(false)
     }
-    
-    pub fn is_fresh(&self, type_id: TypeId) -> bool {
-        if self.sound_mode {
-            self.sticky_fresh_types.contains(&type_id)
+}
+
+impl Checker {
+    fn check_excess_properties(&self, expr: &Expression, source: TypeId, target: TypeId) {
+        let is_fresh = if self.options.sound_mode {
+            // Sound mode: check syntactic OR sticky binding freshness
+            is_fresh_expression(expr) || self.is_sticky_fresh_reference(expr)
         } else {
-            self.fresh_types.contains(&type_id)
+            // TypeScript mode: only syntactic freshness (exact tsc match)
+            is_fresh_expression(expr)
+        };
+        
+        if is_fresh {
+            self.check_excess_properties_impl(source, target);
         }
     }
 }
+```
+
+**Why this is correct**:
+
+| Mode | Freshness Source | tsc Compatible? |
+|------|------------------|-----------------|
+| TypeScript | AST node type (is it a literal?) | ✅ Yes, exact match |
+| Sound | AST node OR sticky binding tracking | N/A (opt-in stricter) |
+
+**The "Zombie Freshness" Bug (avoided)**:
+```typescript
+let x = { a: 1, extra: 2 };  // x is assigned, NOT fresh for tsc
+let y = { a: 1, extra: 2 };  // y is a literal expression
+
+// If we tracked by TypeId, x and y would share freshness state!
+// With syntactic tracking, only the EXPRESSION matters:
+let z: { a: number } = x;  // x is Identifier, not fresh ✅
+let w: { a: number } = y;  // y is... wait, y is also Identifier here
+                           // Only { a: 1, extra: 2 } DIRECTLY is fresh
 ```
 
 **Trade-offs**:
@@ -309,29 +346,31 @@ fn get_interface_members(db: &dyn Judge, def_id: DefId) -> Arc<Vec<PropertyInfo>
 
 **Rule**: The Judge sees merged, complete types. Merging logic lives in the query implementation, not the caller.
 
-#### Constraint 5: Freshness Ownership
+#### Constraint 5: Freshness is Syntactic, Not Type-Based
 
-Object literal "freshness" (for excess property checking) is **Lawyer's responsibility**.
+> ⚠️ **Critical for tsc compatibility**: Freshness must be determined by the **AST expression type**, not by marking `TypeId`s as fresh.
 
+**The Problem with TypeId-based Freshness**:
+Because `TypeInterner` deduplicates types structurally, two object literals `{ a: 1 }` share the same `TypeId`. If we mark that `TypeId` as "fresh", we create "Zombie Freshness" where unrelated literals interfere with each other.
+
+**The Correct Approach**:
 ```rust
-pub struct Lawyer<'db> {
-    judge: &'db dyn Judge,
-    freshness: FreshnessTracker,  // Lawyer owns this
-}
-
-impl FreshnessTracker {
-    /// Mark a TypeId as "fresh" (just created from object literal)
-    fn mark_fresh(&mut self, type_id: TypeId);
-    
-    /// Check if a TypeId is still "fresh"
-    fn is_fresh(&self, type_id: TypeId) -> bool;
-    
-    /// Widen a type (lose freshness on assignment)
-    fn widen(&mut self, type_id: TypeId);
+/// Freshness is a property of the EXPRESSION, not the TYPE
+fn is_fresh_expression(expr: &Expression) -> bool {
+    match expr {
+        Expression::ObjectLiteral(_) => true,      // Direct literal = fresh
+        Expression::ArrayLiteral(_) => true,       // Direct literal = fresh
+        Expression::Parenthesized(e) => is_fresh_expression(e),
+        Expression::AsExpression(e, _) => is_fresh_expression(e),
+        _ => false,  // Variable reference = NOT fresh
+    }
 }
 ```
 
-**Rule**: Judge knows nothing about freshness. Lawyer tracks it and applies excess property checking.
+**Rule**: 
+- Judge knows nothing about freshness
+- Checker determines freshness syntactically (by inspecting the AST node)
+- Sound Mode can additionally track "sticky" freshness through bindings (by SymbolId, not TypeId)
 
 #### Constraint 6: Configuration as Salsa Input
 
@@ -787,17 +826,71 @@ pub enum TypeKey {
 
 **Goal**: Migrate Judge queries to Salsa.
 
+#### Prerequisites (Blockers)
+
+> ⚠️ These must be completed BEFORE Salsa integration:
+
+1. **Refactor `CheckerContext` to use trait**:
+   ```rust
+   // CURRENT (blocker):
+   pub struct CheckerContext<'a> {
+       pub types: &'a TypeInterner,  // Concrete type
+   }
+   
+   // REQUIRED:
+   pub struct CheckerContext<'a> {
+       pub db: &'a dyn QueryDatabase,  // Trait object
+   }
+   ```
+
+2. **Remove `FreshnessTracker` from `src/solver/lawyer.rs`**:
+   - Current code tracks freshness by `TypeId` (WRONG - causes Zombie Freshness)
+   - Freshness must be tracked in Checker by `NodeIndex` (syntactic)
+   - Lawyer should receive `is_fresh: bool` as a parameter, not track it
+
+3. **Remove `RefCell` caches from `src/solver/evaluate.rs`**:
+   - Salsa handles caching; internal `RefCell` caches cause thread-safety issues
+   - Recursion depth tracking moves to Salsa cycle detection
+
+#### Integration Steps
+
 1. **Define Judge trait** as Salsa query group
 2. **Implement `is_subtype` query** with cycle recovery
 3. **Implement `evaluate` query** with cycle recovery
 4. **Update Lawyer** to call Judge queries instead of SubtypeChecker methods
 5. **Remove manual cycle tracking** (`in_progress`, `seen_defs`)
 
+#### Salsa Memoization Scope
+
+> ⚠️ Don't memoize cheap operations - focus on high-value queries.
+
+| Memoize | Don't Memoize |
+|---------|---------------|
+| `is_subtype(ComplexObject, Interface)` | `is_subtype(string, number)` |
+| `evaluate(MappedType)` | `evaluate(Intrinsic)` |
+| `get_members(Class)` | Primitive checks |
+| Generic instantiations | Identity checks |
+
+**Implementation**: Add fast-path short-circuits BEFORE Salsa query invocation:
+```rust
+fn is_subtype(db: &dyn Judge, source: TypeId, target: TypeId) -> bool {
+    // Fast paths (no Salsa overhead)
+    if source == target { return true; }
+    if target == TypeId::UNKNOWN { return true; }
+    if source == TypeId::NEVER { return true; }
+    
+    // Delegate to Salsa only for complex cases
+    db.is_subtype_impl(source, target)
+}
+```
+
 **Key Files**:
 - Create `src/solver/judge.rs`
 - Enhance `src/solver/salsa_db.rs`
 - Refactor `src/solver/subtype.rs` into query implementations
 - Refactor `src/solver/evaluate.rs` into query implementations
+- **Refactor `src/checker/context.rs`** to use `QueryDatabase` trait
+- **Remove `FreshnessTracker`** from `src/solver/lawyer.rs`
 
 ### Phase 3: DefId Migration
 
@@ -1022,7 +1115,74 @@ impl Diagnostic {
 
 ---
 
-## 7. Implementation Risks
+## 7. Current Code Gaps
+
+> ⚠️ These are mismatches between this proposal and the current codebase that must be fixed.
+
+### Gap 1: FreshnessTracker Uses TypeId (Critical)
+
+**Current Code** (`src/solver/lawyer.rs`):
+```rust
+pub struct FreshnessTracker {
+    fresh_types: FxHashSet<TypeId>,  // WRONG
+}
+```
+
+**Problem**: TypeIds are structurally interned. Two identical literals `{ a: 1 }` share the same TypeId. Marking one fresh makes both fresh ("Zombie Freshness").
+
+**Fix**: 
+- Remove `FreshnessTracker` from Solver entirely
+- Checker determines freshness syntactically: `is_fresh_expression(expr: &Expression) -> bool`
+- Lawyer receives `is_fresh: bool` parameter, doesn't track it
+
+### Gap 2: CheckerContext Uses Concrete TypeInterner (Blocker)
+
+**Current Code** (`src/checker/context.rs`):
+```rust
+pub struct CheckerContext<'a> {
+    pub types: &'a TypeInterner,  // Concrete type
+}
+```
+
+**Problem**: Cannot swap in Salsa database without changing this to a trait.
+
+**Fix**:
+```rust
+pub struct CheckerContext<'a> {
+    pub db: &'a dyn QueryDatabase,  // Or generic D: QueryDatabase
+}
+```
+
+### Gap 3: Manual Cycle Detection in SubtypeChecker
+
+**Current Code** (`src/solver/subtype.rs`):
+```rust
+pub struct SubtypeChecker {
+    in_progress: HashSet<(TypeId, TypeId)>,  // Manual tracking
+}
+```
+
+**Problem**: Salsa queries must be pure functions. Internal mutable state breaks Salsa's model.
+
+**Fix**: Remove `in_progress` and rely on Salsa's `#[salsa::cycle]` attribute for cycle recovery.
+
+### Gap 4: RefCell Caches in Evaluator
+
+**Current Code** (`src/solver/evaluate.rs`):
+```rust
+pub struct TypeEvaluator {
+    cache: RefCell<FxHashMap<TypeId, TypeId>>,  // Internal cache
+    visiting: RefCell<FxHashSet<TypeId>>,        // Cycle detection
+}
+```
+
+**Problem**: RefCell is not thread-safe. Salsa provides caching; internal caches are redundant and problematic.
+
+**Fix**: Remove RefCell caches, let Salsa handle memoization and cycle detection.
+
+---
+
+## 8. Implementation Risks
 
 Based on architectural review, these are the key risks to monitor:
 
@@ -1072,7 +1232,7 @@ Based on architectural review, these are the key risks to monitor:
 
 ---
 
-## 8. Success Criteria
+## 9. Success Criteria
 
 ### Architecture Metrics
 

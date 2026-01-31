@@ -1084,14 +1084,13 @@ impl<'a> CheckerState<'a> {
                     TypeId::ERROR
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
+                    // TypeScript does NOT emit TS2339 for element access (bracket notation)
+                    // when the property doesn't exist. It returns 'any' instead.
+                    // This is different from property access (dot notation) which does emit TS2339.
+                    // Only mark report_no_index if we should report a missing index signature error
+                    // (which is TS7053, not TS2339)
                     report_no_index = true;
-                    // Generate TS2339 for property not found during element access
-                    self.error_property_not_exist_at(
-                        &property_name.to_string(),
-                        object_type_for_access,
-                        access.name_or_argument,
-                    );
-                    TypeId::ERROR // Return ERROR instead of ANY to expose the error
+                    TypeId::ANY
                 }
             });
         }
