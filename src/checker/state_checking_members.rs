@@ -2013,6 +2013,32 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 }
             }
 
+            // Extract this type from explicit `this` parameter
+            let mut pushed_this_type = false;
+            if let Some(&first_param) = func.parameters.nodes.first() {
+                if let Some(param_node) = self.ctx.arena.get(first_param)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    let is_this = if let Some(name_node) = self.ctx.arena.get(param.name) {
+                        if name_node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
+                            self.ctx
+                                .arena
+                                .get_identifier(name_node)
+                                .is_some_and(|id| id.escaped_text == "this")
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if is_this && !param.type_annotation.is_none() {
+                        let this_type = self.get_type_from_type_node(param.type_annotation);
+                        self.ctx.this_type_stack.push(this_type);
+                        pushed_this_type = true;
+                    }
+                }
+            }
+
             // Enter async context for await expression checking
             if func.is_async {
                 self.ctx.enter_async_context();
@@ -2070,6 +2096,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Exit async context
             if func.is_async {
                 self.ctx.exit_async_context();
+            }
+
+            if pushed_this_type {
+                self.ctx.this_type_stack.pop();
             }
         } else if self.ctx.no_implicit_any() && !has_type_annotation {
             let is_ambient =
