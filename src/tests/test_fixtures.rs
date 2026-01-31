@@ -226,3 +226,33 @@ pub fn setup_lib_contexts(_checker: &mut CheckerState<'_>) {
 pub fn merge_shared_lib_symbols(_binder: &mut BinderState) {
     // No-op: embedded libs removed
 }
+
+/// Helper function to load lib.d.ts from disk for tests that need global types.
+/// Returns a vector of LibFile objects that can be used with bind_source_file_with_libs.
+/// 
+/// This function tries multiple locations to find lib.d.ts:
+/// 1. TypeScript/node_modules/typescript/lib/lib.d.ts (repo structure)
+/// 2. ../TypeScript/node_modules/typescript/lib/lib.d.ts (parent directory)
+/// 
+/// If lib.d.ts is not found, returns an empty vector.
+#[inline]
+pub fn load_lib_files_for_test() -> Vec<Arc<crate::lib_loader::LibFile>> {
+    let lib_paths = [
+        std::path::PathBuf::from("TypeScript/node_modules/typescript/lib/lib.d.ts"),
+        std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.d.ts"),
+    ];
+    
+    for lib_path in &lib_paths {
+        if lib_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(lib_path) {
+                let lib_file = crate::lib_loader::LibFile::from_source(
+                    "lib.d.ts".to_string(),
+                    content,
+                );
+                return vec![Arc::new(lib_file)];
+            }
+        }
+    }
+    
+    Vec::new()
+}
