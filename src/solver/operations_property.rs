@@ -1152,6 +1152,31 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         prop_atom: Atom,
     ) -> PropertyAccessResult {
         let element_type = self.array_element_type(array_type);
+
+        // STEP 1: Try to use the Array<T> interface from lib.d.ts
+        // This allows us to resolve array methods via the official interface
+        // instead of hardcoding, enabling ES2023+ methods like toSorted, toReversed, etc.
+        if let Some(array_base) = self.resolver.get_array_base_type() {
+            let type_params = self.resolver.get_array_base_type_params();
+            if !type_params.is_empty() {
+                // Instantiate Array<T> with T = element_type
+                use crate::solver::instantiate::instantiate_generic;
+                let instantiated =
+                    instantiate_generic(self.interner, array_base, type_params, &[element_type]);
+
+                // Resolve the property on the instantiated interface
+                let result =
+                    self.resolve_property_access_inner(instantiated, prop_name, Some(prop_atom));
+
+                // If we found the property, return it
+                if !matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
+                    return result;
+                }
+                // Otherwise, fall through to hardcoded methods
+            }
+        }
+
+        // STEP 2: Fallback to hardcoded methods (bootstrapping/no-lib behavior)
         let array_of_element = self.interner.array(element_type);
         let element_or_undefined = self.element_type_with_undefined(element_type);
 

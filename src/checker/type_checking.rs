@@ -2478,7 +2478,7 @@ impl<'a> CheckerState<'a> {
     /// hardcoded lists. For example, "foo".length will look up the String interface
     /// from lib.d.ts and find the length property there.
     pub(crate) fn register_boxed_types(&mut self) {
-        use crate::solver::types::IntrinsicKind;
+        use crate::solver::types::{IntrinsicKind, TypeParamInfo};
 
         // Only register if lib files are loaded
         if !self.ctx.has_lib_loaded() {
@@ -2492,6 +2492,15 @@ impl<'a> CheckerState<'a> {
         let boolean_type = self.resolve_lib_type_by_name("Boolean");
         let symbol_type = self.resolve_lib_type_by_name("Symbol");
         let bigint_type = self.resolve_lib_type_by_name("BigInt");
+        let array_type = self.resolve_lib_type_by_name("Array");
+
+        // Create type parameter info for Array<T> - the Array interface has one type parameter "T"
+        let t_atom = self.ctx.types.intern_string("T");
+        let array_type_params = vec![TypeParamInfo {
+            name: t_atom,
+            constraint: None,
+            default: None,
+        }];
 
         // 2. Populate the environment
         // We use try_borrow_mut to be safe, though at this stage it should be free
@@ -2510,6 +2519,10 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(ty) = bigint_type {
                 env.set_boxed_type(IntrinsicKind::Bigint, ty);
+            }
+            // Register the Array<T> interface for array property resolution
+            if let Some(ty) = array_type {
+                env.set_array_base_type(ty, array_type_params);
             }
         }
     }
