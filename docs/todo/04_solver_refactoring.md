@@ -97,7 +97,7 @@
 
 ---
 
-## Phase 4: DefId Migration - INFRASTRUCTURE COMPLETE ✅
+## Phase 4: DefId Migration - 4.1 & 4.2 COMPLETE ✅
 
 ### 4.1 Create DefId Infrastructure ✅
 - [x] Create `src/solver/def.rs` (673 lines)
@@ -107,11 +107,11 @@
 - [x] Create `ContentAddressedDefIds` for LSP mode
 - [x] Commit
 
-### 4.2 Add Lazy(DefId) to TypeKey - NOT STARTED
-- [ ] Add `TypeKey::Lazy(DefId)` variant
-- [ ] Keep `TypeKey::Ref(SymbolRef)` temporarily for compatibility
-- [ ] Update `TypeInterner` to handle both
-- [ ] Commit
+### 4.2 Add Lazy(DefId) to TypeKey ✅
+- [x] Add `TypeKey::Lazy(DefId)` variant
+- [x] Keep `TypeKey::Ref(SymbolRef)` temporarily for compatibility
+- [x] Update all TypeKey pattern matches across solver
+- [x] Commit
 
 ### 4.3 Migrate Lowering - NOT STARTED
 - [ ] Update type lowering to produce `Lazy(DefId)` for interfaces
