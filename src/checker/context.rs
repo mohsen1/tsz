@@ -229,6 +229,11 @@ pub struct CheckerContext<'a> {
     /// Type interner for structural type interning.
     pub types: &'a TypeInterner,
 
+    /// Optional Salsa-backed query database for memoized type operations.
+    /// When set, CompatChecker/SubtypeChecker will route evaluate_type and
+    /// is_subtype_of through Salsa for memoization and cycle recovery.
+    pub query_db: Option<&'a dyn crate::solver::QueryDatabase>,
+
     /// Current file name.
     pub file_name: String,
 
@@ -461,6 +466,7 @@ impl<'a> CheckerContext<'a> {
             arena,
             binder,
             types,
+            query_db: None,
             file_name,
             compiler_options,
             report_unresolved_imports: false,
@@ -540,6 +546,7 @@ impl<'a> CheckerContext<'a> {
             arena,
             binder,
             types,
+            query_db: None,
             file_name,
             compiler_options,
             report_unresolved_imports: false,
@@ -621,6 +628,7 @@ impl<'a> CheckerContext<'a> {
             arena,
             binder,
             types,
+            query_db: None,
             file_name,
             compiler_options,
             report_unresolved_imports: false,
@@ -701,6 +709,7 @@ impl<'a> CheckerContext<'a> {
             arena,
             binder,
             types,
+            query_db: None,
             file_name,
             compiler_options,
             report_unresolved_imports: false,
@@ -1318,6 +1327,17 @@ impl<'a> CheckerContext<'a> {
     /// When enabled, optional properties are `T | undefined` not `T | undefined | missing`.
     pub fn exact_optional_property_types(&self) -> bool {
         self.compiler_options.exact_optional_property_types
+    }
+
+    /// Apply standard compiler options to a CompatChecker, including query_db if available.
+    pub fn configure_compat_checker<R: crate::solver::TypeResolver>(
+        &self,
+        checker: &mut crate::solver::CompatChecker<'_, R>,
+    ) {
+        checker.set_strict_function_types(self.strict_function_types());
+        checker.set_strict_null_checks(self.strict_null_checks());
+        checker.set_exact_optional_property_types(self.exact_optional_property_types());
+        checker.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
     }
 
     /// Check if noLib is enabled.
