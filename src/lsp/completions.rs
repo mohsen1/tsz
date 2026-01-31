@@ -686,6 +686,22 @@ impl<'a> Completions<'a> {
                     return true;
                 }
             }
+
+            // Text-based regex literal detection: after /pattern/ or /pattern/flags
+            // This catches cases where cursor is at end-of-file after a regex.
+            if self.text_is_inside_regex(i) {
+                return true;
+            }
+
+            // Text-based template literal detection: inside backtick strings
+            if self.text_is_inside_template_literal(i) {
+                return true;
+            }
+
+            // Text-based string literal detection: inside unclosed quotes
+            if self.text_is_inside_string_literal(i) {
+                return true;
+            }
         }
 
         // Check if we're inside a string literal, comment, or regex by examining
@@ -1300,6 +1316,145 @@ impl<'a> Completions<'a> {
             depth += 1;
         }
         false
+    }
+
+    /// Text-based check: is cursor inside a regex literal?
+    /// Scans backward from `i` looking for an unmatched `/pattern/` or `/pattern/flags`.
+    fn text_is_inside_regex(&self, i: usize) -> bool {
+        let text = &self.source_text[..i];
+        // Strategy: scan backward from i looking for a `/`.
+        // A regex literal is `/pattern/flags` where flags are [gimsuy]*.
+        // We need to find the closing `/` and determine if we're in the flags portion.
+        let bytes = text.as_bytes();
+
+        // First check if cursor is right after potential regex flags
+        let mut pos = i;
+        // Skip back over potential regex flags
+        while pos > 0 && matches!(bytes[pos - 1], b'g' | b'i' | b'm' | b's' | b'u' | b'y' | b'd') {
+            pos -= 1;
+        }
+
+        // Now check if there's a `/` right before the flags position
+        if pos > 0 && bytes[pos - 1] == b'/' {
+            let slash_pos = pos - 1;
+            // Scan backward to find the opening `/` of the regex
+            if slash_pos > 0 {
+                // Look for the opening slash by scanning backward
+                let mut j = slash_pos - 1;
+                loop {
+                    if bytes[j] == b'/' {
+                        // Found potential opening slash - check if it's actually a regex
+                        // The character before the opening slash should be an operator, keyword,
+                        // or start of line (not an identifier character or closing paren/bracket)
+                        if j == 0 {
+                            return true; // Start of file
+                        }
+                        let before = bytes[j - 1];
+                        if before == b'=' || before == b'(' || before == b',' || before == b':'
+                            || before == b';' || before == b'!' || before == b'&' || before == b'|'
+                            || before == b'?' || before == b'{' || before == b'}' || before == b'['
+                            || before == b'\n' || before == b'\r' || before == b'\t' || before == b' '
+                            || before == b'+' || before == b'-' || before == b'~' || before == b'^'
+                        {
+                            return true;
+                        }
+                        break;
+                    }
+                    if bytes[j] == b'\n' || bytes[j] == b'\r' {
+                        break; // Regex can't span lines
+                    }
+                    if j == 0 {
+                        break;
+                    }
+                    j -= 1;
+                }
+            }
+        }
+        false
+    }
+
+    /// Text-based check: is cursor inside a template literal (backtick string)?
+    /// Counts unescaped backticks before cursor; odd count means inside template.
+    fn text_is_inside_template_literal(&self, i: usize) -> bool {
+        let text = &self.source_text[..i];
+        let bytes = text.as_bytes();
+        let mut backtick_count = 0;
+        let mut j = 0;
+        while j < bytes.len() {
+            if bytes[j] == b'\\' {
+                j += 2; // Skip escaped character
+                continue;
+            }
+            if bytes[j] == b'`' {
+                backtick_count += 1;
+            }
+            j += 1;
+        }
+        // If odd number of backticks, we're inside a template literal.
+        // However, we might be inside a ${} expression within the template.
+        if backtick_count % 2 == 0 {
+            return false;
+        }
+        // We're inside a template. Check if we're inside a ${} expression.
+        // Scan backward from cursor for `${` that isn't matched by `}`.
+        let mut brace_depth: i32 = 0;
+        let mut k = i;
+        while k > 0 {
+            k -= 1;
+            if bytes[k] == b'\\' && k > 0 {
+                k -= 1; // Skip escaped chars going backward (approximate)
+                continue;
+            }
+            if bytes[k] == b'}' {
+                brace_depth += 1;
+            } else if bytes[k] == b'{' {
+                if k > 0 && bytes[k - 1] == b'$' {
+                    if brace_depth == 0 {
+                        // We're inside a ${} expression, allow completions
+                        return false;
+                    }
+                    brace_depth -= 1;
+                    k -= 1; // Skip the $
+                } else {
+                    // Regular { - just balance
+                    if brace_depth > 0 {
+                        brace_depth -= 1;
+                    }
+                }
+            } else if bytes[k] == b'`' {
+                // Hit the opening backtick without being in an expression
+                return true;
+            }
+        }
+        true
+    }
+
+    /// Text-based check: is cursor inside a string literal (single/double quotes)?
+    fn text_is_inside_string_literal(&self, i: usize) -> bool {
+        let text = &self.source_text[..i];
+        let bytes = text.as_bytes();
+        // Track quote state by scanning from beginning
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut j = 0;
+        while j < bytes.len() {
+            if bytes[j] == b'\\' && (in_single || in_double) {
+                j += 2; // Skip escaped character
+                continue;
+            }
+            match bytes[j] {
+                b'\'' if !in_double => in_single = !in_single,
+                b'"' if !in_single => in_double = !in_double,
+                b'\n' | b'\r' => {
+                    // Newlines terminate string literals (unless escaped, handled above)
+                    in_single = false;
+                    in_double = false;
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        in_single || in_double
     }
 
     /// Check if the cursor is inside a function body (for keyword selection).
