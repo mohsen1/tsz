@@ -259,10 +259,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return Some(true);
         }
 
-        // Error types - suppress cascading errors
+        // Error types are NOT assignable to other types (except themselves)
+        // This prevents "error poisoning" where unresolved types mask real errors
         if !skip_error_check && (source == TypeId::ERROR || target == TypeId::ERROR) {
-            // Error types ARE assignable to suppress cascading errors
-            return Some(true);
+            return Some(source == target);
         }
 
         // unknown is not assignable to non-top types
@@ -295,8 +295,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            // Error types ARE assignable to suppress cascading errors
-            return true;
+            // Error types are only assignable to themselves
+            return source == target;
         }
         if source == TypeId::UNKNOWN {
             return false;
@@ -345,9 +345,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             });
         }
 
-        // Error types should NOT produce diagnostics - suppress cascading errors
+        // Error types should produce ErrorType failure reason
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return None;
+            return Some(SubtypeFailureReason::ErrorType {
+                source_type: source,
+                target_type: target,
+            });
         }
 
         // Weak type violations
@@ -596,10 +599,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == TypeId::ANY || source == TypeId::NEVER {
             return true;
         }
-        // ERROR types should silently pass to prevent cascading errors
-        // (same as fast path behavior)
+        // ERROR types are NOT assignable to empty object (only reflexive)
         if source == TypeId::ERROR {
-            return true;
+            return false;
         }
         if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
             return true;

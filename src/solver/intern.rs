@@ -912,8 +912,8 @@ impl TypeInterner {
                             existing.write_type =
                                 self.intersection2(existing.write_type, prop.write_type);
                             existing.optional = existing.optional && prop.optional;
-                            // Intersection: readonly only if ALL constituents are readonly
-                            existing.readonly = existing.readonly && prop.readonly;
+                            // Intersection: readonly if ANY constituent is readonly (cumulative)
+                            existing.readonly = existing.readonly || prop.readonly;
                         } else {
                             properties.push(prop.clone());
                         }
@@ -925,8 +925,8 @@ impl TypeInterner {
                             string_index = Some(IndexSignature {
                                 key_type: existing.key_type,
                                 value_type: self.intersection2(existing.value_type, idx.value_type),
-                                // Intersection: readonly only if ALL constituents are readonly
-                                readonly: existing.readonly && idx.readonly,
+                                // Intersection: readonly if ANY constituent is readonly (cumulative)
+                                readonly: existing.readonly || idx.readonly,
                             });
                         }
                         _ => {}
@@ -937,8 +937,8 @@ impl TypeInterner {
                             number_index = Some(IndexSignature {
                                 key_type: existing.key_type,
                                 value_type: self.intersection2(existing.value_type, idx.value_type),
-                                // Intersection: readonly only if ALL constituents are readonly
-                                readonly: existing.readonly && idx.readonly,
+                                // Intersection: readonly if ANY constituent is readonly (cumulative)
+                                readonly: existing.readonly || idx.readonly,
                             });
                         }
                         _ => {}
@@ -1038,12 +1038,12 @@ impl TypeInterner {
                         existing.write_type =
                             self.intersection2(existing.write_type, prop.write_type);
                     }
-                    // Merge flags: required wins over optional, readonly requires ALL readonly
+                    // Merge flags: required wins over optional, readonly is cumulative
                     // For optional: only optional if ALL are optional (required wins)
                     existing.optional = existing.optional && prop.optional;
-                    // For readonly: readonly ONLY if ALL are readonly (mutable wins)
-                    // This allows assignment to { readonly a: number } & { a: number }
-                    existing.readonly = existing.readonly && prop.readonly;
+                    // For readonly: readonly if ANY is readonly (readonly is cumulative)
+                    // { readonly a: number } & { a: number } = { readonly a: number }
+                    existing.readonly = existing.readonly || prop.readonly;
                 } else {
                     merged_props.push(prop.clone());
                 }
@@ -1062,8 +1062,8 @@ impl TypeInterner {
                     merged_string_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersection2(existing.value_type, idx.value_type),
-                        // Intersection: readonly only if ALL constituents are readonly
-                        readonly: existing.readonly && idx.readonly,
+                        // Intersection: readonly if ANY constituent is readonly (cumulative)
+                        readonly: existing.readonly || idx.readonly,
                     });
                 }
                 _ => {}
@@ -1081,8 +1081,8 @@ impl TypeInterner {
                     merged_number_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersection2(existing.value_type, idx.value_type),
-                        // Intersection: readonly only if ALL constituents are readonly
-                        readonly: existing.readonly && idx.readonly,
+                        // Intersection: readonly if ANY constituent is readonly (cumulative)
+                        readonly: existing.readonly || idx.readonly,
                     });
                 }
                 _ => {}
@@ -1244,13 +1244,11 @@ impl TypeInterner {
                 continue;
             }
 
-            // Rule #21: Check if property types are disjoint primitives
-            // { a: string } & { a: number } should be never
-            if self.property_types_disjoint(prop.type_id, other.type_id) {
-                return true;
-            }
+            // Note: We don't check for disjoint primitive property types here.
+            // { a: string } & { a: number } should result in { a: never }, not never.
+            // The property type intersection is handled in try_merge_objects_in_intersection.
 
-            // Also check literal sets for discriminant-based reduction
+            // Check literal sets for discriminant-based reduction
             // { kind: "a" } & { kind: "b" } should be never
             if let Some(left_set) = self.literal_set_from_type(prop.type_id) {
                 if let Some(right_set) = self.literal_set_from_type(other.type_id) {

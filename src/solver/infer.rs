@@ -1573,9 +1573,13 @@ impl<'a> InferenceContext<'a> {
                     ) {
                         return false;
                     }
-                    if !t_prop.readonly
-                        && (sp.write_type != sp.type_id || t_prop.write_type != t_prop.type_id)
-                    {
+                    // Check write type compatibility for mutable targets
+                    // A readonly source cannot satisfy a mutable target (can't write to readonly)
+                    if !t_prop.readonly {
+                        // If source is readonly but target is mutable, this is a mismatch
+                        if sp.readonly {
+                            return false;
+                        }
                         let source_write = self.optional_property_write_type(sp);
                         let target_write = self.optional_property_write_type(t_prop);
                         if !self.is_subtype_with_method_variance(

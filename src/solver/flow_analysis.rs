@@ -72,7 +72,7 @@ impl FlowFacts {
     /// At control flow join points (e.g., after if/else), we:
     /// - Keep only narrowings that are present in both branches (intersection)
     /// - Keep only definite assignments that are present in both branches
-    /// - Union the TDZ violations (if any path has a TDZ violation, it's a violation)
+    /// - Keep only TDZ violations that are present in both branches (intersection)
     pub fn merge(&self, other: &FlowFacts) -> FlowFacts {
         let mut result = FlowFacts::new();
 
@@ -92,12 +92,12 @@ impl FlowFacts {
             }
         }
 
-        // Union for TDZ violations (any path with violation is a violation)
-        result.tdz_violations = self
-            .tdz_violations
-            .union(&other.tdz_violations)
-            .cloned()
-            .collect();
+        // Intersection for TDZ violations (must be a violation in all paths)
+        for var in &self.tdz_violations {
+            if other.tdz_violations.contains(var) {
+                result.tdz_violations.insert(var.clone());
+            }
+        }
 
         result
     }

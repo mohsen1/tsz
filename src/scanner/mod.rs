@@ -21,7 +21,7 @@ use wasm_bindgen::prelude::*;
 /// AST node types are not included here.
 #[wasm_bindgen]
 #[repr(u16)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Hash, Serialize)]
 pub enum SyntaxKind {
     Unknown = 0,
     EndOfFileToken = 1,
