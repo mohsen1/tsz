@@ -764,7 +764,7 @@ impl<'a> CheckerState<'a> {
     /// This is the correct implementation per TypeScript semantics: freshness is a property
     /// of the EXPRESSION, not the TYPE. Two object literals `{ a: 1 }` and `{ a: 1 }` are
     /// both fresh, even though they share the same TypeId.
-    fn is_syntactically_fresh(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_syntactically_fresh(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };

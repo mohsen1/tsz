@@ -81,9 +81,8 @@ impl<'a> CheckerState<'a> {
         let right_raw = self.get_type_of_node(right_idx);
         let right_type = self.resolve_type_query_type(right_raw);
 
-        // Remove freshness from RHS since it's being assigned to a variable
-        // Object literals lose freshness when assigned, allowing width subtyping thereafter
-        self.ctx.freshness_tracker.remove_freshness(right_raw);
+        // NOTE: Freshness is now tracked SYNTACTICALLY via is_syntactically_fresh()
+        // rather than by TypeId. No need to manually track freshness removal.
 
         self.ctx.contextual_type = prev_context;
 
@@ -227,9 +226,8 @@ impl<'a> CheckerState<'a> {
         let right_raw = self.get_type_of_node(right_idx);
         let right_type = self.resolve_type_query_type(right_raw);
 
-        // Remove freshness from RHS since it's being assigned to a variable
-        // Object literals lose freshness when assigned, allowing width subtyping thereafter
-        self.ctx.freshness_tracker.remove_freshness(right_raw);
+        // NOTE: Freshness is now tracked SYNTACTICALLY via is_syntactically_fresh()
+        // rather than by TypeId. No need to manually track freshness removal.
 
         self.ctx.contextual_type = prev_context;
 
