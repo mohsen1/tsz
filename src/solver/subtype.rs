@@ -13,6 +13,7 @@
 use crate::limits;
 use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
+use crate::solver::db::QueryDatabase;
 use crate::solver::def::DefId;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
@@ -315,6 +316,9 @@ pub const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
 /// Maintains the "seen" set for cycle detection.
 pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) interner: &'a dyn TypeDatabase,
+    /// Optional query database for Salsa-backed memoization.
+    /// When set, Phase 2/3 will route evaluate_type and is_subtype_of through Salsa.
+    pub(crate) query_db: Option<&'a dyn QueryDatabase>,
     pub(crate) resolver: &'a R,
     /// Active subtype pairs being checked (for cycle detection at TypeId level)
     pub(crate) in_progress: HashSet<(TypeId, TypeId)>,
@@ -368,6 +372,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
         static NOOP: NoopResolver = NoopResolver;
         SubtypeChecker {
             interner,
+            query_db: None,
             resolver: &NOOP,
             in_progress: HashSet::new(),
             seen_refs: HashSet::new(),
@@ -393,6 +398,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         SubtypeChecker {
             interner,
+            query_db: None,
             resolver,
             in_progress: HashSet::new(),
             seen_refs: HashSet::new(),
@@ -425,6 +431,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub fn with_class_check(mut self, check: &'a dyn Fn(SymbolRef) -> bool) -> Self {
         self.is_class_symbol = Some(check);
         self
+    }
+
+    /// Set the query database for Salsa-backed memoization.
+    /// When set, Phase 2/3 will route evaluate_type and is_subtype_of through Salsa.
+    pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
+        self.query_db = Some(db);
+        self
+    }
+
+    /// Get the query database, if available.
+    #[inline]
+    pub(crate) fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
+        self.query_db
     }
 
     /// Set whether strict null checks are enabled.
@@ -2205,6 +2224,25 @@ pub fn is_subtype_of_with_resolver<R: TypeResolver>(
     target: TypeId,
 ) -> bool {
     let mut checker = SubtypeChecker::with_resolver(interner, resolver);
+    checker.is_subtype_of(source, target)
+}
+
+/// Convenience function for one-off subtype checks routed through a QueryDatabase.
+/// The QueryDatabase enables Salsa memoization when available.
+pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: TypeId) -> bool {
+    let mut checker = SubtypeChecker::new(db.as_type_database()).with_query_db(db);
+    checker.is_subtype_of(source, target)
+}
+
+/// Convenience function for one-off subtype checks with a resolver, routed through a QueryDatabase.
+pub fn is_subtype_of_with_resolver_and_db<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let mut checker =
+        SubtypeChecker::with_resolver(db.as_type_database(), resolver).with_query_db(db);
     checker.is_subtype_of(source, target)
 }
 

@@ -12,6 +12,7 @@
 //! - Supports distributivity for naked type parameters in unions
 
 use crate::solver::TypeDatabase;
+use crate::solver::db::QueryDatabase;
 use crate::solver::instantiate::instantiate_generic;
 use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
@@ -53,6 +54,8 @@ pub const MAX_TOTAL_EVALUATIONS: u32 = 100_000;
 /// Salsa integration where state is managed by the database runtime.
 pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     interner: &'a dyn TypeDatabase,
+    /// Optional query database for Salsa-backed memoization.
+    query_db: Option<&'a dyn QueryDatabase>,
     resolver: &'a R,
     no_unchecked_indexed_access: bool,
     cache: FxHashMap<TypeId, TypeId>,
@@ -112,6 +115,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
         static NOOP: NoopResolver = NoopResolver;
         TypeEvaluator {
             interner,
+            query_db: None,
             resolver: &NOOP,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
@@ -128,6 +132,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         TypeEvaluator {
             interner,
+            query_db: None,
             resolver,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
@@ -136,6 +141,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             total_evaluations: 0,
             depth_exceeded: false,
         }
+    }
+
+    /// Set the query database for Salsa-backed memoization.
+    pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
+        self.query_db = Some(db);
+        self
     }
 
     pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
@@ -150,6 +161,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) fn interner(&self) -> &'a dyn TypeDatabase {
         self.interner
+    }
+
+    /// Get the query database, if available.
+    #[inline]
+    pub(crate) fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
+        self.query_db
     }
 
     /// Get the type resolver.
