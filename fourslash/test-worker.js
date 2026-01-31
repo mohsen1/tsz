@@ -147,6 +147,27 @@ function patchTestState(FourSlash, TszAdapter) {
 function patchSessionClient(SessionClient) {
     const proto = SessionClient.prototype;
 
+    // The constructor sets getCombinedCodeFix, applyCodeActionCommand, and mapCode
+    // as instance properties (= notImplemented), which shadows prototype methods.
+    // Wrap the constructor to delete those instance properties so our prototype
+    // patches take effect.
+    // We can't easily wrap the constructor, so instead use a post-init hook.
+    // Override writeMessage to delete instance properties on first call.
+    const instancePropsToDelete = ['getCombinedCodeFix', 'applyCodeActionCommand', 'mapCode'];
+    const _origWriteMessage = proto.writeMessage;
+    proto.writeMessage = function(msg) {
+        // Delete shadowing instance properties on first use
+        if (this._instancePropsDeleted === undefined) {
+            this._instancePropsDeleted = true;
+            for (const prop of instancePropsToDelete) {
+                if (this.hasOwnProperty(prop)) {
+                    delete this[prop];
+                }
+            }
+        }
+        return _origWriteMessage.call(this, msg);
+    };
+
     proto.getBreakpointStatementAtPosition = function(fileName, position) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
@@ -354,6 +375,53 @@ function patchSessionClient(SessionClient) {
 
     proto.getNameOrDottedNameSpan = function(fileName, startPos, endPos) {
         return undefined;
+    };
+
+    // getLinkedEditingRangeAtPosition - route to server protocol
+    proto.getLinkedEditingRangeAtPosition = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("linkedEditingRange", args);
+        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        if (!response.body) return undefined;
+        const { ranges, wordPattern } = response.body;
+        if (!ranges || ranges.length === 0) return undefined;
+        const result = {
+            ranges: ranges.map(r => ({
+                start: this.lineOffsetToPosition(fileName, r.start),
+                length: this.lineOffsetToPosition(fileName, r.end) - this.lineOffsetToPosition(fileName, r.start),
+            })),
+        };
+        if (wordPattern) result.wordPattern = wordPattern;
+        return result;
+    };
+
+    // getCombinedCodeFix - route to server protocol
+    proto.getCombinedCodeFix = function(scope, fixId, formatOptions, preferences) {
+        const args = {
+            scope: { type: "file", args: { file: scope.fileName } },
+            fixId,
+        };
+        const request = this.processRequest("getCombinedCodeFix", args);
+        const response = this.processResponse(request);
+        if (!response.body) return { changes: [], commands: undefined };
+        const { changes, commands } = response.body;
+        return {
+            changes: this.convertChanges(changes || [], scope.fileName),
+            commands,
+        };
+    };
+
+    // mapCode - route to server protocol
+    proto.mapCode = function(fileName, contents, focusLocations, formatOptions, preferences) {
+        const args = {
+            file: fileName,
+            mapping: { contents, focusLocations },
+        };
+        const request = this.processRequest("mapCode", args);
+        const response = this.processResponse(request);
+        if (!response.body) return [];
+        return this.convertChanges(response.body || [], fileName);
     };
 
     // organizeImports - route to server protocol
