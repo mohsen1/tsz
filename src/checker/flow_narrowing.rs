@@ -97,14 +97,14 @@ impl<'a> CheckerState<'a> {
     /// - Type is exactly `undefined`
     /// - Type is a union containing `null` or `undefined`
     pub fn is_nullish_type(&self, type_id: TypeId) -> bool {
-        solver_narrowing::is_nullish_type(self.ctx.types, type_id)
+        solver_narrowing::is_nullish_type(self.ctx.types.as_type_database(), type_id)
     }
 
     /// Check if a type (possibly a union) contains null or undefined.
     ///
     /// Recursively checks union members for null or undefined types.
     pub fn type_contains_nullish(&self, type_id: TypeId) -> bool {
-        solver_narrowing::type_contains_nullish(self.ctx.types, type_id)
+        solver_narrowing::type_contains_nullish(self.ctx.types.as_type_database(), type_id)
     }
 
     /// Remove null and undefined from a type (non-null assertion).
@@ -112,7 +112,7 @@ impl<'a> CheckerState<'a> {
     /// For `T | null | undefined`, returns `T`.
     /// For `T` where T is not nullish, returns `T` unchanged.
     pub fn non_null_type(&self, type_id: TypeId) -> TypeId {
-        solver_narrowing::remove_nullish(self.ctx.types, type_id)
+        solver_narrowing::remove_nullish(self.ctx.types.as_type_database(), type_id)
     }
 
     // =========================================================================

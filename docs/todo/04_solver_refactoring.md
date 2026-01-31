@@ -27,7 +27,7 @@ All bug fixes implemented and tested.
 
 ---
 
-## Phase 2: Salsa Prerequisites - SUBSTANTIALLY COMPLETE
+## Phase 2: Salsa Prerequisites - ✅ COMPLETE
 
 This phase prepares for future Salsa integration.
 
@@ -39,7 +39,7 @@ This phase prepares for future Salsa integration.
 - [x] Route evaluate_type through QueryDatabase memoization ✅
 - [x] Route recursive check_subtype through QueryCache memoization ✅
 - [x] Consolidate CompatChecker configuration via `configure_compat_checker` helper ✅
-- [ ] Refactor CheckerContext to use `&dyn QueryDatabase` instead of `&TypeInterner` (partial: dual-field approach done)
+- [x] Refactor CheckerContext to use `&dyn QueryDatabase` instead of `&TypeInterner` ✅
 
 ### Task 3: Remove RefCell from TypeEvaluator ✅
 
@@ -250,9 +250,9 @@ Remaining 65 TypeKey matches are:
 
 ## Future Work
 
-1. **Phase 2 remaining**: Replace `CheckerContext.types: &TypeInterner` with `&dyn QueryDatabase` (currently uses dual-field approach with both `types` and `query_db`)
+1. ~~**Phase 2 remaining**: Replace `CheckerContext.types: &TypeInterner` with `&dyn QueryDatabase`~~ ✅ DONE — CheckerContext.types is now `&dyn QueryDatabase`, dual-field approach removed
 2. **Phase 4.4**: Complete namespace/enum SymbolRef removal when binder integration is addressed
-3. **Salsa full integration**: Route recursive `check_subtype` calls through Salsa (currently uses QueryCache; Salsa would add coinductive cycle recovery via `#[salsa::cycle]`)
+3. ~~**Salsa full integration**: Route recursive `check_subtype` calls through Salsa~~ DEFERRED — See Appendix F in `SOLVER_REFACTORING_PROPOSAL.md` for architectural rationale; QueryCache is the final memoization layer
 4. **Sound mode docs**: Add usage examples and documentation
 5. **Performance benchmarking**: Measure QueryCache hit rates and memoization impact
 

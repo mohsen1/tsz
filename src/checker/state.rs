@@ -98,7 +98,7 @@ use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::solver::{TypeId, TypeInterner};
+use crate::solver::{QueryDatabase, TypeId};
 
 // =============================================================================
 // CheckerState
@@ -230,7 +230,7 @@ impl<'a> CheckerState<'a> {
     pub fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        types: &'a TypeInterner,
+        types: &'a dyn QueryDatabase,
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
@@ -252,7 +252,7 @@ impl<'a> CheckerState<'a> {
     pub fn with_cache(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        types: &'a TypeInterner,
+        types: &'a dyn QueryDatabase,
         file_name: String,
         cache: crate::checker::TypeCache,
         compiler_options: CheckerOptions,
@@ -319,7 +319,7 @@ impl<'a> CheckerState<'a> {
     pub fn with_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        types: &'a TypeInterner,
+        types: &'a dyn QueryDatabase,
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
@@ -332,7 +332,7 @@ impl<'a> CheckerState<'a> {
     pub fn with_cache_and_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        types: &'a TypeInterner,
+        types: &'a dyn QueryDatabase,
         file_name: String,
         cache: crate::checker::TypeCache,
         compiler_options: &CheckerOptions,

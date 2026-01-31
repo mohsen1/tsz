@@ -39,7 +39,7 @@
 //! ```
 
 use crate::solver::types::{IntrinsicKind, StringIntrinsicKind, TypeParamInfo};
-use crate::solver::{LiteralValue, TypeId, TypeInterner, TypeKey};
+use crate::solver::{LiteralValue, TypeDatabase, TypeId, TypeKey};
 use rustc_hash::FxHashSet;
 
 // =============================================================================
@@ -208,7 +208,7 @@ pub trait TypeVisitor: Sized {
     /// Visit a type by dispatching to the appropriate method.
     ///
     /// This is the main entry point for using the visitor.
-    fn visit_type(&mut self, types: &TypeInterner, type_id: TypeId) -> Self::Output {
+    fn visit_type(&mut self, types: &dyn TypeDatabase, type_id: TypeId) -> Self::Output {
         match types.lookup(type_id) {
             Some(ref type_key) => self.visit_type_key(types, type_key),
             None => Self::default_output(),
@@ -216,7 +216,7 @@ pub trait TypeVisitor: Sized {
     }
 
     /// Visit a TypeKey by dispatching to the appropriate method.
-    fn visit_type_key(&mut self, _types: &TypeInterner, type_key: &TypeKey) -> Self::Output {
+    fn visit_type_key(&mut self, _types: &dyn TypeDatabase, type_key: &TypeKey) -> Self::Output {
         match type_key {
             TypeKey::Intrinsic(kind) => self.visit_intrinsic(*kind),
             TypeKey::Literal(value) => self.visit_literal(value),
@@ -345,7 +345,7 @@ impl TypeKindVisitor {
     }
 
     /// Get the kind of a type by TypeId.
-    pub fn get_kind_of(types: &TypeInterner, type_id: TypeId) -> TypeKind {
+    pub fn get_kind_of(types: &dyn TypeDatabase, type_id: TypeId) -> TypeKind {
         match types.lookup(type_id) {
             Some(ref type_key) => Self::get_kind(type_key),
             None => TypeKind::Other,
@@ -364,7 +364,7 @@ impl TypeVisitor for TypeKindVisitor {
         self.target_kind == TypeKind::Literal
     }
 
-    fn visit_type_key(&mut self, _types: &TypeInterner, type_key: &TypeKey) -> Self::Output {
+    fn visit_type_key(&mut self, _types: &dyn TypeDatabase, type_key: &TypeKey) -> Self::Output {
         Self::get_kind(type_key) == self.target_kind
     }
 
@@ -481,7 +481,7 @@ where
 {
     type Output = bool;
 
-    fn visit_type_key(&mut self, _types: &TypeInterner, type_key: &TypeKey) -> Self::Output {
+    fn visit_type_key(&mut self, _types: &dyn TypeDatabase, type_key: &TypeKey) -> Self::Output {
         (self.predicate)(type_key)
     }
 
@@ -511,7 +511,7 @@ where
 ///
 /// let is_object = is_type_kind(&types, type_id, TypeKind::Object);
 /// ```
-pub fn is_type_kind(types: &TypeInterner, type_id: TypeId, kind: TypeKind) -> bool {
+pub fn is_type_kind(types: &dyn TypeDatabase, type_id: TypeId, kind: TypeKind) -> bool {
     let mut visitor = TypeKindVisitor::new(kind);
     visitor.visit_type(types, type_id)
 }
@@ -525,7 +525,7 @@ pub fn is_type_kind(types: &TypeInterner, type_id: TypeId, kind: TypeKind) -> bo
 ///
 /// let types = collect_referenced_types(&type_interner, type_id);
 /// ```
-pub fn collect_referenced_types(types: &TypeInterner, type_id: TypeId) -> FxHashSet<TypeId> {
+pub fn collect_referenced_types(types: &dyn TypeDatabase, type_id: TypeId) -> FxHashSet<TypeId> {
     let mut visitor = TypeCollectorVisitor::new();
     visitor.visit_type(types, type_id);
     visitor.types
@@ -542,7 +542,7 @@ pub fn collect_referenced_types(types: &TypeInterner, type_id: TypeId) -> FxHash
 ///     matches!(key, TypeKey::Literal(LiteralValue::String(_)))
 /// });
 /// ```
-pub fn test_type<F>(types: &TypeInterner, type_id: TypeId, predicate: F) -> bool
+pub fn test_type<F>(types: &dyn TypeDatabase, type_id: TypeId, predicate: F) -> bool
 where
     F: Fn(&TypeKey) -> bool,
 {
@@ -557,25 +557,25 @@ where
 /// Check if a type is a literal type.
 ///
 /// Matches: TypeKey::Literal(_)
-pub fn is_literal_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Literal(_)))
 }
 
 /// Check if a type is a module namespace type (import * as ns).
 ///
 /// Matches: TypeKey::ModuleNamespace(_)
-pub fn is_module_namespace_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_module_namespace_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::ModuleNamespace(_)))
 }
 
 /// Check if a type is a function type (Function or Callable).
 ///
 /// This also handles intersections containing function types.
-pub fn is_function_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_function_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_function_type_impl(types, type_id)
 }
 
-fn is_function_type_impl(types: &TypeInterner, type_id: TypeId) -> bool {
+fn is_function_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match types.lookup(type_id) {
         Some(TypeKey::Function(_) | TypeKey::Callable(_)) => true,
         Some(TypeKey::Intersection(members)) => {
@@ -591,11 +591,11 @@ fn is_function_type_impl(types: &TypeInterner, type_id: TypeId) -> bool {
 /// Check if a type is an object-like type (suitable for typeof "object").
 ///
 /// Returns true for: Object, ObjectWithIndex, Array, Tuple, Mapped, ReadonlyType (of object)
-pub fn is_object_like_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_object_like_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_object_like_type_impl(types, type_id)
 }
 
-fn is_object_like_type_impl(types: &TypeInterner, type_id: TypeId) -> bool {
+fn is_object_like_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match types.lookup(type_id) {
         Some(TypeKey::Object(_))
         | Some(TypeKey::ObjectWithIndex(_))
@@ -618,7 +618,7 @@ fn is_object_like_type_impl(types: &TypeInterner, type_id: TypeId) -> bool {
 }
 
 /// Check if a type is an empty object type (no properties, no index signatures).
-pub fn is_empty_object_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_empty_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match types.lookup(type_id) {
         Some(TypeKey::Object(shape_id)) => {
             let shape = types.object_shape(shape_id);
@@ -635,7 +635,7 @@ pub fn is_empty_object_type(types: &TypeInterner, type_id: TypeId) -> bool {
 }
 
 /// Check if a type is a primitive type (intrinsic or literal).
-pub fn is_primitive_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Check well-known intrinsic TypeIds first
     if type_id.is_intrinsic() {
         return true;
@@ -647,27 +647,27 @@ pub fn is_primitive_type(types: &TypeInterner, type_id: TypeId) -> bool {
 }
 
 /// Check if a type is a union type.
-pub fn is_union_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_union_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Union(_)))
 }
 
 /// Check if a type is an intersection type.
-pub fn is_intersection_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_intersection_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Intersection(_)))
 }
 
 /// Check if a type is an array type.
-pub fn is_array_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_array_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Array(_)))
 }
 
 /// Check if a type is a tuple type.
-pub fn is_tuple_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Tuple(_)))
 }
 
 /// Check if a type is a type parameter.
-pub fn is_type_parameter(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_type_parameter(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         types.lookup(type_id),
         Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
@@ -675,32 +675,32 @@ pub fn is_type_parameter(types: &TypeInterner, type_id: TypeId) -> bool {
 }
 
 /// Check if a type is a conditional type.
-pub fn is_conditional_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_conditional_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Conditional(_)))
 }
 
 /// Check if a type is a mapped type.
-pub fn is_mapped_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_mapped_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Mapped(_)))
 }
 
 /// Check if a type is an index access type.
-pub fn is_index_access_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_index_access_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::IndexAccess(_, _)))
 }
 
 /// Check if a type is a template literal type.
-pub fn is_template_literal_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_template_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::TemplateLiteral(_)))
 }
 
 /// Check if a type is a type reference (Ref).
-pub fn is_type_reference(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_type_reference(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Ref(_)))
 }
 
 /// Check if a type is a generic type application.
-pub fn is_generic_application(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Application(_)))
 }
 
@@ -711,7 +711,7 @@ pub fn is_generic_application(types: &TypeInterner, type_id: TypeId) -> bool {
 /// A visitor that recursively collects all types referenced by a root type.
 /// Unlike TypeCollectorVisitor, this properly traverses into nested structures.
 pub struct RecursiveTypeCollector<'a> {
-    types: &'a TypeInterner,
+    types: &'a dyn TypeDatabase,
     collected: FxHashSet<TypeId>,
     visiting: FxHashSet<TypeId>,
     max_depth: usize,
@@ -719,7 +719,7 @@ pub struct RecursiveTypeCollector<'a> {
 }
 
 impl<'a> RecursiveTypeCollector<'a> {
-    pub fn new(types: &'a TypeInterner) -> Self {
+    pub fn new(types: &'a dyn TypeDatabase) -> Self {
         Self {
             types,
             collected: FxHashSet::default(),
@@ -729,7 +729,7 @@ impl<'a> RecursiveTypeCollector<'a> {
         }
     }
 
-    pub fn with_max_depth(types: &'a TypeInterner, max_depth: usize) -> Self {
+    pub fn with_max_depth(types: &'a dyn TypeDatabase, max_depth: usize) -> Self {
         Self {
             types,
             collected: FxHashSet::default(),
@@ -893,7 +893,7 @@ impl<'a> RecursiveTypeCollector<'a> {
 }
 
 /// Collect all types recursively reachable from a root type.
-pub fn collect_all_types(types: &TypeInterner, type_id: TypeId) -> FxHashSet<TypeId> {
+pub fn collect_all_types(types: &dyn TypeDatabase, type_id: TypeId) -> FxHashSet<TypeId> {
     let mut collector = RecursiveTypeCollector::new(types);
     collector.collect(type_id)
 }
@@ -903,19 +903,19 @@ pub fn collect_all_types(types: &TypeInterner, type_id: TypeId) -> FxHashSet<Typ
 // =============================================================================
 
 /// Check if a type contains any type parameters.
-pub fn contains_type_parameters(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn contains_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching(types, type_id, |key| {
         matches!(key, TypeKey::TypeParameter(_) | TypeKey::Infer(_))
     })
 }
 
 /// Check if a type contains any `infer` types.
-pub fn contains_infer_types(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn contains_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching(types, type_id, |key| matches!(key, TypeKey::Infer(_)))
 }
 
 /// Check if a type contains the error type.
-pub fn contains_error_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn contains_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::ERROR {
         return true;
     }
@@ -923,7 +923,7 @@ pub fn contains_error_type(types: &TypeInterner, type_id: TypeId) -> bool {
 }
 
 /// Check if a type contains any type matching a predicate.
-pub fn contains_type_matching<F>(types: &TypeInterner, type_id: TypeId, predicate: F) -> bool
+pub fn contains_type_matching<F>(types: &dyn TypeDatabase, type_id: TypeId, predicate: F) -> bool
 where
     F: Fn(&TypeKey) -> bool,
 {
@@ -941,7 +941,7 @@ struct ContainsTypeChecker<'a, F>
 where
     F: Fn(&TypeKey) -> bool,
 {
-    types: &'a TypeInterner,
+    types: &'a dyn TypeDatabase,
     predicate: F,
     visiting: FxHashSet<TypeId>,
     max_depth: usize,
@@ -1067,8 +1067,6 @@ where
 // =============================================================================
 // TypeDatabase-based convenience functions
 // =============================================================================
-
-use crate::solver::TypeDatabase;
 
 /// Check if a type is a literal type (TypeDatabase version).
 pub fn is_literal_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {

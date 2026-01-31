@@ -1495,13 +1495,63 @@ fn get_interface_members(db: &dyn Judge, def_id: DefId) -> Arc<Vec<PropertyInfo>
 
 ---
 
-## Appendix F: References
+## Appendix F: ADR — QueryCache as Final Memoization Architecture
+
+**Status**: Accepted
+**Date**: January 2026
+**Decision**: QueryCache (not Salsa) is the production memoization layer for the solver.
+
+### Context
+
+The original proposal (Section 3.1) envisioned routing all solver queries through Salsa for automatic memoization and coinductive cycle recovery. After implementing QueryCache as a stepping stone, we evaluated whether full Salsa integration is justified.
+
+### Decision
+
+**QueryCache is the final architecture. Salsa routing is deferred indefinitely.**
+
+### Rationale
+
+1. **Architectural mismatch**: Salsa requires pure query functions with no internal mutable state. The SubtypeChecker and TypeEvaluator use mutable `in_progress` sets, recursion depth counters, and `&mut self` methods. Converting these to pure Salsa queries would require a fundamental rewrite of the solver's core algorithms — not just wiring changes.
+
+2. **TypeInterner is shared mutable state**: The TypeInterner interns new types during subtype checking (e.g., when evaluating conditional types or creating union normalizations). Salsa inputs are set once and then read. Making TypeInterner a Salsa input would require either:
+   - Freezing the interner before queries (breaking type creation during checking)
+   - Using `Arc<TypeInterner>` with interior mutability (defeating Salsa's invalidation model)
+
+3. **Inference is fundamentally imperative**: Generic type inference uses `ena` (Union-Find) with mutable unification variables. This cannot be inside Salsa (Constraint 1 in Section 1.4). Since inference calls `is_subtype` for bounds checking, the subtype checker must be callable from both Salsa and non-Salsa contexts — making full Salsa routing impractical.
+
+4. **QueryCache already provides the key benefits**:
+   - Cross-checker memoization of subtype results (the main performance win)
+   - Evaluate-type caching across checker instances
+   - Thread-safe via `RwLock<FxHashMap>`
+   - Zero architecture disruption
+
+5. **Coinductive cycle recovery works without Salsa**: The existing `in_progress` set with `Provisional` result handling implements coinductive semantics correctly. Salsa's `#[salsa::cycle]` would be cleaner but provides no correctness benefit over the current approach.
+
+### Consequences
+
+- `salsa_db.rs` remains as a working proof-of-concept and test bed, not a production path
+- QueryCache in `src/solver/db.rs` is the canonical memoization implementation
+- CheckerContext.types uses `&dyn QueryDatabase` (supports both QueryCache and SalsaDatabase)
+- Future Salsa work would only be justified if incremental recomputation (LSP file-edit invalidation) becomes a priority — and even then, it would likely wrap QueryCache rather than replace the solver internals
+
+### Alternatives Considered
+
+| Alternative | Why Rejected |
+|------------|--------------|
+| Full Salsa routing | Requires pure solver functions; fundamental mismatch with mutable solver state |
+| Salsa for evaluate only | Partial benefit; evaluate already cached by QueryCache |
+| Salsa 2022 (newer API) | Still requires pure functions; same fundamental issue |
+
+---
+
+## Appendix G: References
 
 1. `docs/architecture/NORTH_STAR.md` - Target architecture
 2. `docs/aspirations/SOUND_MODE_ASPIRATIONS.md` - Sound Mode goals
 3. `docs/specs/TS_UNSOUNDNESS_CATALOG.md` - TypeScript quirks to preserve
 4. `src/solver/subtype.rs` - Current subtype implementation
 5. `src/solver/lawyer.rs` - Current Lawyer implementation
-6. `src/solver/salsa_db.rs` - Existing Salsa foundation
-7. [Salsa Book](https://salsa-rs.github.io/salsa/) - Salsa documentation
-8. [Chalk Book](https://rust-lang.github.io/chalk/book/) - Chalk architecture (reference)
+6. `src/solver/salsa_db.rs` - Existing Salsa foundation (proof-of-concept)
+7. `src/solver/db.rs` - QueryCache (production memoization layer)
+8. [Salsa Book](https://salsa-rs.github.io/salsa/) - Salsa documentation
+9. [Chalk Book](https://rust-lang.github.io/chalk/book/) - Chalk architecture (reference)

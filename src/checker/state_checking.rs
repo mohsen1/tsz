@@ -1218,7 +1218,6 @@ impl<'a> CheckerState<'a> {
         wants_string: bool,
         wants_number: bool,
     ) -> bool {
-        use crate::solver::QueryDatabase;
 
         self.ctx
             .types

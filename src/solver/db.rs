@@ -59,6 +59,10 @@ pub trait TypeDatabase {
     fn mapped(&self, mapped: MappedType) -> TypeId;
     fn reference(&self, symbol: SymbolRef) -> TypeId;
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId;
+
+    fn literal_string_atom(&self, atom: Atom) -> TypeId;
+    fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId;
+    fn readonly_type(&self, inner: TypeId) -> TypeId;
 }
 
 impl TypeDatabase for TypeInterner {
@@ -204,6 +208,18 @@ impl TypeDatabase for TypeInterner {
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         TypeInterner::application(self, base, args)
+    }
+
+    fn literal_string_atom(&self, atom: Atom) -> TypeId {
+        TypeInterner::literal_string_atom(self, atom)
+    }
+
+    fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
+        TypeInterner::union_preserve_members(self, members)
+    }
+
+    fn readonly_type(&self, inner: TypeId) -> TypeId {
+        TypeInterner::readonly_type(self, inner)
     }
 }
 
@@ -649,6 +665,18 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         self.interner.application(base, args)
+    }
+
+    fn literal_string_atom(&self, atom: Atom) -> TypeId {
+        self.interner.literal_string_atom(atom)
+    }
+
+    fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
+        self.interner.union_preserve_members(members)
+    }
+
+    fn readonly_type(&self, inner: TypeId) -> TypeId {
+        self.interner.readonly_type(inner)
     }
 }
 

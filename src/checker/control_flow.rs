@@ -24,7 +24,7 @@ use crate::interner::Atom;
 use crate::parser::node::{BinaryExprData, NodeArena};
 use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::solver::{NarrowingContext, ParamInfo, TypeId, TypeInterner, TypePredicate};
+use crate::solver::{NarrowingContext, ParamInfo, TypeDatabase, TypeId, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
@@ -102,7 +102,7 @@ impl<'a> FlowGraph<'a> {
 pub struct FlowAnalyzer<'a> {
     pub(crate) arena: &'a NodeArena,
     pub(crate) binder: &'a BinderState,
-    pub(crate) interner: &'a TypeInterner,
+    pub(crate) interner: &'a dyn TypeDatabase,
     pub(crate) node_types: Option<&'a FxHashMap<u32, TypeId>>,
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
 }
@@ -129,7 +129,7 @@ pub(crate) struct PredicateSignature {
 
 impl<'a> FlowAnalyzer<'a> {
     /// Create a new FlowAnalyzer.
-    pub fn new(arena: &'a NodeArena, binder: &'a BinderState, interner: &'a TypeInterner) -> Self {
+    pub fn new(arena: &'a NodeArena, binder: &'a BinderState, interner: &'a dyn TypeDatabase) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
         Self {
             arena,
@@ -143,7 +143,7 @@ impl<'a> FlowAnalyzer<'a> {
     pub fn with_node_types(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        interner: &'a TypeInterner,
+        interner: &'a dyn TypeDatabase,
         node_types: &'a FxHashMap<u32, TypeId>,
     ) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
@@ -1812,6 +1812,7 @@ mod tests {
     use super::*;
     use crate::parser::ParserState;
     use crate::solver::PropertyInfo;
+    use crate::solver::TypeInterner;
     use crate::solver::type_queries::{UnionMembersKind, classify_for_union_members};
 
     fn get_if_condition(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {

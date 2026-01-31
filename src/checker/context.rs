@@ -14,7 +14,7 @@ use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
 use crate::solver::def::{DefId, DefinitionStore};
-use crate::solver::{PropertyInfo, TypeEnvironment, TypeId, TypeInterner};
+use crate::solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId};
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
@@ -226,13 +226,9 @@ pub struct CheckerContext<'a> {
     /// The binder state with symbols.
     pub binder: &'a BinderState,
 
-    /// Type interner for structural type interning.
-    pub types: &'a TypeInterner,
-
-    /// Optional Salsa-backed query database for memoized type operations.
-    /// When set, CompatChecker/SubtypeChecker will route evaluate_type and
-    /// is_subtype_of through Salsa for memoization and cycle recovery.
-    pub query_db: Option<&'a dyn crate::solver::QueryDatabase>,
+    /// Query database for type interning and memoized type operations.
+    /// Supports both TypeInterner (via trait upcasting) and QueryCache.
+    pub types: &'a dyn QueryDatabase,
 
     /// Current file name.
     pub file_name: String,
@@ -454,7 +450,7 @@ impl<'a> CheckerContext<'a> {
     pub fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        types: &'a TypeInterner,
+        types: &'a dyn QueryDatabase,
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
@@ -466,7 +462,6 @@ impl<'a> CheckerContext<'a> {
             arena,
             binder,
             types,
-            query_db: None,
             file_name,
             compiler_options,
             report_unresolved_imports: false,
@@ -534,7 +529,7 @@ impl<'a> CheckerContext<'a> {
     pub fn with_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        types: &'a TypeInterner,
+        types: &'a dyn QueryDatabase,
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
@@ -546,7 +541,6 @@ impl<'a> CheckerContext<'a> {
             arena,
             binder,
             types,
-            query_db: None,
             file_name,
             compiler_options,
             report_unresolved_imports: false,
@@ -615,7 +609,7 @@ impl<'a> CheckerContext<'a> {
     pub fn with_cache(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        types: &'a TypeInterner,
+        types: &'a dyn QueryDatabase,
         file_name: String,
         cache: TypeCache,
         compiler_options: CheckerOptions,
@@ -628,7 +622,6 @@ impl<'a> CheckerContext<'a> {
             arena,
             binder,
             types,
-            query_db: None,
             file_name,
             compiler_options,
             report_unresolved_imports: false,
@@ -696,7 +689,7 @@ impl<'a> CheckerContext<'a> {
     pub fn with_cache_and_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        types: &'a TypeInterner,
+        types: &'a dyn QueryDatabase,
         file_name: String,
         cache: TypeCache,
         compiler_options: &CheckerOptions,
@@ -709,7 +702,6 @@ impl<'a> CheckerContext<'a> {
             arena,
             binder,
             types,
-            query_db: None,
             file_name,
             compiler_options,
             report_unresolved_imports: false,
@@ -774,11 +766,6 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set lib contexts for global type resolution.
-    /// Set the query database for Salsa-backed memoization of evaluate_type and is_subtype_of.
-    pub fn set_query_db(&mut self, db: &'a dyn crate::solver::QueryDatabase) {
-        self.query_db = Some(db);
-    }
-
     pub fn set_lib_contexts(&mut self, lib_contexts: Vec<LibContext>) {
         self.lib_contexts = lib_contexts;
     }
@@ -1334,7 +1321,7 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.exact_optional_property_types
     }
 
-    /// Apply standard compiler options to a CompatChecker, including query_db if available.
+    /// Apply standard compiler options to a CompatChecker, including query_db.
     pub fn configure_compat_checker<R: crate::solver::TypeResolver>(
         &self,
         checker: &mut crate::solver::CompatChecker<'a, R>,
@@ -1343,9 +1330,7 @@ impl<'a> CheckerContext<'a> {
         checker.set_strict_null_checks(self.strict_null_checks());
         checker.set_exact_optional_property_types(self.exact_optional_property_types());
         checker.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
-        if let Some(db) = self.query_db {
-            checker.set_query_db(db);
-        }
+        checker.set_query_db(self.types);
     }
 
     /// Check if noLib is enabled.

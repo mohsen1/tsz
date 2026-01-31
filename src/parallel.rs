@@ -1209,11 +1209,10 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             let mut checker = CheckerState::new(
                 &file.arena,
                 &binder,
-                &program.type_interner,
+                &query_cache,
                 file.file_name.clone(),
                 compiler_options, // default options for internal operations
             );
-            checker.ctx.set_query_db(&query_cache);
 
             let mut function_results = Vec::new();
 
@@ -1282,12 +1281,10 @@ pub fn check_files_parallel(
             let mut checker = CheckerState::with_options(
                 &file.arena,
                 &binder,
-                &program.type_interner,
+                &query_cache,
                 file.file_name.clone(),
                 checker_options,
             );
-
-            checker.ctx.set_query_db(&query_cache);
 
             if !lib_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(lib_contexts.clone());

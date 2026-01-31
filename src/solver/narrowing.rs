@@ -19,12 +19,12 @@
 
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
-use crate::solver::TypeInterner;
 use crate::solver::types::*;
-use crate::solver::visitor::{
-    TypeVisitor, is_function_type_db, is_literal_type_db, is_object_like_type_db,
-};
+use crate::solver::visitor::{is_function_type_db, is_literal_type_db, is_object_like_type_db};
 use tracing::{Level, span, trace};
+
+#[cfg(test)]
+use crate::solver::TypeInterner;
 
 /// Result of finding discriminant properties in a union.
 #[derive(Clone, Debug)]
@@ -742,33 +742,11 @@ pub fn narrow_by_typeof(
 // Nullish Type Helpers
 // =============================================================================
 
-struct TopLevelUnionMembers<'a> {
-    types: &'a TypeInterner,
-}
-
-impl<'a> TypeVisitor for TopLevelUnionMembers<'a> {
-    type Output = Option<Vec<TypeId>>;
-
-    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
-        Self::default_output()
+fn top_level_union_members(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    match types.lookup(type_id) {
+        Some(TypeKey::Union(list_id)) => Some(types.type_list(list_id).to_vec()),
+        _ => None,
     }
-
-    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
-        Self::default_output()
-    }
-
-    fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        Some(self.types.type_list(TypeListId(list_id)).to_vec())
-    }
-
-    fn default_output() -> Self::Output {
-        None
-    }
-}
-
-fn top_level_union_members(types: &TypeInterner, type_id: TypeId) -> Option<Vec<TypeId>> {
-    let mut visitor = TopLevelUnionMembers { types };
-    visitor.visit_type(types, type_id)
 }
 
 fn is_nullish_intrinsic(type_id: TypeId) -> bool {
@@ -788,7 +766,7 @@ fn normalize_nullish(type_id: TypeId) -> TypeId {
 }
 
 /// Check if a type is nullish (null/undefined/void or union containing them).
-pub fn is_nullish_type(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_nullish_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if is_nullish_intrinsic(type_id) {
         return true;
     }
@@ -799,12 +777,12 @@ pub fn is_nullish_type(types: &TypeInterner, type_id: TypeId) -> bool {
 }
 
 /// Check if a type (possibly a union) contains null or undefined.
-pub fn type_contains_nullish(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn type_contains_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_nullish_type(types, type_id)
 }
 
 /// Check if a type contains undefined (or void).
-pub fn type_contains_undefined(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn type_contains_undefined(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if is_undefined_intrinsic(type_id) {
         return true;
     }
@@ -817,7 +795,7 @@ pub fn type_contains_undefined(types: &TypeInterner, type_id: TypeId) -> bool {
 }
 
 /// Check if a type is definitely nullish (only null/undefined/void).
-pub fn is_definitely_nullish(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn is_definitely_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if is_nullish_intrinsic(type_id) {
         return true;
     }
@@ -830,12 +808,12 @@ pub fn is_definitely_nullish(types: &TypeInterner, type_id: TypeId) -> bool {
 }
 
 /// Check if a type can be nullish (contains null/undefined/void).
-pub fn can_be_nullish(types: &TypeInterner, type_id: TypeId) -> bool {
+pub fn can_be_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_nullish_type(types, type_id)
 }
 
 fn split_nullish_members(
-    types: &TypeInterner,
+    types: &dyn TypeDatabase,
     type_id: TypeId,
     non_nullish: &mut Vec<TypeId>,
     nullish: &mut Vec<TypeId>,
@@ -857,7 +835,7 @@ fn split_nullish_members(
 
 /// Split a type into its non-nullish part and its nullish cause.
 pub fn split_nullish_type(
-    types: &TypeInterner,
+    types: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> (Option<TypeId>, Option<TypeId>) {
     let mut non_nullish = Vec::new();
@@ -887,7 +865,7 @@ pub fn split_nullish_type(
 }
 
 /// Remove nullish parts of a type (non-null assertion).
-pub fn remove_nullish(types: &TypeInterner, type_id: TypeId) -> TypeId {
+pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let (non_nullish, _) = split_nullish_type(types, type_id);
     non_nullish.unwrap_or(TypeId::NEVER)
 }

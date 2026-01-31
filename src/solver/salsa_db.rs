@@ -1,10 +1,17 @@
-//! Salsa-based query database for incremental type checking.
+//! Salsa-based query database for incremental type checking (proof-of-concept).
 //!
 //! This module provides an alternative implementation of the TypeDatabase
-//! trait using Salsa for incremental recomputation and memoization.
+//! and QueryDatabase traits using Salsa for incremental recomputation and
+//! memoization. It coexists with the production `QueryCache` in `db.rs`.
 //!
-//! The salsa implementation coexists with the legacy TypeInterner, allowing
-//! for gradual migration and testing.
+//! **Status**: Proof-of-concept / test bed. The production memoization layer
+//! is `QueryCache` (see `src/solver/db.rs`). Full Salsa routing was evaluated
+//! and deferred — see Appendix F in `docs/architecture/SOLVER_REFACTORING_PROPOSAL.md`
+//! for the architectural decision record.
+//!
+//! Key reason: The solver's SubtypeChecker and TypeEvaluator use mutable
+//! internal state (`in_progress` sets, recursion depth, `&mut self`) which
+//! is incompatible with Salsa's pure-function query model.
 
 use crate::checker::context::CheckerOptions;
 use crate::interner::Atom;
@@ -340,6 +347,18 @@ impl crate::solver::db::TypeDatabase for SalsaDatabase {
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         self.interner_ref().application(base, args)
+    }
+
+    fn literal_string_atom(&self, atom: crate::interner::Atom) -> TypeId {
+        self.interner_ref().literal_string_atom(atom)
+    }
+
+    fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
+        self.interner_ref().union_preserve_members(members)
+    }
+
+    fn readonly_type(&self, inner: TypeId) -> TypeId {
+        self.interner_ref().readonly_type(inner)
     }
 }
 

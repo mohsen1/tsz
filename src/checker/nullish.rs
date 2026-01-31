@@ -34,7 +34,7 @@ use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver as solver_narrowing;
-use crate::solver::{TypeId as SolverTypeId, TypeInterner};
+use crate::solver::{TypeId as SolverTypeId, TypeDatabase};
 
 /// Computes the result type of a nullish coalescing expression
 ///
@@ -43,7 +43,7 @@ use crate::solver::{TypeId as SolverTypeId, TypeInterner};
 /// - If left is definitely not nullish -> result is left's type
 /// - If left may be nullish -> result is NonNullable<left> | right
 pub fn get_nullish_coalescing_type(
-    types: &TypeInterner,
+    types: &dyn TypeDatabase,
     left_type: SolverTypeId,
     right_type: SolverTypeId,
 ) -> SolverTypeId {
@@ -130,7 +130,7 @@ impl PrecedenceError {
 /// - The target must be a valid assignment target
 /// - The result type is NonNullable<target> | value
 pub fn get_nullish_assignment_type(
-    types: &TypeInterner,
+    types: &dyn TypeDatabase,
     target_type: SolverTypeId,
     value_type: SolverTypeId,
 ) -> SolverTypeId {

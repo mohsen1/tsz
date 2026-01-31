@@ -31,7 +31,7 @@
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::solver as solver_narrowing;
-use crate::solver::{TypeId as SolverTypeId, TypeInterner};
+use crate::solver::{TypeId as SolverTypeId, TypeDatabase};
 use rustc_hash::FxHashSet;
 
 /// Maximum depth for optional chain traversal to prevent infinite loops
@@ -148,7 +148,7 @@ pub fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
 /// If the expression is an optional chain and the base can be nullish,
 /// the result is T | undefined
 pub fn get_optional_chain_type(
-    types: &TypeInterner,
+    types: &dyn TypeDatabase,
     _base_type: SolverTypeId,
     access_type: SolverTypeId,
     is_optional: bool,
@@ -173,22 +173,22 @@ pub fn get_optional_chain_type(
 }
 
 /// Checks if a type contains undefined
-pub fn type_contains_undefined(types: &TypeInterner, type_id: SolverTypeId) -> bool {
+pub fn type_contains_undefined(types: &dyn TypeDatabase, type_id: SolverTypeId) -> bool {
     solver_narrowing::type_contains_undefined(types, type_id)
 }
 
 /// Removes null and undefined from a type for optional chain narrowing
-pub fn get_non_nullish_type(types: &TypeInterner, type_id: SolverTypeId) -> SolverTypeId {
+pub fn get_non_nullish_type(types: &dyn TypeDatabase, type_id: SolverTypeId) -> SolverTypeId {
     solver_narrowing::remove_nullish(types, type_id)
 }
 
 /// Checks if a type is nullish (null or undefined)
-pub fn is_nullish_type(types: &TypeInterner, type_id: SolverTypeId) -> bool {
+pub fn is_nullish_type(types: &dyn TypeDatabase, type_id: SolverTypeId) -> bool {
     solver_narrowing::is_nullish_type(types, type_id)
 }
 
 /// Checks if a type can be nullish (contains null or undefined)
-pub fn can_be_nullish(types: &TypeInterner, type_id: SolverTypeId) -> bool {
+pub fn can_be_nullish(types: &dyn TypeDatabase, type_id: SolverTypeId) -> bool {
     solver_narrowing::can_be_nullish(types, type_id)
 }
 
