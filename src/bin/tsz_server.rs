@@ -1702,6 +1702,22 @@ impl Server {
                 "argumentCount": sig_help.active_parameter + 1,
             }))
         })();
+        // signatureHelp must always return a body (processResponse expects it).
+        // When we can't compute signature help, return an empty result.
+        let result = result.or_else(|| {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            Some(serde_json::json!({
+                "items": [],
+                "applicableSpan": {
+                    "start": Self::lsp_to_tsserver_position(&position),
+                    "end": Self::lsp_to_tsserver_position(&position),
+                },
+                "selectedItemIndex": 0,
+                "argumentIndex": 0,
+                "argumentCount": 0,
+            }))
+        });
         self.stub_response(seq, request, result)
     }
 
@@ -2759,15 +2775,11 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         // docCommentTemplate returns DocCommandTemplateResponse or undefined
-        // Return a minimal template
-        self.stub_response(
-            seq,
-            request,
-            Some(serde_json::json!({
-                "newText": "/** */",
-                "caretOffset": 4
-            })),
-        )
+        // When we can't determine the right template, return no body (undefined).
+        // The client expects expectEmptyBody=true for this command, so a body
+        // would cause "Unexpected non-empty response body" errors.
+        // TODO: Implement actual JSDoc template generation based on function signatures
+        self.stub_response(seq, request, None)
     }
 
     fn handle_indentation(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
