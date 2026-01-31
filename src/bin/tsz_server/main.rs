@@ -1705,23 +1705,19 @@ impl Server {
                 "argumentCount": sig_help.active_parameter + 1,
             }))
         })();
-        // signatureHelp must always return a body (processResponse expects it).
-        // When we can't compute signature help, return an empty result.
-        let result = result.or_else(|| {
-            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
-            let position = Self::tsserver_to_lsp_position(line, offset);
-            Some(serde_json::json!({
+        // Always return a body - processResponse asserts !!response.body.
+        // When no signature help is found, return empty items array.
+        // The test-worker converts empty items to undefined.
+        let body = result.unwrap_or_else(|| {
+            serde_json::json!({
                 "items": [],
-                "applicableSpan": {
-                    "start": Self::lsp_to_tsserver_position(&position),
-                    "end": Self::lsp_to_tsserver_position(&position),
-                },
+                "applicableSpan": { "start": { "line": 1, "offset": 1 }, "end": { "line": 1, "offset": 1 } },
                 "selectedItemIndex": 0,
                 "argumentIndex": 0,
                 "argumentCount": 0,
-            }))
+            })
         });
-        self.stub_response(seq, request, result)
+        self.stub_response(seq, request, Some(body))
     }
 
     fn handle_suggestion_diagnostics_sync(
