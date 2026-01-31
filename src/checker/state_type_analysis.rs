@@ -397,6 +397,13 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             } else if let Some(name) = name_text {
                 if is_identifier {
+                    // Handle global intrinsics that may not have symbols in the binder
+                    // (e.g., `typeof undefined`, `typeof NaN`, `typeof Infinity`)
+                    match name.as_str() {
+                        "undefined" => return TypeId::UNDEFINED,
+                        "NaN" | "Infinity" => return TypeId::NUMBER,
+                        _ => {}
+                    }
                     if self.is_known_global_value_name(&name) {
                         // Emit TS2318/TS2583 for missing global type in typeof context
                         // TS2583 for ES2015+ types, TS2304 for other globals
