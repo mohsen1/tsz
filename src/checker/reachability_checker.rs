@@ -51,11 +51,21 @@ impl<'a> CheckerState<'a> {
         let mut unreachable = false;
         for &stmt_idx in statements {
             if unreachable {
-                self.error_at_node(
-                    stmt_idx,
-                    diagnostic_messages::UNREACHABLE_CODE_DETECTED,
-                    diagnostic_codes::UNREACHABLE_CODE_DETECTED,
-                );
+                // Skip empty statements and function declarations -
+                // they don't trigger TS7027 in TypeScript
+                let should_skip = if let Some(node) = self.ctx.arena.get(stmt_idx) {
+                    node.kind == syntax_kind_ext::EMPTY_STATEMENT
+                        || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                } else {
+                    false
+                };
+                if !should_skip {
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::UNREACHABLE_CODE_DETECTED,
+                        diagnostic_codes::UNREACHABLE_CODE_DETECTED,
+                    );
+                }
             } else {
                 let Some(node) = self.ctx.arena.get(stmt_idx) else {
                     continue;
