@@ -824,6 +824,241 @@ EOF
     done
 }
 
+# =============================================================================
+# O(N²) ALGORITHMIC PATTERN BENCHMARKS
+# =============================================================================
+# These generators create files that specifically stress the three known O(N²)
+# algorithmic patterns in the solver that Salsa memoization alone cannot fix.
+# See docs/todo/05_algorithmic_fixes.md for details.
+
+# Stress: Best Common Type — O(N²) in infer.rs:1060
+# N candidates × N subtype checks per candidate.
+# Triggered when many return statements / array elements need a common type.
+generate_bct_stress_file() {
+    local count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Best Common Type (BCT) O(N²) stress test
+// Targets: infer.rs best_common_type() — N candidates × N subtype checks
+//
+// Each class in the hierarchy is a distinct type candidate. When the compiler
+// infers the type of an array literal or multi-return function, it must find
+// the "best common type" by checking every candidate against every other.
+
+HEADER
+
+    # Build a class hierarchy so types are related but distinct
+    echo "class Base { base: string = ''; }" >> "$output"
+    for ((i=0; i<count; i++)); do
+        echo "class Derived$i extends Base { prop$i: number = $i; }" >> "$output"
+    done
+    echo "" >> "$output"
+
+    # 1. Array literal with N distinct derived types — triggers BCT
+    echo "// Array literal: BCT must find common type among $count candidates" >> "$output"
+    echo -n "const items = [" >> "$output"
+    for ((i=0; i<count; i++)); do
+        if [ $i -gt 0 ]; then echo -n ", " >> "$output"; fi
+        echo -n "new Derived$i()" >> "$output"
+    done
+    echo "];" >> "$output"
+    echo "" >> "$output"
+
+    # 2. Function with N return statements — triggers BCT on return type
+    echo "// Function with $count return branches — BCT on return type inference" >> "$output"
+    echo "function pickOne(index: number) {" >> "$output"
+    for ((i=0; i<count; i++)); do
+        echo "    if (index === $i) return new Derived$i();" >> "$output"
+    done
+    echo "    return new Base();" >> "$output"
+    echo "}" >> "$output"
+    echo "" >> "$output"
+
+    # 3. Generic function called with N different argument types
+    # This accumulates inference candidates that go through BCT
+    echo "// Generic calls accumulating $count candidates" >> "$output"
+    echo "function identity<T>(x: T): T { return x; }" >> "$output"
+    echo -n "const mixed = [" >> "$output"
+    for ((i=0; i<count; i++)); do
+        if [ $i -gt 0 ]; then echo -n ", " >> "$output"; fi
+        echo -n "identity(new Derived$i())" >> "$output"
+    done
+    echo "];" >> "$output"
+    echo "" >> "$output"
+
+    # 4. Conditional expression chains — each branch is a BCT candidate
+    echo "// Ternary chain: $count candidates for common type" >> "$output"
+    echo -n "declare const flag: number;" >> "$output"
+    echo "" >> "$output"
+    echo -n "const chosen = " >> "$output"
+    for ((i=0; i<count; i++)); do
+        echo -n "flag === $i ? new Derived$i() : " >> "$output"
+    done
+    echo "new Base();" >> "$output"
+
+    # Force type usage
+    echo "" >> "$output"
+    echo "const _base: Base = items[0];" >> "$output"
+    echo "const _picked: Base = pickOne(0);" >> "$output"
+    echo "const _chosen: Base = chosen;" >> "$output"
+}
+
+# Stress: Constraint Conflict Detection — O(N²) in infer.rs:135
+# N² upper bound pairs + M×N lower×upper bound cross-checks.
+# Triggered when a type parameter accumulates many bounds through usage.
+generate_constraint_conflict_file() {
+    local count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Constraint Conflict Detection O(N²) stress test
+// Targets: infer.rs detect_conflicts() — N² upper bound pairs + M×N lower×upper
+//
+// When a generic type parameter is used in many positions, the solver collects
+// lower bounds (argument types) and upper bounds (extends constraints, parameter
+// positions). Conflict detection checks all pairs for compatibility.
+
+HEADER
+
+    # Generate many interfaces that will become upper bounds
+    for ((i=0; i<count; i++)); do
+        echo "interface Constraint$i { key$i: string; shared: number; }" >> "$output"
+    done
+    echo "" >> "$output"
+
+    # Function where T is constrained by many extends clauses via overloads/conditionals
+    # Each call site adds bounds to T's constraint set
+    echo "// Function with type parameter accumulating bounds from $count call sites" >> "$output"
+    for ((i=0; i<count; i++)); do
+        echo "declare function constrain$i<T extends Constraint$i>(x: T): T;" >> "$output"
+    done
+    echo "" >> "$output"
+
+    # Create objects satisfying various combinations of constraints
+    echo "// Objects that satisfy multiple constraints" >> "$output"
+    for ((i=0; i<count; i++)); do
+        echo -n "const obj$i = { shared: $i" >> "$output"
+        # Each object satisfies constraints 0..i
+        for ((j=0; j<=i && j<count; j++)); do
+            echo -n ", key$j: 'val'" >> "$output"
+        done
+        echo " };" >> "$output"
+    done
+    echo "" >> "$output"
+
+    # Call constrain functions — each call adds lower + upper bounds
+    echo "// Each call adds lower bounds (arg type) and upper bounds (extends Constraint$i)" >> "$output"
+    for ((i=0; i<count; i++)); do
+        echo "const res$i = constrain$i(obj$i);" >> "$output"
+    done
+    echo "" >> "$output"
+
+    # Generic function that collects many bounds on a single type parameter
+    echo "// Single type param T accumulating $count bounds" >> "$output"
+    echo -n "function multiConstrained<T extends " >> "$output"
+    for ((i=0; i<count; i++)); do
+        if [ $i -gt 0 ]; then echo -n " & " >> "$output"; fi
+        echo -n "Constraint$i" >> "$output"
+    done
+    echo ">(x: T): T { return x; }" >> "$output"
+    echo "" >> "$output"
+
+    # Build an object satisfying all constraints — forces full conflict check
+    echo -n "const allConstraints = { shared: 0" >> "$output"
+    for ((i=0; i<count; i++)); do
+        echo -n ", key$i: 'val'" >> "$output"
+    done
+    echo " };" >> "$output"
+    echo "const _result = multiConstrained(allConstraints);" >> "$output"
+}
+
+# Stress: Mapped Type Expansion with Complex Templates — O(N × template_size)
+# in evaluate_rules/mapped.rs:157
+# N properties × instantiate+evaluate per property, with non-trivial templates.
+# The existing generate_mapped_type_file uses simple templates (T[K]).
+# This version uses complex conditional templates that are expensive to evaluate.
+generate_mapped_complex_template_file() {
+    local key_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Mapped Type Complex Template Expansion O(N²) stress test
+// Targets: evaluate_rules/mapped.rs — N properties × expensive template evaluation
+//
+// Unlike simple homomorphic mapped types ({ [K in keyof T]: T[K] }) where the
+// template is trivial, these use conditional types and nested mapped types in
+// the template position, making each property evaluation expensive.
+
+// Utility types with non-trivial evaluation
+type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
+type Stringify<T> = { [K in keyof T]: T[K] extends number ? string : T[K] extends boolean ? 'true' | 'false' : T[K] extends string ? T[K] : string };
+type Validate<T> = { [K in keyof T]: T[K] extends string ? { valid: true; value: T[K] } : T[K] extends number ? { valid: true; value: T[K] } : { valid: false; value: never } };
+type Nullable<T> = { [K in keyof T]: T[K] | null | undefined };
+type Promisify<T> = { [K in keyof T]: Promise<T[K]> };
+
+// Complex conditional template: each property evaluation triggers conditional
+// type distribution and nested type instantiation
+type FormField<T> =
+    T extends string ? { type: 'text'; value: T; validate: (v: string) => boolean }
+  : T extends number ? { type: 'number'; value: T; validate: (v: number) => boolean }
+  : T extends boolean ? { type: 'checkbox'; value: T; validate: (v: boolean) => boolean }
+  : T extends (infer U)[] ? { type: 'list'; items: FormField<U>[]; validate: (v: U[]) => boolean }
+  : T extends object ? { type: 'group'; fields: FormFields<T>; validate: (v: T) => boolean }
+  : { type: 'unknown'; value: T };
+
+type FormFields<T> = { [K in keyof T]: FormField<T[K]> };
+
+HEADER
+
+    # Generate a large interface with mixed property types
+    echo "interface BigModel {" >> "$output"
+    for ((i=0; i<key_count; i++)); do
+        local mod=$((i % 5))
+        case $mod in
+            0) echo "    field$i: string;" >> "$output" ;;
+            1) echo "    field$i: number;" >> "$output" ;;
+            2) echo "    field$i: boolean;" >> "$output" ;;
+            3) echo "    field$i: string[];" >> "$output" ;;
+            4) echo "    field$i: { nested: string; count: number };" >> "$output" ;;
+        esac
+    done
+    echo "}" >> "$output"
+    echo "" >> "$output"
+
+    # Apply complex mapped types — each triggers per-property conditional evaluation
+    echo "// Each mapped type application evaluates a conditional template for $key_count properties" >> "$output"
+    echo "type BigForm = FormFields<BigModel>;" >> "$output"
+    echo "type BigStringified = Stringify<BigModel>;" >> "$output"
+    echo "type BigValidated = Validate<BigModel>;" >> "$output"
+    echo "type BigNullable = Nullable<BigModel>;" >> "$output"
+    echo "type BigPromises = Promisify<BigModel>;" >> "$output"
+    echo "type BigDeepPartial = DeepPartial<BigModel>;" >> "$output"
+    echo "" >> "$output"
+
+    # Chained mapped types — composition multiplies the per-property cost
+    echo "// Chained: each composition re-evaluates all $key_count properties" >> "$output"
+    echo "type Chained1 = Nullable<Stringify<BigModel>>;" >> "$output"
+    echo "type Chained2 = Validate<Nullable<BigModel>>;" >> "$output"
+    echo "type Chained3 = FormFields<Nullable<BigModel>>;" >> "$output"
+    echo "" >> "$output"
+
+    # Force evaluation with declarations
+    echo "declare const form: BigForm;" >> "$output"
+    echo "declare const stringified: BigStringified;" >> "$output"
+    echo "declare const validated: BigValidated;" >> "$output"
+    echo "declare const chained: Chained3;" >> "$output"
+    echo "" >> "$output"
+
+    # Access properties to force full expansion
+    echo "const _f0 = form.field0;" >> "$output"
+    echo "const _s0 = stringified.field0;" >> "$output"
+    echo "const _v0 = validated.field0;" >> "$output"
+    local last=$((key_count - 1))
+    echo "const _fLast = form.field$last;" >> "$output"
+    echo "const _cLast = chained.field$last;" >> "$output"
+}
+
 main() {
     check_prerequisites
     
@@ -1086,7 +1321,72 @@ main() {
             echo
         done
     fi
-    
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # O(N²) ALGORITHMIC PATTERN TESTS
+    # ═══════════════════════════════════════════════════════════════════════════
+    # These benchmarks target three specific O(N²) patterns in the solver that
+    # Salsa memoization alone cannot fix. They serve as regression/progress
+    # tracking for the algorithmic fixes described in docs/todo/05_algorithmic_fixes.md
+    #
+    # Pattern 1: Best Common Type (BCT) — infer.rs:1060
+    #   N candidates × N subtype checks per candidate
+    # Pattern 2: Constraint Conflict Detection — infer.rs:135
+    #   N² upper bound pairs + M×N lower×upper cross-checks
+    # Pattern 3: Mapped Type Complex Templates — evaluate_rules/mapped.rs:157
+    #   N properties × expensive per-property template evaluation
+
+    print_header "O(N²) Algorithmic Pattern Tests"
+
+    if [ "$QUICK_MODE" = true ]; then
+        print_subheader "Quick mode: reduced O(N²) pattern tests"
+
+        local file="$TEMP_DIR/bct_50.ts"
+        generate_bct_stress_file 50 "$file"
+        run_benchmark "BCT candidates=50" "$file"
+        echo
+
+        file="$TEMP_DIR/constraint_conflict_30.ts"
+        generate_constraint_conflict_file 30 "$file"
+        run_benchmark "Constraint conflicts N=30" "$file"
+        echo
+
+        file="$TEMP_DIR/mapped_complex_50.ts"
+        generate_mapped_complex_template_file 50 "$file"
+        run_benchmark "Mapped complex template keys=50" "$file"
+        echo
+    else
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Best Common Type — O(N²) candidate checking"
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/bct_${count}.ts"
+            generate_bct_stress_file "$count" "$file"
+            run_benchmark "BCT candidates=$count" "$file"
+            echo
+        done
+
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Constraint Conflict Detection — O(N²) bound pairs"
+
+        for count in 20 50 100 200; do
+            local file="$TEMP_DIR/constraint_conflict_${count}.ts"
+            generate_constraint_conflict_file "$count" "$file"
+            run_benchmark "Constraint conflicts N=$count" "$file"
+            echo
+        done
+
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Mapped Type Complex Templates — O(N × template_cost)"
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/mapped_complex_${count}.ts"
+            generate_mapped_complex_template_file "$count" "$file"
+            run_benchmark "Mapped complex template keys=$count" "$file"
+            echo
+        done
+    fi
+
     print_header "Results Summary"
     
     if command -v jq &>/dev/null && [ -n "$RESULTS_CSV" ]; then
