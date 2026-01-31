@@ -1441,10 +1441,84 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
-            Some(sym_id.0)
-        } else {
-            None
+            return Some(sym_id.0);
         }
+
+        // The initial resolution found a TYPE-only symbol (e.g., `interface Promise<T>`
+        // from one lib file). But the VALUE declaration (`declare var Promise`) may
+        // exist in a different lib file. Search all lib binders by name for a symbol
+        // that has the VALUE flag. This handles declaration merging across lib files.
+        let name = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|i| i.escaped_text.as_str());
+        if let Some(name) = name {
+            // Check file_locals first (may have merged value from lib)
+            if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name) {
+                if let Some(val_symbol) = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(val_sym_id, &lib_binders)
+                {
+                    if (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
+                        && !val_symbol.is_type_only
+                    {
+                        return Some(val_sym_id.0);
+                    }
+                }
+            }
+            // Search lib binders directly for a value declaration
+            for lib_binder in &lib_binders {
+                if let Some(val_sym_id) = lib_binder.file_locals.get(name) {
+                    if let Some(val_symbol) = lib_binder.get_symbol(val_sym_id) {
+                        if (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
+                            && !val_symbol.is_type_only
+                        {
+                            return Some(val_sym_id.0);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find a VALUE symbol for a name across all lib binders.
+    ///
+    /// This handles declaration merging across lib files: `interface Promise<T>` may be
+    /// in one lib file (TYPE-only) while `declare var Promise: PromiseConstructor` is
+    /// in another (VALUE). When the initial resolution finds only the TYPE symbol,
+    /// this method searches all lib binders for the VALUE declaration.
+    ///
+    /// Returns the SymbolId of the VALUE symbol if found.
+    pub(crate) fn find_value_symbol_in_libs(&self, name: &str) -> Option<SymbolId> {
+        let lib_binders = self.get_lib_binders();
+        // Check file_locals first (may have merged value from lib)
+        if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name) {
+            if let Some(val_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(val_sym_id, &lib_binders)
+            {
+                if (val_symbol.flags & symbol_flags::VALUE) != 0 && !val_symbol.is_type_only {
+                    return Some(val_sym_id);
+                }
+            }
+        }
+        // Search lib binders directly
+        for lib_binder in &lib_binders {
+            if let Some(val_sym_id) = lib_binder.file_locals.get(name) {
+                if let Some(val_symbol) = lib_binder.get_symbol(val_sym_id) {
+                    if (val_symbol.flags & symbol_flags::VALUE) != 0 && !val_symbol.is_type_only {
+                        return Some(val_sym_id);
+                    }
+                }
+            }
+        }
+        None
     }
 
     // =========================================================================

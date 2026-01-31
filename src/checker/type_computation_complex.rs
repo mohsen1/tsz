@@ -1390,7 +1390,17 @@ impl<'a> CheckerState<'a> {
             //
             // IMPORTANT: Only check is_interface if it has no VALUE flag.
             // Interfaces merged with namespaces DO have VALUE and should NOT error.
+            //
+            // CROSS-LIB MERGING: The same name may have TYPE in one lib file
+            // (e.g., `interface Promise<T>` in es5.d.ts) and VALUE in another
+            // (e.g., `declare var Promise` in es2015.promise.d.ts). When we find
+            // a TYPE-only symbol, check if a VALUE exists elsewhere in libs.
             if is_type_alias || (has_type && !has_value) {
+                // Cross-lib merging: check if a VALUE symbol for this name
+                // exists in a different lib binder before emitting error.
+                if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
+                    return self.get_type_of_symbol(val_sym_id);
+                }
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;
             }
@@ -1414,6 +1424,10 @@ impl<'a> CheckerState<'a> {
                     let lib_has_type = (lib_flags & crate::binder::symbol_flags::TYPE) != 0;
                     let lib_has_value = (lib_flags & crate::binder::symbol_flags::VALUE) != 0;
                     if lib_has_type && !lib_has_value {
+                        // Cross-lib merging: VALUE may be in a different lib binder
+                        if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
+                            return self.get_type_of_symbol(val_sym_id);
+                        }
                         self.error_type_only_value_at(name, idx);
                         return TypeId::ERROR;
                     }
