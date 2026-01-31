@@ -910,6 +910,40 @@ impl<'a> CheckerContext<'a> {
         self.types.intern(TypeKey::Lazy(def_id))
     }
 
+    /// Register a resolved type in the TypeEnvironment for both SymbolRef and DefId.
+    ///
+    /// This ensures that both the old `TypeKey::Ref(SymbolRef)` and new `TypeKey::Lazy(DefId)`
+    /// paths can resolve the type during evaluation.
+    ///
+    /// Should be called when a symbol's type is resolved via `get_type_of_symbol`.
+    pub fn register_resolved_type(
+        &mut self,
+        sym_id: SymbolId,
+        type_id: TypeId,
+        type_params: Vec<crate::solver::TypeParamInfo>,
+    ) {
+        use crate::solver::SymbolRef;
+
+        // Try to borrow mutably - skip if already borrowed (during recursive resolution)
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            // Insert with SymbolRef key (existing path)
+            if type_params.is_empty() {
+                env.insert(SymbolRef(sym_id.0), type_id);
+            } else {
+                env.insert_with_params(SymbolRef(sym_id.0), type_id, type_params.clone());
+            }
+
+            // Also insert with DefId key if one exists (Phase 4.3 migration)
+            if let Some(&def_id) = self.symbol_to_def.get(&sym_id) {
+                if type_params.is_empty() {
+                    env.insert_def(def_id, type_id);
+                } else {
+                    env.insert_def_with_params(def_id, type_id, type_params);
+                }
+            }
+        }
+    }
+
     /// Add an error diagnostic (with deduplication).
     /// Diagnostics with the same (start, code) are only emitted once.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
