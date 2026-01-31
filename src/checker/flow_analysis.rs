@@ -1134,12 +1134,36 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
-                    // Check both sides of the binary expression
-                    self.check_expression_for_early_property_access(bin.left, assigned, tracked);
-                    self.check_expression_for_early_property_access(bin.right, assigned, tracked);
-                    // If this is an assignment, track the assignment
+                    // If this is an assignment, handle it specially
                     if self.is_assignment_operator(bin.operator_token) {
+                        // For simple assignment (=), the left side is being written to, not read
+                        // We should NOT check it for "used before assigned" errors
+                        // For compound assignments (+=, etc.), left side is both read AND written
+                        let is_simple_assignment =
+                            bin.operator_token == SyntaxKind::EqualsToken as u16;
+
+                        // Check the right side first (it's being read)
+                        self.check_expression_for_early_property_access(
+                            bin.right, assigned, tracked,
+                        );
+
+                        // Track the assignment
                         self.track_assignment_in_expression(bin.left, assigned, tracked);
+
+                        // For compound assignments, also check the left side (it's being read)
+                        if !is_simple_assignment {
+                            self.check_expression_for_early_property_access(
+                                bin.left, assigned, tracked,
+                            );
+                        }
+                    } else {
+                        // Non-assignment binary expression: check both sides
+                        self.check_expression_for_early_property_access(
+                            bin.left, assigned, tracked,
+                        );
+                        self.check_expression_for_early_property_access(
+                            bin.right, assigned, tracked,
+                        );
                     }
                 }
             }
