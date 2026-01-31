@@ -2672,12 +2672,6 @@ pub fn is_word_character(ch: u32) -> bool {
 // Unit Tests
 // =============================================================================
 
-// Docker environment check - compile-time error if tests run outside Docker
-// The build.rs sets `in_docker` cfg when running inside Docker or when CI=1.
-// Tests are only permitted outside Docker inside CI (for lint/build stages).
-#[cfg(all(test, not(in_docker), not(ci)))]
-compile_error!("Tests must be run inside Docker! Use ./scripts/test.sh");
-
 // ASI Conformance tests for verifying TS1005/TS1109 patterns
 #[cfg(test)]
 #[path = "tests/asi_conformance_tests.rs"]

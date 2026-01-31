@@ -11,31 +11,6 @@ use std::path::Path;
 use std::process::Command;
 
 fn main() {
-    // Declare custom cfg flags for check-cfg
-    println!("cargo::rustc-check-cfg=cfg(in_docker)");
-    println!("cargo::rustc-check-cfg=cfg(ci)");
-
-    // Detect Docker environment (allow tests to run inside Docker)
-    // Docker containers typically have /.dockerenv file or cgroup with docker
-    let in_docker = Path::new("/.dockerenv").exists()
-        || std::fs::read_to_string("/proc/1/cgroup")
-            .map(|s| s.contains("docker"))
-            .unwrap_or(false);
-    if in_docker {
-        println!("cargo:rustc-cfg=in_docker");
-    }
-
-    // Detect CI environment
-    if env::var("CI").is_ok() {
-        println!("cargo:rustc-cfg=ci");
-    }
-
-    // Allow tests to run locally when TSZ_ALLOW_LOCAL_TESTS is set
-    // This is for development convenience when Docker is not available
-    if env::var("TSZ_ALLOW_LOCAL_TESTS").is_ok() {
-        println!("cargo:rustc-cfg=in_docker");
-    }
-
     // Auto-generate when lib-assets are missing or LIB_ASSETS_FORCE is set
     let force = env::var("LIB_ASSETS_FORCE").is_ok();
 

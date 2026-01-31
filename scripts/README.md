@@ -2,20 +2,16 @@
 
 Testing and build scripts for Project Zang.
 
-## Important: Docker Required
-
-**Conformance tests MUST run in Docker.** Direct execution can cause:
-- Infinite loops (freezes your machine)
-- Out of memory crashes
-- System instability
-
 ## Quick Start
 
 ```bash
 # Show all available commands
 node scripts/help.mjs
 
-# Run conformance tests (500 tests, in Docker)
+# Run unit tests
+./scripts/test.sh
+
+# Run conformance tests (500 tests)
 ./conformance/run-conformance.sh
 
 # Run with options
@@ -29,18 +25,18 @@ node scripts/help.mjs
 
 | Script | Purpose |
 |--------|---------|
-| `conformance/run-conformance.sh` | Run conformance tests (Docker) |
-| `scripts/test.sh` | Run Rust unit tests (Docker) |
+| `conformance/run-conformance.sh` | Run conformance tests |
+| `scripts/test.sh` | Run Rust unit tests |
+| `scripts/bench.sh` | Run benchmarks |
 | `scripts/build-wasm.sh` | Build WASM module |
 | `scripts/install-hooks.sh` | Install git pre-commit hooks |
 | `scripts/run-single-test.mjs` | Debug single file (host) |
 | `scripts/validate-wasm.mjs` | Validate WASM loads |
 | `scripts/help.mjs` | Show all commands |
 
-## Docker Configuration
+## Resource Protection
 
-The conformance runner uses these limits:
-- **Memory**: 4GB (prevents OOM from killing host)
-- **CPUs**: 2 (prevents CPU saturation)
-- **PIDs**: 100 (prevents fork bombs)
-- **Timeout**: 600s default (kills runaway tests)
+Test and benchmark scripts apply resource limits to protect the host:
+- **Memory**: 8GB default via ulimit (configurable with `TSZ_MAX_RSS_MB`)
+- **Timeout**: 300s for tests, 600s for benchmarks
+- **Per-test timeout**: Configured in `.config/nextest.toml` profiles
