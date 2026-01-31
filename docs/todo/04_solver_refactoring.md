@@ -2,7 +2,11 @@
 
 **Reference**: `docs/architecture/SOLVER_REFACTORING_PROPOSAL.md`  
 **Goal**: Query-based Judge with Sound Mode  
-**Status**: Phase 1, 3, 4.1-4.3 infra, 5.1, 6 COMPLETE. Phase 2 (Salsa prep), 4.3-4.4 (migration), 5.2-5.3 remain.
+**Status**: Phase 1, 3, 4.1-4.3 INFRA, 5.1, 6 COMPLETE. Phase 4.3-4.4 (actual migration), 5.2-5.3 remain.
+
+**Latest**: TypeKey::Lazy(DefId) infrastructure is fully operational. TypeResolver, TypeEnvironment,
+and TypeEvaluator all support Lazy type resolution. The actual migration (replacing Ref with Lazy
+in type lowering) can now proceed.
 
 ---
 
@@ -113,16 +117,23 @@
 - [x] Update all TypeKey pattern matches across solver
 - [x] Commit
 
-### 4.3 Migrate Lowering - INFRASTRUCTURE COMPLETE
+### 4.3 Migrate Lowering - FULL INFRASTRUCTURE COMPLETE ✅
 - [x] Add `DefinitionStore` to `CheckerContext`
 - [x] Add `symbol_to_def: FxHashMap<SymbolId, DefId>` mapping
 - [x] Add `get_or_create_def_id()` helper method
 - [x] Add `create_lazy_type_ref()` helper method
+- [x] Add `TypeResolver.resolve_lazy()` method for Lazy type resolution
+- [x] Add `TypeEnvironment.insert_def()` for DefId -> TypeId storage
+- [x] Add `TypeEvaluator` handling for `TypeKey::Lazy` in evaluation
+- [x] Add `register_resolved_type()` helper for dual SymbolRef/DefId mapping
 - [ ] Update type_literal_checker to use `create_lazy_type_ref()` for interfaces
 - [ ] Update type_literal_checker to use `create_lazy_type_ref()` for classes
 - [ ] Update type_literal_checker to use `create_lazy_type_ref()` for type aliases
 - [ ] Run conformance tests after each change
 - [ ] Commit
+
+**Status**: Infrastructure is ready. Actual migration requires updating call sites
+to use `create_lazy_type_ref()` and `register_resolved_type()`, then testing.
 
 ### 4.4 Remove Legacy SymbolRef Variants - NOT STARTED
 - [ ] Remove `TypeKey::Ref(SymbolRef)` after all uses migrated
