@@ -1857,6 +1857,39 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.strict {
         options.checker.strict = true;
+        // Expand --strict to individual flags (matching TypeScript behavior)
+        options.checker.no_implicit_any = true;
+        options.checker.no_implicit_returns = true;
+        options.checker.strict_null_checks = true;
+        options.checker.strict_function_types = true;
+        options.checker.strict_property_initialization = true;
+        options.checker.no_implicit_this = true;
+        options.checker.use_unknown_in_catch_variables = true;
+    }
+    // Individual strict flag overrides (must come after --strict expansion)
+    if let Some(val) = args.strict_null_checks {
+        options.checker.strict_null_checks = val;
+    }
+    if let Some(val) = args.strict_function_types {
+        options.checker.strict_function_types = val;
+    }
+    if let Some(val) = args.strict_property_initialization {
+        options.checker.strict_property_initialization = val;
+    }
+    if let Some(val) = args.strict_bind_call_apply {
+        options.checker.strict_bind_call_apply = val;
+    }
+    if let Some(val) = args.no_implicit_this {
+        options.checker.no_implicit_this = val;
+    }
+    if let Some(val) = args.no_implicit_any {
+        options.checker.no_implicit_any = val;
+    }
+    if let Some(val) = args.use_unknown_in_catch_variables {
+        options.checker.use_unknown_in_catch_variables = val;
+    }
+    if args.no_implicit_returns {
+        options.checker.no_implicit_returns = true;
     }
     if args.no_emit {
         options.no_emit = true;
