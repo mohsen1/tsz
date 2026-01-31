@@ -387,6 +387,17 @@ function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
   if (opts.alwaysstrict !== undefined) options.alwaysStrict = toBool(opts.alwaysstrict);
   if (opts.nolib !== undefined) options.noLib = toBool(opts.nolib);
 
+  // Lib - tell TypeScript which lib files to include in the program.
+  // Without this, TypeScript only discovers libs through getDefaultLibFileName()
+  // and its /// <reference> chain, missing explicitly specified libs like
+  // es2015.promise when the target is ES5.
+  if (opts.lib !== undefined) {
+    const libNames = parseLibOption(opts.lib);
+    if (libNames.length > 0) {
+      options.lib = libNames.map(name => `lib.${name}.d.ts`);
+    }
+  }
+
   // Additional checks
   if (opts.nopropertyaccessfromindexsignature !== undefined) {
     options.noPropertyAccessFromIndexSignature = toBool(opts.nopropertyaccessfromindexsignature);
