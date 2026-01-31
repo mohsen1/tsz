@@ -616,9 +616,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.property_not_exist(prop_name, type_id, loc.start, loc.length());
+            // Use push_diagnostic for deduplication
             self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+                .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
         }
     }
 
@@ -635,9 +635,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.excess_property(prop_name, target, loc.start, loc.length());
+            // Use push_diagnostic for deduplication
             self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+                .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
         }
     }
 
