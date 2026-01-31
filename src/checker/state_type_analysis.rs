@@ -1160,15 +1160,6 @@ impl<'a> CheckerState<'a> {
                 if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                     && let Some(import) = self.ctx.arena.get_import_decl(node)
                 {
-                    // CRITICAL FIX: Prevent stack overflow from circular references
-                    // When resolving an import equals inside a namespace that's currently being
-                    // resolved, return ANY to break the cycle instead of crashing
-                    if !self.ctx.symbol_resolution_stack.is_empty() {
-                        // We're in a nested resolution - this is likely to cause a cycle
-                        // Return ANY as a safe fallback
-                        return (TypeId::ANY, Vec::new());
-                    }
-
                     // module_specifier holds the reference (e.g., 'ns.member' or require("..."))
                     // Use resolve_qualified_symbol to get the target symbol directly,
                     // avoiding the value-only check that's inappropriate for import aliases.
