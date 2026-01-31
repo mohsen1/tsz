@@ -1254,6 +1254,9 @@ impl<'a> CheckerState<'a> {
 
         // Collect properties from the object literal (later entries override earlier ones)
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        // Track getter/setter names to allow getter+setter pairs with the same name
+        let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
+        let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
 
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -1484,8 +1487,15 @@ impl<'a> CheckerState<'a> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
 
-                    // Check for duplicate property
-                    if properties.contains_key(&name_atom) {
+                    // Check for duplicate property - but allow getter+setter pairs
+                    // A getter and setter with the same name is valid, not a duplicate
+                    let is_getter = elem_node.kind == syntax_kind_ext::GET_ACCESSOR;
+                    let is_complementary_pair = if is_getter {
+                        setter_names.contains(&name_atom) && !getter_names.contains(&name_atom)
+                    } else {
+                        getter_names.contains(&name_atom) && !setter_names.contains(&name_atom)
+                    };
+                    if properties.contains_key(&name_atom) && !is_complementary_pair {
                         let message = format_message(
                             diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
                             &[&name],
@@ -1495,6 +1505,12 @@ impl<'a> CheckerState<'a> {
                             &message,
                             diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
                         );
+                    }
+
+                    if is_getter {
+                        getter_names.insert(name_atom);
+                    } else {
+                        setter_names.insert(name_atom);
                     }
 
                     properties.insert(
