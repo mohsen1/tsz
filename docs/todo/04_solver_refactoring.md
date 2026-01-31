@@ -32,7 +32,7 @@ All bug fixes implemented and tested.
 This phase prepares for future Salsa integration.
 
 - [ ] Refactor CheckerContext to use trait-based database
-- [ ] Remove FreshnessTracker from Solver
+- [x] Remove FreshnessTracker from Solver ✅
 - [x] Remove RefCell caches from Evaluator ✅
 
 ### Task 3: Remove RefCell from TypeEvaluator ✅

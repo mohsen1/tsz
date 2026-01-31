@@ -212,7 +212,7 @@ impl UnsoundnessAudit {
             implementation_files: vec!["src/solver/lawyer.rs", "src/checker/state.rs"],
             test_coverage: 0.85,
             dependencies: vec![],
-            notes: "FULLY IMPLEMENTED. FreshnessTracker tracks object literals. check_object_literal_excess_properties() recursively checks nested object literals via should_check_excess_properties().",
+            notes: "FULLY IMPLEMENTED. Freshness is determined syntactically by the Checker (expression-level). check_object_literal_excess_properties() recursively checks nested object literals. Sound Mode uses StickyFreshnessTracker for binding-level tracking.",
         });
 
         rules.insert(10, RuleImplementation {

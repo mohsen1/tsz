@@ -25,7 +25,9 @@
 //! ### C. Freshness (Excess Property Checking)
 //! Object literals are "fresh" and trigger excess property checking.
 //! Once assigned to a variable, they lose freshness and allow width subtyping.
-//! The `FreshnessTracker` provides this functionality.
+//! Freshness is determined syntactically by the Checker (expression-level),
+//! not tracked by TypeId in the Solver. See `StickyFreshnessTracker` in
+//! `sound.rs` for Sound Mode's binding-level freshness tracking.
 //!
 //! ### D. The Void Exception
 //! TypeScript allows `() => void` to match `() => T` for any T, because
@@ -245,72 +247,6 @@ impl AnyPropagationRules {
 impl Default for AnyPropagationRules {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// =============================================================================
-// Freshness Tracking for Excess Property Checking
-// =============================================================================
-
-/// Tracks "freshness" of object types for excess property checking.
-///
-/// In TypeScript, object literals are "fresh" and trigger excess property
-/// checking. Once assigned to a variable or passed through a type assertion,
-/// they lose their freshness and allow width subtyping (extra properties).
-///
-/// ## Example
-/// ```typescript
-/// interface Point { x: number; y: number }
-///
-/// // Fresh object literal - EXCESS property error for 'z'
-/// const p: Point = { x: 1, y: 2, z: 3 }; // Error: 'z' does not exist
-///
-/// // Not fresh - assigned to a variable first, then passed
-/// const temp = { x: 1, y: 2, z: 3 };
-/// const p2: Point = temp; // OK - temp is not fresh
-/// ```
-///
-/// ## Usage
-/// The FreshnessTracker should be used by expression-level type checking,
-/// not by the subtype checker. Freshness is an expression concept, not a
-/// type concept.
-#[derive(Debug, Default)]
-pub struct FreshnessTracker {
-    /// Set of TypeIds that are currently "fresh" (object literals).
-    fresh_types: rustc_hash::FxHashSet<TypeId>,
-}
-
-impl FreshnessTracker {
-    /// Create a new FreshnessTracker.
-    pub fn new() -> Self {
-        FreshnessTracker {
-            fresh_types: rustc_hash::FxHashSet::default(),
-        }
-    }
-
-    /// Mark a type as fresh (usually when creating an object literal).
-    pub fn mark_fresh(&mut self, type_id: TypeId) {
-        self.fresh_types.insert(type_id);
-    }
-
-    /// Remove freshness from a type (when assigned to a variable, etc.).
-    pub fn remove_freshness(&mut self, type_id: TypeId) {
-        self.fresh_types.remove(&type_id);
-    }
-
-    /// Check if a type is fresh.
-    pub fn is_fresh(&self, type_id: TypeId) -> bool {
-        self.fresh_types.contains(&type_id)
-    }
-
-    /// Clear all freshness tracking (e.g., when leaving a scope).
-    pub fn clear(&mut self) {
-        self.fresh_types.clear();
-    }
-
-    /// Check if excess property checking should be performed.
-    pub fn should_check_excess_properties(&self, source: TypeId) -> bool {
-        self.is_fresh(source)
     }
 }
 
