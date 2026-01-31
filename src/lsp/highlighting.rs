@@ -223,8 +223,8 @@ impl<'a> DocumentHighlightProvider<'a> {
     fn find_word_start(&self, offset: usize) -> usize {
         let bytes = self.source_text.as_bytes();
         let mut start = offset;
-        while start > 0 && (bytes[start - 1] as char).is_alphanumeric()
-            || (start > 0 && bytes[start - 1] == b'_')
+        while start > 0
+            && ((bytes[start - 1] as char).is_alphanumeric() || bytes[start - 1] == b'_')
         {
             start -= 1;
         }
@@ -251,6 +251,7 @@ impl<'a> DocumentHighlightProvider<'a> {
     }
 
     /// Find the parent if-statement for a node near the given offset.
+    #[allow(dead_code)]
     fn find_enclosing_if_statement(&self, _node_idx: NodeIndex, offset: u32) -> Option<NodeIndex> {
         // Walk all nodes to find the if statement that contains this offset
         // and whose keyword is at or near this offset
@@ -283,6 +284,7 @@ impl<'a> DocumentHighlightProvider<'a> {
     }
 
     /// Find the enclosing try statement for a node near the given offset.
+    #[allow(dead_code)]
     fn find_enclosing_try_statement(&self, offset: u32) -> Option<NodeIndex> {
         let mut best = NodeIndex::NONE;
         let mut best_len = u32::MAX;

@@ -1020,10 +1020,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// This handles the case where `keyof T` (T is a type parameter) should be
     /// considered a subtype of `string | number | symbol` because in TypeScript,
     /// keyof always produces a subtype of those three types.
-    fn is_keyof_subtype_of_string_number_symbol_union(
-        &self,
-        members: TypeListId,
-    ) -> bool {
+    fn is_keyof_subtype_of_string_number_symbol_union(&self, members: TypeListId) -> bool {
         let member_list = self.interner.type_list(members);
         // Check if the union contains string, number, and symbol
         let mut has_string = false;

@@ -301,7 +301,11 @@ impl<'a> SignatureHelpProvider<'a> {
                     let e = pn.end as usize;
                     if s < e && e <= self.source_text.len() {
                         let text = self.source_text[s..e].trim();
-                        if !text.is_empty() && text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+                        if !text.is_empty()
+                            && text
+                                .chars()
+                                .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                        {
                             return text.to_string();
                         }
                     }

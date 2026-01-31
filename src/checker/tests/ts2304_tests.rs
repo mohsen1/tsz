@@ -48,7 +48,8 @@ fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
         vec![std::sync::Arc::new(lib_file)]
     } else {
         // Fallback: try to find lib.d.ts in parent directories
-        let alt_path = std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.d.ts");
+        let alt_path =
+            std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.d.ts");
         if alt_path.exists() {
             let content = std::fs::read_to_string(&alt_path).expect("Failed to read lib.d.ts");
             let lib_file = crate::lib_loader::LibFile::from_source("lib.d.ts".to_string(), content);
