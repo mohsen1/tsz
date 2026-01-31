@@ -213,10 +213,7 @@ impl<'a> CheckerState<'a> {
             let result = {
                 let env = self.ctx.type_env.borrow();
                 let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-                checker.set_strict_function_types(self.ctx.strict_function_types());
-                checker.set_strict_null_checks(self.ctx.strict_null_checks());
-                checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-                checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+                self.ctx.configure_compat_checker(&mut checker);
                 let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
                 evaluator.resolve_call(func_type, &arg_types)
             };

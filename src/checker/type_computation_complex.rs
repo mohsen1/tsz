@@ -336,8 +336,7 @@ impl<'a> CheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            checker.set_strict_function_types(self.ctx.strict_function_types());
-            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            self.ctx.configure_compat_checker(&mut checker);
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
             evaluator.resolve_call(construct_type, &arg_types)
         };
@@ -1220,8 +1219,7 @@ impl<'a> CheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            checker.set_strict_function_types(self.ctx.strict_function_types());
-            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            self.ctx.configure_compat_checker(&mut checker);
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
             evaluator.resolve_call(callee_type_for_call, &arg_types)
         };

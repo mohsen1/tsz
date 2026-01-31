@@ -774,6 +774,11 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set lib contexts for global type resolution.
+    /// Set the query database for Salsa-backed memoization of evaluate_type and is_subtype_of.
+    pub fn set_query_db(&mut self, db: &'a dyn crate::solver::QueryDatabase) {
+        self.query_db = Some(db);
+    }
+
     pub fn set_lib_contexts(&mut self, lib_contexts: Vec<LibContext>) {
         self.lib_contexts = lib_contexts;
     }
@@ -1332,12 +1337,15 @@ impl<'a> CheckerContext<'a> {
     /// Apply standard compiler options to a CompatChecker, including query_db if available.
     pub fn configure_compat_checker<R: crate::solver::TypeResolver>(
         &self,
-        checker: &mut crate::solver::CompatChecker<'_, R>,
+        checker: &mut crate::solver::CompatChecker<'a, R>,
     ) {
         checker.set_strict_function_types(self.strict_function_types());
         checker.set_strict_null_checks(self.strict_null_checks());
         checker.set_exact_optional_property_types(self.exact_optional_property_types());
         checker.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
+        if let Some(db) = self.query_db {
+            checker.set_query_db(db);
+        }
     }
 
     /// Check if noLib is enabled.

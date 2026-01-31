@@ -231,10 +231,7 @@ impl<'a> CheckerState<'a> {
         let env = self.ctx.type_env.borrow();
         let overrides = CheckerOverrideProvider::new(self, Some(&*env));
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_function_types(self.ctx.strict_function_types());
-        checker.set_strict_null_checks(self.ctx.strict_null_checks());
-        checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-        checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+        self.ctx.configure_compat_checker(&mut checker);
         checker.is_assignable_with_overrides(source, target, &overrides)
     }
 
@@ -251,10 +248,7 @@ impl<'a> CheckerState<'a> {
 
         let overrides = CheckerOverrideProvider::new(self, Some(env));
         let mut checker = CompatChecker::with_resolver(self.ctx.types, env);
-        checker.set_strict_function_types(self.ctx.strict_function_types());
-        checker.set_strict_null_checks(self.ctx.strict_null_checks());
-        checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-        checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+        self.ctx.configure_compat_checker(&mut checker);
         checker.is_assignable_with_overrides(source, target, &overrides)
     }
 
@@ -285,10 +279,7 @@ impl<'a> CheckerState<'a> {
         let is_weak_union_violation = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            checker.set_strict_function_types(self.ctx.strict_function_types());
-            checker.set_strict_null_checks(self.ctx.strict_null_checks());
-            checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-            checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+            self.ctx.configure_compat_checker(&mut checker);
             checker.is_weak_union_violation(source, target)
         };
 
@@ -335,8 +326,7 @@ impl<'a> CheckerState<'a> {
                 let is_assignable = {
                     let env = self.ctx.type_env.borrow();
                     let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-                    checker.set_strict_function_types(self.ctx.strict_function_types());
-                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
+                    self.ctx.configure_compat_checker(&mut checker);
                     checker.is_assignable(source_prop_type, effective_target_type)
                 };
 
@@ -605,10 +595,7 @@ impl<'a> CheckerState<'a> {
         use crate::solver::CompatChecker;
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_function_types(self.ctx.strict_function_types());
-        checker.set_strict_null_checks(self.ctx.strict_null_checks());
-        checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
-        checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+        self.ctx.configure_compat_checker(&mut checker);
         for &target in targets {
             if checker.is_assignable(source, target) {
                 return true;

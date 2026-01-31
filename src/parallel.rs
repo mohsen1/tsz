@@ -1190,6 +1190,9 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 
     let function_count = all_functions.len();
 
+    // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
+    let query_cache = crate::solver::QueryCache::new(&program.type_interner);
+
     // Check functions in parallel
     // Note: We need to be careful here - CheckerState holds mutable references
     // For now, we group by file and check each file's functions together
@@ -1210,6 +1213,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
                 file.file_name.clone(),
                 compiler_options, // default options for internal operations
             );
+            checker.ctx.set_query_db(&query_cache);
 
             let mut function_results = Vec::new();
 
@@ -1266,6 +1270,10 @@ pub fn check_files_parallel(
         })
         .collect();
 
+    // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
+    // This is thread-safe (uses RwLock internally) and shared across all file checks.
+    let query_cache = crate::solver::QueryCache::new(&program.type_interner);
+
     let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
         .enumerate()
         .map(|(file_idx, file)| {
@@ -1278,6 +1286,8 @@ pub fn check_files_parallel(
                 file.file_name.clone(),
                 checker_options,
             );
+
+            checker.ctx.set_query_db(&query_cache);
 
             if !lib_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(lib_contexts.clone());

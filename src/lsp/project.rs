@@ -445,6 +445,8 @@ impl ProjectFile {
             ..Default::default()
         };
 
+        let query_cache = crate::solver::QueryCache::new(&self.type_interner);
+
         let mut checker = if let Some(cache) = self.type_cache.take() {
             CheckerState::with_cache(
                 self.parser.get_arena(),
@@ -464,6 +466,7 @@ impl ProjectFile {
             )
         };
 
+        checker.ctx.set_query_db(&query_cache);
         checker.check_source_file(self.root);
 
         let diagnostics = checker
