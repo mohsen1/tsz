@@ -494,8 +494,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<crate::solver::TypeParamInfo>)> {
-        use crate::solver::{SymbolRef, TypeKey};
-
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let decl_idx = if !symbol.value_declaration.is_none() {
             symbol.value_declaration
@@ -516,7 +514,9 @@ impl<'a> CheckerState<'a> {
         // NOTE: We don't insert here because get_class_instance_type_inner will handle it.
         // The check here is just to catch cycles from callers who go through this function.
         if self.ctx.class_instance_resolution_set.contains(&sym_id) {
+            use crate::solver::{SymbolRef, TypeKey};
             // Already resolving this class - return a fallback to break the cycle
+            // NOTE: Cannot migrate to Lazy(DefId) yet - cycle detection needs TypeResolver
             let fallback = self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
             return Some((fallback, Vec::new()));
         }

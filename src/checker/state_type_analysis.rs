@@ -876,7 +876,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
-        use crate::solver::{SymbolRef, TypeKey, TypeLowering};
+        use crate::solver::TypeLowering;
 
         // Handle cross-file symbol resolution: if this symbol's arena is different
         // from the current arena, delegate to a checker using the correct arena.
@@ -947,7 +947,10 @@ impl<'a> CheckerState<'a> {
 
         // Namespace / Module
         // Return a Ref type so resolve_qualified_name can access the symbol's exports
+        // NOTE: Cannot migrate to Lazy(DefId) yet - resolve_qualified_name depends on SymbolRef
+        // to access the symbol's exports map. This needs TypeResolver support for Lazy types first.
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
+            use crate::solver::{SymbolRef, TypeKey};
             // Note: We use the symbol ID directly.
             // For merged declarations, this ID points to the unified symbol in the binder.
             return (
@@ -957,7 +960,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Enum - return a nominal reference type
+        // NOTE: Cannot migrate to Lazy(DefId) yet - enum type checking depends on SymbolRef
+        // to access enum members. This needs TypeResolver support for Lazy types first.
         if flags & symbol_flags::ENUM != 0 {
+            use crate::solver::{SymbolRef, TypeKey};
             return (
                 self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0))),
                 Vec::new(),
