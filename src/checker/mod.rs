@@ -121,7 +121,9 @@ mod symbol_resolver_stability_tests;
 #[cfg(test)]
 #[path = "tests/ts2304_tests.rs"]
 mod ts2304_tests;
-// ts2322_tests: orphaned (stale API, not yet updated)
+#[cfg(test)]
+#[path = "tests/ts2322_tests.rs"]
+mod ts2322_tests;
 #[cfg(test)]
 #[path = "tests/value_usage_tests.rs"]
 mod value_usage_tests;
