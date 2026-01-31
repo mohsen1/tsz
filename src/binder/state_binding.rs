@@ -1118,6 +1118,7 @@ impl BinderState {
             || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
             || kind == syntax_kind_ext::ENUM_DECLARATION
             || kind == syntax_kind_ext::MODULE_DECLARATION
+            || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
     }
 
     pub(crate) fn bind_module_declaration(

@@ -834,6 +834,26 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
+            // For ALIAS symbols (import equals declarations), resolve to the target
+            // and check if it's a namespace/module
+            if flags & symbol_flags::ALIAS != 0 {
+                let mut visited = Vec::new();
+                if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited) {
+                    let target_flags = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    if (target_flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0
+                    {
+                        return true;
+                    }
+                }
+            }
+
             let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
                 || self.symbol_is_value_only(sym_id, None))
                 && !self.symbol_is_type_only(sym_id, None);
