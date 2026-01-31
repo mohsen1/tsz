@@ -6,7 +6,6 @@
 
 use crate::binder::SymbolId;
 use crate::checker::state::CheckerState;
-use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::solver::{ContextualTypeContext, TypeId};
 
@@ -1502,27 +1501,9 @@ impl<'a> CheckerState<'a> {
                 let symbol_available = self.ctx.has_symbol_in_lib();
 
                 if !symbol_available {
-                    // Symbol is not available via lib, check if it resolves to a symbol in scope
-                    // If resolve_identifier_symbol already failed (we're here), then Symbol is not in scope
-                    // Emit TS2585: Symbol only refers to a type, suggest changing lib
-                    use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    if let Some(loc) = self.get_source_location(idx) {
-                        let message = format_message(
-                            diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
-                            &[name],
-                        );
-                        self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
-                            category: DiagnosticCategory::Error,
-                            message_text: message,
-                            start: loc.start,
-                            length: loc.length(),
-                            file: self.ctx.file_name.clone(),
-                            related_information: Vec::new(),
-                        });
-                    }
+                    // Symbol is not available via lib — emit TS2583 (same as Promise, Map, etc.)
+                    // tsc emits "Cannot find name 'Symbol'" when lib target doesn't include it
+                    self.error_cannot_find_name_change_lib(name, idx);
                     return TypeId::ERROR;
                 }
                 self.get_symbol_constructor_type()

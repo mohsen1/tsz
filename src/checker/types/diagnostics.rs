@@ -351,7 +351,7 @@ pub mod diagnostic_codes {
     pub const GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS: u32 = 2314;
     pub const TYPE_IS_NOT_GENERIC: u32 = 2315;
     pub const TYPE_NOT_ASSIGNABLE_TO_TYPE: u32 = 2322;
-    pub const PROPERTY_MISSING_IN_TYPE: u32 = 2324;
+    pub const PROPERTY_MISSING_IN_TYPE: u32 = 2741;
     pub const TYPES_OF_PROPERTY_INCOMPATIBLE: u32 = 2326;
     pub const PROPERTY_DOES_NOT_EXIST_ON_TYPE: u32 = 2339;
     pub const TYPE_HAS_NO_PROPERTY: u32 = 2339;

@@ -253,6 +253,58 @@ impl<'a> CheckerState<'a> {
                 target_property_type,
                 nested_reason,
             } => {
+                // At depth 0, emit TS2322 as the primary error (matching tsc behavior).
+                // TS2326 details go into related_information.
+                if depth == 0 {
+                    let source_str = self.format_type(source);
+                    let target_str = self.format_type(target);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                        &[&source_str, &target_str],
+                    );
+                    let mut diag = Diagnostic::error(
+                        file_name.clone(),
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+
+                    // Add property incompatibility as related info
+                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                    let prop_message = format_message(
+                        diagnostic_messages::TYPES_OF_PROPERTY_INCOMPATIBLE,
+                        &[&prop_name],
+                    );
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: prop_message,
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::TYPES_OF_PROPERTY_INCOMPATIBLE,
+                    });
+
+                    if let Some(nested) = nested_reason {
+                        let nested_diag = self.render_failure_reason(
+                            nested,
+                            *source_property_type,
+                            *target_property_type,
+                            idx,
+                            depth + 1,
+                        );
+                        diag.related_information.push(DiagnosticRelatedInformation {
+                            file: nested_diag.file,
+                            start: nested_diag.start,
+                            length: nested_diag.length,
+                            message_text: nested_diag.message_text,
+                            category: DiagnosticCategory::Message,
+                            code: nested_diag.code,
+                        });
+                    }
+                    return diag;
+                }
+
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let message = format_message(
                     diagnostic_messages::TYPES_OF_PROPERTY_INCOMPATIBLE,
