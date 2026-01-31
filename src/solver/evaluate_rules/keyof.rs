@@ -71,13 +71,13 @@ impl KeyofKeySet {
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Helper to recursively evaluate keyof while respecting depth limits.
     /// Creates a KeyOf type and evaluates it through the main evaluate() method.
-    fn recurse_keyof(&self, operand: TypeId) -> TypeId {
+    fn recurse_keyof(&mut self, operand: TypeId) -> TypeId {
         let keyof = self.interner().intern(TypeKey::KeyOf(operand));
         self.evaluate(keyof)
     }
 
     /// Evaluate keyof T - extract the keys of an object type
-    pub fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+    pub fn evaluate_keyof(&mut self, operand: TypeId) -> TypeId {
         // First evaluate the operand in case it's a meta-type
         let evaluated_operand = self.evaluate(operand);
 
@@ -213,10 +213,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Compute keyof for a union type: keyof (A | B) = keyof A & keyof B
-    pub(crate) fn keyof_union(&self, members: TypeListId, _operand: TypeId) -> TypeId {
+    pub(crate) fn keyof_union(&mut self, members: TypeListId, _operand: TypeId) -> TypeId {
         let members = self.interner().type_list(members);
         // Use recurse_keyof to respect depth limits
-        let key_sets: Vec<TypeId> = members.iter().map(|&m| self.recurse_keyof(m)).collect();
+        // Use loop instead of closure to allow mutable self access
+        let mut key_sets: Vec<TypeId> = Vec::with_capacity(members.len());
+        for &m in members.iter() {
+            key_sets.push(self.recurse_keyof(m));
+        }
         // Prefer explicit key-set intersection to avoid opaque literal intersections.
         if let Some(intersection) = self.intersect_keyof_sets(&key_sets) {
             intersection
@@ -226,10 +230,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
-    pub(crate) fn keyof_intersection(&self, members: TypeListId, _operand: TypeId) -> TypeId {
+    pub(crate) fn keyof_intersection(&mut self, members: TypeListId, _operand: TypeId) -> TypeId {
         let members = self.interner().type_list(members);
         // Use recurse_keyof to respect depth limits
-        let key_sets: Vec<TypeId> = members.iter().map(|&m| self.recurse_keyof(m)).collect();
+        // Use loop instead of closure to allow mutable self access
+        let mut key_sets: Vec<TypeId> = Vec::with_capacity(members.len());
+        for &m in members.iter() {
+            key_sets.push(self.recurse_keyof(m));
+        }
         self.interner().union(key_sets)
     }
 

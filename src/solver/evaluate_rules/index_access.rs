@@ -20,7 +20,11 @@ fn is_member(name: &str, list: &[&str]) -> bool {
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Helper to recursively evaluate an index access while respecting depth limits.
     /// Creates an IndexAccess type and evaluates it through the main evaluate() method.
-    pub(crate) fn recurse_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+    pub(crate) fn recurse_index_access(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> TypeId {
         let index_access = self
             .interner()
             .intern(TypeKey::IndexAccess(object_type, index_type));
@@ -30,7 +34,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate an index access type: T[K]
     ///
     /// This resolves property access on object types.
-    pub fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+    pub fn evaluate_index_access(&mut self, object_type: TypeId, index_type: TypeId) -> TypeId {
         let evaluated_object = self.evaluate(object_type);
         let evaluated_index = self.evaluate(index_type);
         if evaluated_object != object_type || evaluated_index != index_type {

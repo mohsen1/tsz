@@ -13,7 +13,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Template literals evaluate to a union of all possible literal string combinations.
     /// For example: `get${K}` where K = "a" | "b" evaluates to "geta" | "getb"
     /// Multiple unions compute a Cartesian product: `${"a"|"b"}-${"x"|"y"}` => "a-x"|"a-y"|"b-x"|"b-y"
-    pub fn evaluate_template_literal(&self, spans: TemplateLiteralId) -> TypeId {
+    pub fn evaluate_template_literal(&mut self, spans: TemplateLiteralId) -> TypeId {
         use crate::solver::TEMPLATE_LITERAL_EXPANSION_LIMIT;
 
         let span_list = self.interner().template_list(spans);

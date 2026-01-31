@@ -60,6 +60,10 @@ pub struct CheckerOptions {
     /// - Excess properties via sticky freshness (TS9001)
     /// Activated via: `--sound` CLI flag or `// @ts-sound` pragma
     pub sound_mode: bool,
+    /// When true, enables experimental support for decorators (legacy decorators).
+    /// This is required for the @experimentalDecorators flag.
+    /// When decorators are used, TypedPropertyDescriptor must be available.
+    pub experimental_decorators: bool,
 }
 
 /// ECMAScript target version
