@@ -227,46 +227,8 @@ mod token_validation {
 
     /// Check if a token is an identifier or keyword (can be used as identifier).
     pub fn is_identifier_or_keyword(token: SyntaxKind) -> bool {
-        matches!(
-            token,
-            SyntaxKind::Identifier
-                | SyntaxKind::BreakKeyword
-                | SyntaxKind::CaseKeyword
-                | SyntaxKind::CatchKeyword
-                | SyntaxKind::ClassKeyword
-                | SyntaxKind::ConstKeyword
-                | SyntaxKind::ContinueKeyword
-                | SyntaxKind::DebuggerKeyword
-                | SyntaxKind::DefaultKeyword
-                | SyntaxKind::DeleteKeyword
-                | SyntaxKind::DoKeyword
-                | SyntaxKind::ElseKeyword
-                | SyntaxKind::EnumKeyword
-                | SyntaxKind::ExportKeyword
-                | SyntaxKind::ExtendsKeyword
-                | SyntaxKind::FalseKeyword
-                | SyntaxKind::FinallyKeyword
-                | SyntaxKind::ForKeyword
-                | SyntaxKind::FunctionKeyword
-                | SyntaxKind::IfKeyword
-                | SyntaxKind::ImportKeyword
-                | SyntaxKind::InKeyword
-                | SyntaxKind::InstanceOfKeyword
-                | SyntaxKind::NewKeyword
-                | SyntaxKind::NullKeyword
-                | SyntaxKind::ReturnKeyword
-                | SyntaxKind::SuperKeyword
-                | SyntaxKind::SwitchKeyword
-                | SyntaxKind::ThisKeyword
-                | SyntaxKind::ThrowKeyword
-                | SyntaxKind::TrueKeyword
-                | SyntaxKind::TryKeyword
-                | SyntaxKind::TypeOfKeyword
-                | SyntaxKind::VarKeyword
-                | SyntaxKind::VoidKeyword
-                | SyntaxKind::WhileKeyword
-                | SyntaxKind::WithKeyword
-        )
+        // Match TypeScript's isIdentifierOrKeyword: Identifier or any keyword
+        token == SyntaxKind::Identifier || crate::scanner::token_is_keyword(token)
     }
 
     /// Check if a token is a valid property name.
@@ -346,6 +308,7 @@ mod token_validation {
                 | SyntaxKind::RequireKeyword
                 | SyntaxKind::SatisfiesKeyword
                 | SyntaxKind::IntrinsicKeyword
+                | SyntaxKind::DeferKeyword
         )
     }
 }

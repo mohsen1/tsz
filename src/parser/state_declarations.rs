@@ -1106,6 +1106,7 @@ impl ParserState {
     pub(crate) fn parse_import_clause(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let mut is_type_only = false;
+        let mut is_deferred = false;
 
         // Check for "type" keyword (import type { ... })
         if self.is_token(SyntaxKind::TypeKeyword) {
@@ -1118,6 +1119,19 @@ impl ParserState {
                 || self.is_token(SyntaxKind::AsteriskToken)
             {
                 is_type_only = true;
+            } else {
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+            }
+        }
+
+        // Check for "defer" keyword (import defer * as ns from ...)
+        if self.is_token(SyntaxKind::DeferKeyword) {
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            self.next_token();
+            if self.is_token(SyntaxKind::Identifier) || self.is_token(SyntaxKind::AsteriskToken) {
+                is_deferred = true;
             } else {
                 self.scanner.restore_state(snapshot);
                 self.current_token = current;
@@ -1154,6 +1168,7 @@ impl ParserState {
             end_pos,
             ImportClauseData {
                 is_type_only,
+                is_deferred,
                 name,
                 named_bindings,
             },

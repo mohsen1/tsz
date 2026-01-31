@@ -521,6 +521,7 @@ pub struct ImportDeclData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportClauseData {
     pub is_type_only: bool,
+    pub is_deferred: bool,
     pub name: NodeIndex,
     pub named_bindings: NodeIndex,
 }
