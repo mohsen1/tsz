@@ -643,8 +643,10 @@ impl<'a> Completions<'a> {
             return true;
         }
 
-        // Default to false - TypeScript's implementation is very conservative
-        // and only returns true for specific AST-verified contexts
+        // TODO: isNewIdentifierLocation requires AST-based context checks matching
+        // TypeScript's getCompletionData logic. Text-based heuristics for operators
+        // like =, (, [, , cause regressions because the same operators return
+        // different values depending on AST parent context.
         false
     }
 
