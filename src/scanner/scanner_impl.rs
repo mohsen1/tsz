@@ -866,6 +866,20 @@ impl ScannerState {
 
                 // Default: identifier or unknown
                 _ => {
+                    // Handle Unicode line separators (U+2028, U+2029) as newlines
+                    if ch == CharacterCodes::LINE_SEPARATOR
+                        || ch == CharacterCodes::PARAGRAPH_SEPARATOR
+                    {
+                        self.token_flags |= TokenFlags::PrecedingLineBreak as u32;
+                        if self.skip_trivia {
+                            self.pos += self.char_len_at(self.pos);
+                            continue;
+                        } else {
+                            self.pos += self.char_len_at(self.pos);
+                            self.token = SyntaxKind::NewLineTrivia;
+                            return self.token;
+                        }
+                    }
                     // Handle additional Unicode whitespace characters not in the fast path above
                     if ch > 127 && is_white_space_single_line(ch) {
                         if self.skip_trivia {
