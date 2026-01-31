@@ -344,6 +344,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.cache.borrow_mut().insert(type_id, result);
                 result
             }
+            // Resolve Lazy(DefId) types to their structural form (Phase 4.3)
+            TypeKey::Lazy(def_id) => {
+                let result =
+                    if let Some(resolved) = self.resolver.resolve_lazy(*def_id, self.interner) {
+                        resolved
+                    } else {
+                        // Lazy type not resolved - return ERROR
+                        TypeId::ERROR
+                    };
+                self.visiting.borrow_mut().remove(&type_id);
+                self.cache.borrow_mut().insert(type_id, result);
+                result
+            }
             TypeKey::StringIntrinsic { kind, type_arg } => {
                 let result = self.evaluate_string_intrinsic(*kind, *type_arg);
                 self.visiting.borrow_mut().remove(&type_id);
@@ -383,6 +396,50 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Try to get the type parameters for this symbol
             let type_params = self.resolver.get_type_params(symbol);
             let resolved = self.resolver.resolve_ref(symbol, self.interner);
+
+            if let Some(type_params) = type_params {
+                // Resolve the base type to get the body
+                if let Some(resolved) = resolved {
+                    // Pre-expand type arguments that are TypeQuery or Application
+                    let expanded_args: Vec<TypeId> = app
+                        .args
+                        .iter()
+                        .map(|&arg| self.try_expand_type_arg(arg))
+                        .collect();
+
+                    // Instantiate the resolved type with the type arguments
+                    let instantiated =
+                        instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
+                    // Recursively evaluate the result
+                    return self.evaluate(instantiated);
+                }
+            } else if let Some(resolved) = resolved {
+                // Fallback: try to extract type params from the resolved type's properties
+                let extracted_params = self.extract_type_params_from_type(resolved);
+                if !extracted_params.is_empty() && extracted_params.len() == app.args.len() {
+                    // Pre-expand type arguments
+                    let expanded_args: Vec<TypeId> = app
+                        .args
+                        .iter()
+                        .map(|&arg| self.try_expand_type_arg(arg))
+                        .collect();
+
+                    let instantiated = instantiate_generic(
+                        self.interner,
+                        resolved,
+                        &extracted_params,
+                        &expanded_args,
+                    );
+                    return self.evaluate(instantiated);
+                }
+            }
+        }
+
+        // If the base is a Lazy(DefId), try to resolve and instantiate (Phase 4.3)
+        if let TypeKey::Lazy(def_id) = base_key {
+            // Try to get the type parameters for this DefId
+            let type_params = self.resolver.get_lazy_type_params(def_id);
+            let resolved = self.resolver.resolve_lazy(def_id, self.interner);
 
             if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
@@ -556,6 +613,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // This helps with generic instantiation accuracy
                 self.resolver
                     .resolve_ref(sym_ref, self.interner)
+                    .unwrap_or(arg)
+            }
+            TypeKey::Lazy(def_id) => {
+                // Also try to resolve Lazy types in type arguments (Phase 4.3)
+                // This helps with generic instantiation accuracy
+                self.resolver
+                    .resolve_lazy(def_id, self.interner)
                     .unwrap_or(arg)
             }
             TypeKey::Conditional(_) => {

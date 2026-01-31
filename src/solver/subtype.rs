@@ -13,6 +13,7 @@
 use crate::limits;
 use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
+use crate::solver::def::DefId;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -55,10 +56,29 @@ pub trait TypeResolver {
     /// Returns None if the symbol cannot be resolved.
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId>;
 
+    /// Resolve a DefId reference to its structural type.
+    ///
+    /// This is the DefId equivalent of `resolve_ref`, used for `TypeKey::Lazy(DefId)`.
+    /// DefIds are Solver-owned identifiers that decouple type references from the Binder.
+    ///
+    /// Returns None by default; implementations should override to support Lazy type resolution.
+    fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
     /// Get type parameters for a symbol (for generic type aliases/interfaces).
     /// Returns None by default; implementations can override to support
     /// Application type expansion.
     fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
+        None
+    }
+
+    /// Get type parameters for a DefId (for generic type aliases/interfaces).
+    ///
+    /// This is the DefId equivalent of `get_type_params`.
+    /// Returns None by default; implementations can override to support
+    /// Application type expansion with Lazy types.
+    fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
         None
     }
 
@@ -91,6 +111,11 @@ pub struct TypeEnvironment {
     /// Maps primitive intrinsic kinds to their boxed interface types (Rule #33).
     /// e.g., IntrinsicKind::Number -> TypeId of the Number interface
     boxed_types: std::collections::HashMap<IntrinsicKind, TypeId>,
+    /// Maps DefIds to their resolved structural types (Phase 4.3 migration).
+    /// This enables `TypeKey::Lazy(DefId)` resolution.
+    def_types: std::collections::HashMap<u32, TypeId>,
+    /// Maps DefIds to their type parameters (for generic types with Lazy refs).
+    def_type_params: std::collections::HashMap<u32, Vec<TypeParamInfo>>,
 }
 
 impl TypeEnvironment {
@@ -99,6 +124,8 @@ impl TypeEnvironment {
             types: std::collections::HashMap::new(),
             type_params: std::collections::HashMap::new(),
             boxed_types: std::collections::HashMap::new(),
+            def_types: std::collections::HashMap::new(),
+            def_type_params: std::collections::HashMap::new(),
         }
     }
 
@@ -155,6 +182,43 @@ impl TypeEnvironment {
     pub fn is_empty(&self) -> bool {
         self.types.is_empty()
     }
+
+    // =========================================================================
+    // DefId Resolution (Phase 4.3 migration)
+    // =========================================================================
+
+    /// Register a DefId's resolved type.
+    pub fn insert_def(&mut self, def_id: DefId, type_id: TypeId) {
+        self.def_types.insert(def_id.0, type_id);
+    }
+
+    /// Register a DefId's resolved type with type parameters.
+    pub fn insert_def_with_params(
+        &mut self,
+        def_id: DefId,
+        type_id: TypeId,
+        params: Vec<TypeParamInfo>,
+    ) {
+        self.def_types.insert(def_id.0, type_id);
+        if !params.is_empty() {
+            self.def_type_params.insert(def_id.0, params);
+        }
+    }
+
+    /// Get a DefId's resolved type.
+    pub fn get_def(&self, def_id: DefId) -> Option<TypeId> {
+        self.def_types.get(&def_id.0).copied()
+    }
+
+    /// Get a DefId's type parameters.
+    pub fn get_def_params(&self, def_id: DefId) -> Option<&Vec<TypeParamInfo>> {
+        self.def_type_params.get(&def_id.0)
+    }
+
+    /// Check if the environment contains a DefId.
+    pub fn contains_def(&self, def_id: DefId) -> bool {
+        self.def_types.contains_key(&def_id.0)
+    }
 }
 
 impl TypeResolver for TypeEnvironment {
@@ -162,8 +226,16 @@ impl TypeResolver for TypeEnvironment {
         self.get(symbol)
     }
 
+    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.get_def(def_id)
+    }
+
     fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
         self.get_params(symbol).cloned()
+    }
+
+    fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        self.get_def_params(def_id).cloned()
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
