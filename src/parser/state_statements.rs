@@ -963,6 +963,80 @@ impl ParserState {
         )
     }
 
+    /// Parse function declaration for export default context (name is optional).
+    /// Unlike regular function declarations, `export default function() {}` allows anonymous functions.
+    /// Unlike function expressions, this creates a FUNCTION_DECLARATION node and supports
+    /// overload signatures (missing body).
+    pub(crate) fn parse_function_declaration_with_async_optional_name(
+        &mut self,
+        is_async: bool,
+        modifiers: Option<NodeList>,
+    ) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        let is_async = is_async || self.parse_optional(SyntaxKind::AsyncKeyword);
+        self.parse_expected(SyntaxKind::FunctionKeyword);
+        let asterisk_token = self.parse_optional(SyntaxKind::AsteriskToken);
+
+        // Name is optional for export default function declarations
+        let name = if self.is_identifier_or_keyword() {
+            self.parse_identifier_name()
+        } else {
+            NodeIndex::NONE
+        };
+
+        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+            Some(self.parse_type_parameters())
+        } else {
+            None
+        };
+
+        self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = self.parse_parameter_list();
+        self.parse_expected(SyntaxKind::CloseParenToken);
+
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_return_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        let saved_flags = self.context_flags;
+        if is_async {
+            self.context_flags |= CONTEXT_FLAG_ASYNC;
+        }
+        if asterisk_token {
+            self.context_flags |= CONTEXT_FLAG_GENERATOR;
+        }
+
+        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
+            self.parse_block()
+        } else {
+            self.parse_optional(SyntaxKind::SemicolonToken);
+            NodeIndex::NONE
+        };
+
+        self.context_flags = saved_flags;
+
+        let end_pos = self.token_end();
+        self.arena.add_function(
+            syntax_kind_ext::FUNCTION_DECLARATION,
+            start_pos,
+            end_pos,
+            FunctionData {
+                modifiers,
+                is_async,
+                asterisk_token,
+                name,
+                type_parameters,
+                parameters,
+                type_annotation,
+                body,
+                equals_greater_than_token: false,
+            },
+        )
+    }
+
     /// Parse function expression: function() {} or function name() {}
     ///
     /// Unlike function declarations, function expressions can be anonymous.
