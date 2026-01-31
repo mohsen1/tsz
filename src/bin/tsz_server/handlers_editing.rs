@@ -329,23 +329,114 @@ impl Server {
             let position = request.arguments.get("offset")?.as_u64().unwrap_or(1);
             let source_text = self.open_files.get(file)?;
 
-            // Get tab size from options (default 4)
-            let tab_size = request
+            // Get indent size from options (default 4)
+            let indent_size = request
                 .arguments
                 .get("options")
-                .and_then(|o| o.get("tabSize"))
-                .and_then(|v| v.as_u64())
+                .and_then(|o| {
+                    o.get("indentSize")
+                        .and_then(|v| v.as_u64())
+                        .or_else(|| o.get("tabSize").and_then(|v| v.as_u64()))
+                })
                 .unwrap_or(4) as usize;
 
-            // Basic smart indentation: look at previous lines to determine context
+            let base_indent = request
+                .arguments
+                .get("options")
+                .and_then(|o| o.get("baseIndentSize"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
+
             let lines: Vec<&str> = source_text.lines().collect();
-            let target_line_idx = if line > 0 { line - 1 } else { 0 }; // 1-based to 0-based
+            let target_line_idx = if line > 0 { line - 1 } else { 0 };
 
             if target_line_idx >= lines.len() {
                 return Some(serde_json::json!({"position": position, "indentation": 0}));
             }
 
-            // Find the previous non-empty line
+            // Smart indentation: compute brace/bracket/paren depth up to the target line
+            // by scanning all lines before it, then adjust for the current line.
+            let mut depth: i32 = 0;
+            let mut in_block_comment = false;
+            let mut in_single_line_string = false;
+
+            for line_idx in 0..target_line_idx {
+                let line_text = lines[line_idx];
+                let bytes = line_text.as_bytes();
+                let mut j = 0;
+                while j < bytes.len() {
+                    if in_block_comment {
+                        if j + 1 < bytes.len() && bytes[j] == b'*' && bytes[j + 1] == b'/' {
+                            in_block_comment = false;
+                            j += 2;
+                            continue;
+                        }
+                        j += 1;
+                        continue;
+                    }
+                    // Skip strings
+                    if bytes[j] == b'"' || bytes[j] == b'\'' {
+                        let q = bytes[j];
+                        j += 1;
+                        while j < bytes.len() {
+                            if bytes[j] == b'\\' {
+                                j += 2;
+                                continue;
+                            }
+                            if bytes[j] == q {
+                                j += 1;
+                                break;
+                            }
+                            j += 1;
+                        }
+                        continue;
+                    }
+                    if bytes[j] == b'`' {
+                        // Template literals can span lines - simplified handling
+                        j += 1;
+                        while j < bytes.len() {
+                            if bytes[j] == b'\\' {
+                                j += 2;
+                                continue;
+                            }
+                            if bytes[j] == b'`' {
+                                j += 1;
+                                break;
+                            }
+                            j += 1;
+                        }
+                        continue;
+                    }
+                    // Skip line comments
+                    if j + 1 < bytes.len() && bytes[j] == b'/' && bytes[j + 1] == b'/' {
+                        break; // rest of line is comment
+                    }
+                    // Block comment start
+                    if j + 1 < bytes.len() && bytes[j] == b'/' && bytes[j + 1] == b'*' {
+                        in_block_comment = true;
+                        j += 2;
+                        continue;
+                    }
+                    match bytes[j] {
+                        b'{' | b'(' | b'[' => depth += 1,
+                        b'}' | b')' | b']' => {
+                            if depth > 0 {
+                                depth -= 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    j += 1;
+                }
+            }
+
+            // Check if the current line starts with a closing bracket
+            let current_trimmed = lines[target_line_idx].trim();
+            let starts_with_closing = current_trimmed.starts_with('}')
+                || current_trimmed.starts_with(')')
+                || current_trimmed.starts_with(']');
+
+            // Also look at the previous non-empty line for context
             let mut prev_line_idx = if target_line_idx > 0 {
                 target_line_idx - 1
             } else {
@@ -354,43 +445,35 @@ impl Server {
             while prev_line_idx > 0 && lines[prev_line_idx].trim().is_empty() {
                 prev_line_idx -= 1;
             }
+            let prev_trimmed = lines.get(prev_line_idx).map(|l| l.trim()).unwrap_or("");
 
-            let prev_line = if prev_line_idx < lines.len() {
-                lines[prev_line_idx]
-            } else {
-                ""
-            };
+            // Adjust: if previous line ends with opener, we've already counted it in depth
+            // The depth represents how many unclosed openers exist before this line
+            let mut indentation = (depth as usize) * indent_size + base_indent;
 
-            // Count leading spaces of previous line
-            let prev_indent = prev_line.len() - prev_line.trim_start().len();
+            // If current line starts with closer, reduce by one level
+            if starts_with_closing && indentation >= indent_size {
+                indentation -= indent_size;
+            }
 
-            // Determine if we should indent further
-            let prev_trimmed = prev_line.trim();
-            let should_indent_more = prev_trimmed.ends_with('{')
+            // Special case: if previous line ends with opener and current line is empty
+            // (new line just inserted), the depth already accounts for it
+            // But if previous line doesn't end with opener and has continuation context
+            // (like after =>, case:, etc.) add one level
+            let prev_ends_with_opener = prev_trimmed.ends_with('{')
                 || prev_trimmed.ends_with('(')
-                || prev_trimmed.ends_with('[')
-                || prev_trimmed.ends_with(':')
-                || prev_trimmed.ends_with("=>")
-                || prev_trimmed.ends_with(',');
+                || prev_trimmed.ends_with('[');
 
-            // Check if current line starts with closing bracket
-            let current_trimmed = lines[target_line_idx].trim();
-            let starts_with_closing = current_trimmed.starts_with('}')
-                || current_trimmed.starts_with(')')
-                || current_trimmed.starts_with(']');
-
-            let indentation = if starts_with_closing {
-                // Closing bracket: match the line with the opening bracket
-                if prev_indent >= tab_size {
-                    prev_indent - tab_size
-                } else {
-                    0
+            if !prev_ends_with_opener && !starts_with_closing {
+                // Check for continuation contexts that need extra indentation
+                let needs_continuation = prev_trimmed.ends_with("=>")
+                    || (prev_trimmed.ends_with(':')
+                        && (prev_trimmed.starts_with("case ")
+                            || prev_trimmed.starts_with("default:")));
+                if needs_continuation {
+                    indentation += indent_size;
                 }
-            } else if should_indent_more {
-                prev_indent + tab_size
-            } else {
-                prev_indent
-            };
+            }
 
             Some(serde_json::json!({
                 "position": position,
