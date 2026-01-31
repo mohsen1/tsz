@@ -1348,6 +1348,11 @@ impl ParserState {
             return self.parse_export_assignment(start_pos);
         }
 
+        // export as namespace Foo (UMD global namespace declaration)
+        if self.is_token(SyntaxKind::AsKeyword) {
+            return self.parse_namespace_export_declaration(start_pos);
+        }
+
         // export function/class/const/let/var/interface/type/enum
         self.parse_export_declaration_or_statement(start_pos)
     }
@@ -1391,6 +1396,32 @@ impl ParserState {
                 modifiers: None,
                 is_export_equals: true,
                 expression,
+            },
+        )
+    }
+
+    /// Parse `export as namespace Foo;` (UMD global namespace declaration)
+    ///
+    /// This creates a NamespaceExportDeclaration node. The syntax declares that the module's
+    /// exports are also available globally under the given namespace name.
+    pub(crate) fn parse_namespace_export_declaration(&mut self, start_pos: u32) -> NodeIndex {
+        self.parse_expected(SyntaxKind::AsKeyword);
+        self.parse_expected(SyntaxKind::NamespaceKeyword);
+        let name = self.parse_identifier();
+        self.parse_semicolon();
+
+        let end_pos = self.token_end();
+        self.arena.add_export_decl(
+            syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION,
+            start_pos,
+            end_pos,
+            ExportDeclData {
+                modifiers: None,
+                is_type_only: false,
+                is_default_export: false,
+                export_clause: name,
+                module_specifier: NodeIndex::NONE,
+                attributes: NodeIndex::NONE,
             },
         )
     }
