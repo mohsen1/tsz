@@ -28,8 +28,7 @@ use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, SymbolRef, TypeId,
-    TypeKey, TypeLowering, TypeSubstitution, instantiate_type,
+    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeLowering, TypeSubstitution, instantiate_type,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -923,40 +922,76 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &crate::parser::node::ClassData,
     ) -> TypeId {
+        // CRITICAL: Check if this class is already being resolved to prevent infinite recursion
+        // This handles indirect cycles like: C extends E, E extends D, D extends C
+        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        if let Some(sym_id) = current_sym {
+            if self.ctx.class_instance_resolution_set.contains(&sym_id) {
+                // Already resolving this class - return ERROR to break the cycle
+                // Note: We don't need to cleanup here because we didn't insert
+                return TypeId::ERROR;
+            }
+        }
+
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
         let (class_type_params, type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
 
+        // CRITICAL: Add to resolution set BEFORE calling get_class_instance_type
+        // This prevents infinite recursion when resolving base classes
+        let did_insert = if let Some(sym_id) = current_sym {
+            self.ctx.class_instance_resolution_set.insert(sym_id)
+        } else {
+            false
+        };
+
         // CRITICAL: Check for self-referential class BEFORE calling get_class_instance_type
         // This catches class C extends C before we recurse into heritage resolution
         // which would call get_type_of_symbol -> get_class_constructor_type (same class)
-        if let Some(current_sym) = self.ctx.binder.get_node_symbol(class_idx) {
-            if let Some(ref heritage_clauses) = class.heritage_clauses {
-                for &clause_idx in &heritage_clauses.nodes {
-                    if let Some(clause_node) = self.ctx.arena.get(clause_idx) {
-                        if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) {
-                            if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
-                                if let Some(&type_idx) = heritage.types.nodes.first() {
-                                    if let Some(type_node) = self.ctx.arena.get(type_idx) {
-                                        let expr_idx = self
-                                            .ctx
-                                            .arena
-                                            .get_expr_type_args(type_node)
-                                            .map(|e| e.expression)
-                                            .unwrap_or(type_idx);
-                                        // Check if the extends clause refers to the same class
-                                        if let Some(extends_sym) =
-                                            self.ctx.binder.get_node_symbol(expr_idx)
-                                        {
-                                            if extends_sym == current_sym {
-                                                // Self-referential inheritance detected
-                                                // Return a placeholder constructor type to break the cycle
-                                                self.pop_type_parameters(type_param_updates);
-                                                return self.ctx.types.intern(TypeKey::Ref(
-                                                    SymbolRef(current_sym.0),
-                                                ));
-                                            }
-                                        }
+        //
+        // We check both by symbol ID (if available) and by name comparison (as fallback)
+        let class_name = self
+            .ctx
+            .arena
+            .get(class.name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|i| i.escaped_text.clone());
+
+        let mut self_referential = false;
+        if let Some(ref heritage_clauses) = class.heritage_clauses {
+            for &clause_idx in &heritage_clauses.nodes {
+                if let Some(clause_node) = self.ctx.arena.get(clause_idx) {
+                    if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) {
+                        if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
+                            if let Some(&type_idx) = heritage.types.nodes.first() {
+                                if let Some(type_node) = self.ctx.arena.get(type_idx) {
+                                    let expr_idx = self
+                                        .ctx
+                                        .arena
+                                        .get_expr_type_args(type_node)
+                                        .map(|e| e.expression)
+                                        .unwrap_or(type_idx);
+
+                                    // Check 1: Compare symbols if available
+                                    let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+                                    let extends_sym = self.ctx.binder.get_node_symbol(expr_idx);
+                                    let same_symbol =
+                                        current_sym.is_some() && current_sym == extends_sym;
+
+                                    // Check 2: Compare names as fallback
+                                    // This catches cases where symbols might not be bound yet
+                                    let extends_name = self
+                                        .ctx
+                                        .arena
+                                        .get(expr_idx)
+                                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                                        .map(|i| i.escaped_text.clone());
+                                    let same_name =
+                                        class_name.is_some() && class_name == extends_name;
+
+                                    if same_symbol || same_name {
+                                        self_referential = true;
+                                        break;
                                     }
                                 }
                             }
@@ -964,6 +999,17 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+
+        // If self-referential, cleanup and return ERROR
+        if self_referential {
+            if did_insert {
+                if let Some(sym_id) = current_sym {
+                    self.ctx.class_instance_resolution_set.remove(&sym_id);
+                }
+            }
+            self.pop_type_parameters(type_param_updates);
+            return TypeId::ERROR;
         }
 
         let instance_type = self.get_class_instance_type(class_idx, class);
@@ -1509,6 +1555,13 @@ impl<'a> CheckerState<'a> {
         // Track abstract classes
         if is_abstract_class {
             self.ctx.abstract_constructor_types.insert(constructor_type);
+        }
+
+        // Cleanup: Remove from resolution set before returning
+        if did_insert {
+            if let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
         }
 
         constructor_type

@@ -924,6 +924,15 @@ impl<'a> CheckerState<'a> {
                 // CRITICAL: Check for self-referential class BEFORE computing constructor type
                 // This catches class C extends C before we recurse into get_class_constructor_type
                 // which would call get_class_instance_type -> heritage resolution -> get_type_of_symbol (same symbol)
+                //
+                // We check both by symbol ID and by name comparison
+                let class_name = self
+                    .ctx
+                    .arena
+                    .get(class.name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|i| i.escaped_text.clone());
+
                 if let Some(ref heritage_clauses) = class.heritage_clauses {
                     for &clause_idx in &heritage_clauses.nodes {
                         if let Some(clause_node) = self.ctx.arena.get(clause_idx) {
@@ -938,20 +947,31 @@ impl<'a> CheckerState<'a> {
                                                 .get_expr_type_args(type_node)
                                                 .map(|e| e.expression)
                                                 .unwrap_or(type_idx);
-                                            // Check if the extends clause refers to the same class
-                                            if let Some(extends_sym) =
-                                                self.ctx.binder.get_node_symbol(expr_idx)
-                                            {
-                                                if extends_sym == sym_id {
-                                                    // Self-referential inheritance detected
-                                                    // Return a placeholder type to break the cycle
-                                                    // The actual error is reported by ClassInheritanceChecker
-                                                    let placeholder = self
-                                                        .ctx
-                                                        .types
-                                                        .intern(TypeKey::Ref(SymbolRef(sym_id.0)));
-                                                    return (placeholder, Vec::new());
-                                                }
+
+                                            // Check 1: Compare symbols if available
+                                            let extends_sym =
+                                                self.ctx.binder.get_node_symbol(expr_idx);
+                                            let same_symbol = extends_sym == Some(sym_id);
+
+                                            // Check 2: Compare names as fallback
+                                            let extends_name = self
+                                                .ctx
+                                                .arena
+                                                .get(expr_idx)
+                                                .and_then(|n| self.ctx.arena.get_identifier(n))
+                                                .map(|i| i.escaped_text.clone());
+                                            let same_name =
+                                                class_name.is_some() && class_name == extends_name;
+
+                                            if same_symbol || same_name {
+                                                // Self-referential inheritance detected
+                                                // Return a placeholder type to break the cycle
+                                                // The actual error is reported by ClassInheritanceChecker
+                                                let placeholder = self
+                                                    .ctx
+                                                    .types
+                                                    .intern(TypeKey::Ref(SymbolRef(sym_id.0)));
+                                                return (placeholder, Vec::new());
                                             }
                                         }
                                     }
