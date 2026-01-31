@@ -6,19 +6,21 @@ The scanner (lexer) transforms source text into a stream of tokens. It's the fir
 
 ```
 src/
-├── scanner.rs              Token types, SyntaxKind enum
-├── scanner_impl.rs         Core tokenization engine
-├── scanner_tests.rs        Token classification tests
-├── scanner_impl_tests.rs   Tokenization tests
-├── char_codes.rs           Character code constants
-└── interner.rs             String interning (Atom)
+├── scanner/
+│   ├── mod.rs              Token types, SyntaxKind enum (~600 LOC)
+│   ├── scanner_impl.rs     Core tokenization engine (~2,700 LOC)
+│   └── char_codes.rs       Character code constants
+├── interner.rs             String interning (Atom)
+└── tests/
+    ├── scanner_tests.rs        Token classification tests
+    └── scanner_impl_tests.rs   Tokenization tests
 ```
 
 ## Core Data Structures
 
 ### ScannerState
 
-**Location**: `scanner_impl.rs` - struct `ScannerState`
+**Location**: `scanner/scanner_impl.rs` - struct `ScannerState`
 
 Key fields:
 - `source: Arc<str>` - Shared source text (zero-copy)
@@ -34,7 +36,7 @@ Key fields:
 
 ### 📍 KEY: SyntaxKind Enum
 
-**Location**: `scanner.rs` - enum `SyntaxKind`
+**Location**: `scanner/mod.rs` - enum `SyntaxKind`
 
 167 token types organized by category:
 
@@ -48,7 +50,7 @@ Key fields:
 
 ### TokenFlags
 
-**Location**: `scanner_impl.rs` - enum `TokenFlags`
+**Location**: `scanner/scanner_impl.rs` - enum `TokenFlags`
 
 16+ flags packed into a single `u32`:
 - `None`, `PrecedingLineBreak` (ASI detection), `PrecedingJSDocComment`
@@ -63,7 +65,7 @@ Key fields:
 
 ### Main Scan Loop
 
-**Location**: `scanner_impl.rs` - method `scan() -> SyntaxKind`
+**Location**: `scanner/scanner_impl.rs` - method `scan() -> SyntaxKind`
 
 The scanner uses a massive match statement on character codes:
 
@@ -109,7 +111,7 @@ Source: "const x = 42;"
 
 ### Numeric Literals
 
-**Location**: `scanner_impl.rs` - method `scan_number()`
+**Location**: `scanner/scanner_impl.rs` - method `scan_number()`
 
 Supports all JavaScript numeric formats:
 
@@ -127,7 +129,7 @@ Numeric separator validation fully detects invalid cases (`1__0`, `_1`, `1_`) an
 
 ### String Literals
 
-**Location**: `scanner_impl.rs` - method `scan_string(quote) -> SyntaxKind`
+**Location**: `scanner/scanner_impl.rs` - method `scan_string(quote) -> SyntaxKind`
 
 - Handles escape sequences: `\n`, `\r`, `\t`, `\\`, `\'`, `\"`
 - Line continuations: backslash before newline
@@ -135,7 +137,7 @@ Numeric separator validation fully detects invalid cases (`1__0`, `_1`, `1_`) an
 
 ### Template Literals
 
-**Location**: `scanner_impl.rs` - method `scan_template_literal()`
+**Location**: `scanner/scanner_impl.rs` - method `scan_template_literal()`
 
 Complex state machine for template strings:
 
@@ -167,7 +169,7 @@ The parser calls rescan methods when context changes token interpretation:
 
 ### Example: Greater-Than Disambiguation
 
-**Location**: `scanner_impl.rs` - method `re_scan_greater_token()`
+**Location**: `scanner/scanner_impl.rs` - method `re_scan_greater_token()`
 
 ```typescript
 // Problem: Is ">>" one token or two?
@@ -180,7 +182,7 @@ Map<string, Map<string, number>>
 
 ## JSX Support
 
-**Location**: `scanner_impl.rs` - JSX-related methods
+**Location**: `scanner/scanner_impl.rs` - JSX-related methods
 
 JSX requires special tokenization rules:
 - `scan_jsx_identifier()` - Allows hyphens (e.g., `data-testid`)
@@ -194,7 +196,7 @@ JSX requires special tokenization rules:
 
 ### 1. Zero-Copy Architecture
 
-**Location**: `scanner_impl.rs` - `source: Arc<str>` field
+**Location**: `scanner/scanner_impl.rs` - `source: Arc<str>` field
 
 Benefits:
 - No duplication across scanner, parser, AST phases
@@ -213,7 +215,7 @@ Benefits:
 
 ### 3. Fast ASCII Path
 
-**Location**: `scanner_impl.rs` - method `char_code_unchecked()`
+**Location**: `scanner/scanner_impl.rs` - method `char_code_unchecked()`
 
 - Fast path for ASCII bytes (< 128): single byte read
 - UTF-8 fallback for multi-byte characters
@@ -221,13 +223,13 @@ Benefits:
 
 ### 4. Buffer Reuse
 
-**Location**: `scanner_impl.rs` - `scan()` method calls `token_value.clear()` to reuse allocation
+**Location**: `scanner/scanner_impl.rs` - `scan()` method calls `token_value.clear()` to reuse allocation
 
 ## State Snapshots for Lookahead
 
 The parser needs to look ahead without consuming tokens:
 
-**Location**: `scanner_impl.rs` - struct `ScannerSnapshot`
+**Location**: `scanner/scanner_impl.rs` - struct `ScannerSnapshot`
 
 Fields captured for snapshot:
 - `pos`, `full_start_pos`, `token_start` - Position tracking
@@ -258,7 +260,7 @@ Fields captured for snapshot:
 
 ### Zero-Copy Accessors
 
-**Location**: `scanner_impl.rs` - accessor methods:
+**Location**: `scanner/scanner_impl.rs` - accessor methods:
 - `get_token_value_ref()` - Uses interned atom when possible
 - `get_token_text_ref()` - Direct source slice
 - `source_slice()` - Direct reference slicing
@@ -267,14 +269,14 @@ Fields captured for snapshot:
 
 ### ⚠️ GAP: Unicode Support
 
-**Location**: `scanner_impl.rs` - `is_identifier_start()` and `is_identifier_part()`
+**Location**: `scanner/scanner_impl.rs` - `is_identifier_start()` and `is_identifier_part()`
 
 **Issue**: Simplified check treats all non-ASCII chars (> 127) as potential identifier chars. Should use proper Unicode category tables (`ID_Start`, `ID_Continue`).
 **Impact**: May incorrectly accept/reject some Unicode identifiers
 
 ### ✅ FIXED: Octal Escapes in Templates
 
-**Location**: `scanner_impl.rs` - `scan_template_escape_sequence()`
+**Location**: `scanner/scanner_impl.rs` - `scan_template_escape_sequence()`
 
 Octal escape sequences (`\0` followed by digits, `\1`-`\9`) in template literals now properly set the `ContainsInvalidEscape` flag. The scanner detects:
 - `\0` followed by a decimal digit (invalid)
@@ -282,7 +284,7 @@ Octal escape sequences (`\0` followed by digits, `\1`-`\9`) in template literals
 
 ### ✅ FIXED: Regex Flag Validation
 
-**Location**: `scanner_impl.rs` - `re_scan_slash_token()`
+**Location**: `scanner/scanner_impl.rs` - `re_scan_slash_token()`
 
 Regex flag validation now detects:
 - **Duplicate flags**: `/foo/gg` → `RegexFlagError::Duplicate`

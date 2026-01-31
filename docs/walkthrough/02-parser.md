@@ -6,14 +6,20 @@ The parser transforms tokens into an Abstract Syntax Tree (AST) stored in a cach
 
 ```
 src/parser/
-├── mod.rs           Module definition and re-exports
-├── base.rs          Shared types (NodeIndex, NodeList, TextRange)
-├── node.rs          Cache-optimized AST node representation (~5,300 LOC)
-├── state.rs         Main parser implementation (~10,800 LOC)
-├── flags.rs         Node and modifier flags
+├── mod.rs                Module definition and re-exports
+├── base.rs               Shared types (NodeIndex, NodeList, TextRange)
+├── node.rs               AST node struct definition (~1,100 LOC)
+├── node_arena.rs         NodeArena typed data pools (~2,200 LOC)
+├── node_access.rs        Node accessor methods (~2,100 LOC)
+├── state.rs              Core parser state and utilities (~1,100 LOC)
+├── state_declarations.rs Declaration parsing (~2,500 LOC)
+├── state_expressions.rs  Expression parsing (~2,800 LOC)
+├── state_statements.rs   Statement parsing (~2,800 LOC)
+├── state_types.rs        Type annotation parsing (~2,200 LOC)
+├── flags.rs              Node and modifier flags
 └── parse_rules/
-    ├── mod.rs       Module organization
-    └── utils.rs     Common parsing utilities
+    ├── mod.rs            Module organization
+    └── utils.rs          Common parsing utilities
 ```
 
 ## Core Design: Thin Node Architecture
@@ -130,7 +136,7 @@ parse_expression()
 
 ### 📍 KEY: Operator Precedence Table (`state.rs`)
 
-Precedence levels (higher = tighter binding) via `get_binary_operator_precedence()`:
+Precedence levels (higher = tighter binding) via `get_operator_precedence()`:
 1. Comma (`,`)
 2. Assignment (`=`, `+=`, `-=`, `*=`, `/=`, ...)
 3. Ternary (`? :`)
@@ -337,9 +343,10 @@ Uses `last_error_pos: Option<usize>` to track last error position.
 
 ### ✅ Expression Parsing Architecture (`parse_rules/mod.rs`)
 
-Expression parsing logic is implemented directly in `state.rs` using methods on `ParserState`
-for optimal performance and simpler control flow. The precedence climbing algorithm for binary
-expressions and all primary/unary expression parsing are integrated into the main parser state.
+Expression parsing logic is implemented using methods on `ParserState`, split across
+`state_expressions.rs`, `state_declarations.rs`, `state_statements.rs`, and `state_types.rs`
+for maintainability. The precedence climbing algorithm for binary expressions lives in
+`state_expressions.rs` while core utilities remain in `state.rs`.
 
 This design was intentional: a separate expressions module with a context-based API was evaluated
 but rejected in favor of the direct method approach for better performance and maintainability.

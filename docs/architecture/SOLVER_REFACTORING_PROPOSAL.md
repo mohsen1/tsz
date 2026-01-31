@@ -1,8 +1,8 @@
 # Solver Refactoring Proposal: Query-Based Judge with Sound Core
 
-**Status**: Proposal  
-**Authors**: Architecture Review  
-**Date**: January 2026  
+**Status**: Accepted — Substantially Implemented
+**Authors**: Architecture Review
+**Date**: January 2026
 **Version**: 2.1 (Reviewed)
 
 ---

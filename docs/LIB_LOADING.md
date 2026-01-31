@@ -377,16 +377,16 @@ tsz-server uses JSON-RPC over stdin/stdout:
 
 ### Test Results
 
+Output format example:
+
 ```
-Pass Rate: 37.8% (4,562/12,054)
+Pass Rate: XX.X% (N/M)
 
 Top Missing Errors:
-  TS2488: 1579x    (tsz should emit but doesn't)
-  TS2322: 860x
+  TSXXXX: Nx    (tsz should emit but doesn't)
 
 Top Extra Errors:
-  TS2322: 11814x   (tsz emits but tsc doesn't)
-  TS2307: 3933x
+  TSXXXX: Nx    (tsz emits but tsc doesn't)
 ```
 
 - **Missing**: TSC emits this error, tsz doesn't

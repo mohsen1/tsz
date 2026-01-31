@@ -173,7 +173,7 @@ This document tracks the CLI compatibility status between tsz/tsz-server and tsc
 ### tsz vs tsc
 - **Language**: tsz is Rust; tsc is TypeScript/JavaScript running on Node.js
 - **Performance**: tsz aims for native speed advantage
-- **Conformance**: Currently at 39.2% of TypeScript conformance tests
+- **Conformance**: See conformance test runner for current pass rate
 - **Emit**: tsz has a full emitter; some edge cases may differ from tsc
 
 ### tsz-server vs tsserver
