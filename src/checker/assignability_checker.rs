@@ -440,6 +440,25 @@ impl<'a> CheckerState<'a> {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
+        use crate::solver::visitor::contains_infer_types;
+
+        // Fast path: identity check
+        if source == target {
+            return true;
+        }
+
+        // Check relation cache for non-inference types
+        // Key format: (source, target, relation_kind) where 0 = subtype
+        const SUBTYPE_RELATION: u8 = 0;
+        let cache_key = (source, target, SUBTYPE_RELATION);
+        let is_cacheable = !contains_infer_types(self.ctx.types, source)
+            && !contains_infer_types(self.ctx.types, target);
+
+        if is_cacheable {
+            if let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key) {
+                return cached;
+            }
+        }
 
         // CRITICAL: Before checking subtypes, ensure all Ref types in source and target
         // are resolved and in the type environment. This fixes intersection type
@@ -478,7 +497,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        depth_exceeded.0
+        let result = depth_exceeded.0;
+
+        // Cache the result for non-inference types
+        if is_cacheable {
+            self.ctx
+                .relation_cache
+                .borrow_mut()
+                .insert(cache_key, result);
+        }
+
+        result
     }
 
     /// Check if source type is a subtype of target type with explicit environment.
