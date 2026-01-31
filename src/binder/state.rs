@@ -123,6 +123,13 @@ pub struct BinderState {
     /// A file can have multiple wildcard re-exports (e.g., `export * from 'a'; export * from 'b'`)
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
 
+    /// Cache for resolved exports to avoid repeated lookups through re-export chains.
+    /// Key: (module_specifier, export_name) -> resolved SymbolId (or None if not found)
+    /// This cache dramatically speeds up barrel file imports where the same export
+    /// is looked up multiple times across different files.
+    /// Uses RwLock for thread-safety in parallel compilation.
+    resolved_export_cache: std::sync::RwLock<FxHashMap<(String, String), Option<SymbolId>>>,
+
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
     /// Imports from these modules should resolve to `any` type
     pub shorthand_ambient_modules: FxHashSet<String>,
@@ -197,6 +204,7 @@ impl BinderState {
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
+            resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
             lib_symbols_merged: false,
         }
@@ -235,6 +243,7 @@ impl BinderState {
         self.module_exports.clear();
         self.reexports.clear();
         self.wildcard_reexports.clear();
+        self.resolved_export_cache.write().unwrap().clear();
         self.shorthand_ambient_modules.clear();
         self.lib_symbols_merged = false;
     }
@@ -304,6 +313,7 @@ impl BinderState {
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
+            resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
             lib_symbols_merged: false,
         }
@@ -393,6 +403,7 @@ impl BinderState {
             module_exports,
             reexports,
             wildcard_reexports,
+            resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules,
             lib_symbols_merged: false,
         }
@@ -553,13 +564,29 @@ impl BinderState {
     /// - Direct exports: `export { foo }` - looks up in module_exports
     /// - Named re-exports: `export { foo } from 'bar'` - follows the re-export mapping
     /// - Wildcard re-exports: `export * from 'bar'` - searches the re-exported module
+    ///
+    /// Results are cached to speed up repeated lookups (common with barrel files).
     pub(crate) fn resolve_import_with_reexports(
         &self,
         module_specifier: &str,
         export_name: &str,
     ) -> Option<SymbolId> {
+        // Check cache first for fast path
+        let cache_key = (module_specifier.to_string(), export_name.to_string());
+        if let Some(&cached) = self.resolved_export_cache.read().unwrap().get(&cache_key) {
+            return cached;
+        }
+
         let mut visited = rustc_hash::FxHashSet::default();
-        self.resolve_import_with_reexports_inner(module_specifier, export_name, &mut visited)
+        let result =
+            self.resolve_import_with_reexports_inner(module_specifier, export_name, &mut visited);
+
+        // Cache the result (including None for not found)
+        self.resolved_export_cache
+            .write()
+            .unwrap()
+            .insert(cache_key, result);
+        result
     }
 
     /// Inner implementation with cycle detection for module re-exports.
