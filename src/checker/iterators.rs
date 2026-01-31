@@ -97,47 +97,23 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
 
     /// Check if a type is iterable (has Symbol.iterator).
     pub fn is_iterable(&self, type_id: TypeId) -> bool {
-        // Built-in iterable types
-        if type_id == TypeId::STRING {
-            return true;
-        }
-
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            match type_key {
-                crate::solver::TypeKey::Array(_) => return true,
-                crate::solver::TypeKey::Tuple(_) => return true,
-                crate::solver::TypeKey::Object(shape_id) => {
-                    // Check for Symbol.iterator method
-                    return self.object_has_iterator_method(shape_id);
-                }
-                crate::solver::TypeKey::Union(type_list_id) => {
-                    // Union is iterable if all constituents are iterable
-                    let types = self.ctx.types.type_list(type_list_id);
-                    return types.iter().all(|&t| self.is_iterable(t));
-                }
-                _ => {}
-            }
-        }
-
-        false
+        use crate::solver::judge::IterableKind;
+        // Use Judge's classify_iterable for cleaner type classification
+        // This handles arrays, tuples, strings, objects with Symbol.iterator, and unions
+        !matches!(
+            self.judge_classify_iterable(type_id),
+            IterableKind::NotIterable
+        )
     }
 
     /// Check if a type is async iterable (has Symbol.asyncIterator).
     pub fn is_async_iterable(&self, type_id: TypeId) -> bool {
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            match type_key {
-                crate::solver::TypeKey::Object(shape_id) => {
-                    return self.object_has_async_iterator_method(shape_id);
-                }
-                crate::solver::TypeKey::Union(type_list_id) => {
-                    let types = self.ctx.types.type_list(type_list_id);
-                    return types.iter().all(|&t| self.is_async_iterable(t));
-                }
-                _ => {}
-            }
-        }
-
-        false
+        use crate::solver::judge::IterableKind;
+        // Use Judge's classify_iterable to check for async iterability
+        matches!(
+            self.judge_classify_iterable(type_id),
+            IterableKind::AsyncIterator { .. }
+        )
     }
 
     /// Get the element type of an iterable.
@@ -146,38 +122,23 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     /// For strings, this returns string (each character).
     /// For iterables, this extracts T from Iterator<T>.
     pub fn get_iterable_element_type(&self, type_id: TypeId) -> TypeId {
-        // Handle built-in types
-        if type_id == TypeId::STRING {
-            return TypeId::STRING;
-        }
+        use crate::solver::judge::IterableKind;
 
-        if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            match type_key {
-                crate::solver::TypeKey::Array(elem_type) => return elem_type,
-                crate::solver::TypeKey::Tuple(tuple_id) => {
-                    let elements = self.ctx.types.tuple_list(tuple_id);
-                    if elements.is_empty() {
-                        return TypeId::NEVER;
-                    }
-                    // Return union of all element types
-                    let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
-                    return self.ctx.types.union(types);
+        // Use Judge's classify_iterable to get element type information
+        match self.judge_classify_iterable(type_id) {
+            IterableKind::Array(elem) => elem,
+            IterableKind::Tuple(elems) => {
+                if elems.is_empty() {
+                    TypeId::NEVER
+                } else {
+                    self.ctx.types.union(elems)
                 }
-                crate::solver::TypeKey::Union(type_list_id) => {
-                    // Get element types from all constituents
-                    let types = self.ctx.types.type_list(type_list_id);
-                    let element_types: Vec<TypeId> = types
-                        .iter()
-                        .map(|&t| self.get_iterable_element_type(t))
-                        .collect();
-                    return self.ctx.types.union(element_types);
-                }
-                _ => {}
             }
+            IterableKind::String => TypeId::STRING,
+            IterableKind::SyncIterator { element_type, .. } => element_type,
+            IterableKind::AsyncIterator { element_type, .. } => element_type,
+            IterableKind::NotIterable => TypeId::ANY,
         }
-
-        // Default for unknown iterables
-        TypeId::ANY
     }
 
     /// Check a for-of loop and return the element type.
