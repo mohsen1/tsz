@@ -21,7 +21,7 @@ test suite against it.
 Currently targeting `TypeScript`@`6.0.0-dev.20260116`
 
 ```
-Progress: [█████████░░░░░░░░░░░] 46.6% (5,767 / 12,379 tests)
+Progress: [█████████░░░░░░░░░░░] 46.7% (5,785 / 12,379 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -34,7 +34,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 Currently targeting `TypeScript`@`6.0.0-dev.20260116`
 
 ```
-Progress: [█░░░░░░░░░░░░░░░░░░░] 5.0% (325 / 6,563 tests)
+Progress: [██░░░░░░░░░░░░░░░░░░] 11.1% (728 / 6,563 tests)
 ```
 <!-- FOURSLASH_END -->
 
