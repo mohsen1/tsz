@@ -214,7 +214,7 @@ jobs:
       - name: Run conformance tests (quick)
         run: |
           cd conformance
-          timeout 600 bash run-conformance.sh --max=500 --workers=4 || {
+          timeout 600 bash run.sh --max=500 --workers=4 || {
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::warning::Conformance tests timed out"
