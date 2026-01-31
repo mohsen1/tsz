@@ -1,7 +1,41 @@
-# Sound Mode Aspirations
+# Sound Mode
 
-**Status**: Draft / Future Feature
+**Status**: ✅ IMPLEMENTED (Basic)
 **Last Updated**: January 2026
+
+## Quick Start
+
+```bash
+# Enable sound mode via CLI
+tsz check --sound src/
+
+# Or in tsconfig.json
+{
+  "compilerOptions": {
+    "sound": true
+  }
+}
+
+# Or per-file pragma
+// @ts-sound
+```
+
+## Implemented Features
+
+| Feature | Status | Diagnostic |
+|---------|--------|------------|
+| Sticky freshness | ✅ | TS9001 |
+| Mutable array covariance | ✅ | TS9002 |
+| Method bivariance | ✅ | TS9003 |
+| `any` escape detection | ✅ | TS9004 |
+| Enum-number assignment | ✅ | TS9005 |
+| Missing index signature | ✅ | TS9006 |
+| Unsafe type assertion | ✅ | TS9007 |
+| Unchecked indexed access | ✅ | TS9008 |
+
+See `src/solver/sound.rs` for implementation details.
+
+---
 
 ---
 
