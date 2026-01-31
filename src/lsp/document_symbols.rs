@@ -71,7 +71,7 @@ impl SymbolKind {
             SymbolKind::Object => "var",
             SymbolKind::Key => "property",
             SymbolKind::Null => "var",
-            SymbolKind::Struct => "class",
+            SymbolKind::Struct => "type",
             SymbolKind::Event => "function",
             SymbolKind::Operator => "function",
             SymbolKind::Package => "module",
@@ -354,7 +354,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     vec![DocumentSymbol {
                         name,
                         detail: None,
-                        kind: SymbolKind::TypeParameter,
+                        // Use Struct as a marker for type aliases.
+                        // TypeParameter is reserved for generic type params like <T>.
+                        kind: SymbolKind::Struct,
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
