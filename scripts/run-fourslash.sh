@@ -86,6 +86,8 @@ OPTIONS:
     Parallelism:
     --workers=N         Number of parallel workers (default: CPU count)
     --sequential        Run tests sequentially (single process, no workers)
+    --timeout=MS        Per-test timeout in ms (default: 15000)
+    --memory-limit=MB   Per-worker memory limit in MB (default: 512)
 
     Build:
     --skip-build        Skip all build steps (use existing binaries)

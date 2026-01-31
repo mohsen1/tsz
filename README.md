@@ -34,7 +34,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 Currently targeting `TypeScript`@`6.0.0-dev.20260116`
 
 ```
-Progress: [█░░░░░░░░░░░░░░░░░░░] 4.1% (267 / 6,563 tests)
+Progress: [█░░░░░░░░░░░░░░░░░░░] 4.2% (278 / 6,563 tests)
 ```
 <!-- FOURSLASH_END -->
 

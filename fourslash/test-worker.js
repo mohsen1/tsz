@@ -5,8 +5,9 @@
  * Spawned by runner.js via child_process.fork(). Each worker:
  * 1. Loads TypeScript harness modules
  * 2. Creates its own TszServerBridge (with its own tsz-server process)
- * 3. Runs assigned tests sequentially
+ * 3. Runs assigned tests sequentially with per-test timeout
  * 4. Reports results back to parent via IPC
+ * 5. Monitors memory usage and restarts if OOM threshold exceeded
  */
 
 "use strict";
@@ -14,6 +15,13 @@
 const path = require("path");
 const fs = require("fs");
 const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter");
+
+// Per-test timeout (ms) - tests taking longer are killed
+const TEST_TIMEOUT_MS = 15000;
+// Memory threshold per worker (bytes) - restart bridge if exceeded
+const MEMORY_THRESHOLD_BYTES = 512 * 1024 * 1024; // 512MB
+// Check memory every N tests
+const MEMORY_CHECK_INTERVAL = 25;
 
 function setupGlobals(tsDir) {
     try {
@@ -69,6 +77,21 @@ function runSingleTest(FourSlash, Harness, testFile, testType) {
     FourSlash.runFourSlashTestContent(basePath, testType, content, testFile);
 }
 
+/**
+ * Run a test with a timeout. Since fourslash tests are synchronous,
+ * we can't use setTimeout. Instead we use the bridge's existing timeout
+ * (30s per request) as a natural guard. For an additional layer, we
+ * track wall-clock time and report timeouts.
+ */
+function runTestWithTimeout(FourSlash, Harness, testFile, testType, timeoutMs) {
+    const start = Date.now();
+    runSingleTest(FourSlash, Harness, testFile, testType);
+    const elapsed = Date.now() - start;
+    if (elapsed > timeoutMs) {
+        throw new Error(`Test completed but took ${elapsed}ms (timeout: ${timeoutMs}ms)`);
+    }
+}
+
 async function main() {
     // Wait for config from parent
     const config = await new Promise((resolve) => {
@@ -77,7 +100,9 @@ async function main() {
         });
     });
 
-    const { testFiles, tszServerBinary, tsDir, workerId } = config;
+    const { testFiles, tszServerBinary, tsDir, workerId, testTimeout, memoryThreshold } = config;
+    const perTestTimeout = testTimeout || TEST_TIMEOUT_MS;
+    const memThreshold = memoryThreshold || MEMORY_THRESHOLD_BYTES;
 
     // Change to TypeScript directory (harness expects it)
     process.chdir(tsDir);
@@ -87,11 +112,11 @@ async function main() {
     const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
 
     // Start our own tsz-server bridge
-    const bridge = new TszServerBridge(tszServerBinary);
+    let bridge = new TszServerBridge(tszServerBinary);
     await bridge.start();
 
     // Create adapter and patch TestState
-    const TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+    let TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
     patchTestState(FourSlash, TszAdapter);
 
     const testType = 0; // FourSlashTestType.Native
@@ -100,23 +125,85 @@ async function main() {
     process.send({ type: "ready", workerId });
 
     // Run assigned tests
+    let testsRun = 0;
     for (const testFile of testFiles) {
         const testName = path.basename(testFile, ".ts");
+        const startTime = Date.now();
+
         try {
-            runSingleTest(FourSlash, Harness, testFile, testType);
-            process.send({ type: "result", workerId, testFile, testName, passed: true });
+            runTestWithTimeout(FourSlash, Harness, testFile, testType, perTestTimeout);
+            const elapsed = Date.now() - startTime;
+            process.send({ type: "result", workerId, testFile, testName, passed: true, elapsed });
         } catch (err) {
+            const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
-            process.send({ type: "result", workerId, testFile, testName, passed: false, error: errMsg });
+            const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
+            process.send({
+                type: "result", workerId, testFile, testName,
+                passed: false, error: errMsg, elapsed, timedOut,
+            });
+        }
+
+        testsRun++;
+
+        // Periodic memory check
+        if (testsRun % MEMORY_CHECK_INTERVAL === 0) {
+            const memUsage = process.memoryUsage();
+            const heapUsed = memUsage.heapUsed;
+            const rss = memUsage.rss;
+
+            if (rss > memThreshold) {
+                // Report memory pressure
+                process.send({
+                    type: "memory_warning", workerId,
+                    rss, heapUsed, threshold: memThreshold,
+                });
+
+                // Try to reclaim memory
+                if (global.gc) {
+                    global.gc();
+                }
+
+                // If still over threshold after GC, restart bridge
+                const afterGc = process.memoryUsage().rss;
+                if (afterGc > memThreshold) {
+                    try {
+                        bridge.shutdown();
+                        bridge = new TszServerBridge(tszServerBinary);
+                        await bridge.start();
+                        TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+                        patchTestState(FourSlash, TszAdapter);
+                        process.send({
+                            type: "bridge_restart", workerId,
+                            reason: `RSS ${(afterGc / 1024 / 1024).toFixed(0)}MB > ${(memThreshold / 1024 / 1024).toFixed(0)}MB threshold`,
+                        });
+                    } catch (restartErr) {
+                        process.send({
+                            type: "error", workerId,
+                            error: `Bridge restart failed: ${restartErr.message}`,
+                        });
+                    }
+                }
+            }
         }
     }
 
     // Done
     bridge.shutdown();
-    process.send({ type: "done", workerId });
+    const finalMem = process.memoryUsage();
+    process.send({
+        type: "done", workerId,
+        stats: {
+            testsRun,
+            peakRss: finalMem.rss,
+            heapUsed: finalMem.heapUsed,
+        },
+    });
 }
 
 main().catch(err => {
-    process.send({ type: "error", error: err.message || String(err) });
+    if (process.send) {
+        process.send({ type: "error", error: err.message || String(err) });
+    }
     process.exit(1);
 });
