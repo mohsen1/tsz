@@ -151,7 +151,7 @@ Remaining 65 TypeKey matches are:
 - [x] No conformance regressions
 - [x] Sound mode functional via `--sound` flag
 - [x] Judge queries working for type classification
-- [x] Conformance: 47.1% (5,833/12,379 tests passing) - matches baseline
+- [x] Conformance: 47.3% (5,851/12,379 tests passing) - improved from baseline
 
 ---
 
@@ -165,7 +165,13 @@ Remaining 65 TypeKey matches are:
 
 ## Conformance Analysis
 
-Current pass rate: **47.1%** (no regression from refactoring)
+Current pass rate: **47.3%** (improved from 47.1% baseline)
+
+### Fixes Applied
+| Issue | Tests Fixed | Description |
+|-------|-------------|-------------|
+| TS1127 | +15 | Invalid character errors for backslashes |
+| TS2565 | +3 | False positives on assignment targets |
 
 ### Top Extra Errors (TSZ emits but shouldn't)
 | Code | Count | Description |
