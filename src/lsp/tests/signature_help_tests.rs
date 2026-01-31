@@ -772,7 +772,7 @@ fn setup_provider(
 #[test]
 fn test_signature_label_includes_function_name() {
     let source = "function greet(name: string): void {}\ngreet(\"hello\");";
-    let (parser, binder, _interner, _line_map, root) = setup_provider(source);
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
         parser.get_arena(),
         &binder,
@@ -807,7 +807,7 @@ fn test_signature_label_includes_function_name() {
 #[test]
 fn test_signature_prefix_and_suffix() {
     let source = "function add(x: number, y: number): number { return x + y; }\nadd(1, 2);";
-    let (parser, binder, _interner, _line_map, _root) = setup_provider(source);
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
         parser.get_arena(),
         &binder,
