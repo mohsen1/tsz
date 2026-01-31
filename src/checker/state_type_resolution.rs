@@ -516,7 +516,9 @@ impl<'a> CheckerState<'a> {
         if self.ctx.class_instance_resolution_set.contains(&sym_id) {
             use crate::solver::{SymbolRef, TypeKey};
             // Already resolving this class - return a fallback to break the cycle
-            // NOTE: Cannot migrate to Lazy(DefId) yet - cycle detection needs TypeResolver
+            // NOTE: Cannot migrate to Lazy(DefId) yet - this fallback is used for classes
+            // that are mid-resolution, and the Lazy type would return ERROR because the
+            // class hasn't been registered in the TypeEnvironment yet.
             let fallback = self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
             return Some((fallback, Vec::new()));
         }
