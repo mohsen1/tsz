@@ -1108,7 +1108,7 @@ impl ScannerState {
                 return;
             }
             if next == CharacterCodes::LOWER_O || next == CharacterCodes::UPPER_O {
-                // Octal number
+                // Octal number (0o777)
                 self.pos += 2;
                 self.token_flags |= TokenFlags::OctalSpecifier as u32;
                 self.scan_digits_with_separators(is_octal_digit);
@@ -1128,6 +1128,13 @@ impl ScannerState {
                 }
                 self.token = SyntaxKind::NumericLiteral;
                 return;
+            }
+
+            // Legacy octal: 0777 (no prefix, starts with 0 followed by octal digits)
+            if is_octal_digit(next) {
+                self.token_flags |= TokenFlags::Octal as u32;
+                // Fall through to decimal scanning - the value "0777" will be scanned normally
+                // The Octal flag signals to the checker that this is a legacy octal literal
             }
         }
 
