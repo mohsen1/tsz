@@ -1303,9 +1303,21 @@ impl Server {
                 })
                 .collect();
 
+            // Return documentation as a structured display parts array when non-empty,
+            // or empty string when there's no documentation. The SessionClient handles
+            // string documentation by wrapping in [{kind:"text", text:doc}].
+            // When doc is "", that creates [{kind:"text",text:""}] (length 1) which
+            // causes an unwanted blank line in baseline output.
+            // Return as empty array [] to avoid the blank line.
+            let doc_value: serde_json::Value = if documentation.is_empty() {
+                serde_json::json!([])
+            } else {
+                serde_json::json!([{"kind": "text", "text": documentation}])
+            };
+
             Some(serde_json::json!({
                 "displayString": display_string,
-                "documentation": documentation,
+                "documentation": doc_value,
                 "kind": kind,
                 "kindModifiers": kind_modifiers,
                 "tags": tags,
