@@ -12,3 +12,6 @@ stuff like this is not good. we should not care about file name
 file name extension checks should be unified. there are so many crazy extensions like mjs etc
 
 ---
+
+A future stateless `SubtypeChecker` rewrite? 
+To benefit from Salsa's cycle detection (automatic coinductive cycle recovery)
