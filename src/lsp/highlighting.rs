@@ -111,7 +111,7 @@ impl<'a> DocumentHighlightProvider<'a> {
             }
         }
 
-        // Use FindReferences with detailed info for AST-based write detection
+        // Use FindReferences to get all occurrences
         let finder = FindReferences::new(
             self.arena,
             self.binder,
@@ -120,32 +120,13 @@ impl<'a> DocumentHighlightProvider<'a> {
             self.source_text,
         );
 
-        // Try the detailed path first for proper write access detection
-        if let Some(detailed_refs) = finder.find_references_detailed(root, position) {
-            let highlights: Vec<DocumentHighlight> = detailed_refs
-                .into_iter()
-                .map(|ref_info| {
-                    let kind = if ref_info.is_write_access {
-                        Some(DocumentHighlightKind::Write)
-                    } else {
-                        Some(DocumentHighlightKind::Read)
-                    };
-                    DocumentHighlight::new(ref_info.location.range, kind)
-                })
-                .collect();
-
-            if !highlights.is_empty() {
-                return Some(highlights);
-            }
-        }
-
-        // Fallback: use simple find_references with text-based heuristic detection
         let locations = finder.find_references(root, position)?;
 
+        // Convert locations to highlights with AST-based write detection
         let highlights: Vec<DocumentHighlight> = locations
             .into_iter()
             .map(|loc| {
-                let kind = self.detect_access_kind(loc.range);
+                let kind = self.detect_access_kind_ast(loc.range, &finder);
                 DocumentHighlight::new(loc.range, kind)
             })
             .collect();
@@ -768,6 +749,29 @@ impl<'a> DocumentHighlightProvider<'a> {
         }
 
         None
+    }
+
+    /// Detect read/write access using AST-based analysis, falling back to text heuristics.
+    ///
+    /// This method first tries to find the AST node at the reference location and
+    /// uses the `is_write_access_node` method from FindReferences for accurate
+    /// detection. If the AST lookup fails, it falls back to text-based heuristics.
+    fn detect_access_kind_ast(&self, range: Range, finder: &FindReferences) -> Option<DocumentHighlightKind> {
+        // Try AST-based detection first
+        if let Some(start_offset) = self.line_map.position_to_offset(range.start, self.source_text) {
+            let node_idx = find_node_at_offset(self.arena, start_offset);
+            if node_idx.is_some() {
+                let is_write = finder.is_write_access_node(node_idx);
+                return if is_write {
+                    Some(DocumentHighlightKind::Write)
+                } else {
+                    Some(DocumentHighlightKind::Read)
+                };
+            }
+        }
+
+        // Fallback to text-based heuristic
+        self.detect_access_kind(range)
     }
 
     /// Detect whether a reference is a read or write (fallback text-based heuristic).
@@ -1686,4 +1690,54 @@ mod highlighting_tests {
         // Should highlight: switch, case, default = 3
         assert!(highlights.len() >= 3, "Should highlight switch + case + default, got {}", highlights.len());
     }
+
+    #[test]
+    fn test_debug_if_statement_positions() {
+        let source = "if (true) {\n  console.log(\'yes\');\n} else {\n  console.log(\'no\');\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let _root = parser.parse_source_file();
+        let arena = parser.get_arena();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, _root);
+
+        let line_map = LineMap::build(source);
+        let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+        // Print all IF_STATEMENT nodes and their positions
+        for (i, node) in arena.nodes.iter().enumerate() {
+            if node.kind == syntax_kind_ext::IF_STATEMENT {
+                eprintln!("IF_STATEMENT at index {}: pos={}, end={}", i, node.pos, node.end);
+                let kw_start = provider.skip_whitespace_forward(node.pos as usize);
+                eprintln!("  skip_whitespace_forward(pos={})={}", node.pos, kw_start);
+                eprintln!("  text at kw_start: '{}'", &source[kw_start..kw_start.min(source.len()) + 10.min(source.len() - kw_start)]);
+                if let Some(if_data) = arena.get_if_statement(node) {
+                    if let Some(then_node) = arena.get(if_data.then_statement) {
+                        eprintln!("  then: pos={}, end={}", then_node.pos, then_node.end);
+                    }
+                    if !if_data.else_statement.is_none() {
+                        if let Some(else_node) = arena.get(if_data.else_statement) {
+                            eprintln!("  else_statement: pos={}, end={}, kind={}", else_node.pos, else_node.end, else_node.kind);
+                            if let Some(then_node) = arena.get(if_data.then_statement) {
+                                let search_start = then_node.end as usize;
+                                let search_end = else_node.end as usize;
+                                let search_text = &source[search_start..search_end.min(source.len())];
+                                eprintln!("  search range: {}..{}, text: '{}'", search_start, search_end, search_text);
+                                // Try to find "else" in this range
+                                if let Some(else_pos) = provider.find_keyword_in_range(search_start, search_end, "else") {
+                                    eprintln!("  FOUND 'else' at offset {}", else_pos);
+                                } else {
+                                    eprintln!("  DID NOT find 'else' in range");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also test find_owning_if_statement
+        eprintln!("\nfind_owning_if_statement(0)={:?}", provider.find_owning_if_statement(0));
+    }
+
 }

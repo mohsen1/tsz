@@ -280,19 +280,35 @@ impl<'a> SignatureHelpProvider<'a> {
     /// For `foo(...)` returns "foo", for `obj.method(...)` returns "method",
     /// for `new Foo(...)` returns "Foo".
     fn resolve_callee_name(&self, expr_idx: NodeIndex, _call_kind: CallKind) -> String {
+        // Try to get identifier text directly (handles simple identifiers)
+        if let Some(name) = self.arena.get_identifier_text(expr_idx) {
+            return name.to_string();
+        }
         if let Some(node) = self.arena.get(expr_idx) {
-            // Direct identifier: foo(...)
-            if node.kind == SyntaxKind::Identifier as u16 {
-                if let Some(name) = self.arena.get_identifier_text(expr_idx) {
+            // Property access: obj.method(...)
+            if let Some(access) = self.arena.get_access_expr(node) {
+                if let Some(name) = self.arena.get_identifier_text(access.name_or_argument) {
                     return name.to_string();
                 }
             }
-            // Property access: obj.method(...)
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                if let Some(access) = self.arena.get_access_expr(node) {
-                    if let Some(name) = self.arena.get_identifier_text(access.name_or_argument) {
+        }
+        // Fallback: try to extract name from source text
+        if let Some(node) = self.arena.get(expr_idx) {
+            let start = node.pos as usize;
+            let end = node.end as usize;
+            if start < end && end <= self.source_text.len() {
+                let text = &self.source_text[start..end];
+                // For dotted access, take the last segment
+                if let Some(dot_pos) = text.rfind('.') {
+                    let name = text[dot_pos + 1..].trim();
+                    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
                         return name.to_string();
                     }
+                }
+                // For simple identifier, use the whole text
+                let trimmed = text.trim();
+                if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+                    return trimmed.to_string();
                 }
             }
         }

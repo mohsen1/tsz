@@ -2849,10 +2849,12 @@ impl CodeFixRegistry {
             // === fixAwaitInSyncFunction ===
             // 'await' expressions are only allowed within async functions...
             1308 |
-            // 'await' expressions are only allowed at top level of a module...
-            1375 |
+            // Identifier expected. 'await' is a reserved word...
+            1359 |
             // 'for await' loops are only allowed within async functions...
-            1103 => {
+            1432 |
+            // Cannot find name '{0}'. Did you mean to write this in an async function?
+            2773 => {
                 vec![("fixAwaitInSyncFunction", "fixAwaitInSyncFunction", "Add async modifier to containing function", "Add all missing async modifiers")]
             }
 
@@ -2873,7 +2875,12 @@ impl CodeFixRegistry {
             // === fixClassDoesntImplementInheritedAbstractMember ===
             // Non-abstract class '{0}' does not implement inherited abstract member...
             2515 |
-            2654 => {
+            // Non-abstract class is missing implementations for the following members
+            2654 |
+            // Non-abstract class expression does not implement inherited abstract member
+            18052 |
+            // Non-abstract class expression is missing implementations
+            18053 => {
                 vec![("fixClassDoesntImplementInheritedAbstractMember", "fixClassDoesntImplementInheritedAbstractMember", "Implement inherited abstract class", "Implement all inherited abstract classes")]
             }
 
@@ -2973,10 +2980,10 @@ impl CodeFixRegistry {
             2304, 2503, 2693, 2583,             // import
             6133, 6196, 6138, 6192, 6198, 6199, 6205, // fixUnusedIdentifier
             2339, 2741,                         // fixAddMissingMember
-            1308, 1375, 1103,                   // fixAwaitInSyncFunction
+            1308, 1359, 1432, 2773,              // fixAwaitInSyncFunction
             4114, 4113,                         // fixOverrideModifier
             2420,                               // fixClassIncorrectlyImplementsInterface
-            2515, 2654,                         // fixClassDoesntImplementInheritedAbstractMember
+            2515, 2654, 18052, 18053,            // fixClassDoesntImplementInheritedAbstractMember
             2705, 2322,                         // addMissingAsync
             2697,                               // fixReturnTypeInAsyncFunction
             2774,                               // fixMissingCallParentheses
