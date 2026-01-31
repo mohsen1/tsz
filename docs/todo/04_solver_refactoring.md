@@ -151,6 +151,7 @@ Remaining 65 TypeKey matches are:
 - [x] No conformance regressions
 - [x] Sound mode functional via `--sound` flag
 - [x] Judge queries working for type classification
+- [x] Conformance: 47.1% (5,833/12,379 tests passing) - matches baseline
 
 ---
 
@@ -159,3 +160,32 @@ Remaining 65 TypeKey matches are:
 1. **Phase 2**: Complete Salsa prerequisites when Salsa integration begins
 2. **Phase 4.4**: Complete namespace/enum migration when binder integration is addressed
 3. **Sound mode docs**: Add usage examples and documentation
+
+---
+
+## Conformance Analysis
+
+Current pass rate: **47.1%** (no regression from refactoring)
+
+### Top Extra Errors (TSZ emits but shouldn't)
+| Code | Count | Description |
+|------|-------|-------------|
+| TS1005 | 1409 | ';' expected |
+| TS2339 | 1247 | Property does not exist |
+| TS2322 | 1081 | Type not assignable |
+| TS2345 | 878 | Argument not assignable |
+| TS2304 | 833 | Cannot find name |
+
+### Top Missing Errors (TSZ should emit but doesn't)
+| Code | Count | Description |
+|------|-------|-------------|
+| TS2304 | 1419 | Cannot find name |
+| TS2318 | 1405 | Cannot find global type |
+| TS2322 | 719 | Type not assignable |
+| TS18050 | 679 | Element implicitly has 'any' |
+| TS2339 | 610 | Property does not exist |
+
+### Key Areas for Improvement
+1. **Parser** - TS1005, TS1127, TS1128 errors suggest parser/scanner issues
+2. **Global types** - TS2318 missing errors indicate lib type resolution issues
+3. **Type checking** - TS2322, TS2339, TS2345 both extra and missing
