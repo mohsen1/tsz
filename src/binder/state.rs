@@ -1413,11 +1413,87 @@ impl BinderState {
                         }
                     }
                     k if k == syntax_kind_ext::WHILE_STATEMENT
-                        || k == syntax_kind_ext::DO_STATEMENT
-                        || k == syntax_kind_ext::FOR_STATEMENT =>
+                        || k == syntax_kind_ext::DO_STATEMENT =>
                     {
                         if let Some(loop_data) = arena.get_loop(node) {
                             self.collect_hoisted_from_node(arena, loop_data.statement);
+                        }
+                    }
+                    k if k == syntax_kind_ext::FOR_STATEMENT => {
+                        if let Some(loop_data) = arena.get_loop(node) {
+                            // Hoist var declarations from initializer (e.g., `for (var i = 0; ...)`)
+                            let init = loop_data.initializer;
+                            if !init.is_none() {
+                                if let Some(init_node) = arena.get(init) {
+                                    if init_node.kind
+                                        == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                                    {
+                                        self.collect_hoisted_var_decl(arena, init);
+                                    }
+                                }
+                            }
+                            // Hoist from the loop body
+                            self.collect_hoisted_from_node(arena, loop_data.statement);
+                        }
+                    }
+                    k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                        || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+                    {
+                        if let Some(for_data) = arena.get_for_in_of(node) {
+                            // Hoist var declarations from the initializer (e.g., `for (var x in obj)`)
+                            let init = for_data.initializer;
+                            if let Some(init_node) = arena.get(init) {
+                                if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                                    self.collect_hoisted_var_decl(arena, init);
+                                }
+                            }
+                            // Hoist from the loop body
+                            self.collect_hoisted_from_node(arena, for_data.statement);
+                        }
+                    }
+                    k if k == syntax_kind_ext::TRY_STATEMENT => {
+                        if let Some(try_data) = arena.get_try(node) {
+                            // Hoist from try block
+                            self.collect_hoisted_from_node(arena, try_data.try_block);
+                            // Hoist from catch clause's block
+                            if !try_data.catch_clause.is_none() {
+                                if let Some(catch_node) = arena.get(try_data.catch_clause) {
+                                    if let Some(catch_data) = arena.get_catch_clause(catch_node) {
+                                        self.collect_hoisted_from_node(arena, catch_data.block);
+                                    }
+                                }
+                            }
+                            // Hoist from finally block
+                            if !try_data.finally_block.is_none() {
+                                self.collect_hoisted_from_node(arena, try_data.finally_block);
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                        if let Some(switch_data) = arena.get_switch(node) {
+                            // The case_block is treated as a block - get its children (case/default clauses)
+                            if let Some(case_block_node) = arena.get(switch_data.case_block) {
+                                if let Some(block_data) = arena.get_block(case_block_node) {
+                                    // Each child is a case/default clause with statements
+                                    for &clause_idx in &block_data.statements.nodes {
+                                        if let Some(clause_node) = arena.get(clause_idx) {
+                                            if let Some(clause_data) =
+                                                arena.get_case_clause(clause_node)
+                                            {
+                                                self.collect_hoisted_declarations(
+                                                    arena,
+                                                    &clause_data.statements,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                        if let Some(label_data) = arena.get_labeled_statement(node) {
+                            self.collect_hoisted_from_node(arena, label_data.statement);
                         }
                     }
                     _ => {}
@@ -1455,11 +1531,18 @@ impl BinderState {
     }
 
     pub(crate) fn collect_hoisted_from_node(&mut self, arena: &NodeArena, idx: NodeIndex) {
-        if let Some(node) = arena.get(idx)
-            && node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = arena.get_block(node)
-        {
-            self.collect_hoisted_declarations(arena, &block.statements);
+        if let Some(node) = arena.get(idx) {
+            if node.kind == syntax_kind_ext::BLOCK {
+                if let Some(block) = arena.get_block(node) {
+                    self.collect_hoisted_declarations(arena, &block.statements);
+                }
+            } else {
+                // Handle single statement (not wrapped in a block)
+                // e.g., `if (x) var y = 1;` or `while (x) var i = 0;`
+                let mut stmts = crate::parser::NodeList::new();
+                stmts.nodes.push(idx);
+                self.collect_hoisted_declarations(arena, &stmts);
+            }
         }
     }
 
