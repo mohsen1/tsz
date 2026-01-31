@@ -86,23 +86,13 @@ function patchTestState(FourSlash, TszAdapter) {
         // which is not available through the server protocol.
     };
 
-    // getProgram: return undefined instead of calling Debug.fail when the
-    // language service cannot provide a Program object.
-    TestState.prototype.getProgram = function() {
-        if (!this._program) {
-            this._program = this.languageService.getProgram() || "missing";
-        }
-        if (this._program === "missing") {
-            return undefined;
-        }
-        return this._program;
-    };
-
-    // getChecker: depends on getProgram() which may return undefined.
+    // getChecker: depends on getProgram() which may return a stub.
     TestState.prototype.getChecker = function() {
         const program = this.getProgram();
         if (!program) return undefined;
-        return this._checker || (this._checker = program.getTypeChecker());
+        const checker = program.getTypeChecker();
+        if (!checker) return undefined;
+        return this._checker || (this._checker = checker);
     };
 
     // getSourceFile: depends on getProgram() which may return undefined.
@@ -120,6 +110,34 @@ function patchTestState(FourSlash, TszAdapter) {
         if (!sf) return undefined;
         return originalGetNode.call(this);
     };
+
+    // getProgram: return a minimal stub that provides getCompilerOptions().
+    // The fourslash harness calls getProgram().getCompilerOptions() without null
+    // checks when testType !== Server (our case, since we use testType=Native).
+    // The stub provides safe defaults so these calls don't throw.
+    const _origGetProgram = TestState.prototype.getProgram;
+    TestState.prototype.getProgram = function() {
+        if (!this._program) {
+            this._program = this.languageService.getProgram() || "missing";
+        }
+        if (this._program === "missing") {
+            // Return a minimal stub with getCompilerOptions so callers
+            // like verifyNoErrors don't crash.
+            if (!this._programStub) {
+                const compilationOptions = this.compilationOptions || {};
+                this._programStub = {
+                    getCompilerOptions: function() { return compilationOptions; },
+                    getTypeChecker: function() { return undefined; },
+                    getSourceFile: function() { return undefined; },
+                    getSourceFiles: function() { return []; },
+                    getCurrentDirectory: function() { return "/"; },
+                    getConfigFileParsingDiagnostics: function() { return []; },
+                };
+            }
+            return this._programStub;
+        }
+        return this._program;
+    };
 }
 
 /**
@@ -128,6 +146,27 @@ function patchTestState(FourSlash, TszAdapter) {
  */
 function patchSessionClient(SessionClient) {
     const proto = SessionClient.prototype;
+
+    // The constructor sets getCombinedCodeFix, applyCodeActionCommand, and mapCode
+    // as instance properties (= notImplemented), which shadows prototype methods.
+    // Wrap the constructor to delete those instance properties so our prototype
+    // patches take effect.
+    // We can't easily wrap the constructor, so instead use a post-init hook.
+    // Override writeMessage to delete instance properties on first call.
+    const instancePropsToDelete = ['getCombinedCodeFix', 'applyCodeActionCommand', 'mapCode'];
+    const _origWriteMessage = proto.writeMessage;
+    proto.writeMessage = function(msg) {
+        // Delete shadowing instance properties on first use
+        if (this._instancePropsDeleted === undefined) {
+            this._instancePropsDeleted = true;
+            for (const prop of instancePropsToDelete) {
+                if (this.hasOwnProperty(prop)) {
+                    delete this[prop];
+                }
+            }
+        }
+        return _origWriteMessage.call(this, msg);
+    };
 
     proto.getBreakpointStatementAtPosition = function(fileName, position) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
@@ -148,6 +187,18 @@ function patchSessionClient(SessionClient) {
         const request = this.processRequest("jsxClosingTag", args);
         const response = this.processResponse(request, /*expectEmptyBody*/ true);
         return response.body || undefined;
+    };
+
+    // Override getCompletionsAtPosition to return undefined when no entries
+    // The fourslash harness distinguishes "no completions" (undefined) from
+    // "completions with 0 entries" (object with empty entries array)
+    const _origGetCompletions = proto.getCompletionsAtPosition;
+    proto.getCompletionsAtPosition = function(fileName, position, preferences) {
+        const result = _origGetCompletions.call(this, fileName, position, preferences);
+        if (result && result.entries && result.entries.length === 0) {
+            return undefined;
+        }
+        return result;
     };
 
     proto.isValidBraceCompletionAtPosition = function(fileName, position, openingBrace) {
@@ -197,8 +248,10 @@ function patchSessionClient(SessionClient) {
             ...(options || {}),
         };
         const request = this.processRequest("docCommentTemplate", args);
-        const response = this.processResponse(request, /*expectEmptyBody*/ true);
-        return response.body || undefined;
+        const response = this.processResponse(request);
+        // Server returns {newText: "", caretOffset: 0} for "no template"
+        if (!response.body || !response.body.newText) return undefined;
+        return response.body;
     };
 
     proto.getIndentationAtPosition = function(fileName, position, options) {
@@ -206,7 +259,7 @@ function patchSessionClient(SessionClient) {
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset, options };
         const request = this.processRequest("indentation", args);
         const response = this.processResponse(request);
-        return response.body;
+        return response.body ? response.body.indentation : 0;
     };
 
     proto.toggleLineComment = function(fileName, textRange) {
@@ -271,11 +324,25 @@ function patchSessionClient(SessionClient) {
 
     proto.getSmartSelectionRange = function(fileName, position) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
-        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
-        // Use selectionRange which is already handled by tsz-server
+        // selectionRange command expects locations array, not line/offset directly
+        const args = { file: fileName, locations: [{ line: lineOffset.line, offset: lineOffset.offset }] };
         const request = this.processRequest("selectionRange", args);
         const response = this.processResponse(request);
-        return response.body || undefined;
+        if (!response.body || !Array.isArray(response.body) || response.body.length === 0) {
+            return undefined;
+        }
+        // Convert server format {textSpan: {start, end}, parent: ...} to
+        // LS API format {textSpan: {start, length}, parent: ...}
+        const convertRange = (range) => {
+            if (!range || !range.textSpan) return undefined;
+            const start = this.lineOffsetToPosition(fileName, range.textSpan.start);
+            const end = this.lineOffsetToPosition(fileName, range.textSpan.end);
+            return {
+                textSpan: { start, length: end - start },
+                parent: range.parent ? convertRange(range.parent) : undefined,
+            };
+        };
+        return convertRange(response.body[0]);
     };
 
     proto.getSyntacticClassifications = function(fileName, span) {
@@ -294,8 +361,67 @@ function patchSessionClient(SessionClient) {
         return [];
     };
 
+    // Override getSignatureHelpItems to return undefined when items are empty.
+    // The server always returns a body (processResponse requires it), but when
+    // the items array is empty, the harness expects undefined (no signature help).
+    const _origGetSignatureHelpItems = proto.getSignatureHelpItems;
+    proto.getSignatureHelpItems = function(fileName, position, options) {
+        const result = _origGetSignatureHelpItems.call(this, fileName, position, options);
+        if (result && result.items && result.items.length === 0) {
+            return undefined;
+        }
+        return result;
+    };
+
     proto.getNameOrDottedNameSpan = function(fileName, startPos, endPos) {
         return undefined;
+    };
+
+    // getLinkedEditingRangeAtPosition - route to server protocol
+    proto.getLinkedEditingRangeAtPosition = function(fileName, position) {
+        const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
+        const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
+        const request = this.processRequest("linkedEditingRange", args);
+        const response = this.processResponse(request, /*expectEmptyBody*/ true);
+        if (!response.body) return undefined;
+        const { ranges, wordPattern } = response.body;
+        if (!ranges || ranges.length === 0) return undefined;
+        const result = {
+            ranges: ranges.map(r => ({
+                start: this.lineOffsetToPosition(fileName, r.start),
+                length: this.lineOffsetToPosition(fileName, r.end) - this.lineOffsetToPosition(fileName, r.start),
+            })),
+        };
+        if (wordPattern) result.wordPattern = wordPattern;
+        return result;
+    };
+
+    // getCombinedCodeFix - route to server protocol
+    proto.getCombinedCodeFix = function(scope, fixId, formatOptions, preferences) {
+        const args = {
+            scope: { type: "file", args: { file: scope.fileName } },
+            fixId,
+        };
+        const request = this.processRequest("getCombinedCodeFix", args);
+        const response = this.processResponse(request);
+        if (!response.body) return { changes: [], commands: undefined };
+        const { changes, commands } = response.body;
+        return {
+            changes: this.convertChanges(changes || [], scope.fileName),
+            commands,
+        };
+    };
+
+    // mapCode - route to server protocol
+    proto.mapCode = function(fileName, contents, focusLocations, formatOptions, preferences) {
+        const args = {
+            file: fileName,
+            mapping: { contents, focusLocations },
+        };
+        const request = this.processRequest("mapCode", args);
+        const response = this.processResponse(request);
+        if (!response.body) return [];
+        return this.convertChanges(response.body || [], fileName);
     };
 
     // organizeImports - route to server protocol
@@ -324,10 +450,26 @@ function patchSessionClient(SessionClient) {
     // Return safe stubs so tests that don't strictly need these objects can proceed.
 
     proto.getProgram = function() {
-        // Returns a minimal stub Program object. The fourslash harness calls
-        // getProgram().getCompilerOptions(), getProgram().getSourceFile(), etc.
-        // We return a stub that provides safe defaults for these methods.
-        return undefined;
+        // Return a minimal Program stub so callers like
+        // ts.getPreEmitDiagnostics(languageService.getProgram()) don't crash.
+        // TODO: Implement proper Program when compiler supports it
+        if (!this._programStub) {
+            this._programStub = {
+                getCompilerOptions: function() { return {}; },
+                getTypeChecker: function() { return undefined; },
+                getSourceFile: function() { return undefined; },
+                getSourceFiles: function() { return []; },
+                getCurrentDirectory: function() { return "/"; },
+                getConfigFileParsingDiagnostics: function() { return []; },
+                getOptionsDiagnostics: function() { return []; },
+                getSemanticDiagnostics: function() { return []; },
+                getSyntacticDiagnostics: function() { return []; },
+                getGlobalDiagnostics: function() { return []; },
+                getDeclarationDiagnostics: function() { return []; },
+                emit: function() { return { emitSkipped: true, diagnostics: [], emittedFiles: [] }; },
+            };
+        }
+        return this._programStub;
     };
 
     proto.getCurrentProgram = function() {
