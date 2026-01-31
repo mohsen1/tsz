@@ -150,6 +150,18 @@ function patchSessionClient(SessionClient) {
         return response.body || undefined;
     };
 
+    // Override getCompletionsAtPosition to return undefined when no entries
+    // The fourslash harness distinguishes "no completions" (undefined) from
+    // "completions with 0 entries" (object with empty entries array)
+    const _origGetCompletions = proto.getCompletionsAtPosition;
+    proto.getCompletionsAtPosition = function(fileName, position, preferences) {
+        const result = _origGetCompletions.call(this, fileName, position, preferences);
+        if (result && result.entries && result.entries.length === 0) {
+            return undefined;
+        }
+        return result;
+    };
+
     proto.isValidBraceCompletionAtPosition = function(fileName, position, openingBrace) {
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = {
