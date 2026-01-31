@@ -870,6 +870,12 @@ impl<'a> CheckerContext<'a> {
             crate::solver::def::DefKind::Class
         } else if (symbol.flags & crate::binder::symbol_flags::ENUM) != 0 {
             crate::solver::def::DefKind::Enum
+        } else if (symbol.flags
+            & (crate::binder::symbol_flags::NAMESPACE_MODULE
+                | crate::binder::symbol_flags::VALUE_MODULE))
+            != 0
+        {
+            crate::solver::def::DefKind::Namespace
         } else {
             // Default to TypeAlias for other symbols
             crate::solver::def::DefKind::TypeAlias
@@ -889,6 +895,7 @@ impl<'a> CheckerContext<'a> {
             extends: None,
             implements: Vec::new(),
             enum_members: Vec::new(),
+            exports: Vec::new(), // Will be populated for namespaces/modules
             file_id: Some(symbol.decl_file_idx),
             span,
         };
