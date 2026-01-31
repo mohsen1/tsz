@@ -318,6 +318,512 @@ EOF
     done
 }
 
+# =============================================================================
+# SOLVER STRESS TEST GENERATORS
+# =============================================================================
+# These generators create files that stress specific solver limits defined in
+# src/limits.rs. They push close to (but under) hard limits to find perf cliffs.
+
+# Stress: MAX_INSTANTIATION_DEPTH (50), MAX_SUBTYPE_DEPTH (100)
+generate_recursive_generic_file() {
+    local depth="$1"
+    local output="$2"
+    
+    cat > "$output" << 'HEADER'
+// Recursive generic type instantiation stress test
+// Pushes MAX_INSTANTIATION_DEPTH and subtype checking limits
+
+type LinkedList<T> = { value: T; next: LinkedList<T> | null };
+type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
+type DeepReadonly<T> = T extends object ? { readonly [P in keyof T]: DeepReadonly<T[P]> } : T;
+
+HEADER
+
+    # Generate recursive wrapper types
+    for ((i=0; i<depth; i++)); do
+        echo "type Wrap$i<T> = { layer$i: T };" >> "$output"
+    done
+    
+    # Generate deeply nested instantiation
+    echo "" >> "$output"
+    echo "// Deep instantiation chain" >> "$output"
+    local chain="string"
+    local max_chain=$((depth < 40 ? depth : 40))
+    for ((i=0; i<max_chain; i++)); do
+        chain="Wrap$i<$chain>"
+    done
+    echo "type DeepWrapped = $chain;" >> "$output"
+    
+    # Force evaluation with assignments
+    echo "" >> "$output"
+    echo "declare const deep: DeepWrapped;" >> "$output"
+    echo "declare function extract<T>(x: Wrap0<T>): T;" >> "$output"
+    echo "const _test = extract(deep);" >> "$output"
+    
+    # Add recursive type checks
+    echo "" >> "$output"
+    echo "// Recursive list operations" >> "$output"
+    echo "declare const list: LinkedList<number>;" >> "$output"
+    echo "declare function mapList<T, U>(l: LinkedList<T>, f: (x: T) => U): LinkedList<U>;" >> "$output"
+    echo "const mapped = mapList(list, x => x.toString());" >> "$output"
+}
+
+# Stress: MAX_DISTRIBUTION_SIZE (100), MAX_EVALUATE_DEPTH (50)
+generate_conditional_distribution_file() {
+    local member_count="$1"
+    local output="$2"
+    
+    cat > "$output" << 'HEADER'
+// Conditional type distribution stress test
+// Tests large union distribution in conditional types
+
+type ExtractString<T> = T extends string ? T : never;
+type ExtractNumber<T> = T extends number ? T : never;
+type ExtractArrayType<T> = T extends (infer U)[] ? U : never;
+type ToArray<T> = T extends any ? T[] : never;
+type Flatten<T> = T extends (infer U)[] ? Flatten<U> : T;
+
+HEADER
+
+    # Generate a large union type
+    echo "type BigUnion =" >> "$output"
+    for ((i=0; i<member_count; i++)); do
+        if [ $i -eq $((member_count - 1)) ]; then
+            echo "    | 'value$i';" >> "$output"
+        else
+            echo "    | 'value$i'" >> "$output"
+        fi
+    done
+    
+    # Apply conditional types that distribute over the union
+    echo "" >> "$output"
+    echo "// Distributive conditional type applications" >> "$output"
+    echo "type Distributed1 = ToArray<BigUnion>;" >> "$output"
+    echo "type Distributed2 = ExtractString<BigUnion | number>;" >> "$output"
+    
+    # Chain multiple conditional transformations
+    cat >> "$output" << 'EOF'
+
+type ChainedConditional<T> =
+    T extends string ? `prefix_${T}` :
+    T extends number ? T :
+    T extends boolean ? (T extends true ? 1 : 0) :
+    never;
+
+type Applied = ChainedConditional<BigUnion>;
+
+// Nested conditional
+type NestedConditional<T> =
+    T extends `value${infer N}` ? N extends `${infer D}${infer Rest}` ? D : never : never;
+
+type Extracted = NestedConditional<BigUnion>;
+
+EOF
+
+    # Force type evaluation with declarations
+    echo "declare const distributed: Distributed1;" >> "$output"
+    echo "declare const applied: Applied;" >> "$output"
+    echo "declare const extracted: Extracted;" >> "$output"
+}
+
+# Stress: MAX_MAPPED_KEYS (500)
+generate_mapped_type_file() {
+    local key_count="$1"
+    local output="$2"
+    
+    cat > "$output" << 'HEADER'
+// Mapped type expansion stress test
+// Tests MAX_MAPPED_KEYS limit and mapped type evaluation
+
+type MyOptional<T> = { [K in keyof T]?: T[K] };
+type MyRequired<T> = { [K in keyof T]-?: T[K] };
+type MyReadonly<T> = { readonly [K in keyof T]: T[K] };
+type MyMutable<T> = { -readonly [K in keyof T]: T[K] };
+
+// Advanced mapped types
+type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
+type Setters<T> = { [K in keyof T as `set${Capitalize<string & K>}`]: (val: T[K]) => void };
+
+HEADER
+
+    # Generate a type with many properties
+    echo "interface BigObject {" >> "$output"
+    for ((i=0; i<key_count; i++)); do
+        echo "    prop$i: string;" >> "$output"
+    done
+    echo "}" >> "$output"
+    
+    # Apply various mapped type transformations
+    echo "" >> "$output"
+    echo "// Mapped type transformations" >> "$output"
+    echo "type Partial1 = MyOptional<BigObject>;" >> "$output"
+    echo "type Readonly1 = MyReadonly<BigObject>;" >> "$output"
+    echo "type Both = MyReadonly<MyOptional<BigObject>>;" >> "$output"
+    echo "" >> "$output"
+    echo "type BigGetters = Getters<BigObject>;" >> "$output"
+    echo "type BigSetters = Setters<BigObject>;" >> "$output"
+    
+    # Nested mapped type
+    cat >> "$output" << 'EOF'
+
+// Nested mapped type
+type DeepOptional<T> = T extends object ? { [K in keyof T]?: DeepOptional<T[K]> } : T;
+type DeepBigObject = DeepOptional<BigObject>;
+
+EOF
+
+    # Force evaluation
+    echo "declare const partial: Partial1;" >> "$output"
+    echo "declare const getters: BigGetters;" >> "$output"
+    echo "declare const deep: DeepBigObject;" >> "$output"
+    echo "const _prop0 = partial.prop0;" >> "$output"
+}
+
+# Stress: TEMPLATE_LITERAL_EXPANSION_LIMIT (100,000)
+generate_template_literal_file() {
+    local variant_count="$1"
+    local output="$2"
+    
+    cat > "$output" << 'HEADER'
+// Template literal type expansion stress test
+// Tests Cartesian product explosion prevention
+
+HEADER
+
+    # Generate multiple union types for Cartesian product
+    local max_variants=$((variant_count < 50 ? variant_count : 50))
+    
+    echo "type Colors =" >> "$output"
+    for ((i=0; i<max_variants; i++)); do
+        if [ $i -eq $((max_variants - 1)) ]; then
+            echo "    | 'color$i';" >> "$output"
+        else
+            echo "    | 'color$i'" >> "$output"
+        fi
+    done
+    
+    echo "" >> "$output"
+    echo "type Sizes =" >> "$output"
+    for ((i=0; i<max_variants; i++)); do
+        if [ $i -eq $((max_variants - 1)) ]; then
+            echo "    | 'size$i';" >> "$output"
+        else
+            echo "    | 'size$i'" >> "$output"
+        fi
+    done
+    
+    echo "" >> "$output"
+    echo "type Variants =" >> "$output"
+    for ((i=0; i<max_variants; i++)); do
+        if [ $i -eq $((max_variants - 1)) ]; then
+            echo "    | 'variant$i';" >> "$output"
+        else
+            echo "    | 'variant$i'" >> "$output"
+        fi
+    done
+    
+    # Template literal combining unions (Cartesian product)
+    cat >> "$output" << 'EOF'
+
+// Template literal Cartesian products
+type ProductSmall = `${Colors}-${Sizes}`;
+type ProductMedium = `${Colors}-${Sizes}-${Variants}`;
+
+// String manipulation types
+type Prefixed = `prefix_${Colors}`;
+type Suffixed = `${Colors}_suffix`;
+type Wrapped = `[${Colors}]`;
+
+// Nested template
+type NestedTemplate = `start_${`mid_${Colors}`}_end`;
+
+EOF
+
+    # Force evaluation
+    echo "declare const product: ProductSmall;" >> "$output"
+    echo "declare const prefixed: Prefixed;" >> "$output"
+}
+
+# Stress: MAX_SUBTYPE_DEPTH (100), coinductive cycle detection
+generate_deep_subtype_file() {
+    local depth="$1"
+    local output="$2"
+    
+    cat > "$output" << 'HEADER'
+// Deep subtype checking stress test
+// Tests recursive type comparison and cycle detection
+
+// Self-referential types
+interface TreeNode<T> {
+    value: T;
+    children: TreeNode<T>[];
+}
+
+interface MutualA<T> {
+    data: T;
+    ref: MutualB<T>;
+}
+
+interface MutualB<T> {
+    info: T;
+    back: MutualA<T>;
+}
+
+// Recursive JSON type
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+
+HEADER
+
+    # Generate deep class hierarchy for variance checking
+    echo "// Deep class hierarchy for subtype checking" >> "$output"
+    echo "class Base0 { x0: string = ''; }" >> "$output"
+    local max_depth=$((depth < 50 ? depth : 50))
+    for ((i=1; i<max_depth; i++)); do
+        local prev=$((i - 1))
+        echo "class Base$i extends Base$prev { x$i: string = ''; }" >> "$output"
+    done
+    
+    # Generate covariant/contravariant positions
+    cat >> "$output" << 'EOF'
+
+// Variance stress with function types
+type CovariantContainer<T> = { get(): T };
+type ContravariantContainer<T> = { set(x: T): void };
+type InvariantContainer<T> = { get(): T; set(x: T): void };
+
+// Bivariant method position
+interface BivariantMethods<T> {
+    method(x: T): T;
+}
+
+EOF
+
+    # Deep nested function type
+    local deepfn="string"
+    local max_fn_depth=$((depth < 30 ? depth : 30))
+    for ((i=0; i<max_fn_depth; i++)); do
+        deepfn="(x: $deepfn) => $deepfn"
+    done
+    echo "" >> "$output"
+    echo "type DeepFunction = $deepfn;" >> "$output"
+    
+    # Force subtype checks
+    cat >> "$output" << 'EOF'
+
+// Force subtype checks
+declare const tree1: TreeNode<string>;
+declare const tree2: TreeNode<string | number>;
+const _check: TreeNode<string | number> = tree1;
+
+declare const mutual: MutualA<string>;
+declare function acceptMutual(x: MutualA<string | number>): void;
+acceptMutual(mutual);
+
+// JSON type checks
+declare const json1: Json;
+declare const json2: { nested: Json };
+const _jsonCheck: Json = json2;
+
+EOF
+}
+
+# Stress: Intersection normalization and property merging
+generate_intersection_file() {
+    local count="$1"
+    local output="$2"
+    
+    cat > "$output" << 'HEADER'
+// Intersection type stress test
+// Tests intersection normalization and property merging
+
+HEADER
+
+    # Generate many interfaces to intersect
+    for ((i=0; i<count; i++)); do
+        echo "interface Part$i {" >> "$output"
+        echo "    prop$i: string;" >> "$output"
+        echo "    shared: number;" >> "$output"
+        echo "    method$i(): number;" >> "$output"
+        echo "}" >> "$output"
+        echo "" >> "$output"
+    done
+    
+    # Create large intersections
+    local intersection="Part0"
+    local max_intersect=$((count < 50 ? count : 50))
+    for ((i=1; i<max_intersect; i++)); do
+        intersection="$intersection & Part$i"
+    done
+    echo "type BigIntersection = $intersection;" >> "$output"
+    
+    # Function overload intersection
+    cat >> "$output" << 'EOF'
+
+// Function overload intersection
+type OverloadIntersection = 
+    ((x: string) => string) &
+    ((x: number) => number) &
+    ((x: boolean) => boolean);
+
+// Generic intersection
+type GenericIntersection<T, U> = T & U;
+
+EOF
+
+    # Force evaluation
+    echo "" >> "$output"
+    echo "declare const big: BigIntersection;" >> "$output"
+    echo "const _prop0 = big.prop0;" >> "$output"
+    echo "const _shared = big.shared;" >> "$output"
+    local last=$((count - 1))
+    if [ $last -lt 50 ]; then
+        echo "const _propLast = big.prop$last;" >> "$output"
+    fi
+}
+
+# Stress: Inference variable instantiation in conditional types
+generate_infer_stress_file() {
+    local count="$1"
+    local output="$2"
+    
+    cat > "$output" << 'HEADER'
+// Infer keyword stress test
+// Tests inference variable resolution in conditional types
+
+type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
+type UnwrapArray<T> = T extends (infer U)[] ? U : T;
+type MyParameters<T> = T extends (...args: infer P) => any ? P : never;
+type MyReturnType<T> = T extends (...args: any[]) => infer R ? R : never;
+
+// Multi-infer conditional
+type FirstAndRest<T> = T extends [infer First, ...infer Rest] ? { first: First; rest: Rest } : never;
+
+// Nested infer
+type DeepUnwrap<T> = 
+    T extends Promise<infer U> ? DeepUnwrap<U> :
+    T extends (infer V)[] ? DeepUnwrap<V>[] :
+    T;
+
+// Infer in template literal
+type ExtractPrefix<T> = T extends `${infer P}_${string}` ? P : never;
+
+// Infer with constraints
+type ExtractIfString<T> = T extends infer U extends string ? U : never;
+
+HEADER
+
+    # Generate functions with many parameters to test Parameters<T>
+    local max_funcs=$((count < 30 ? count : 30))
+    for ((i=0; i<max_funcs; i++)); do
+        echo "declare function func$i(" >> "$output"
+        for ((j=0; j<=i; j++)); do
+            if [ $j -eq $i ]; then
+                echo "    arg$j: string" >> "$output"
+            else
+                echo "    arg$j: string," >> "$output"
+            fi
+        done
+        echo "): number;" >> "$output"
+        echo "" >> "$output"
+        echo "type Params$i = MyParameters<typeof func$i>;" >> "$output"
+        echo "type Return$i = MyReturnType<typeof func$i>;" >> "$output"
+        echo "" >> "$output"
+    done
+    
+    # Force evaluation with complex nested inference
+    cat >> "$output" << 'EOF'
+
+// Complex nested inference
+type ComplexInfer<T> = T extends { 
+    data: infer D; 
+    nested: { value: infer V }[] 
+} ? { data: D; values: V[] } : never;
+
+interface TestData {
+    data: string;
+    nested: { value: number }[];
+}
+
+type Inferred = ComplexInfer<TestData>;
+
+EOF
+
+    echo "declare const params: Params$((max_funcs - 1));" >> "$output"
+    echo "declare const inferred: Inferred;" >> "$output"
+}
+
+# Stress: Control flow analysis with many branches
+generate_cfa_stress_file() {
+    local branch_count="$1"
+    local output="$2"
+    
+    cat > "$output" << 'HEADER'
+// Control flow analysis stress test
+// Tests type narrowing with many branches
+
+type Status = 'pending' | 'active' | 'completed' | 'failed' | 'cancelled';
+
+interface BaseEntity {
+    id: string;
+    status: Status;
+}
+
+HEADER
+
+    # Generate discriminated union
+    echo "type Entity =" >> "$output"
+    for ((i=0; i<branch_count; i++)); do
+        if [ $i -eq $((branch_count - 1)) ]; then
+            echo "    | { kind: 'type$i'; data$i: string; common: number };" >> "$output"
+        else
+            echo "    | { kind: 'type$i'; data$i: string; common: number }" >> "$output"
+        fi
+    done
+    
+    # Generate exhaustive switch
+    cat >> "$output" << 'EOF'
+
+function processEntity(e: Entity): string {
+    switch (e.kind) {
+EOF
+
+    for ((i=0; i<branch_count; i++)); do
+        echo "        case 'type$i': return e.data$i;" >> "$output"
+    done
+    
+    cat >> "$output" << 'EOF'
+    }
+}
+
+EOF
+
+    # Generate if-else chain with type guards
+    echo "function processWithIf(e: Entity): string {" >> "$output"
+    for ((i=0; i<branch_count; i++)); do
+        if [ $i -eq 0 ]; then
+            echo "    if (e.kind === 'type$i') {" >> "$output"
+        elif [ $i -eq $((branch_count - 1)) ]; then
+            echo "    } else {" >> "$output"
+        else
+            echo "    } else if (e.kind === 'type$i') {" >> "$output"
+        fi
+        echo "        return e.data$i;" >> "$output"
+    done
+    echo "    }" >> "$output"
+    echo "}" >> "$output"
+    
+    # Type guard functions
+    echo "" >> "$output"
+    for ((i=0; i<branch_count; i+=5)); do
+        cat >> "$output" << EOF
+function isType$i(e: Entity): e is Extract<Entity, { kind: 'type$i' }> {
+    return e.kind === 'type$i';
+}
+
+EOF
+    done
+}
+
 main() {
     check_prerequisites
     
@@ -472,6 +978,111 @@ main() {
             local file="$TEMP_DIR/union_${count}.ts"
             generate_union_file "$count" "$file"
             run_benchmark "${count} union members" "$file"
+            echo
+        done
+    fi
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SOLVER STRESS TESTS - Type system limit testing
+    # ═══════════════════════════════════════════════════════════════════════════
+    print_header "Solver Stress Tests - Type System Limits"
+    
+    if [ "$QUICK_MODE" = true ]; then
+        print_subheader "Quick mode: reduced solver stress tests"
+        
+        # One test per category in quick mode
+        local file="$TEMP_DIR/recursive_generic_25.ts"
+        generate_recursive_generic_file 25 "$file"
+        run_benchmark "Recursive generic depth=25" "$file"
+        echo
+        
+        file="$TEMP_DIR/conditional_dist_50.ts"
+        generate_conditional_distribution_file 50 "$file"
+        run_benchmark "Conditional dist N=50" "$file"
+        echo
+        
+        file="$TEMP_DIR/mapped_100.ts"
+        generate_mapped_type_file 100 "$file"
+        run_benchmark "Mapped type keys=100" "$file"
+        echo
+    else
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Recursive generic instantiation (MAX_INSTANTIATION_DEPTH=50)"
+        
+        for depth in 20 35 45; do
+            local file="$TEMP_DIR/recursive_generic_${depth}.ts"
+            generate_recursive_generic_file "$depth" "$file"
+            run_benchmark "Recursive generic depth=$depth" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Conditional type distribution (MAX_DISTRIBUTION_SIZE=100)"
+        
+        for count in 50 80 95; do
+            local file="$TEMP_DIR/conditional_dist_${count}.ts"
+            generate_conditional_distribution_file "$count" "$file"
+            run_benchmark "Conditional dist N=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Mapped type expansion (MAX_MAPPED_KEYS=500)"
+        
+        for count in 100 300 450; do
+            local file="$TEMP_DIR/mapped_${count}.ts"
+            generate_mapped_type_file "$count" "$file"
+            run_benchmark "Mapped type keys=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Template literal types (TEMPLATE_LITERAL_EXPANSION_LIMIT)"
+        
+        for count in 20 35 45; do
+            local file="$TEMP_DIR/template_${count}.ts"
+            generate_template_literal_file "$count" "$file"
+            run_benchmark "Template literal N=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Deep subtype checking (MAX_SUBTYPE_DEPTH=100)"
+        
+        for depth in 30 60 90; do
+            local file="$TEMP_DIR/deep_subtype_${depth}.ts"
+            generate_deep_subtype_file "$depth" "$file"
+            run_benchmark "Deep subtype depth=$depth" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Intersection types (property merging)"
+        
+        for count in 20 35 45; do
+            local file="$TEMP_DIR/intersection_${count}.ts"
+            generate_intersection_file "$count" "$file"
+            run_benchmark "Intersection N=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Infer keyword stress (type inference)"
+        
+        for count in 15 25 30; do
+            local file="$TEMP_DIR/infer_${count}.ts"
+            generate_infer_stress_file "$count" "$file"
+            run_benchmark "Infer stress N=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Control flow analysis (CFA with many branches)"
+        
+        for count in 50 100 150; do
+            local file="$TEMP_DIR/cfa_${count}.ts"
+            generate_cfa_stress_file "$count" "$file"
+            run_benchmark "CFA branches=$count" "$file"
             echo
         done
     fi
