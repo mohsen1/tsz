@@ -2,7 +2,7 @@
 
 **Reference**: `docs/architecture/SOLVER_REFACTORING_PROPOSAL.md`  
 **Goal**: Query-based Judge with Sound Mode  
-**Status**: Phase 1, 3, 4.1, 6 Infrastructure Complete
+**Status**: Phase 1, 3, 4.1-4.2, 6 COMPLETE. Phase 2, 4.3-4.4, 5 remain.
 
 ---
 
@@ -130,12 +130,28 @@
 
 ---
 
-## Phase 5: Checker Cleanup - NOT STARTED
+## Phase 5: Checker Cleanup - AUDIT COMPLETE, MIGRATION PENDING
 
-### 5.1 Audit TypeKey Matches
-- [ ] Run `grep -r "TypeKey::" src/checker/` to find all matches
-- [ ] Create list of all TypeKey matches with file:line
-- [ ] Prioritize by frequency
+### 5.1 Audit TypeKey Matches ✅
+- [x] Run `grep -r "TypeKey::" src/checker/` to find all matches
+- [x] Create list of all TypeKey matches with file:line
+- [x] Prioritize by frequency
+
+**Audit Results (74 total matches):**
+| File | Count | Type |
+|------|-------|------|
+| iterators.rs | 18 | Type queries (replaceable) |
+| generators.rs | 15 | Type queries (replaceable) |
+| assignability_checker.rs | 15 | Traversal + queries (partial) |
+| state_type_analysis.rs | 7 | Type queries |
+| type_literal_checker.rs | 6 | Type creation (keep) |
+| state_checking_members.rs | 3 | Type queries |
+| Other files | 10 | Mixed |
+
+**Analysis:**
+- Type **creation** (e.g., `TypeKey::Array(...)`) should stay as-is
+- Type **queries** (pattern matching) should move to Judge classifiers
+- Traversal for symbol resolution is Checker-specific, harder to abstract
 
 ### 5.2 Create Judge Queries for Each Match
 - [ ] For each unique operation, determine if existing query covers it
