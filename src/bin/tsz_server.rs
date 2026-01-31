@@ -812,7 +812,7 @@ impl Server {
             "encodedSemanticClassifications-full" => {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
             }
-            "inlayHints" => self.handle_inlay_hints(seq, &request),
+            "inlayHints" | "provideInlayHints" => self.handle_inlay_hints(seq, &request),
             "selectionRange" => self.handle_selection_range(seq, &request),
             "linkedEditingRange" => self.handle_linked_editing_range(seq, &request),
             "prepareCallHierarchy" => self.handle_prepare_call_hierarchy(seq, &request),
@@ -824,7 +824,7 @@ impl Server {
             "implementation" | "implementation-full" => self.handle_implementation(seq, &request),
             "getOutliningSpans" => self.handle_outlining_spans(seq, &request),
             "brace" => self.stub_response(seq, &request, Some(serde_json::json!([]))),
-            "emitOutput" => self.stub_response(
+            "emitOutput" | "emit-output" => self.stub_response(
                 seq,
                 &request,
                 Some(serde_json::json!({"outputFiles": [], "emitSkipped": true})),
@@ -1801,14 +1801,19 @@ impl Server {
             let provider = DocumentHighlightProvider::new(&arena, &binder, &line_map, &source_text);
             let highlights = provider.get_document_highlights(root, position)?;
 
-            let body: Vec<serde_json::Value> = highlights
+            // Group highlights by file (tsserver groups by file, each with highlightSpans)
+            let highlight_spans: Vec<serde_json::Value> = highlights
                 .iter()
                 .map(|hl| {
                     let kind_str = match hl.kind {
-                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Read) => "read",
-                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Write) => "write",
-                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Text) => "text",
-                        None => "text",
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Read) => {
+                            "reference"
+                        }
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Write) => {
+                            "writtenReference"
+                        }
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Text) => "none",
+                        None => "none",
                     };
                     serde_json::json!({
                         "start": Self::lsp_to_tsserver_position(&hl.range.start),
@@ -1817,7 +1822,11 @@ impl Server {
                     })
                 })
                 .collect();
-            Some(serde_json::json!(body))
+            // All highlights are in the same file for now
+            Some(serde_json::json!([{
+                "file": file,
+                "highlightSpans": highlight_spans,
+            }]))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
