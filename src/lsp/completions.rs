@@ -615,9 +615,12 @@ impl<'a> Completions<'a> {
                 }
             }
 
-            // TODO: Object literal expression → isNewIdentifierLocation depends on
-            // whether the type has string/number index signatures (requires type checker).
-            // For now we default to false which matches most typed object literal tests.
+            // TODO: More AST-based checks needed for:
+            // - Object literal with index signatures
+            // - Type literal positions
+            // - Function call argument positions
+            // - Array literal positions
+            // These require careful type-checking context that we don't have yet.
         }
 
         // Text-based heuristic for the context token
@@ -654,42 +657,43 @@ impl<'a> Completions<'a> {
             return true;
         }
 
+        // Check for comments before the offset >= len guard, since comments at
+        // end-of-file (offset == len) should still suppress completions.
+        let i = offset as usize;
+        if i > 0 {
+            // Check for line comments: if we find // before offset on same line
+            let line_start = self.source_text[..i]
+                .rfind('\n')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let line_prefix = &self.source_text[line_start..i];
+            if line_prefix.contains("//") {
+                // Check that the // is not inside a string
+                let comment_pos = line_prefix.find("//").unwrap();
+                let before_comment = &line_prefix[..comment_pos];
+                let single_quotes = before_comment.chars().filter(|&c| c == '\'').count();
+                let double_quotes = before_comment.chars().filter(|&c| c == '"').count();
+                let backticks = before_comment.chars().filter(|&c| c == '`').count();
+                if single_quotes % 2 == 0 && double_quotes % 2 == 0 && backticks % 2 == 0 {
+                    return true;
+                }
+            }
+
+            // Check for block comments: scan backwards for /* without matching */
+            if let Some(block_start) = self.source_text[..i].rfind("/*") {
+                let after_block = &self.source_text[block_start + 2..i];
+                if !after_block.contains("*/") {
+                    return true;
+                }
+            }
+        }
+
         // Check if we're inside a string literal, comment, or regex by examining
         // the source text character context around the offset.
         let bytes = self.source_text.as_bytes();
         let len = bytes.len();
         if offset as usize >= len {
             return false;
-        }
-
-        // Scan backwards to find context
-        let i = offset as usize;
-
-        // Check for line comments: if we find // before offset on same line, we're in a comment
-        let line_start = self.source_text[..i]
-            .rfind('\n')
-            .map(|p| p + 1)
-            .unwrap_or(0);
-        let line_prefix = &self.source_text[line_start..i];
-        if line_prefix.contains("//") {
-            // Check that the // is not inside a string
-            let comment_pos = line_prefix.find("//").unwrap();
-            let before_comment = &line_prefix[..comment_pos];
-            let single_quotes = before_comment.chars().filter(|&c| c == '\'').count();
-            let double_quotes = before_comment.chars().filter(|&c| c == '"').count();
-            let backticks = before_comment.chars().filter(|&c| c == '`').count();
-            // If all quote counts are even, the // is not inside a string
-            if single_quotes % 2 == 0 && double_quotes % 2 == 0 && backticks % 2 == 0 {
-                return true;
-            }
-        }
-
-        // Check for block comments: scan backwards for /* without matching */
-        if let Some(block_start) = self.source_text[..i].rfind("/*") {
-            let after_block = &self.source_text[block_start + 2..i];
-            if !after_block.contains("*/") {
-                return true;
-            }
         }
 
         // Check if we're inside a numeric literal (including BigInt suffixed with 'n')
