@@ -316,7 +316,7 @@ async function main() {
     patchTestState(FourSlash, TszAdapter);
     patchSessionClient(SessionClient);
 
-    const testType = 1; // FourSlashTestType.Server
+    const testType = 0; // FourSlashTestType.Native
 
     // Signal ready
     process.send({ type: "ready", workerId });
