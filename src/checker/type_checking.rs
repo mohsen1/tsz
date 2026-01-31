@@ -2446,9 +2446,12 @@ impl<'a> CheckerState<'a> {
         // Check if lib files are loaded
         let has_lib = self.ctx.has_lib_loaded();
 
-        // When --noLib is used, check for core global types
-        // Emit TS2318 for types that are not declared in the source file
-        if !has_lib {
+        // Only emit TS2318 errors when:
+        // - no_lib is false (user expects lib files)
+        // - AND lib files are not loaded
+        // When no_lib is true, the user explicitly opted out of lib files,
+        // so we shouldn't emit errors for missing global types.
+        if !has_lib && !self.ctx.no_lib() {
             for &type_name in CORE_GLOBAL_TYPES {
                 // Check if the type is declared in the current file
                 if !self.ctx.binder.file_locals.has(type_name) {
