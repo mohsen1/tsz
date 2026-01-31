@@ -1407,8 +1407,13 @@ impl ParserState {
             SyntaxKind::FunctionKeyword => {
                 self.parse_function_declaration_with_async_optional_name(false, None)
             }
+            SyntaxKind::AsyncKeyword if self.look_ahead_is_async_function() => {
+                self.next_token(); // consume 'async'
+                self.parse_function_declaration_with_async_optional_name(true, None)
+            }
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
             SyntaxKind::AbstractKeyword => self.parse_abstract_class_declaration(),
+            SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
             _ => {
                 let expr = self.parse_assignment_expression();
                 self.parse_semicolon();
@@ -2164,7 +2169,9 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::CloseParenToken);
 
-        self.parse_semicolon();
+        // Per ECMAScript spec, semicolons are always auto-inserted after do-while.
+        // TypeScript uses parseOptional(SemicolonToken) here, not parseSemicolon().
+        self.parse_optional(SyntaxKind::SemicolonToken);
         let end_pos = self.token_end();
 
         self.arena.add_loop(
