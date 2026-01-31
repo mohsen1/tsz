@@ -1585,30 +1585,39 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64()? as u32;
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let items = provider.get_completions(root, position)?;
+            let items = provider.get_completions(root, position).unwrap_or_default();
             let details: Vec<serde_json::Value> = entry_names
                 .iter()
-                .filter_map(|entry_name| {
+                .map(|entry_name| {
                     let name = if let Some(s) = entry_name.as_str() {
                         s.to_string()
                     } else if let Some(obj) = entry_name.as_object() {
-                        obj.get("name")?.as_str()?.to_string()
+                        obj.get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string()
                     } else {
-                        return None;
+                        String::new()
                     };
-                    let item = items.iter().find(|i| i.label == name)?;
-                    let kind = Self::completion_kind_to_str(item.kind);
-                    let display_parts = if let Some(ref detail) = item.detail {
-                        serde_json::json!([{"text": detail, "kind": "text"}])
+                    // Try to find the matching completion item
+                    let item = items.iter().find(|i| i.label == name);
+                    let kind = item
+                        .map(|i| Self::completion_kind_to_str(i.kind))
+                        .unwrap_or("property");
+                    let display_parts = if let Some(i) = item {
+                        if let Some(ref detail) = i.detail {
+                            serde_json::json!([{"text": detail, "kind": "text"}])
+                        } else {
+                            serde_json::json!([{"text": &name, "kind": "text"}])
+                        }
                     } else {
                         serde_json::json!([{"text": &name, "kind": "text"}])
                     };
-                    let documentation = if let Some(ref doc) = item.documentation {
-                        serde_json::json!([{"text": doc, "kind": "text"}])
-                    } else {
-                        serde_json::json!([])
-                    };
-                    Some(serde_json::json!({
+                    let documentation = item
+                        .and_then(|i| i.documentation.as_ref())
+                        .map(|doc| serde_json::json!([{"text": doc, "kind": "text"}]))
+                        .unwrap_or(serde_json::json!([]));
+                    serde_json::json!({
                         "name": name,
                         "kind": kind,
                         "kindModifiers": "",
@@ -1617,7 +1626,7 @@ impl Server {
                         "tags": [],
                         "codeActions": [],
                         "source": [],
-                    }))
+                    })
                 })
                 .collect();
             Some(serde_json::json!(details))
@@ -2763,18 +2772,84 @@ impl Server {
 
     fn handle_indentation(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         // indentation returns { position: number, indentation: number }
-        let position = request
-            .arguments
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1);
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let line = request.arguments.get("line")?.as_u64()? as usize;
+            let position = request.arguments.get("offset")?.as_u64().unwrap_or(1);
+            let source_text = self.open_files.get(file)?;
+
+            // Get tab size from options (default 4)
+            let tab_size = request
+                .arguments
+                .get("options")
+                .and_then(|o| o.get("tabSize"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(4) as usize;
+
+            // Basic smart indentation: look at previous lines to determine context
+            let lines: Vec<&str> = source_text.lines().collect();
+            let target_line_idx = if line > 0 { line - 1 } else { 0 }; // 1-based to 0-based
+
+            if target_line_idx >= lines.len() {
+                return Some(serde_json::json!({"position": position, "indentation": 0}));
+            }
+
+            // Find the previous non-empty line
+            let mut prev_line_idx = if target_line_idx > 0 {
+                target_line_idx - 1
+            } else {
+                0
+            };
+            while prev_line_idx > 0 && lines[prev_line_idx].trim().is_empty() {
+                prev_line_idx -= 1;
+            }
+
+            let prev_line = if prev_line_idx < lines.len() {
+                lines[prev_line_idx]
+            } else {
+                ""
+            };
+
+            // Count leading spaces of previous line
+            let prev_indent = prev_line.len() - prev_line.trim_start().len();
+
+            // Determine if we should indent further
+            let prev_trimmed = prev_line.trim();
+            let should_indent_more = prev_trimmed.ends_with('{')
+                || prev_trimmed.ends_with('(')
+                || prev_trimmed.ends_with('[')
+                || prev_trimmed.ends_with(':')
+                || prev_trimmed.ends_with("=>")
+                || prev_trimmed.ends_with(',');
+
+            // Check if current line starts with closing bracket
+            let current_trimmed = lines[target_line_idx].trim();
+            let starts_with_closing = current_trimmed.starts_with('}')
+                || current_trimmed.starts_with(')')
+                || current_trimmed.starts_with(']');
+
+            let indentation = if starts_with_closing {
+                // Closing bracket: match the line with the opening bracket
+                if prev_indent >= tab_size {
+                    prev_indent - tab_size
+                } else {
+                    0
+                }
+            } else if should_indent_more {
+                prev_indent + tab_size
+            } else {
+                prev_indent
+            };
+
+            Some(serde_json::json!({
+                "position": position,
+                "indentation": indentation
+            }))
+        })();
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({
-                "position": position,
-                "indentation": 0
-            })),
+            Some(result.unwrap_or(serde_json::json!({"position": 1, "indentation": 0}))),
         )
     }
 
