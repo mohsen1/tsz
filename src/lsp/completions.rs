@@ -699,6 +699,34 @@ impl<'a> Completions<'a> {
             }
         }
 
+        // Check if we're inside a numeric literal (including BigInt suffixed with 'n')
+        // No completions should appear at the end of numeric literals like `0n`, `123`, `0xff`
+        if offset > 0 {
+            let check_offset = (offset - 1) as usize;
+            if check_offset < len {
+                let prev_byte = bytes[check_offset];
+                // After a digit or 'n' suffix (BigInt), check if we're in a numeric literal
+                if prev_byte.is_ascii_digit()
+                    || prev_byte == b'n'
+                    || prev_byte == b'x'
+                    || prev_byte == b'o'
+                    || prev_byte == b'b'
+                {
+                    let node_idx_check = find_node_at_offset(self.arena, offset.saturating_sub(1));
+                    if !node_idx_check.is_none() {
+                        if let Some(node) = self.arena.get(node_idx_check) {
+                            if node.kind == SyntaxKind::NumericLiteral as u16
+                                || node.kind == SyntaxKind::BigIntLiteral as u16
+                            {
+                                // We're right after a numeric/BigInt literal
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Check if we're inside a string literal using the AST
         let node_idx = find_node_at_offset(self.arena, offset);
         if !node_idx.is_none() {
