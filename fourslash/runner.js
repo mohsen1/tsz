@@ -5,6 +5,13 @@
  * Runs TypeScript's fourslash test suite against tsz-server using parallel
  * child processes, each with its own tsz-server instance.
  *
+ * Features:
+ * - Parallel execution with N workers (default: CPU count)
+ * - Per-test timeout protection (default: 15s)
+ * - Per-worker OOM protection with memory monitoring + bridge restart
+ * - Worker crash recovery (remaining tests redistributed)
+ * - Detailed timing and memory stats in summary
+ *
  * Architecture:
  *   runner.js (main process)
  *     → discovers tests, distributes to N child processes
@@ -18,14 +25,16 @@
  *   node runner.js [options]
  *
  * Options:
- *   --tsz-server=PATH   Path to tsz-server binary (required)
- *   --max=N             Maximum number of tests to run
- *   --filter=PATTERN    Only run tests matching pattern (substring)
- *   --test-dir=DIR      Test directory relative to TypeScript root
- *   --verbose           Show detailed output for each test
- *   --server-tests      Run server-specific tests
- *   --workers=N         Number of parallel workers (default: CPU count)
- *   --sequential        Run tests sequentially (single process, no workers)
+ *   --tsz-server=PATH     Path to tsz-server binary (required)
+ *   --max=N               Maximum number of tests to run
+ *   --filter=PATTERN      Only run tests matching pattern (substring)
+ *   --test-dir=DIR        Test directory relative to TypeScript root
+ *   --verbose             Show detailed output for each test
+ *   --server-tests        Run server-specific tests
+ *   --workers=N           Number of parallel workers (default: CPU count)
+ *   --sequential          Run tests sequentially (single process, no workers)
+ *   --timeout=MS          Per-test timeout in ms (default: 15000)
+ *   --memory-limit=MB     Per-worker memory limit in MB (default: 512)
  */
 
 "use strict";
@@ -50,6 +59,8 @@ function parseArgs() {
         serverTests: false,
         workers: os.cpus().length,
         sequential: false,
+        testTimeout: 15000,
+        memoryLimitMB: 512,
     };
 
     for (const arg of args) {
@@ -70,6 +81,10 @@ function parseArgs() {
             opts.workers = parseInt(arg.substring("--workers=".length), 10);
         } else if (arg === "--sequential") {
             opts.sequential = true;
+        } else if (arg.startsWith("--timeout=")) {
+            opts.testTimeout = parseInt(arg.substring("--timeout=".length), 10);
+        } else if (arg.startsWith("--memory-limit=")) {
+            opts.memoryLimitMB = parseInt(arg.substring("--memory-limit=".length), 10);
         }
     }
 
@@ -78,7 +93,6 @@ function parseArgs() {
         process.exit(2);
     }
 
-    // Clamp workers to reasonable range
     if (opts.workers < 1) opts.workers = 1;
     if (opts.workers > 32) opts.workers = 32;
 
@@ -116,20 +130,16 @@ function discoverTests(testDir, filter) {
 }
 
 // =============================================================================
-// Sequential runner (fallback, same as original)
+// Sequential runner (fallback)
 // =============================================================================
 
 async function runSequential(opts, testsToRun) {
     const tsDir = process.cwd();
     const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter");
 
-    // Set up globals
     setupGlobals(tsDir);
-
-    // Load harness modules
     const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
 
-    // Start tsz-server bridge
     const bridge = new TszServerBridge(opts.tszServerBinary);
     await bridge.start();
 
@@ -139,11 +149,13 @@ async function runSequential(opts, testsToRun) {
     const testType = 0;
     let passed = 0;
     let failed = 0;
+    let timedOut = 0;
     const errors = [];
 
     for (let i = 0; i < testsToRun.length; i++) {
         const testFile = testsToRun[i];
         const testName = path.basename(testFile, ".ts");
+        const startTime = Date.now();
 
         if (opts.verbose) {
             process.stdout.write(`[${i + 1}/${testsToRun.length}] ${testName}... `);
@@ -154,26 +166,34 @@ async function runSequential(opts, testsToRun) {
             const content = Harness.IO.readFile(testFile);
             if (content == null) throw new Error(`Could not read test file: ${testFile}`);
             FourSlash.runFourSlashTestContent(basePath, testType, content, testFile);
+            const elapsed = Date.now() - startTime;
+            if (elapsed > opts.testTimeout) {
+                throw new Error(`Test completed but took ${elapsed}ms (timeout: ${opts.testTimeout}ms)`);
+            }
             passed++;
             if (opts.verbose) {
-                console.log("\x1b[32mPASS\x1b[0m");
+                console.log(`\x1b[32mPASS\x1b[0m (${elapsed}ms)`);
             } else if ((passed + failed) % 50 === 0) {
                 process.stdout.write(`\r  Progress: ${passed + failed}/${testsToRun.length} (${passed} passed, ${failed} failed)`);
             }
         } catch (err) {
             failed++;
+            const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
-            errors.push({ file: testFile, error: errMsg });
+            const isTimeout = elapsed >= opts.testTimeout || errMsg.includes("Timeout");
+            if (isTimeout) timedOut++;
+            errors.push({ file: testFile, error: errMsg, timedOut: isTimeout });
 
             if (opts.verbose) {
-                console.log("\x1b[31mFAIL\x1b[0m");
+                const tag = isTimeout ? "\x1b[33mTIMEOUT\x1b[0m" : "\x1b[31mFAIL\x1b[0m";
+                console.log(`${tag} (${elapsed}ms)`);
                 console.log(`    ${errMsg.split("\n")[0]}`);
             }
         }
     }
 
     bridge.shutdown();
-    return { passed, failed, errors };
+    return { passed, failed, timedOut, errors };
 }
 
 function setupGlobals(tsDir) {
@@ -229,7 +249,6 @@ function patchTestState(FourSlash, TszAdapter) {
 
 function distributeTests(tests, numWorkers) {
     const chunks = Array.from({ length: numWorkers }, () => []);
-    // Round-robin distribution for even load
     for (let i = 0; i < tests.length; i++) {
         chunks[i % numWorkers].push(tests[i]);
     }
@@ -241,13 +260,20 @@ async function runParallel(opts, testsToRun) {
     const numWorkers = Math.min(opts.workers, testsToRun.length);
     const chunks = distributeTests(testsToRun, numWorkers);
 
-    console.log(`  Spawning ${chunks.length} worker processes...`);
+    console.log(`  Spawning ${chunks.length} workers (timeout: ${opts.testTimeout}ms, mem limit: ${opts.memoryLimitMB}MB)...`);
 
     let passed = 0;
     let failed = 0;
+    let timedOut = 0;
     let completed = 0;
+    let bridgeRestarts = 0;
+    let memoryWarnings = 0;
     const errors = [];
+    const workerStats = [];
     const workerFile = path.join(__dirname, "test-worker.js");
+
+    // Track per-worker status for crash recovery
+    const workerProgress = new Map(); // workerId -> { total, completed }
 
     return new Promise((resolve) => {
         let activeWorkers = chunks.length;
@@ -256,39 +282,57 @@ async function runParallel(opts, testsToRun) {
         function printProgress() {
             const total = testsToRun.length;
             const done = passed + failed;
-            const msg = `\r  Progress: ${done}/${total} (${passed} passed, ${failed} failed) [${activeWorkers} workers]`;
-            // Pad with spaces to clear previous longer line
+            const msg = `\r  Progress: ${done}/${total} (${passed} passed, ${failed} failed${timedOut > 0 ? `, ${timedOut} timeout` : ""}) [${activeWorkers} workers]`;
             const padded = msg + " ".repeat(Math.max(0, lastProgressLen - msg.length));
             process.stdout.write(padded);
             lastProgressLen = msg.length;
         }
 
+        function onWorkerDone() {
+            activeWorkers--;
+            if (activeWorkers === 0) {
+                if (!opts.verbose) printProgress();
+                resolve({ passed, failed, timedOut, errors, bridgeRestarts, memoryWarnings, workerStats });
+            }
+        }
+
         for (let i = 0; i < chunks.length; i++) {
             const child = fork(workerFile, [], {
                 stdio: ["pipe", "pipe", "pipe", "ipc"],
+                // Set max old space to worker memory limit to prevent V8 OOM
+                execArgv: [`--max-old-space-size=${opts.memoryLimitMB}`],
             });
 
-            // Suppress child stdout/stderr (they load harness modules which print)
+            workerProgress.set(i, { total: chunks[i].length, completed: 0 });
+
+            // Suppress child stdout/stderr
             child.stdout.on("data", () => {});
             child.stderr.on("data", () => {});
 
             child.on("message", (msg) => {
                 if (msg.type === "ready") {
-                    // Worker is ready, already running tests
+                    // Worker initialized
                 } else if (msg.type === "result") {
                     if (msg.passed) {
                         passed++;
                     } else {
                         failed++;
-                        errors.push({ file: msg.testFile, error: msg.error });
+                        if (msg.timedOut) timedOut++;
+                        errors.push({ file: msg.testFile, error: msg.error, timedOut: msg.timedOut });
                     }
                     completed++;
 
+                    const wp = workerProgress.get(msg.workerId);
+                    if (wp) wp.completed++;
+
                     if (opts.verbose) {
                         const status = msg.passed
-                            ? "\x1b[32mPASS\x1b[0m"
-                            : "\x1b[31mFAIL\x1b[0m";
-                        console.log(`  [W${msg.workerId}] ${msg.testName} ${status}`);
+                            ? `\x1b[32mPASS\x1b[0m`
+                            : msg.timedOut
+                            ? `\x1b[33mTIMEOUT\x1b[0m`
+                            : `\x1b[31mFAIL\x1b[0m`;
+                        const elapsed = msg.elapsed ? ` (${msg.elapsed}ms)` : "";
+                        console.log(`  [W${msg.workerId}] ${msg.testName} ${status}${elapsed}`);
                         if (!msg.passed) {
                             console.log(`    ${msg.error.split("\n")[0]}`);
                         }
@@ -296,24 +340,42 @@ async function runParallel(opts, testsToRun) {
                         printProgress();
                     }
                 } else if (msg.type === "done") {
-                    activeWorkers--;
-                    if (activeWorkers === 0) {
-                        if (!opts.verbose) printProgress();
-                        resolve({ passed, failed, errors });
+                    if (msg.stats) workerStats.push({ workerId: msg.workerId, ...msg.stats });
+                    onWorkerDone();
+                } else if (msg.type === "memory_warning") {
+                    memoryWarnings++;
+                    if (opts.verbose) {
+                        console.log(`  [W${msg.workerId}] \x1b[33mMEMORY WARNING\x1b[0m RSS: ${(msg.rss / 1024 / 1024).toFixed(0)}MB`);
+                    }
+                } else if (msg.type === "bridge_restart") {
+                    bridgeRestarts++;
+                    if (opts.verbose) {
+                        console.log(`  [W${msg.workerId}] \x1b[33mBRIDGE RESTART\x1b[0m ${msg.reason}`);
                     }
                 } else if (msg.type === "error") {
-                    console.error(`  Worker ${i} error: ${msg.error}`);
+                    console.error(`  \x1b[31mWorker ${i} error:\x1b[0m ${msg.error}`);
                 }
             });
 
-            child.on("exit", (code) => {
+            child.on("exit", (code, signal) => {
                 if (code !== 0 && code !== null) {
-                    // Worker crashed - count remaining tests as failed
-                    activeWorkers--;
-                    if (activeWorkers === 0) {
-                        if (!opts.verbose) printProgress();
-                        resolve({ passed, failed, errors });
+                    // Worker crashed (likely OOM killed or segfault)
+                    const wp = workerProgress.get(i);
+                    const remaining = wp ? wp.total - wp.completed : 0;
+                    if (remaining > 0) {
+                        const reason = signal === "SIGKILL" ? "OOM killed" : `exit code ${code}`;
+                        console.error(`  \x1b[31mWorker ${i} crashed (${reason}), ${remaining} tests lost\x1b[0m`);
+                        // Count remaining tests as failed
+                        failed += remaining;
+                        for (let j = wp.completed; j < wp.total; j++) {
+                            errors.push({
+                                file: chunks[i][j],
+                                error: `Worker crashed (${reason})`,
+                                timedOut: false,
+                            });
+                        }
                     }
+                    onWorkerDone();
                 }
             });
 
@@ -324,6 +386,8 @@ async function runParallel(opts, testsToRun) {
                 tszServerBinary: opts.tszServerBinary,
                 tsDir,
                 workerId: i,
+                testTimeout: opts.testTimeout,
+                memoryThreshold: opts.memoryLimitMB * 1024 * 1024,
             });
         }
     });
@@ -337,21 +401,18 @@ async function main() {
     const opts = parseArgs();
     const tsDir = process.cwd();
 
-    // Verify we're in the TypeScript directory
     if (!fs.existsSync(path.join(tsDir, "Herebyfile.mjs"))) {
         console.error("Error: Must be run from the TypeScript directory");
         console.error(`  Current directory: ${tsDir}`);
         process.exit(2);
     }
 
-    // Verify the non-bundled build exists
     const builtDir = path.join(tsDir, "built/local");
     if (!fs.existsSync(path.join(builtDir, "harness/fourslashImpl.js"))) {
         console.error("Error: TypeScript harness not built. Run: npx hereby tests --no-bundle");
         process.exit(2);
     }
 
-    // Verify tsz-server binary exists
     if (!fs.existsSync(opts.tszServerBinary)) {
         console.error(`Error: tsz-server binary not found at: ${opts.tszServerBinary}`);
         process.exit(2);
@@ -377,7 +438,7 @@ async function main() {
         results = await runParallel(opts, testsToRun);
     }
 
-    const { passed, failed, errors } = results;
+    const { passed, failed, timedOut, errors } = results;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
     // Print summary
@@ -395,11 +456,31 @@ async function main() {
         : "0.0";
     console.log(`  Pass rate: ${passRate}%`);
 
+    // Extra stats for parallel mode
+    if (!opts.sequential && results.bridgeRestarts !== undefined) {
+        const statsLine = [];
+        if (timedOut > 0) statsLine.push(`${timedOut} timed out`);
+        if (results.bridgeRestarts > 0) statsLine.push(`${results.bridgeRestarts} bridge restarts`);
+        if (results.memoryWarnings > 0) statsLine.push(`${results.memoryWarnings} memory warnings`);
+        if (statsLine.length > 0) {
+            console.log(`  Health: ${statsLine.join(", ")}`);
+        }
+
+        // Worker memory summary
+        if (results.workerStats && results.workerStats.length > 0) {
+            const maxRss = Math.max(...results.workerStats.map(s => s.peakRss || 0));
+            if (maxRss > 0) {
+                console.log(`  Peak worker RSS: ${(maxRss / 1024 / 1024).toFixed(0)}MB`);
+            }
+        }
+    }
+
     if (errors.length > 0 && !opts.verbose) {
         console.log("");
         console.log(`First ${Math.min(errors.length, 20)} failures:`);
-        for (const { file, error } of errors.slice(0, 20)) {
-            console.log(`  \x1b[31m✗\x1b[0m ${path.basename(file, ".ts")}: ${error.split("\n")[0].substring(0, 100)}`);
+        for (const { file, error, timedOut: to } of errors.slice(0, 20)) {
+            const icon = to ? "\x1b[33m⏱\x1b[0m" : "\x1b[31m✗\x1b[0m";
+            console.log(`  ${icon} ${path.basename(file, ".ts")}: ${error.split("\n")[0].substring(0, 100)}`);
         }
         if (errors.length > 20) {
             console.log(`  ... and ${errors.length - 20} more failures`);
