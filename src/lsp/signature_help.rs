@@ -182,7 +182,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let leaf_node = find_node_at_or_before_offset(self.arena, offset, self.source_text);
 
         // 2. Walk up to find the nearest CallExpression or NewExpression
-        let (call_node_idx, call_expr, call_kind) = self.find_containing_call(leaf_node)?;
+        let (call_node_idx, call_expr, call_kind) = self.find_containing_call(leaf_node, offset)?;
 
         // 3. Determine active parameter by counting commas
         let active_parameter = self.determine_active_parameter(call_node_idx, call_expr, offset);
@@ -347,6 +347,7 @@ impl<'a> SignatureHelpProvider<'a> {
     fn find_containing_call(
         &self,
         start_node: NodeIndex,
+        cursor_offset: u32,
     ) -> Option<(NodeIndex, &'a CallExprData, CallKind)> {
         let mut current = start_node;
 
@@ -358,12 +359,39 @@ impl<'a> SignatureHelpProvider<'a> {
                     || node.kind == syntax_kind_ext::NEW_EXPRESSION)
                     && let Some(data) = self.arena.get_call_expr(node)
                 {
-                    let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
-                        CallKind::New
-                    } else {
-                        CallKind::Call
-                    };
-                    return Some((current, data, kind));
+                    // Only provide signature help if cursor is after the opening
+                    // `(` or `<` of the call. We find the delimiter by scanning
+                    // the source text within the call node range.
+                    let has_args_or_type_args =
+                        data.arguments.is_some() || data.type_arguments.is_some();
+                    if has_args_or_type_args {
+                        let call_start = node.pos as usize;
+                        let call_end = (node.end as usize).min(self.source_text.len());
+                        let call_text = &self.source_text[call_start..call_end];
+                        // Find the first `(` or `<` (for type args) that opens
+                        // the argument/type-argument list. We look for `(` first
+                        // since type args `<` may also appear in comparisons.
+                        let delimiter = if data.type_arguments.is_some() {
+                            // For type args, find `<` after expression name
+                            call_text.find('<')
+                        } else {
+                            call_text.find('(')
+                        };
+                        if let Some(delim_offset) = delimiter {
+                            let delim_pos = (call_start + delim_offset) as u32;
+                            // Cursor must be strictly after the opening delimiter
+                            if cursor_offset > delim_pos {
+                                let kind =
+                                    if node.kind == syntax_kind_ext::NEW_EXPRESSION {
+                                        CallKind::New
+                                    } else {
+                                        CallKind::Call
+                                    };
+                                return Some((current, data, kind));
+                            }
+                        }
+                    }
+                    // No args/type-args or cursor before delimiter - skip
                 }
 
                 // Move up to parent
