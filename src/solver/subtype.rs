@@ -88,6 +88,24 @@ pub trait TypeResolver {
     fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
         None
     }
+
+    /// Get an export from a namespace/module by name.
+    ///
+    /// Used for qualified name resolution: `namespace.member`.
+    /// Returns None by default; implementations should override to support
+    /// namespace member access with Lazy types.
+    fn get_lazy_export(&self, _def_id: DefId, _name: crate::interner::Atom) -> Option<TypeId> {
+        None
+    }
+
+    /// Get enum member type by name from an enum DefId.
+    ///
+    /// Used for enum member access: `Enum.Member`.
+    /// Returns None by default; implementations should override to support
+    /// enum member access with Lazy types.
+    fn get_lazy_enum_member(&self, _def_id: DefId, _name: crate::interner::Atom) -> Option<TypeId> {
+        None
+    }
 }
 
 /// A no-op resolver that doesn't resolve any references.

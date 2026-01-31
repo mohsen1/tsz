@@ -75,6 +75,7 @@ impl DefId {
 /// | Interface | Lazy expand | No | `interface Point { x: number }` |
 /// | Class | Lazy expand | Yes (with brand) | `class Foo {}` |
 /// | Enum | Special handling | Yes | `enum Color { Red, Green }` |
+/// | Namespace | Export lookup | No | `namespace NS { export type T = number }` |
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DefKind {
     /// Type alias: always expand (transparent).
@@ -92,6 +93,10 @@ pub enum DefKind {
     /// Enum: special handling for member access.
     /// `enum Direction { Up, Down, Left, Right }`
     Enum,
+
+    /// Namespace/Module: container for exported types and values.
+    /// `namespace NS { export type T = number }`
+    Namespace,
 }
 
 // =============================================================================
@@ -131,6 +136,10 @@ pub struct DefinitionInfo {
     /// For enums: member names and values
     pub enum_members: Vec<(Atom, EnumMemberValue)>,
 
+    /// For namespaces/modules: exported members
+    /// Maps export name to the DefId of the exported type
+    pub exports: Vec<(Atom, DefId)>,
+
     /// Optional file identifier for debugging
     pub file_id: Option<u32>,
 
@@ -162,6 +171,7 @@ impl DefinitionInfo {
             extends: None,
             implements: Vec::new(),
             enum_members: Vec::new(),
+            exports: Vec::new(),
             file_id: None,
             span: None,
         }
@@ -188,6 +198,7 @@ impl DefinitionInfo {
             extends: None,
             implements: Vec::new(),
             enum_members: Vec::new(),
+            exports: Vec::new(),
             file_id: None,
             span: None,
         }
@@ -220,6 +231,7 @@ impl DefinitionInfo {
             extends: None,
             implements: Vec::new(),
             enum_members: Vec::new(),
+            exports: Vec::new(),
             file_id: None,
             span: None,
         }
@@ -237,6 +249,25 @@ impl DefinitionInfo {
             extends: None,
             implements: Vec::new(),
             enum_members: members,
+            exports: Vec::new(),
+            file_id: None,
+            span: None,
+        }
+    }
+
+    /// Create a new namespace definition.
+    pub fn namespace(name: Atom, exports: Vec<(Atom, DefId)>) -> Self {
+        DefinitionInfo {
+            kind: DefKind::Namespace,
+            name,
+            type_params: Vec::new(),
+            body: None,
+            instance_shape: None,
+            static_shape: None,
+            extends: None,
+            implements: Vec::new(),
+            enum_members: Vec::new(),
+            exports,
             file_id: None,
             span: None,
         }
@@ -252,6 +283,25 @@ impl DefinitionInfo {
     pub fn with_implements(mut self, interfaces: Vec<DefId>) -> Self {
         self.implements = interfaces;
         self
+    }
+
+    /// Set exports for a namespace/module.
+    pub fn with_exports(mut self, exports: Vec<(Atom, DefId)>) -> Self {
+        self.exports = exports;
+        self
+    }
+
+    /// Add an export to the namespace/module.
+    pub fn add_export(&mut self, name: Atom, def_id: DefId) {
+        self.exports.push((name, def_id));
+    }
+
+    /// Look up an export by name.
+    pub fn get_export(&self, name: Atom) -> Option<DefId> {
+        self.exports
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, d)| *d)
     }
 
     /// Set file ID for debugging.
@@ -654,6 +704,7 @@ mod tests {
                             extends: None,
                             implements: Vec::new(),
                             enum_members: Vec::new(),
+                            exports: Vec::new(),
                             file_id: None,
                             span: None,
                         };
