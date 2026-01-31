@@ -89,6 +89,8 @@ impl<'a> CheckerState<'a> {
                 self.resolve_strict_null_checks_from_source(&sf.text);
             self.ctx.compiler_options.strict_function_types =
                 self.resolve_strict_function_types_from_source(&sf.text);
+            self.ctx.compiler_options.allow_unreachable_code =
+                self.resolve_allow_unreachable_code_from_source(&sf.text);
 
             // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
             // This enables primitive property access to use lib definitions instead of hardcoded lists
