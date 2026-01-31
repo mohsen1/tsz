@@ -3069,25 +3069,30 @@ impl<'a> CheckerState<'a> {
         &self,
         members: &[NodeIndex],
         start: usize,
-        _name: &str,
+        name: &str,
     ) -> (bool, Option<String>) {
-        if start >= members.len() {
-            return (false, None);
-        }
+        for i in start..members.len() {
+            let member_idx = members[i];
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
 
-        let member_idx = members[start];
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return (false, None);
-        };
-
-        if node.kind == syntax_kind_ext::METHOD_DECLARATION
-            && let Some(method) = self.ctx.arena.get_method_decl(node)
-            && !method.body.is_none()
-        {
-            // This is an implementation - check if name matches
-            let impl_name = self.get_method_name_from_node(member_idx);
-            if impl_name.is_some() {
-                return (true, impl_name);
+            if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    let member_name = self.get_method_name_from_node(member_idx);
+                    if member_name.as_deref() != Some(name) {
+                        // Different method name - no implementation found for this overload group
+                        return (false, None);
+                    }
+                    if !method.body.is_none() {
+                        // Found the implementation with matching name
+                        return (true, member_name);
+                    }
+                    // Same name but no body - another overload signature, keep looking
+                }
+            } else {
+                // Non-method member encountered - no implementation found
+                return (false, None);
             }
         }
         (false, None)
