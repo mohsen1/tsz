@@ -701,6 +701,17 @@ impl<'a> CheckerState<'a> {
                         // With optional chaining, missing property results in undefined
                         return TypeId::UNDEFINED;
                     }
+                    // Check for expando function pattern: func.prop = value
+                    // TypeScript allows property assignments to function/class declarations
+                    // without emitting TS2339. The assigned properties become part of the
+                    // function's type (expando pattern).
+                    if self.is_expando_function_assignment(
+                        idx,
+                        access.expression,
+                        object_type_for_access,
+                    ) {
+                        return TypeId::ANY;
+                    }
                     // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
                     if !property_name.starts_with('#') {
                         // Property access expressions are VALUE context - always emit TS2339.
@@ -775,5 +786,72 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
+    }
+
+    /// Check if a property access is an expando function assignment pattern.
+    ///
+    /// TypeScript allows assigning properties to function and class declarations:
+    /// ```typescript
+    /// function foo() {}
+    /// foo.bar = 1;  // OK - expando pattern, no TS2339
+    /// ```
+    ///
+    /// Returns true if:
+    /// 1. The property access is the LHS of a `=` assignment
+    /// 2. The object expression is an identifier bound to a function or class declaration
+    /// 3. The object type is a function type
+    fn is_expando_function_assignment(
+        &self,
+        property_access_idx: NodeIndex,
+        object_expr_idx: NodeIndex,
+        object_type: TypeId,
+    ) -> bool {
+        use crate::solver::visitor::is_function_type;
+
+        // Check if object type is a function type
+        if !is_function_type(self.ctx.types, object_type) {
+            return false;
+        }
+
+        // Check if property access is LHS of a `=` assignment
+        let parent_idx = match self.ctx.arena.get_extended(property_access_idx) {
+            Some(ext) if !ext.parent.is_none() => ext.parent,
+            _ => return false,
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16
+            || binary.left != property_access_idx
+        {
+            return false;
+        }
+
+        // Check if the object expression is an identifier bound to a function/class declaration
+        let Some(expr_node) = self.ctx.arena.get(object_expr_idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
+            return false;
+        };
+
+        // Look up the symbol - try file_locals first, then full scope resolution
+        let sym_id = self
+            .ctx
+            .binder
+            .file_locals
+            .get(&ident.escaped_text)
+            .or_else(|| self.resolve_identifier_symbol(object_expr_idx));
+
+        if let Some(sym_id) = sym_id {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                return (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
+            }
+        }
+
+        false
     }
 }
