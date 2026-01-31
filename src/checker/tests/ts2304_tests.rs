@@ -40,13 +40,29 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
 
 /// Helper function to check source WITH lib.d.ts and return diagnostics.
 fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
-    let ctx = TestContext::new();
+    // Load lib.d.ts from disk
+    let lib_path = std::path::PathBuf::from("TypeScript/node_modules/typescript/lib/lib.d.ts");
+    let lib_files = if lib_path.exists() {
+        let content = std::fs::read_to_string(&lib_path).expect("Failed to read lib.d.ts");
+        let lib_file = crate::lib_loader::LibFile::from_source("lib.d.ts".to_string(), content);
+        vec![std::sync::Arc::new(lib_file)]
+    } else {
+        // Fallback: try to find lib.d.ts in parent directories
+        let alt_path = std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.d.ts");
+        if alt_path.exists() {
+            let content = std::fs::read_to_string(&alt_path).expect("Failed to read lib.d.ts");
+            let lib_file = crate::lib_loader::LibFile::from_source("lib.d.ts".to_string(), content);
+            vec![std::sync::Arc::new(lib_file)]
+        } else {
+            Vec::new()
+        }
+    };
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
 
     let types = TypeInterner::new();
     let options = CheckerOptions::default();
@@ -60,9 +76,8 @@ fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     );
 
     // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = lib_files
             .iter()
             .map(|lib| crate::checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
