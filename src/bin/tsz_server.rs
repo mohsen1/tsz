@@ -1061,6 +1061,11 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         let file = request.arguments.get("file").and_then(|v| v.as_str());
+        let include_line_position = request
+            .arguments
+            .get("includeLinePosition")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = self.open_files.get(file_path).cloned() {
                 let line_map = LineMap::build(&content);
@@ -1068,26 +1073,16 @@ impl Server {
                 full_diags
                     .iter()
                     .map(|diag| {
-                        let start_pos = line_map.offset_to_position(diag.start, &content);
-                        let end_pos =
-                            line_map.offset_to_position(diag.start + diag.length, &content);
-                        serde_json::json!({
-                            "start": {
-                                "line": start_pos.line + 1,
-                                "offset": start_pos.character + 1,
-                            },
-                            "end": {
-                                "line": end_pos.line + 1,
-                                "offset": end_pos.character + 1,
-                            },
-                            "text": diag.message_text,
-                            "code": diag.code,
-                            "category": match diag.category {
-                                DiagnosticCategory::Error => "error",
-                                DiagnosticCategory::Warning => "warning",
-                                _ => "suggestion",
-                            }
-                        })
+                        Self::format_diagnostic(
+                            diag.start,
+                            diag.length,
+                            &diag.message_text,
+                            diag.code,
+                            &diag.category,
+                            &line_map,
+                            &content,
+                            include_line_position,
+                        )
                     })
                     .collect()
             } else {
@@ -1114,6 +1109,11 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         let file = request.arguments.get("file").and_then(|v| v.as_str());
+        let include_line_position = request
+            .arguments
+            .get("includeLinePosition")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = self.open_files.get(file_path).cloned() {
                 let line_map = LineMap::build(&content);
@@ -1123,21 +1123,16 @@ impl Server {
                     .get_diagnostics()
                     .iter()
                     .map(|d| {
-                        let start_pos = line_map.offset_to_position(d.start, &content);
-                        let end_pos = line_map.offset_to_position(d.start + d.length, &content);
-                        serde_json::json!({
-                            "start": {
-                                "line": start_pos.line + 1,
-                                "offset": start_pos.character + 1,
-                            },
-                            "end": {
-                                "line": end_pos.line + 1,
-                                "offset": end_pos.character + 1,
-                            },
-                            "text": d.message,
-                            "code": d.code,
-                            "category": "error"
-                        })
+                        Self::format_diagnostic(
+                            d.start,
+                            d.length,
+                            &d.message,
+                            d.code,
+                            &DiagnosticCategory::Error,
+                            &line_map,
+                            &content,
+                            include_line_position,
+                        )
                     })
                     .collect()
             } else {
@@ -1155,6 +1150,72 @@ impl Server {
             success: true,
             message: None,
             body: Some(serde_json::json!(diagnostics)),
+        }
+    }
+
+    /// Format a diagnostic for the tsserver protocol.
+    ///
+    /// When `include_line_position` is true (the SessionClient always sets this),
+    /// the response includes 0-based `start`/`length` fields plus `startLocation`/
+    /// `endLocation` with 1-based line/offset. When false, uses `start`/`end` as
+    /// 1-based line/offset objects (the traditional tsserver format).
+    fn format_diagnostic(
+        start_offset: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+        category: &DiagnosticCategory,
+        line_map: &LineMap,
+        content: &str,
+        include_line_position: bool,
+    ) -> serde_json::Value {
+        let start_pos = line_map.offset_to_position(start_offset, content);
+        let end_pos = line_map.offset_to_position(start_offset + length, content);
+        let cat_str = match category {
+            DiagnosticCategory::Error => "error",
+            DiagnosticCategory::Warning => "warning",
+            _ => "suggestion",
+        };
+
+        if include_line_position {
+            // When includeLinePosition is true, the harness expects:
+            // - start: 0-based byte offset (number)
+            // - length: byte length (number)
+            // - startLocation: {line, offset} (1-based)
+            // - endLocation: {line, offset} (1-based)
+            // - message: the diagnostic text
+            // - category: category string
+            // - code: error code
+            serde_json::json!({
+                "start": start_offset,
+                "length": length,
+                "startLocation": {
+                    "line": start_pos.line + 1,
+                    "offset": start_pos.character + 1,
+                },
+                "endLocation": {
+                    "line": end_pos.line + 1,
+                    "offset": end_pos.character + 1,
+                },
+                "message": message,
+                "code": code,
+                "category": cat_str,
+            })
+        } else {
+            // Traditional tsserver format: start/end as {line, offset}
+            serde_json::json!({
+                "start": {
+                    "line": start_pos.line + 1,
+                    "offset": start_pos.character + 1,
+                },
+                "end": {
+                    "line": end_pos.line + 1,
+                    "offset": end_pos.character + 1,
+                },
+                "text": message,
+                "code": code,
+                "category": cat_str,
+            })
         }
     }
 
