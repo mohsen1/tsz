@@ -130,11 +130,13 @@ build_server() {
 
 build_runner() {
     log_step "Building conformance runner..."
-    cd "$SCRIPT_DIR"
-    if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/typescript" ]]; then
-        npm install --silent 2>/dev/null || npm install
-    fi
-    npm run build --silent 2>/dev/null || npm run build
+    (
+        cd "$SCRIPT_DIR"
+        if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/typescript" ]]; then
+            npm install --silent 2>/dev/null || npm install
+        fi
+        npm run build --silent 2>/dev/null || npm run build
+    )
     log_success "Runner built"
 }
 
