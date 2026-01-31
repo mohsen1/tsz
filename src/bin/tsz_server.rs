@@ -1433,12 +1433,23 @@ impl Server {
                 .iter()
                 .map(|item| {
                     let kind = Self::completion_kind_to_str(item.kind);
+                    // Map internal sort_text to tsserver's SortText format
+                    let tsserver_sort_text = match item.sort_text.as_deref() {
+                        Some("0") => "11",  // LOCAL_DECLARATION -> LocationPriority
+                        Some("1") => "11",  // MEMBER -> LocationPriority
+                        Some("2") => "11",  // TYPE_DECLARATION -> LocationPriority
+                        Some("3") => "16",  // AUTO_IMPORT -> AutoImportSuggestions
+                        Some("5") => "15",  // KEYWORD -> GlobalsOrKeywords
+                        _ => "11",           // Default to LocationPriority
+                    };
                     let mut entry = serde_json::json!({
                         "name": item.label,
                         "kind": kind,
-                        "sortText": format!("{:02}{}", if kind == "keyword" { 15 } else { 0 }, item.label),
+                        "sortText": tsserver_sort_text,
                     });
-                    if let Some(ref detail) = item.detail {
+                    if let Some(ref modifiers) = item.kind_modifiers {
+                        entry["kindModifiers"] = serde_json::json!(modifiers);
+                    } else if let Some(ref detail) = item.detail {
                         entry["kindModifiers"] = serde_json::json!(detail);
                     }
                     entry

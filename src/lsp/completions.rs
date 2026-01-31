@@ -20,6 +20,7 @@ use crate::parser::syntax_kind_ext;
 use crate::solver::{
     ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, TypeKey, apparent_primitive_members,
 };
+use crate::scanner::SyntaxKind;
 
 /// The kind of completion item, matching tsserver's ScriptElementKind values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -262,7 +263,87 @@ pub struct Completions<'a> {
 }
 
 /// JavaScript/TypeScript keywords for completion.
+/// Matches tsserver's `globalKeywords` list.
 const KEYWORDS: &[&str] = &[
+    "abstract",
+    "any",
+    "as",
+    "asserts",
+    "async",
+    "await",
+    "bigint",
+    "boolean",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "declare",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "get",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "infer",
+    "instanceof",
+    "interface",
+    "keyof",
+    "let",
+    "module",
+    "namespace",
+    "never",
+    "new",
+    "null",
+    "number",
+    "object",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "readonly",
+    "return",
+    "satisfies",
+    "set",
+    "static",
+    "string",
+    "super",
+    "switch",
+    "symbol",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "type",
+    "typeof",
+    "unique",
+    "unknown",
+    "using",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+];
+
+/// Keywords valid inside a function body (subset without top-level-only keywords).
+/// Matches tsserver's `globalKeywordsInsideFunction`.
+const KEYWORDS_INSIDE_FUNCTION: &[&str] = &[
+    "as",
+    "async",
+    "await",
     "break",
     "case",
     "catch",
@@ -282,37 +363,82 @@ const KEYWORDS: &[&str] = &[
     "for",
     "function",
     "if",
+    "implements",
     "import",
     "in",
+    "instanceof",
     "interface",
     "let",
     "new",
     "null",
+    "package",
     "return",
+    "satisfies",
     "super",
     "switch",
     "this",
     "throw",
     "true",
     "try",
+    "type",
     "typeof",
+    "using",
     "var",
     "void",
     "while",
     "with",
-    "async",
-    "await",
     "yield",
-    "type",
-    "readonly",
-    "abstract",
-    "declare",
-    "static",
-    "public",
-    "private",
-    "protected",
-    "get",
-    "set",
+];
+
+/// Global variable names from lib.d.ts that should appear in completions.
+/// Matches tsserver's `globalsVars` list.
+const GLOBAL_VARS: &[(&str, CompletionItemKind)] = &[
+    ("Array", CompletionItemKind::Variable),
+    ("ArrayBuffer", CompletionItemKind::Variable),
+    ("Boolean", CompletionItemKind::Variable),
+    ("DataView", CompletionItemKind::Variable),
+    ("Date", CompletionItemKind::Variable),
+    ("decodeURI", CompletionItemKind::Function),
+    ("decodeURIComponent", CompletionItemKind::Function),
+    ("encodeURI", CompletionItemKind::Function),
+    ("encodeURIComponent", CompletionItemKind::Function),
+    ("Error", CompletionItemKind::Variable),
+    ("escape", CompletionItemKind::Function),
+    ("eval", CompletionItemKind::Function),
+    ("EvalError", CompletionItemKind::Variable),
+    ("Float32Array", CompletionItemKind::Variable),
+    ("Float64Array", CompletionItemKind::Variable),
+    ("Function", CompletionItemKind::Variable),
+    ("globalThis", CompletionItemKind::Module),
+    ("Infinity", CompletionItemKind::Variable),
+    ("Int16Array", CompletionItemKind::Variable),
+    ("Int32Array", CompletionItemKind::Variable),
+    ("Int8Array", CompletionItemKind::Variable),
+    ("Intl", CompletionItemKind::Module),
+    ("isFinite", CompletionItemKind::Function),
+    ("isNaN", CompletionItemKind::Function),
+    ("JSON", CompletionItemKind::Variable),
+    ("Math", CompletionItemKind::Variable),
+    ("NaN", CompletionItemKind::Variable),
+    ("Number", CompletionItemKind::Variable),
+    ("Object", CompletionItemKind::Variable),
+    ("parseFloat", CompletionItemKind::Function),
+    ("parseInt", CompletionItemKind::Function),
+    ("Promise", CompletionItemKind::Variable),
+    ("RangeError", CompletionItemKind::Variable),
+    ("ReferenceError", CompletionItemKind::Variable),
+    ("RegExp", CompletionItemKind::Variable),
+    ("String", CompletionItemKind::Variable),
+    ("Symbol", CompletionItemKind::Variable),
+    ("SyntaxError", CompletionItemKind::Variable),
+    ("TypeError", CompletionItemKind::Variable),
+    ("Uint16Array", CompletionItemKind::Variable),
+    ("Uint32Array", CompletionItemKind::Variable),
+    ("Uint8Array", CompletionItemKind::Variable),
+    ("Uint8ClampedArray", CompletionItemKind::Variable),
+    ("undefined", CompletionItemKind::Variable),
+    ("unescape", CompletionItemKind::Function),
+    ("URIError", CompletionItemKind::Variable),
 ];
 
 impl<'a> Completions<'a> {
@@ -459,231 +585,45 @@ impl<'a> Completions<'a> {
     /// typing a brand-new identifier (e.g. a variable name after `const`, a
     /// parameter name, an import binding name, etc.).
     pub fn compute_is_new_identifier_location(&self, root: NodeIndex, offset: u32) -> bool {
-        // Find the node at this offset
-        let mut node_idx = find_node_at_offset(self.arena, offset);
-        if node_idx.is_none() && offset > 0 {
-            node_idx = find_node_at_offset(self.arena, offset - 1);
-        }
-        let node_idx = if node_idx.is_none() { root } else { node_idx };
+        // isNewIdentifierLocation=true means the user is typing a new NAME (not referring
+        // to an existing one). This is true after declaration keywords and in class/interface
+        // member positions, but false for most expression/statement positions.
+        //
+        // We use a conservative approach: primarily text-based heuristics, with limited
+        // AST checks for class/interface bodies.
 
-        // Walk up the AST looking for contexts where new identifiers are valid
-        let mut current = node_idx;
-        while !current.is_none() {
-            if let Some(node) = self.arena.get(current) {
-                match node.kind {
-                    // Variable declarations: `const x|`, `let y|`, `var z|`
-                    k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                        return true;
-                    }
-                    // Variable declaration list: `const |`, `let |`
-                    k if k == syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
-                        return true;
-                    }
-                    // Parameter declarations: `function f(x|)`
-                    k if k == syntax_kind_ext::PARAMETER => {
-                        return true;
-                    }
-                    // Function declarations: `function |`
-                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                        // Only if cursor is at the name position (between `function` and `(`)
-                        return true;
-                    }
-                    // Class declarations: `class |` or inside class body
-                    k if k == syntax_kind_ext::CLASS_DECLARATION
-                        || k == syntax_kind_ext::CLASS_EXPRESSION =>
-                    {
-                        return true;
-                    }
-                    // Interface declarations: inside body
-                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                        return true;
-                    }
-                    // Type alias: `type |`
-                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                        return true;
-                    }
-                    // Import clause: `import |`
-                    k if k == syntax_kind_ext::IMPORT_CLAUSE => {
-                        return true;
-                    }
-                    // Import declaration: `import |`
-                    k if k == syntax_kind_ext::IMPORT_DECLARATION => {
-                        return true;
-                    }
-                    // Named imports: `import { | }`
-                    k if k == syntax_kind_ext::NAMED_IMPORTS => {
-                        return true;
-                    }
-                    // Import specifier: `import { x as | }`
-                    k if k == syntax_kind_ext::IMPORT_SPECIFIER => {
-                        return true;
-                    }
-                    // Namespace import: `import * as |`
-                    k if k == syntax_kind_ext::NAMESPACE_IMPORT => {
-                        return true;
-                    }
-                    // Export declaration
-                    k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                        return true;
-                    }
-                    // Named exports: `export { | }`
-                    k if k == syntax_kind_ext::NAMED_EXPORTS => {
-                        return true;
-                    }
-                    // Export specifier
-                    k if k == syntax_kind_ext::EXPORT_SPECIFIER => {
-                        return true;
-                    }
-                    // Constructor: `constructor(|)`
-                    k if k == syntax_kind_ext::CONSTRUCTOR => {
-                        return true;
-                    }
-                    // Type parameter: `<T|>`
-                    k if k == syntax_kind_ext::TYPE_PARAMETER => {
-                        return true;
-                    }
-                    // New expression: `new |`
-                    k if k == syntax_kind_ext::NEW_EXPRESSION => {
-                        return true;
-                    }
-                    // Call expression: `foo(|)` -- arguments can be new identifiers
-                    k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                        return true;
-                    }
-                    // Array literal: `[|]`
-                    k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                        return true;
-                    }
-                    // Object literal: `{ | }`
-                    k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                        return true;
-                    }
-                    // As expression: `x as |`
-                    k if k == syntax_kind_ext::AS_EXPRESSION => {
-                        return true;
-                    }
-                    // Binding patterns: `const { | } = ...` or `const [ | ] = ...`
-                    k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
-                    {
-                        return true;
-                    }
-                    // Binding element
-                    k if k == syntax_kind_ext::BINDING_ELEMENT => {
-                        return true;
-                    }
-                    // Heritage clause: `extends |` or `implements |`
-                    k if k == syntax_kind_ext::HERITAGE_CLAUSE => {
-                        return true;
-                    }
-                    // Catch clause: `catch (|)`
-                    k if k == syntax_kind_ext::CATCH_CLAUSE => {
-                        return true;
-                    }
-                    // Module declaration: `module |`
-                    k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                        return true;
-                    }
-                    // Enum declaration: `enum |`
-                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                        return true;
-                    }
-                    // Arrow function: `(|) =>`
-                    k if k == syntax_kind_ext::ARROW_FUNCTION => {
-                        return true;
-                    }
-                    // For-in and for-of: `for (const | in/of ...)`
-                    k if k == syntax_kind_ext::FOR_IN_STATEMENT
-                        || k == syntax_kind_ext::FOR_OF_STATEMENT =>
-                    {
-                        return true;
-                    }
-                    // For statement: `for (|; ; )`
-                    k if k == syntax_kind_ext::FOR_STATEMENT => {
-                        return true;
-                    }
-                    // Property declaration in class: new member name
-                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                        return true;
-                    }
-                    // Method declaration: new method name
-                    k if k == syntax_kind_ext::METHOD_DECLARATION
-                        || k == syntax_kind_ext::METHOD_SIGNATURE =>
-                    {
-                        return true;
-                    }
-                    // Property/method signatures in interfaces
-                    k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                        return true;
-                    }
-                    // Index signature: `[|: string]: any`
-                    k if k == syntax_kind_ext::INDEX_SIGNATURE => {
-                        return true;
-                    }
-                    // Function type: `(|) => void`
-                    k if k == syntax_kind_ext::FUNCTION_TYPE => {
-                        return true;
-                    }
-                    // Parenthesized expression: `(|)`
-                    k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                        return true;
-                    }
-                    // Template expression: `${|}`
-                    k if k == syntax_kind_ext::TEMPLATE_EXPRESSION
-                        || k == syntax_kind_ext::TEMPLATE_SPAN =>
-                    {
-                        return true;
-                    }
-                    // Binary expression: `x = |`, `a + |`
-                    k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                        return true;
-                    }
-                    // Return statement: `return |`
-                    k if k == syntax_kind_ext::RETURN_STATEMENT => {
-                        return true;
-                    }
-                    // Variable statement: `const |`
-                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                        return true;
-                    }
-                    // Yield expression: `yield |`
-                    k if k == syntax_kind_ext::YIELD_EXPRESSION => {
-                        return true;
-                    }
-                    // Spread element: `...x|`
-                    k if k == syntax_kind_ext::SPREAD_ELEMENT => {
-                        return true;
-                    }
-                    // Conditional: `x ? | : |`
-                    k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
-                        return true;
-                    }
-                    // Expression with type args: `foo<|>`
-                    k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
-                        return true;
-                    }
-                    _ => {}
-                }
+        let node_idx = self.find_completions_node(root, offset);
+
+        // Check if inside a class/interface body at a member declaration position
+        if let Some(node) = self.arena.get(node_idx) {
+            let k = node.kind;
+
+            // Property/method declarations and signatures in class/interface bodies
+            if k == syntax_kind_ext::PROPERTY_DECLARATION
+                || k == syntax_kind_ext::PROPERTY_SIGNATURE
+                || k == syntax_kind_ext::METHOD_SIGNATURE
+                || k == syntax_kind_ext::INDEX_SIGNATURE
+            {
+                return true;
             }
-            // Walk up to parent
-            if let Some(ext) = self.arena.get_extended(current) {
-                if ext.parent == current {
-                    break; // avoid infinite loop
+
+            // Inside class/interface body at member position
+            if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::INTERFACE_DECLARATION
+            {
+                let text_before = &self.source_text[..offset as usize];
+                if text_before[node.pos as usize..].contains('{') {
+                    return true;
                 }
-                current = ext.parent;
-            } else {
-                break;
             }
         }
 
-        // Also check text-based heuristics: if previous non-whitespace token is a keyword
-        // that introduces a new identifier
+        // Text-based heuristic: check if the previous non-whitespace token is
+        // a keyword that introduces a new name
         self.check_preceding_keyword_for_new_id(offset)
     }
 
-    /// Check if the text before the cursor contains a keyword that introduces a new
-    /// identifier (e.g., `const `, `let `, `var `, `function `, `class `, `import `,
-    /// `as `, `extends `, `implements `, `new `, `type `).
     fn check_preceding_keyword_for_new_id(&self, offset: u32) -> bool {
         let text = &self.source_text[..offset as usize];
         let trimmed = text.trim_end();
@@ -694,10 +634,11 @@ impl<'a> Completions<'a> {
         // Find the last word before cursor
         let last_word_start = trimmed
             .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-            .map(|i| i + 1)
+            .map(|p| p + 1)
             .unwrap_or(0);
         let last_word = &trimmed[last_word_start..];
 
+        // Keywords that explicitly introduce a new name
         matches!(
             last_word,
             "const"
@@ -712,34 +653,155 @@ impl<'a> Completions<'a> {
                 | "module"
                 | "import"
                 | "as"
-                | "extends"
-                | "implements"
-                | "new"
-                | "catch"
                 | "from"
-                | "export"
-                | "abstract"
-                | "async"
-                | "declare"
-                | "readonly"
-                | "public"
-                | "private"
-                | "protected"
-                | "static"
-                | "get"
-                | "set"
-                | "of"
-                | "in"
-                | "return"
-                | "yield"
-                | "throw"
-                | "await"
-                | "typeof"
-                | "keyof"
-                | "infer"
-                | "case"
-                | "default"
+                | "catch"
         )
+    }
+
+
+
+    /// Check if the cursor is inside a context where completions should not be offered,
+    /// such as inside string literals (non-module-specifier), comments, or regex literals.
+    fn is_in_no_completion_context(&self, offset: u32) -> bool {
+        // Check if we're inside a string literal, comment, or regex by examining
+        // the source text character context around the offset.
+        let bytes = self.source_text.as_bytes();
+        let len = bytes.len();
+        if offset as usize >= len {
+            return false;
+        }
+
+        // Scan backwards to find context
+        let i = offset as usize;
+        
+        // Check for line comments: if we find // before offset on same line, we're in a comment
+        let line_start = self.source_text[..i].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let line_prefix = &self.source_text[line_start..i];
+        if line_prefix.contains("//") {
+            // Check that the // is not inside a string
+            let comment_pos = line_prefix.find("//").unwrap();
+            let before_comment = &line_prefix[..comment_pos];
+            let single_quotes = before_comment.chars().filter(|&c| c == '\'').count();
+            let double_quotes = before_comment.chars().filter(|&c| c == '"').count();
+            let backticks = before_comment.chars().filter(|&c| c == '`').count();
+            // If all quote counts are even, the // is not inside a string
+            if single_quotes % 2 == 0 && double_quotes % 2 == 0 && backticks % 2 == 0 {
+                return true;
+            }
+        }
+        
+        // Check for block comments: scan backwards for /* without matching */
+        if let Some(block_start) = self.source_text[..i].rfind("/*") {
+            let after_block = &self.source_text[block_start + 2..i];
+            if !after_block.contains("*/") {
+                return true;
+            }
+        }
+        
+        // Check if we're inside a string literal using the AST
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if !node_idx.is_none() {
+            if let Some(node) = self.arena.get(node_idx) {
+                let kind = node.kind;
+                // String literal (not inside an import/require module specifier)
+                if kind == SyntaxKind::StringLiteral as u16 {
+                    // Check if parent is an import declaration's module specifier
+                    if let Some(ext) = self.arena.get_extended(node_idx) {
+                        let parent = self.arena.get(ext.parent);
+                        if let Some(p) = parent {
+                            if p.kind == syntax_kind_ext::IMPORT_DECLARATION 
+                                || p.kind == syntax_kind_ext::EXPORT_DECLARATION
+                                || p.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE {
+                                return false; // Module specifier - allow completions
+                            }
+                        }
+                    }
+                    return true; // Regular string literal - no completions
+                }
+                // No-substitution template literal 
+                if kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+                    return true;
+                }
+                // Template head/middle/tail (inside template literal parts, not expressions)
+                if kind == SyntaxKind::TemplateHead as u16
+                    || kind == SyntaxKind::TemplateMiddle as u16
+                    || kind == SyntaxKind::TemplateTail as u16 {
+                    return true;
+                }
+                // Regular expression literal
+                if kind == SyntaxKind::RegularExpressionLiteral as u16 {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if the cursor is inside a function body (for keyword selection).
+    fn is_inside_function(&self, offset: u32) -> bool {
+        let node_idx = find_node_at_offset(self.arena, offset);
+        let start = if node_idx.is_none() && offset > 0 {
+            find_node_at_offset(self.arena, offset.saturating_sub(1))
+        } else {
+            node_idx
+        };
+        let mut current = start;
+        while !current.is_none() {
+            if let Some(node) = self.arena.get(current) {
+                let k = node.kind;
+                if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                {
+                    return true;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                if ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Find the best node for completions at the given offset.
+    /// When the cursor is in whitespace, finds the smallest containing scope node.
+    fn find_completions_node(&self, root: NodeIndex, offset: u32) -> NodeIndex {
+        // Try exact offset first
+        let mut node_idx = find_node_at_offset(self.arena, offset);
+        if !node_idx.is_none() {
+            return node_idx;
+        }
+        // Try offset-1 (common when cursor is right after a token boundary)
+        if offset > 0 {
+            node_idx = find_node_at_offset(self.arena, offset - 1);
+            if !node_idx.is_none() {
+                return node_idx;
+            }
+        }
+        // Fallback: find the smallest node whose range contains the offset
+        // This handles whitespace inside blocks where pos <= offset < end
+        let mut best = root;
+        let mut best_len = u32::MAX;
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.pos <= offset && node.end >= offset {
+                let len = node.end - node.pos;
+                if len < best_len {
+                    best_len = len;
+                    best = NodeIndex(i as u32);
+                }
+            }
+        }
+        best
     }
 
     fn get_completions_internal(
@@ -755,21 +817,22 @@ impl<'a> Completions<'a> {
             .line_map
             .position_to_offset(position, self.source_text)?;
 
-        // 2. Find the node at this offset (or use root if not found)
-        let mut node_idx = find_node_at_offset(self.arena, offset);
-        if node_idx.is_none() && offset > 0 {
-            node_idx = find_node_at_offset(self.arena, offset - 1);
+        // 2. Filter out positions where completions should not appear
+        if self.is_in_no_completion_context(offset) {
+            return Some(Vec::new());
         }
-        let node_idx = if node_idx.is_none() { root } else { node_idx };
 
+        // 3. Find the node at this offset using improved lookup
+        let node_idx = self.find_completions_node(root, offset);
+
+        // 4. Check for member completion (after a dot)
         if let Some(expr_idx) = self.member_completion_target(node_idx, offset)
             && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
         {
             return if items.is_empty() { None } else { Some(items) };
         }
 
-        // Check for object literal property completion (contextual completions)
-        // Only if we have type information available
+        // 5. Check for object literal property completion (contextual completions)
         if self.interner.is_some()
             && self.file_name.is_some()
             && let Some(items) = self.get_object_literal_completions(node_idx, type_cache)
@@ -777,7 +840,7 @@ impl<'a> Completions<'a> {
             return if items.is_empty() { None } else { Some(items) };
         }
 
-        // 3. Get the scope chain at this position
+        // 6. Get the scope chain at this position
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let scope_chain = if let Some(scope_cache) = scope_cache {
             Cow::Borrowed(walker.get_scope_chain_cached(root, node_idx, scope_cache, scope_stats))
@@ -785,52 +848,38 @@ impl<'a> Completions<'a> {
             Cow::Owned(walker.get_scope_chain(root, node_idx))
         };
 
-        // 4. Collect all visible identifiers from the scope chain
+        // 7. Collect all visible identifiers from the scope chain
         let mut completions = Vec::new();
         let mut seen_names = std::collections::HashSet::new();
 
         // Walk scopes from innermost to outermost
         for scope in scope_chain.iter().rev() {
             for (name, symbol_id) in scope.iter() {
-                // Skip if we've already seen this name (inner scopes shadow outer scopes)
                 if seen_names.contains(name) {
                     continue;
                 }
                 seen_names.insert(name.clone());
 
-                // Get the symbol to determine its kind
                 if let Some(symbol) = self.binder.symbols.get(*symbol_id) {
                     let kind = self.determine_completion_kind(symbol);
                     let mut item = CompletionItem::new(name.clone(), kind);
-
-                    // Set sort text based on kind
                     item.sort_text = Some(default_sort_text(kind).to_string());
 
-                    // Add detail information if available
                     if let Some(detail) = self.get_symbol_detail(symbol) {
                         item = item.with_detail(detail);
                     }
-
-                    // Add kind modifiers
                     if let Some(modifiers) = self.build_kind_modifiers(symbol) {
                         item.kind_modifiers = Some(modifiers);
                     }
-
-                    // For function completions, add snippet insert text
                     if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
                         item.insert_text = Some(format!("{}($1)", name));
                         item.is_snippet = true;
                     }
 
-                    // Add JSDoc documentation if available
                     let decl_node = if !symbol.value_declaration.is_none() {
                         symbol.value_declaration
                     } else {
-                        symbol
-                            .declarations
-                            .first()
-                            .copied()
-                            .unwrap_or(NodeIndex::NONE)
+                        symbol.declarations.first().copied().unwrap_or(NodeIndex::NONE)
                     };
                     if !decl_node.is_none() {
                         let doc = jsdoc_for_node(self.arena, root, decl_node, self.source_text);
@@ -844,10 +893,39 @@ impl<'a> Completions<'a> {
             }
         }
 
-        // Add keywords for non-member completions (when not typing after a dot)
-        // Note: If we were in member context, we would have returned early above
-        for &kw in KEYWORDS {
-            // Skip if keyword is already in completions (e.g., if user defined a variable named 'function')
+        // 8. Add global variables (globalThis, undefined, Array, etc.)
+        //    These are always available and match tsserver's globalsVars.
+        let inside_func = self.is_inside_function(offset);
+        for &(name, kind) in GLOBAL_VARS {
+            if !seen_names.contains(name) {
+                seen_names.insert(name.to_string());
+                let mut item = CompletionItem::new(name.to_string(), kind);
+                item.sort_text = Some(sort_priority::KEYWORD.to_string());
+                if kind == CompletionItemKind::Function {
+                    item.insert_text = Some(format!("{}($1)", name));
+                    item.is_snippet = true;
+                }
+                completions.push(item);
+            }
+        }
+
+        // 9. If inside a function, also add "arguments" as a local variable
+        if inside_func {
+            if !seen_names.contains("arguments") {
+                seen_names.insert("arguments".to_string());
+                let mut item = CompletionItem::new("arguments".to_string(), CompletionItemKind::Variable);
+                item.sort_text = Some(sort_priority::LOCAL_DECLARATION.to_string());
+                completions.push(item);
+            }
+        }
+
+        // 10. Add keywords for non-member completions
+        let keywords = if inside_func {
+            KEYWORDS_INSIDE_FUNCTION
+        } else {
+            KEYWORDS
+        };
+        for &kw in keywords {
             if !seen_names.contains(kw) {
                 let mut kw_item = CompletionItem::new(kw.to_string(), CompletionItemKind::Keyword);
                 kw_item.sort_text = Some(sort_priority::KEYWORD.to_string());
@@ -858,8 +936,6 @@ impl<'a> Completions<'a> {
         if completions.is_empty() {
             None
         } else {
-            // Sort by (sort_text, label) so that higher-priority items appear first
-            // and items within the same priority are ordered alphabetically.
             completions.sort_by(|a, b| {
                 let sa = a.effective_sort_text();
                 let sb = b.effective_sort_text();

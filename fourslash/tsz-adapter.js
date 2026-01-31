@@ -243,7 +243,17 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         openFile(fileName, content, scriptKindName) {
             super.openFile(fileName, content, scriptKindName);
             if (this._client) {
-                this._client.openFile(fileName, content, scriptKindName);
+                // If content is not provided, get it from the host's stored scripts
+                // This is needed because the virtual file system paths don't exist on disk,
+                // and tsz-server would fall back to reading from disk (which would fail).
+                let fileContent = content;
+                if (fileContent == null) {
+                    const scriptInfo = this.getScriptInfo(fileName);
+                    if (scriptInfo) {
+                        fileContent = scriptInfo.content;
+                    }
+                }
+                this._client.openFile(fileName, fileContent, scriptKindName);
             }
         }
 
