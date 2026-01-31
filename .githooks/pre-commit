@@ -109,12 +109,12 @@ fi
 echo "✅ Tests passed"
 
 # ============================================================
-# 4. Conformance regression check
+# 4. Conformance regression check (runs ALL tests)
 # ============================================================
 if [[ "$SKIP_CONFORMANCE" == "1" ]]; then
     echo "4️⃣  Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
 else
-    echo "4️⃣  Conformance regression check..."
+    echo "4️⃣  Conformance regression check (running ALL tests)..."
     
     # Get the last recorded conformance from git history
     LAST_CONFORMANCE=""
@@ -127,12 +127,12 @@ else
     fi
     
     if [[ "$SKIP_CONFORMANCE" != "1" ]]; then
-        # Run quick conformance check
+        # Run FULL conformance check (all tests)
         TEMP_OUTPUT=$(mktemp)
         trap "rm -f $TEMP_OUTPUT" EXIT
         
-        echo "   Running quick conformance check..."
-        if ! "$ROOT_DIR/conformance/run.sh" --max=500 --workers=4 > "$TEMP_OUTPUT" 2>&1; then
+        echo "   Running full conformance test suite..."
+        if ! "$ROOT_DIR/conformance/run.sh" > "$TEMP_OUTPUT" 2>&1; then
             echo "❌ Conformance tests failed to run"
             cat "$TEMP_OUTPUT" | tail -20
             exit 1
@@ -186,7 +186,7 @@ else
         
         echo "✅ Conformance: ${CURRENT_CONFORMANCE}% (no regression from ${LAST_CONFORMANCE}%)"
         
-        # Store the conformance value for the commit-msg hook to pick up
+        # Store the conformance value for the prepare-commit-msg hook to pick up
         echo "$CURRENT_CONFORMANCE" > "$ROOT_DIR/.conformance-value"
     fi
 fi
