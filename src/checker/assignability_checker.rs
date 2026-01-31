@@ -190,11 +190,17 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         use crate::solver::type_queries::{AssignabilityEvalKind, classify_for_assignability_eval};
 
-        match classify_for_assignability_eval(self.ctx.types, type_id) {
+        let kind = classify_for_assignability_eval(self.ctx.types, type_id);
+        eprintln!("[DEBUG eval_for_assignability] type_id={:?}, key={:?}, kind={:?}", type_id, self.ctx.types.lookup(type_id), kind);
+        let result = match kind {
             AssignabilityEvalKind::Application => self.evaluate_type_with_resolution(type_id),
             AssignabilityEvalKind::NeedsEnvEval => self.evaluate_type_with_env(type_id),
             AssignabilityEvalKind::Resolved => type_id,
+        };
+        if result != type_id {
+            eprintln!("[DEBUG eval_for_assignability] type_id={:?} => result={:?}, result_key={:?}", type_id, result, self.ctx.types.lookup(result));
         }
+        result
     }
 
     // =========================================================================

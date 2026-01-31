@@ -237,6 +237,8 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        eprintln!("[DEBUG evaluate_application_type] ENTER type_id={:?}, key={:?}", type_id, self.ctx.types.lookup(type_id));
+
         // Clear cache to ensure fresh evaluation with current contextual type
         self.ctx.application_eval_cache.clear();
 
@@ -256,6 +258,8 @@ impl<'a> CheckerState<'a> {
         *self.ctx.instantiation_depth.borrow_mut() += 1;
 
         let result = self.evaluate_application_type_inner(type_id);
+
+        eprintln!("[DEBUG evaluate_application_type] RESULT type_id={:?} => result={:?}, result_key={:?}", type_id, result, self.ctx.types.lookup(result));
 
         *self.ctx.instantiation_depth.borrow_mut() -= 1;
         self.ctx.application_eval_set.remove(&type_id);
