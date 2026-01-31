@@ -853,8 +853,83 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // toggleLineComment returns TextChange[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let start_line = request.arguments.get("startLine")?.as_u64()? as usize;
+            let end_line = request.arguments.get("endLine")?.as_u64()? as usize;
+            let source_text = self.open_files.get(file)?.clone();
+
+            let all_lines: Vec<&str> = source_text.lines().collect();
+            // Convert 1-based to 0-based
+            let first = start_line.saturating_sub(1);
+            let last = end_line.saturating_sub(1).min(all_lines.len().saturating_sub(1));
+
+            // Collect the lines in range, skipping empty lines for analysis
+            let non_empty_lines: Vec<(usize, &str)> = (first..=last)
+                .filter_map(|i| {
+                    let line = all_lines.get(i)?;
+                    if line.trim().is_empty() { None } else { Some((i, *line)) }
+                })
+                .collect();
+
+            if non_empty_lines.is_empty() {
+                return Some(serde_json::json!([]));
+            }
+
+            // Check if ALL non-empty lines are commented (start with //)
+            let all_commented = non_empty_lines.iter().all(|(_, line)| {
+                line.trim_start().starts_with("//")
+            });
+
+            let mut edits = Vec::new();
+
+            if all_commented {
+                // Uncomment: remove the // and one preceding space if present
+                for &(line_idx, line) in &non_empty_lines {
+                    let ws_len = line.len() - line.trim_start().len();
+                    let rest = &line[ws_len..];
+                    if rest.starts_with("//") {
+                        let one_line = line_idx + 1; // 1-based
+                        // If there's a space before //, remove it too (symmetric with comment)
+                        let start_col = if ws_len > 0 { ws_len - 1 } else { ws_len };
+                        let end_col = ws_len + 2; // past the //
+                        edits.push(serde_json::json!({
+                            "start": {"line": one_line, "offset": start_col + 1},
+                            "end": {"line": one_line, "offset": end_col + 1},
+                            "newText": ""
+                        }));
+                    }
+                }
+            } else {
+                // Comment: insert // replacing one space at min_indent position
+                let min_indent = non_empty_lines.iter()
+                    .map(|(_, line)| line.len() - line.trim_start().len())
+                    .min()
+                    .unwrap_or(0);
+
+                for &(line_idx, _) in &non_empty_lines {
+                    let one_line = line_idx + 1; // 1-based
+                    if min_indent > 0 {
+                        // Replace the space at min_indent-1 with //
+                        edits.push(serde_json::json!({
+                            "start": {"line": one_line, "offset": min_indent},
+                            "end": {"line": one_line, "offset": min_indent + 1},
+                            "newText": "//"
+                        }));
+                    } else {
+                        // No indent: insert // at position 0
+                        edits.push(serde_json::json!({
+                            "start": {"line": one_line, "offset": 1},
+                            "end": {"line": one_line, "offset": 1},
+                            "newText": "//"
+                        }));
+                    }
+                }
+            }
+
+            Some(serde_json::json!(edits))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_toggle_multiline_comment(
@@ -862,7 +937,7 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // toggleMultilineComment returns TextChange[]
+        // TODO: Implement multiline comment toggle
         self.stub_response(seq, request, Some(serde_json::json!([])))
     }
 
@@ -871,8 +946,79 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // commentSelection returns TextChange[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let start_line = request.arguments.get("startLine")?.as_u64()? as usize;
+            let start_offset = request.arguments.get("startOffset")?.as_u64()? as usize;
+            let end_line = request.arguments.get("endLine")?.as_u64()? as usize;
+            let end_offset = request.arguments.get("endOffset")?.as_u64()? as usize;
+            let source_text = self.open_files.get(file)?.clone();
+
+            let all_lines: Vec<&str> = source_text.lines().collect();
+            let first = start_line.saturating_sub(1);
+            let last = end_line.saturating_sub(1).min(all_lines.len().saturating_sub(1));
+
+            let mut edits = Vec::new();
+
+            if first == last && start_offset != end_offset {
+                // Single-line partial selection: use block comment /* ... */
+                let line = all_lines.get(first)?;
+                let sel_start = start_offset.saturating_sub(1);
+                let sel_end = end_offset.saturating_sub(1).min(line.len());
+                if sel_start < sel_end && sel_start < line.len() {
+                    // Wrap selection in /* */
+                    edits.push(serde_json::json!({
+                        "start": {"line": start_line, "offset": start_offset},
+                        "end": {"line": start_line, "offset": start_offset},
+                        "newText": "/*"
+                    }));
+                    // After inserting /*, the end offset shifts by 2
+                    edits.push(serde_json::json!({
+                        "start": {"line": end_line, "offset": end_offset},
+                        "end": {"line": end_line, "offset": end_offset},
+                        "newText": "*/"
+                    }));
+                }
+            } else {
+                // Multi-line or cursor: add // to each non-empty line
+                let non_empty_lines: Vec<(usize, &str)> = (first..=last)
+                    .filter_map(|i| {
+                        let line = all_lines.get(i)?;
+                        if line.trim().is_empty() { None } else { Some((i, *line)) }
+                    })
+                    .collect();
+
+                if non_empty_lines.is_empty() {
+                    return Some(serde_json::json!([]));
+                }
+
+                let min_indent = non_empty_lines.iter()
+                    .map(|(_, line)| line.len() - line.trim_start().len())
+                    .min()
+                    .unwrap_or(0);
+
+                for &(line_idx, _) in &non_empty_lines {
+                    let one_line = line_idx + 1;
+                    if min_indent > 0 {
+                        // Replace the space at min_indent-1 with //
+                        edits.push(serde_json::json!({
+                            "start": {"line": one_line, "offset": min_indent},
+                            "end": {"line": one_line, "offset": min_indent + 1},
+                            "newText": "//"
+                        }));
+                    } else {
+                        edits.push(serde_json::json!({
+                            "start": {"line": one_line, "offset": 1},
+                            "end": {"line": one_line, "offset": 1},
+                            "newText": "//"
+                        }));
+                    }
+                }
+            }
+
+            Some(serde_json::json!(edits))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_uncomment_selection(
@@ -880,8 +1026,76 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // uncommentSelection returns TextChange[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let start_line = request.arguments.get("startLine")?.as_u64()? as usize;
+            let end_line = request.arguments.get("endLine")?.as_u64()? as usize;
+            let source_text = self.open_files.get(file)?.clone();
+
+            let all_lines: Vec<&str> = source_text.lines().collect();
+            let first = start_line.saturating_sub(1);
+            let last = end_line.saturating_sub(1).min(all_lines.len().saturating_sub(1));
+
+            let mut edits = Vec::new();
+
+            // Check for block comments /* */ in the range and remove them
+            // Also check for line comments //
+            for line_idx in first..=last {
+                let line = match all_lines.get(line_idx) {
+                    Some(l) => *l,
+                    None => continue,
+                };
+
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                let one_line = line_idx + 1; // 1-based
+
+                // Check for line comment: remove leading //
+                let ws_len = line.len() - trimmed.len();
+                if trimmed.starts_with("//") {
+                    let remove_len = if trimmed.starts_with("// ") { 3 } else { 2 };
+                    let start_off = ws_len + 1;
+                    edits.push(serde_json::json!({
+                        "start": {"line": one_line, "offset": start_off},
+                        "end": {"line": one_line, "offset": start_off + remove_len},
+                        "newText": ""
+                    }));
+                    continue;
+                }
+
+                // Check for block comments {/* ... */} or /* ... */
+                // Find and remove /* and */ pairs
+                let mut col = 0;
+                let chars: Vec<char> = line.chars().collect();
+                while col < chars.len() {
+                    if col + 1 < chars.len() && chars[col] == '/' && chars[col + 1] == '*' {
+                        // Remove /*
+                        edits.push(serde_json::json!({
+                            "start": {"line": one_line, "offset": col + 1},
+                            "end": {"line": one_line, "offset": col + 3},
+                            "newText": ""
+                        }));
+                        col += 2;
+                    } else if col + 1 < chars.len() && chars[col] == '*' && chars[col + 1] == '/' {
+                        // Remove */
+                        edits.push(serde_json::json!({
+                            "start": {"line": one_line, "offset": col + 1},
+                            "end": {"line": one_line, "offset": col + 3},
+                            "newText": ""
+                        }));
+                        col += 2;
+                    } else {
+                        col += 1;
+                    }
+                }
+            }
+
+            Some(serde_json::json!(edits))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_smart_selection_range(
