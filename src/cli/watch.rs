@@ -1,12 +1,12 @@
 use anyhow::{Context, Result, bail};
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{BTreeSet, HashSet};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::cli::args::CliArgs;
+use crate::cli::args::{CliArgs, PollingWatchKind, WatchFileKind};
 use crate::cli::config::{ResolvedCompilerOptions, resolve_compiler_options};
 use crate::cli::driver::{self, CompilationCache};
 use crate::cli::fs::{DEFAULT_EXCLUDES, is_ts_file};
@@ -14,6 +14,31 @@ use crate::cli::reporter::Reporter;
 
 const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(200);
 const DEBOUNCE_TICK: Duration = Duration::from_millis(50);
+
+/// Polling intervals for different strategies (matching tsc)
+const FIXED_POLLING_INTERVAL: Duration = Duration::from_millis(250);
+#[allow(dead_code)]
+const PRIORITY_POLLING_INTERVAL_HIGH: Duration = Duration::from_millis(250);
+const PRIORITY_POLLING_INTERVAL_MEDIUM: Duration = Duration::from_millis(500);
+#[allow(dead_code)]
+const PRIORITY_POLLING_INTERVAL_LOW: Duration = Duration::from_millis(2000);
+const DYNAMIC_PRIORITY_POLLING_DEFAULT: Duration = Duration::from_millis(500);
+const FIXED_CHUNK_SIZE_POLLING: Duration = Duration::from_millis(2000);
+
+/// Wrapper for different watcher types
+enum WatcherImpl {
+    Native(RecommendedWatcher),
+    Poll(PollWatcher),
+}
+
+impl WatcherImpl {
+    fn watch(&mut self, path: &Path, mode: RecursiveMode) -> notify::Result<()> {
+        match self {
+            WatcherImpl::Native(w) => w.watch(path, mode),
+            WatcherImpl::Poll(w) => w.watch(path, mode),
+        }
+    }
+}
 
 pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
     let cwd = canonicalize_or_owned(cwd);
@@ -24,8 +49,7 @@ pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
     state.compile_and_report(args, &cwd, &mut reporter, None)?;
 
     let (tx, rx) = mpsc::channel();
-    let mut watcher = RecommendedWatcher::new(tx, Config::default())
-        .context("failed to initialize file watcher")?;
+    let mut watcher = create_watcher(args, tx)?;
 
     for root in &state.watch_roots {
         watcher
@@ -45,6 +69,51 @@ pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
 
         if let Some(changed) = state.debouncer.flush_ready(Instant::now()) {
             state.compile_and_report(args, &cwd, &mut reporter, Some(changed))?;
+        }
+    }
+}
+
+/// Create a watcher based on the specified watch strategy
+fn create_watcher(args: &CliArgs, tx: mpsc::Sender<notify::Result<Event>>) -> Result<WatcherImpl> {
+    // Determine polling interval for polling mode
+    let poll_interval = match args.fallback_polling {
+        Some(PollingWatchKind::FixedInterval) => FIXED_POLLING_INTERVAL,
+        Some(PollingWatchKind::PriorityInterval) => PRIORITY_POLLING_INTERVAL_MEDIUM,
+        Some(PollingWatchKind::DynamicPriority) => DYNAMIC_PRIORITY_POLLING_DEFAULT,
+        Some(PollingWatchKind::FixedChunkSize) => FIXED_CHUNK_SIZE_POLLING,
+        None => FIXED_POLLING_INTERVAL,
+    };
+
+    // Determine which watcher to use based on watch_file strategy
+    match args.watch_file {
+        // Use polling for these strategies
+        Some(WatchFileKind::FixedPollingInterval)
+        | Some(WatchFileKind::PriorityPollingInterval)
+        | Some(WatchFileKind::DynamicPriorityPolling)
+        | Some(WatchFileKind::FixedChunkSizePolling) => {
+            let config = Config::default().with_poll_interval(poll_interval);
+            let watcher =
+                PollWatcher::new(tx, config).context("failed to initialize poll watcher")?;
+            Ok(WatcherImpl::Poll(watcher))
+        }
+        // Use native file system events (default and UseFsEvents strategies)
+        Some(WatchFileKind::UseFsEvents)
+        | Some(WatchFileKind::UseFsEventsOnParentDirectory)
+        | None => {
+            // Try native watcher first, fall back to polling if it fails
+            match RecommendedWatcher::new(tx.clone(), Config::default()) {
+                Ok(watcher) => Ok(WatcherImpl::Native(watcher)),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Native file watcher failed ({}), falling back to polling",
+                        e
+                    );
+                    let config = Config::default().with_poll_interval(poll_interval);
+                    let watcher = PollWatcher::new(tx, config)
+                        .context("failed to initialize fallback poll watcher")?;
+                    Ok(WatcherImpl::Poll(watcher))
+                }
+            }
         }
     }
 }
