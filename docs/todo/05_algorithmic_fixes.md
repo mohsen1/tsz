@@ -2,7 +2,7 @@
 
 **Reference**: `docs/architecture/SOLVER_REFACTORING_PROPOSAL.md`
 **Benchmarks**: `scripts/bench-vs-tsgo.sh` — "O(N²) Algorithmic Pattern Tests" section
-**Status**: FUTURE WORK — requires Salsa integration first for full impact
+**Status**: IN PROGRESS — Pattern 1 (BCT) complete, Patterns 2-3 remaining
 **Priority**: High — these are the primary blockers to reaching 5x+ at 200-entity scale
 
 ---
@@ -24,49 +24,9 @@ scaling benchmarks from ~1-2x → 4-5x vs tsgo.
 
 ---
 
-## Pattern 1: Best Common Type (BCT)
+## Pattern 1: Best Common Type (BCT) — ✅ DONE
 
-### Current Code
-
-```rust
-// infer.rs:1060-1064
-for &candidate in &unique {                              // O(N)
-    if self.is_suitable_common_type(candidate, &unique) {  // O(N) inner
-        return candidate;
-    }
-}
-
-fn is_suitable_common_type(&self, candidate: TypeId, types: &[TypeId]) -> bool {
-    types.iter().all(|&ty| self.is_subtype(ty, candidate))
-}
-```
-
-For N candidates, this performs N × N subtype checks. With 200 generic
-functions accumulating type candidates, this goes quadratic fast.
-
-### Recommended Fix: Tournament Reduction — O(N)
-
-Replace the N×N scan with a single-pass "king of the hill" approach:
-
-1. Start with `best = candidates[0]`
-2. For each subsequent candidate: if `is_subtype(best, candidate)`, update `best = candidate`
-3. Final validation pass: verify `best` against all candidates (still O(N))
-
-Total: O(2N) = O(N). This matches what tsc does internally.
-
-### Alternative Options
-
-- **Type class bucketing**: Partition candidates by shape before comparing.
-  Reduces the constant factor but doesn't change the algorithm for the
-  tournament approach (which is already O(N)).
-- **Partial-order DAG**: Build a subtype graph and find maximal elements.
-  More principled but overkill — the tournament is simpler and sufficient.
-
-### Acceptance Criteria
-
-- [ ] `BCT candidates=200` benchmark shows linear scaling (< 2x slowdown vs N=100)
-- [ ] No conformance regressions
-- [ ] Array literal type inference unchanged for all existing tests
+Tournament reduction implemented (commit `8c7807d`). Replaced O(N²) candidate scan with O(N) single-pass "king of the hill" approach plus final O(N) validation pass.
 
 ---
 
@@ -203,7 +163,7 @@ BCT candidates=200   →  ~64X ms
 
 ## Implementation Order
 
-1. **BCT Tournament** — highest impact, simplest change, localized to one function
+1. ~~**BCT Tournament**~~ — ✅ DONE (commit `8c7807d`)
 2. **Constraint Incremental Representative** — medium impact, also localized
 3. **Mapped Template Pre-Analysis** — requires more design, broader changes
 

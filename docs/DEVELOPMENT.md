@@ -60,8 +60,6 @@ Conformance tests compare Zang's output against the official TypeScript compiler
 ./scripts/conformance/run.sh --wasm --max=500
 ```
 
-See [TESTING.md](./TESTING.md) for more details on the testing infrastructure.
-
 ## Building
 
 ### Native Binary
