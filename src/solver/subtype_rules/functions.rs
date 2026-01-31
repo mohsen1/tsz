@@ -1010,7 +1010,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Evaluate a meta-type (conditional, index access, mapped, etc.) to its concrete form.
     /// Uses TypeEvaluator to reduce types like `T extends U ? X : Y` to either X or Y.
+    ///
+    /// When a QueryDatabase is available (via `with_query_db`), routes through Salsa
+    /// for memoization. Otherwise falls back to creating a fresh TypeEvaluator.
     pub(crate) fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+        if let Some(db) = self.query_db {
+            return db.evaluate_type(type_id);
+        }
         use crate::solver::evaluate::TypeEvaluator;
         let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
         evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
