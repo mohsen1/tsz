@@ -2411,9 +2411,6 @@ impl ParserState {
         use crate::checker::types::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
 
-        // Parse decorators first (if any)
-        let _decorators = self.parse_decorators();
-
         // Handle empty statement (semicolon) in class body - this is valid TypeScript/JavaScript
         // A standalone semicolon in a class body is an empty class element
         if self.is_token(SyntaxKind::SemicolonToken) {
@@ -2474,7 +2471,26 @@ impl ParserState {
         }
 
         // Parse modifiers (static, public, private, protected, readonly, abstract, override)
-        let modifiers = self.parse_class_member_modifiers();
+        let parsed_modifiers = self.parse_class_member_modifiers();
+
+        // Combine decorators and modifiers into a single modifiers list
+        // TypeScript stores decorators as part of the modifiers array
+        let modifiers = match (decorators, parsed_modifiers) {
+            (Some(dec), Some(mods)) => {
+                // Combine: decorators come first, then regular modifiers
+                let mut combined = dec.nodes;
+                combined.extend(mods.nodes);
+                Some(crate::parser::NodeList {
+                    nodes: combined,
+                    pos: dec.pos,
+                    end: mods.end,
+                    has_trailing_comma: false,
+                })
+            }
+            (Some(dec), None) => Some(dec),
+            (None, Some(mods)) => Some(mods),
+            (None, None) => None,
+        };
 
         // Handle static block after modifiers: { ... }
         if self.is_token(SyntaxKind::StaticKeyword) && self.look_ahead_is_static_block() {

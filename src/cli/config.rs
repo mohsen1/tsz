@@ -119,6 +119,9 @@ pub struct CompilerOptions {
     /// Allow 'import x from y' when a module doesn't have a default export
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_synthetic_default_imports: Option<bool>,
+    /// Enable experimental support for legacy experimental decorators
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub experimental_decorators: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -416,6 +419,10 @@ pub fn resolve_compiler_options(
         resolved.checker.allow_synthetic_default_imports = allow_synthetic_default_imports;
     }
 
+    if let Some(experimental_decorators) = options.experimental_decorators {
+        resolved.checker.experimental_decorators = experimental_decorators;
+    }
+
     Ok(resolved)
 }
 
@@ -519,6 +526,9 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         allow_synthetic_default_imports: child
             .allow_synthetic_default_imports
             .or(base.allow_synthetic_default_imports),
+        experimental_decorators: child
+            .experimental_decorators
+            .or(base.experimental_decorators),
     }
 }
 

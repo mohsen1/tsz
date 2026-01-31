@@ -2021,6 +2021,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.sound {
         options.checker.sound_mode = true;
     }
+    if args.experimental_decorators {
+        options.checker.experimental_decorators = true;
+    }
     if args.no_emit {
         options.no_emit = true;
     }
