@@ -17,6 +17,15 @@ use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::solver::TypeInterner;
 
+/// A single JSDoc tag (e.g. `@param`, `@returns`, `@deprecated`).
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct JsDocTag {
+    /// The tag name (e.g. "param", "returns", "deprecated")
+    pub name: String,
+    /// The tag text content
+    pub text: String,
+}
+
 /// Information returned for a hover request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HoverInfo {
@@ -32,6 +41,8 @@ pub struct HoverInfo {
     pub kind_modifiers: String,
     /// The documentation text extracted from JSDoc
     pub documentation: String,
+    /// JSDoc tags (e.g. @param, @returns, @deprecated)
+    pub tags: Vec<JsDocTag>,
 }
 
 /// Hover provider.
@@ -228,6 +239,7 @@ impl<'a> HoverProvider<'a> {
             kind,
             kind_modifiers,
             documentation: documentation_text,
+            tags: Vec::new(),
         })
     }
 
@@ -289,11 +301,20 @@ impl<'a> HoverProvider<'a> {
         }
         if f & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
             let keyword = self.get_variable_keyword(decl_node_idx);
+            if self.is_local_variable(decl_node_idx) {
+                return format!(
+                    "(local {}) {}: {}",
+                    keyword, symbol.escaped_name, type_string
+                );
+            }
             return format!("{} {}: {}", keyword, symbol.escaped_name, type_string);
         }
         if f & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             if self.is_parameter_declaration(decl_node_idx) {
                 return format!("(parameter) {}: {}", symbol.escaped_name, type_string);
+            }
+            if self.is_local_variable(decl_node_idx) {
+                return format!("(local var) {}: {}", symbol.escaped_name, type_string);
             }
             return format!("var {}: {}", symbol.escaped_name, type_string);
         }
@@ -456,6 +477,53 @@ impl<'a> HoverProvider<'a> {
         }
 
         "let"
+    }
+
+    /// Check if a variable declaration is local (inside a function/method body).
+    /// TypeScript uses `(local var)`, `(local const)`, `(local let)` for variables
+    /// declared inside function bodies, as opposed to module-level declarations.
+    fn is_local_variable(&self, decl_node_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
+
+        if decl_node_idx.is_none() {
+            return false;
+        }
+
+        // Walk up the parent chain looking for a function-like container
+        let mut current = decl_node_idx;
+        loop {
+            let ext = match self.arena.get_extended(current) {
+                Some(e) => e,
+                None => return false,
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let parent_node = match self.arena.get(parent_idx) {
+                Some(n) => n,
+                None => return false,
+            };
+            match parent_node.kind {
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::CONSTRUCTOR
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR => {
+                    return true;
+                }
+                syntax_kind_ext::SOURCE_FILE
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::MODULE_BLOCK => {
+                    return false;
+                }
+                _ => {
+                    current = parent_idx;
+                }
+            }
+        }
     }
 
     /// Check if a declaration node is a parameter.

@@ -27,6 +27,8 @@
 //! echo '{"type":"check","id":1,"files":{"main.ts":"const x: string = 1;"}}' | tsz-server --protocol legacy
 //! ```
 
+mod handlers_editing;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use rustc_hash::FxHashMap;
@@ -217,28 +219,28 @@ enum Protocol {
 /// tsserver protocol message (incoming request)
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
-struct TsServerRequest {
-    seq: u64,
+pub(crate) struct TsServerRequest {
+    pub(crate) seq: u64,
     #[serde(rename = "type")]
-    msg_type: String,
-    command: String,
+    pub(crate) msg_type: String,
+    pub(crate) command: String,
     #[serde(default)]
-    arguments: serde_json::Value,
+    pub(crate) arguments: serde_json::Value,
 }
 
 /// tsserver protocol response (outgoing)
 #[derive(Debug, Serialize)]
-struct TsServerResponse {
-    seq: u64,
+pub(crate) struct TsServerResponse {
+    pub(crate) seq: u64,
     #[serde(rename = "type")]
-    msg_type: String,
-    command: String,
-    request_seq: u64,
-    success: bool,
+    pub(crate) msg_type: String,
+    pub(crate) command: String,
+    pub(crate) request_seq: u64,
+    pub(crate) success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
+    pub(crate) message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    body: Option<serde_json::Value>,
+    pub(crate) body: Option<serde_json::Value>,
 }
 
 /// tsserver protocol event (outgoing, unsolicited)
@@ -516,14 +518,14 @@ struct ErrorResponse {
 // Logging Configuration (TSS_LOG environment variable)
 // =============================================================================
 
-struct LogConfig {
-    level: LogLevel,
-    file: Option<PathBuf>,
-    trace_to_console: bool,
+pub(crate) struct LogConfig {
+    pub(crate) level: LogLevel,
+    pub(crate) file: Option<PathBuf>,
+    pub(crate) trace_to_console: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LogLevel {
+pub(crate) enum LogLevel {
     Off,
     Terse,
     Normal,
@@ -595,27 +597,27 @@ impl LogConfig {
 // Server State
 // =============================================================================
 
-struct Server {
+pub(crate) struct Server {
     /// Directory containing lib.*.d.ts files (TypeScript/src/lib)
-    lib_dir: PathBuf,
+    pub(crate) lib_dir: PathBuf,
     /// Fallback directory for tests (TypeScript/tests/lib)
-    tests_lib_dir: PathBuf,
+    pub(crate) tests_lib_dir: PathBuf,
     /// Cache of parsed+bound lib files AND their dependencies (references)
-    lib_cache: FxHashMap<String, (Arc<LibFile>, Vec<String>)>,
+    pub(crate) lib_cache: FxHashMap<String, (Arc<LibFile>, Vec<String>)>,
     /// Number of checks completed
-    checks_completed: u64,
+    pub(crate) checks_completed: u64,
     /// Response sequence counter (for tsserver protocol)
-    response_seq: u64,
+    pub(crate) response_seq: u64,
     /// Open files (for tsserver protocol)
-    open_files: HashMap<String, String>,
+    pub(crate) open_files: HashMap<String, String>,
     /// Server mode
-    _server_mode: ServerMode,
+    pub(crate) _server_mode: ServerMode,
     /// Log configuration
-    _log_config: LogConfig,
+    pub(crate) _log_config: LogConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ServerMode {
+pub(crate) enum ServerMode {
     Semantic,
     PartialSemantic,
     Syntactic,
@@ -701,7 +703,7 @@ impl Server {
     }
 
     /// Convert tsserver 1-based line/offset to 0-based LSP Position.
-    fn tsserver_to_lsp_position(line: u32, offset: u32) -> Position {
+    pub(crate) fn tsserver_to_lsp_position(line: u32, offset: u32) -> Position {
         Position::new(line.saturating_sub(1), offset.saturating_sub(1))
     }
 
@@ -788,7 +790,8 @@ impl Server {
             "suggestionDiagnosticsSync" => self.handle_suggestion_diagnostics_sync(seq, &request),
             "geterr" => self.handle_geterr(seq, &request),
             "geterrForProject" => self.handle_geterr_for_project(seq, &request),
-            "navtree" | "navbar" => self.handle_navtree(seq, &request),
+            "navtree" => self.handle_navtree(seq, &request),
+            "navbar" => self.handle_navbar(seq, &request),
             "navto" | "navTo" | "navto-full" | "navTo-full" => self.handle_navto(seq, &request),
             "documentHighlights" => self.handle_document_highlights(seq, &request),
             "rename" | "rename-full" => self.handle_rename(seq, &request),
@@ -812,7 +815,7 @@ impl Server {
             "encodedSemanticClassifications-full" => {
                 self.handle_encoded_semantic_classifications_full(seq, &request)
             }
-            "inlayHints" => self.handle_inlay_hints(seq, &request),
+            "inlayHints" | "provideInlayHints" => self.handle_inlay_hints(seq, &request),
             "selectionRange" => self.handle_selection_range(seq, &request),
             "linkedEditingRange" => self.handle_linked_editing_range(seq, &request),
             "prepareCallHierarchy" => self.handle_prepare_call_hierarchy(seq, &request),
@@ -824,7 +827,7 @@ impl Server {
             "implementation" | "implementation-full" => self.handle_implementation(seq, &request),
             "getOutliningSpans" => self.handle_outlining_spans(seq, &request),
             "brace" => self.stub_response(seq, &request, Some(serde_json::json!([]))),
-            "emitOutput" => self.stub_response(
+            "emitOutput" | "emit-output" => self.stub_response(
                 seq,
                 &request,
                 Some(serde_json::json!({"outputFiles": [], "emitSkipped": true})),
@@ -1061,6 +1064,11 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         let file = request.arguments.get("file").and_then(|v| v.as_str());
+        let include_line_position = request
+            .arguments
+            .get("includeLinePosition")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = self.open_files.get(file_path).cloned() {
                 let line_map = LineMap::build(&content);
@@ -1068,26 +1076,16 @@ impl Server {
                 full_diags
                     .iter()
                     .map(|diag| {
-                        let start_pos = line_map.offset_to_position(diag.start, &content);
-                        let end_pos =
-                            line_map.offset_to_position(diag.start + diag.length, &content);
-                        serde_json::json!({
-                            "start": {
-                                "line": start_pos.line + 1,
-                                "offset": start_pos.character + 1,
-                            },
-                            "end": {
-                                "line": end_pos.line + 1,
-                                "offset": end_pos.character + 1,
-                            },
-                            "text": diag.message_text,
-                            "code": diag.code,
-                            "category": match diag.category {
-                                DiagnosticCategory::Error => "error",
-                                DiagnosticCategory::Warning => "warning",
-                                _ => "suggestion",
-                            }
-                        })
+                        Self::format_diagnostic(
+                            diag.start,
+                            diag.length,
+                            &diag.message_text,
+                            diag.code,
+                            &diag.category,
+                            &line_map,
+                            &content,
+                            include_line_position,
+                        )
                     })
                     .collect()
             } else {
@@ -1114,6 +1112,11 @@ impl Server {
         request: &TsServerRequest,
     ) -> TsServerResponse {
         let file = request.arguments.get("file").and_then(|v| v.as_str());
+        let include_line_position = request
+            .arguments
+            .get("includeLinePosition")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = self.open_files.get(file_path).cloned() {
                 let line_map = LineMap::build(&content);
@@ -1123,21 +1126,16 @@ impl Server {
                     .get_diagnostics()
                     .iter()
                     .map(|d| {
-                        let start_pos = line_map.offset_to_position(d.start, &content);
-                        let end_pos = line_map.offset_to_position(d.start + d.length, &content);
-                        serde_json::json!({
-                            "start": {
-                                "line": start_pos.line + 1,
-                                "offset": start_pos.character + 1,
-                            },
-                            "end": {
-                                "line": end_pos.line + 1,
-                                "offset": end_pos.character + 1,
-                            },
-                            "text": d.message,
-                            "code": d.code,
-                            "category": "error"
-                        })
+                        Self::format_diagnostic(
+                            d.start,
+                            d.length,
+                            &d.message,
+                            d.code,
+                            &DiagnosticCategory::Error,
+                            &line_map,
+                            &content,
+                            include_line_position,
+                        )
                     })
                     .collect()
             } else {
@@ -1158,8 +1156,74 @@ impl Server {
         }
     }
 
+    /// Format a diagnostic for the tsserver protocol.
+    ///
+    /// When `include_line_position` is true (the SessionClient always sets this),
+    /// the response includes 0-based `start`/`length` fields plus `startLocation`/
+    /// `endLocation` with 1-based line/offset. When false, uses `start`/`end` as
+    /// 1-based line/offset objects (the traditional tsserver format).
+    fn format_diagnostic(
+        start_offset: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+        category: &DiagnosticCategory,
+        line_map: &LineMap,
+        content: &str,
+        include_line_position: bool,
+    ) -> serde_json::Value {
+        let start_pos = line_map.offset_to_position(start_offset, content);
+        let end_pos = line_map.offset_to_position(start_offset + length, content);
+        let cat_str = match category {
+            DiagnosticCategory::Error => "error",
+            DiagnosticCategory::Warning => "warning",
+            _ => "suggestion",
+        };
+
+        if include_line_position {
+            // When includeLinePosition is true, the harness expects:
+            // - start: 0-based byte offset (number)
+            // - length: byte length (number)
+            // - startLocation: {line, offset} (1-based)
+            // - endLocation: {line, offset} (1-based)
+            // - message: the diagnostic text
+            // - category: category string
+            // - code: error code
+            serde_json::json!({
+                "start": start_offset,
+                "length": length,
+                "startLocation": {
+                    "line": start_pos.line + 1,
+                    "offset": start_pos.character + 1,
+                },
+                "endLocation": {
+                    "line": end_pos.line + 1,
+                    "offset": end_pos.character + 1,
+                },
+                "message": message,
+                "code": code,
+                "category": cat_str,
+            })
+        } else {
+            // Traditional tsserver format: start/end as {line, offset}
+            serde_json::json!({
+                "start": {
+                    "line": start_pos.line + 1,
+                    "offset": start_pos.character + 1,
+                },
+                "end": {
+                    "line": end_pos.line + 1,
+                    "offset": end_pos.character + 1,
+                },
+                "text": message,
+                "code": code,
+                "category": cat_str,
+            })
+        }
+    }
+
     // Stub handlers for protocol commands - return success with empty/minimal responses
-    fn stub_response(
+    pub(crate) fn stub_response(
         &self,
         seq: u64,
         request: &TsServerRequest,
@@ -1230,11 +1294,36 @@ impl Server {
             let kind_modifiers = info.kind_modifiers.clone();
 
             let range = info.range.unwrap_or(Range::new(position, position));
+            // Build tags array from JSDoc tags when available
+            let tags: Vec<serde_json::Value> = info
+                .tags
+                .iter()
+                .map(|tag| {
+                    serde_json::json!({
+                        "name": tag.name,
+                        "text": tag.text,
+                    })
+                })
+                .collect();
+
+            // Return documentation as a structured display parts array when non-empty,
+            // or empty string when there's no documentation. The SessionClient handles
+            // string documentation by wrapping in [{kind:"text", text:doc}].
+            // When doc is "", that creates [{kind:"text",text:""}] (length 1) which
+            // causes an unwanted blank line in baseline output.
+            // Return as empty array [] to avoid the blank line.
+            let doc_value: serde_json::Value = if documentation.is_empty() {
+                serde_json::json!([])
+            } else {
+                serde_json::json!([{"kind": "text", "text": documentation}])
+            };
+
             Some(serde_json::json!({
                 "displayString": display_string,
-                "documentation": documentation,
+                "documentation": doc_value,
                 "kind": kind,
                 "kindModifiers": kind_modifiers,
+                "tags": tags,
                 "start": Self::lsp_to_tsserver_position(&range.start),
                 "end": Self::lsp_to_tsserver_position(&range.end),
             }))
@@ -1251,6 +1340,7 @@ impl Server {
                 "documentation": "",
                 "kind": "",
                 "kindModifiers": "",
+                "tags": [],
                 "start": Self::lsp_to_tsserver_position(&position),
                 "end": Self::lsp_to_tsserver_position(&position),
             }))
@@ -1263,6 +1353,7 @@ impl Server {
                 "documentation": "",
                 "kind": "",
                 "kindModifiers": "",
+                "tags": [],
                 "start": {"line": 1, "offset": 1},
                 "end": {"line": 1, "offset": 1},
             }))),
@@ -1497,30 +1588,39 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64()? as u32;
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let items = provider.get_completions(root, position)?;
+            let items = provider.get_completions(root, position).unwrap_or_default();
             let details: Vec<serde_json::Value> = entry_names
                 .iter()
-                .filter_map(|entry_name| {
+                .map(|entry_name| {
                     let name = if let Some(s) = entry_name.as_str() {
                         s.to_string()
                     } else if let Some(obj) = entry_name.as_object() {
-                        obj.get("name")?.as_str()?.to_string()
+                        obj.get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string()
                     } else {
-                        return None;
+                        String::new()
                     };
-                    let item = items.iter().find(|i| i.label == name)?;
-                    let kind = Self::completion_kind_to_str(item.kind);
-                    let display_parts = if let Some(ref detail) = item.detail {
-                        serde_json::json!([{"text": detail, "kind": "text"}])
+                    // Try to find the matching completion item
+                    let item = items.iter().find(|i| i.label == name);
+                    let kind = item
+                        .map(|i| Self::completion_kind_to_str(i.kind))
+                        .unwrap_or("property");
+                    let display_parts = if let Some(i) = item {
+                        if let Some(ref detail) = i.detail {
+                            serde_json::json!([{"text": detail, "kind": "text"}])
+                        } else {
+                            serde_json::json!([{"text": &name, "kind": "text"}])
+                        }
                     } else {
                         serde_json::json!([{"text": &name, "kind": "text"}])
                     };
-                    let documentation = if let Some(ref doc) = item.documentation {
-                        serde_json::json!([{"text": doc, "kind": "text"}])
-                    } else {
-                        serde_json::json!([])
-                    };
-                    Some(serde_json::json!({
+                    let documentation = item
+                        .and_then(|i| i.documentation.as_ref())
+                        .map(|doc| serde_json::json!([{"text": doc, "kind": "text"}]))
+                        .unwrap_or(serde_json::json!([]));
+                    serde_json::json!({
                         "name": name,
                         "kind": kind,
                         "kindModifiers": "",
@@ -1529,7 +1629,7 @@ impl Server {
                         "tags": [],
                         "codeActions": [],
                         "source": [],
-                    }))
+                    })
                 })
                 .collect();
             Some(serde_json::json!(details))
@@ -1605,7 +1705,19 @@ impl Server {
                 "argumentCount": sig_help.active_parameter + 1,
             }))
         })();
-        self.stub_response(seq, request, result)
+        // Always return a body - processResponse asserts !!response.body.
+        // When no signature help is found, return empty items array.
+        // The test-worker converts empty items to undefined.
+        let body = result.unwrap_or_else(|| {
+            serde_json::json!({
+                "items": [],
+                "applicableSpan": { "start": { "line": 1, "offset": 1 }, "end": { "line": 1, "offset": 1 } },
+                "selectedItemIndex": 0,
+                "argumentIndex": 0,
+                "argumentCount": 0,
+            })
+        });
+        self.stub_response(seq, request, Some(body))
     }
 
     fn handle_suggestion_diagnostics_sync(
@@ -1657,6 +1769,7 @@ impl Server {
                     wasm::lsp::document_symbols::SymbolKind::Constant => "const",
                     wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
                     wasm::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
+                    wasm::lsp::document_symbols::SymbolKind::Struct => "type",
                     _ => "unknown",
                 };
                 let children: Vec<serde_json::Value> =
@@ -1681,22 +1794,150 @@ impl Server {
             let child_items: Vec<serde_json::Value> =
                 symbols.iter().map(symbol_to_navtree).collect();
 
+            // Compute the end span based on source text length
+            let total_lines = source_text.lines().count();
+            let last_line_len = source_text.lines().last().map(|l| l.len()).unwrap_or(0);
             Some(serde_json::json!({
-                "text": "<module>",
-                "kind": "module",
+                "text": "<global>",
+                "kind": "script",
                 "childItems": child_items,
-                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
+                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}}],
             }))
         })();
         self.stub_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({
-                "text": "<module>",
-                "kind": "module",
+                "text": "<global>",
+                "kind": "script",
                 "childItems": [],
                 "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
             }))),
+        )
+    }
+
+    fn handle_navbar(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let line_map = LineMap::build(&source_text);
+            let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
+            let symbols = provider.get_document_symbols(root);
+
+            fn symbol_to_navbar_item(
+                sym: &wasm::lsp::document_symbols::DocumentSymbol,
+                indent: usize,
+                items: &mut Vec<serde_json::Value>,
+            ) {
+                let kind = match sym.kind {
+                    wasm::lsp::document_symbols::SymbolKind::File => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Module => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Namespace => "module",
+                    wasm::lsp::document_symbols::SymbolKind::Class => "class",
+                    wasm::lsp::document_symbols::SymbolKind::Method => "method",
+                    wasm::lsp::document_symbols::SymbolKind::Property => "property",
+                    wasm::lsp::document_symbols::SymbolKind::Field => "property",
+                    wasm::lsp::document_symbols::SymbolKind::Constructor => "constructor",
+                    wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
+                    wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
+                    wasm::lsp::document_symbols::SymbolKind::Function => "function",
+                    wasm::lsp::document_symbols::SymbolKind::Variable => "var",
+                    wasm::lsp::document_symbols::SymbolKind::Constant => "const",
+                    wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                    wasm::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
+                    wasm::lsp::document_symbols::SymbolKind::Struct => "type",
+                    _ => "unknown",
+                };
+                let child_items: Vec<serde_json::Value> = sym
+                    .children
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "text": c.name,
+                            "kind": match c.kind {
+                                wasm::lsp::document_symbols::SymbolKind::Function => "function",
+                                wasm::lsp::document_symbols::SymbolKind::Class => "class",
+                                wasm::lsp::document_symbols::SymbolKind::Method => "method",
+                                wasm::lsp::document_symbols::SymbolKind::Property => "property",
+                                wasm::lsp::document_symbols::SymbolKind::Variable => "var",
+                                wasm::lsp::document_symbols::SymbolKind::Constant => "const",
+                                wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
+                                wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
+                                wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                                wasm::lsp::document_symbols::SymbolKind::Struct => "type",
+                                _ => "unknown",
+                            },
+                        })
+                    })
+                    .collect();
+                items.push(serde_json::json!({
+                    "text": sym.name,
+                    "kind": kind,
+                    "childItems": child_items,
+                    "indent": indent,
+                    "spans": [{
+                        "start": {
+                            "line": sym.range.start.line + 1,
+                            "offset": sym.range.start.character + 1,
+                        },
+                        "end": {
+                            "line": sym.range.end.line + 1,
+                            "offset": sym.range.end.character + 1,
+                        },
+                    }],
+                }));
+                for child in &sym.children {
+                    symbol_to_navbar_item(child, indent + 1, items);
+                }
+            }
+
+            let mut items = Vec::new();
+            // Root item
+            let total_lines = source_text.lines().count();
+            let last_line_len = source_text.lines().last().map(|l| l.len()).unwrap_or(0);
+            let child_items: Vec<serde_json::Value> = symbols
+                .iter()
+                .map(|sym| {
+                    serde_json::json!({
+                        "text": sym.name,
+                        "kind": match sym.kind {
+                            wasm::lsp::document_symbols::SymbolKind::Function => "function",
+                            wasm::lsp::document_symbols::SymbolKind::Class => "class",
+                            wasm::lsp::document_symbols::SymbolKind::Method => "method",
+                            wasm::lsp::document_symbols::SymbolKind::Property => "property",
+                            wasm::lsp::document_symbols::SymbolKind::Variable => "var",
+                            wasm::lsp::document_symbols::SymbolKind::Constant => "const",
+                            wasm::lsp::document_symbols::SymbolKind::Enum => "enum",
+                            wasm::lsp::document_symbols::SymbolKind::Interface => "interface",
+                            wasm::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                            _ => "unknown",
+                        },
+                    })
+                })
+                .collect();
+            items.push(serde_json::json!({
+                "text": "<global>",
+                "kind": "script",
+                "childItems": child_items,
+                "indent": 0,
+                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}}],
+            }));
+            // Flatten children
+            for sym in &symbols {
+                symbol_to_navbar_item(sym, 1, &mut items);
+            }
+            Some(serde_json::json!(items))
+        })();
+        self.stub_response(
+            seq,
+            request,
+            Some(result.unwrap_or(serde_json::json!([{
+                "text": "<global>",
+                "kind": "script",
+                "childItems": [],
+                "indent": 0,
+                "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": 1, "offset": 1}}],
+            }]))),
         )
     }
 
@@ -1713,14 +1954,19 @@ impl Server {
             let provider = DocumentHighlightProvider::new(&arena, &binder, &line_map, &source_text);
             let highlights = provider.get_document_highlights(root, position)?;
 
-            let body: Vec<serde_json::Value> = highlights
+            // Group highlights by file (tsserver groups by file, each with highlightSpans)
+            let highlight_spans: Vec<serde_json::Value> = highlights
                 .iter()
                 .map(|hl| {
                     let kind_str = match hl.kind {
-                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Read) => "read",
-                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Write) => "write",
-                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Text) => "text",
-                        None => "text",
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Read) => {
+                            "reference"
+                        }
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Write) => {
+                            "writtenReference"
+                        }
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Text) => "none",
+                        None => "none",
                     };
                     serde_json::json!({
                         "start": Self::lsp_to_tsserver_position(&hl.range.start),
@@ -1729,7 +1975,11 @@ impl Server {
                     })
                 })
                 .collect();
-            Some(serde_json::json!(body))
+            // All highlights are in the same file for now
+            Some(serde_json::json!([{
+                "file": file,
+                "highlightSpans": highlight_spans,
+            }]))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
@@ -1918,7 +2168,7 @@ impl Server {
         self.stub_response(
             seq,
             request,
-            Some(serde_json::json!({"changes": [], "commands": []})),
+            Some(serde_json::json!({"changes": []})),
         )
     }
 
@@ -1997,7 +2247,7 @@ impl Server {
                     let line_map = LineMap::build(&source_text);
                     let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
                     let symbols = provider.get_document_symbols(root);
-                    Self::collect_navto_items(&symbols, &search_lower, file_path, &mut nav_items);
+                    Self::collect_navto_items(&symbols, search_value, &search_lower, file_path, &mut nav_items);
                 }
             }
             Some(serde_json::json!(nav_items))
@@ -2007,6 +2257,7 @@ impl Server {
 
     fn collect_navto_items(
         symbols: &[wasm::lsp::document_symbols::DocumentSymbol],
+        search_value: &str,
         search_lower: &str,
         file_path: &str,
         result: &mut Vec<serde_json::Value>,
@@ -2014,6 +2265,7 @@ impl Server {
         for sym in symbols {
             let name_lower = sym.name.to_lowercase();
             if name_lower.contains(search_lower) {
+                let is_case_sensitive = sym.name.contains(search_value);
                 let kind = match sym.kind {
                     wasm::lsp::document_symbols::SymbolKind::Module => "module",
                     wasm::lsp::document_symbols::SymbolKind::Class => "class",
@@ -2042,7 +2294,7 @@ impl Server {
                     "kind": kind,
                     "kindModifiers": "",
                     "matchKind": match_kind,
-                    "isCaseSensitive": false,
+                    "isCaseSensitive": is_case_sensitive,
                     "file": file_path,
                     "start": {
                         "line": sym.range.start.line + 1,
@@ -2054,7 +2306,7 @@ impl Server {
                     },
                 }));
             }
-            Self::collect_navto_items(&sym.children, search_lower, file_path, result);
+            Self::collect_navto_items(&sym.children, search_value, search_lower, file_path, result);
         }
     }
 
@@ -2579,17 +2831,30 @@ impl Server {
             let provider = FoldingRangeProvider::new(&arena, &line_map, &source_text);
             let ranges = provider.get_folding_ranges(root);
 
+            // Pre-compute line lengths for offset calculation
+            let lines: Vec<&str> = source_text.lines().collect();
+
             let body: Vec<serde_json::Value> = ranges
                 .iter()
                 .map(|fr| {
+                    // Compute end offset: length of the end line + 1 (1-based)
+                    let end_line_len = lines
+                        .get(fr.end_line as usize)
+                        .map(|l| l.len() as u32)
+                        .unwrap_or(0);
+                    let start_line_len = lines
+                        .get(fr.start_line as usize)
+                        .map(|l| l.len() as u32)
+                        .unwrap_or(0);
+
                     let mut span = serde_json::json!({
                         "textSpan": {
                             "start": { "line": fr.start_line + 1, "offset": 1 },
-                            "end": { "line": fr.end_line + 1, "offset": 1 },
+                            "end": { "line": fr.end_line + 1, "offset": end_line_len + 1 },
                         },
                         "hintSpan": {
                             "start": { "line": fr.start_line + 1, "offset": 1 },
-                            "end": { "line": fr.start_line + 1, "offset": 1 },
+                            "end": { "line": fr.start_line + 1, "offset": start_line_len + 1 },
                         },
                         "bannerText": "...",
                         "autoCollapse": false,
@@ -2605,155 +2870,7 @@ impl Server {
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
-    // =========================================================================
-    // Stub handlers for previously unimplemented protocol commands
-    // These return valid (empty/default) responses instead of crashing
-    // =========================================================================
-
-    fn handle_breakpoint_statement(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // breakpointStatement returns a TextSpan or undefined
-        // Return undefined (no body) to indicate no breakpoint at this position
-        self.stub_response(seq, request, None)
-    }
-
-    fn handle_jsx_closing_tag(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        // jsxClosingTag returns { newText: string } or undefined
-        // Return undefined (no body) to indicate no closing tag needed
-        self.stub_response(seq, request, None)
-    }
-
-    fn handle_brace_completion(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        // braceCompletion returns boolean
-        // Default to true (brace completion is valid)
-        self.stub_response(seq, request, Some(serde_json::json!(true)))
-    }
-
-    fn handle_span_of_enclosing_comment(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // getSpanOfEnclosingComment returns TextSpan or undefined
-        // Return undefined (no body) to indicate not inside a comment
-        self.stub_response(seq, request, None)
-    }
-
-    fn handle_todo_comments(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        // todoComments returns TodoComment[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
-
-    fn handle_doc_comment_template(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // docCommentTemplate returns DocCommandTemplateResponse or undefined
-        // Return a minimal template
-        self.stub_response(
-            seq,
-            request,
-            Some(serde_json::json!({
-                "newText": "/** */",
-                "caretOffset": 4
-            })),
-        )
-    }
-
-    fn handle_indentation(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        // indentation returns { position: number, indentation: number }
-        let position = request
-            .arguments
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1);
-        self.stub_response(
-            seq,
-            request,
-            Some(serde_json::json!({
-                "position": position,
-                "indentation": 0
-            })),
-        )
-    }
-
-    fn handle_toggle_line_comment(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // toggleLineComment returns TextChange[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
-
-    fn handle_toggle_multiline_comment(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // toggleMultilineComment returns TextChange[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
-
-    fn handle_comment_selection(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // commentSelection returns TextChange[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
-
-    fn handle_uncomment_selection(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // uncommentSelection returns TextChange[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
-
-    fn handle_smart_selection_range(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // getSmartSelectionRange returns SelectionRange
-        // This is different from selectionRange - it's the smart version
-        // Return a minimal selection range
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
-
-    fn handle_syntactic_classifications(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // getSyntacticClassifications returns ClassifiedSpan[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
-
-    fn handle_semantic_classifications(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // getSemanticClassifications returns ClassifiedSpan[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
-
-    fn handle_compiler_options_diagnostics(
-        &mut self,
-        seq: u64,
-        request: &TsServerRequest,
-    ) -> TsServerResponse {
-        // getCompilerOptionsDiagnostics returns Diagnostic[]
-        self.stub_response(seq, request, Some(serde_json::json!([])))
-    }
+    // Editing handlers extracted to handlers_editing.rs
 
     // =========================================================================
     // Legacy Protocol Handling
