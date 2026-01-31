@@ -448,6 +448,42 @@ impl DefinitionStore {
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 
+    /// Get exports for a namespace/module DefId.
+    pub fn get_exports(&self, id: DefId) -> Option<Vec<(Atom, DefId)>> {
+        self.definitions.get(&id).map(|r| r.exports.clone())
+    }
+
+    /// Get enum members for an enum DefId.
+    pub fn get_enum_members(&self, id: DefId) -> Option<Vec<(Atom, EnumMemberValue)>> {
+        self.definitions.get(&id).map(|r| r.enum_members.clone())
+    }
+
+    /// Get the name of a definition.
+    pub fn get_name(&self, id: DefId) -> Option<Atom> {
+        self.definitions.get(&id).map(|r| r.name)
+    }
+
+    /// Update exports for a definition (for lazy population).
+    pub fn set_exports(&self, id: DefId, exports: Vec<(Atom, DefId)>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.exports = exports;
+        }
+    }
+
+    /// Add an export to an existing definition.
+    pub fn add_export(&self, id: DefId, name: Atom, export_def: DefId) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.add_export(name, export_def);
+        }
+    }
+
+    /// Update enum members for a definition (for lazy population).
+    pub fn set_enum_members(&self, id: DefId, members: Vec<(Atom, EnumMemberValue)>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.enum_members = members;
+        }
+    }
+
     /// Get all DefIds (for debugging/testing).
     pub fn all_ids(&self) -> Vec<DefId> {
         self.definitions.iter().map(|r| *r.key()).collect()

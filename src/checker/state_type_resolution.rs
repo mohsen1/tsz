@@ -514,12 +514,11 @@ impl<'a> CheckerState<'a> {
         // NOTE: We don't insert here because get_class_instance_type_inner will handle it.
         // The check here is just to catch cycles from callers who go through this function.
         if self.ctx.class_instance_resolution_set.contains(&sym_id) {
-            use crate::solver::{SymbolRef, TypeKey};
-            // Already resolving this class - return a fallback to break the cycle
-            // NOTE: Cannot migrate to Lazy(DefId) yet - this fallback is used for classes
-            // that are mid-resolution, and the Lazy type would return ERROR because the
-            // class hasn't been registered in the TypeEnvironment yet.
-            let fallback = self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
+            // Already resolving this class - return a Lazy(DefId) fallback to break cycle.
+            // Like Ref(SymbolRef), this resolves to ERROR during mid-resolution since the
+            // class body isn't registered in TypeEnvironment yet. Once resolution completes
+            // and register_resolved_type is called, the DefId becomes resolvable.
+            let fallback = self.ctx.create_lazy_type_ref(sym_id);
             return Some((fallback, Vec::new()));
         }
 

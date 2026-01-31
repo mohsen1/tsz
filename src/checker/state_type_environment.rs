@@ -279,11 +279,19 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
-        // Check if the base is a Ref
-        let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) else {
+        // Check if the base is a Ref or Lazy
+        let sym_id = if let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) {
+            sym_ref.0
+        } else if let Some(def_id) =
+            crate::solver::type_queries_extended::get_def_id(self.ctx.types, base)
+        {
+            let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+                return type_id;
+            };
+            sym_id.0
+        } else {
             return type_id;
         };
-        let sym_id = sym_ref.0;
 
         // CRITICAL FIX: Get BOTH the body type AND the type parameters together
         // to ensure the TypeIds in the body match the TypeIds in the substitution.
@@ -724,9 +732,17 @@ impl<'a> CheckerState<'a> {
 
         match classify_for_symbol_resolution_traversal(self.ctx.types, type_id) {
             SymbolResolutionTraversalKind::Application { base, args, .. } => {
-                // If the base is a Ref, resolve the symbol
-                if let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) {
-                    let sym_id = SymbolId(sym_ref.0);
+                // If the base is a Ref or Lazy, resolve the symbol
+                let base_sym_id = if let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) {
+                    Some(SymbolId(sym_ref.0))
+                } else if let Some(def_id) =
+                    crate::solver::type_queries_extended::get_def_id(self.ctx.types, base)
+                {
+                    self.ctx.def_to_symbol_id(def_id)
+                } else {
+                    None
+                };
+                if let Some(sym_id) = base_sym_id {
                     let resolved = self.type_reference_symbol_type(sym_id);
                     self.insert_type_env_symbol(sym_id, resolved);
                 }
@@ -741,6 +757,12 @@ impl<'a> CheckerState<'a> {
                 let sym_id = SymbolId(sym_ref.0);
                 let resolved = self.type_reference_symbol_type(sym_id);
                 self.insert_type_env_symbol(sym_id, resolved);
+            }
+            SymbolResolutionTraversalKind::Lazy(def_id) => {
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    let resolved = self.type_reference_symbol_type(sym_id);
+                    self.insert_type_env_symbol(sym_id, resolved);
+                }
             }
             SymbolResolutionTraversalKind::TypeParameter {
                 constraint,

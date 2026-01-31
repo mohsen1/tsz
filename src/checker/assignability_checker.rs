@@ -48,6 +48,13 @@ impl<'a> CheckerState<'a> {
                 let _ = self.get_type_of_symbol(sym_id);
             }
 
+            // For Lazy(DefId) types, resolve via the reverse DefId→SymbolId mapping
+            TypeKey::Lazy(def_id) => {
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    let _ = self.get_type_of_symbol(sym_id);
+                }
+            }
+
             // For intersections, ensure all members are resolved
             TypeKey::Intersection(members) => {
                 let member_list = self.ctx.types.type_list(members);

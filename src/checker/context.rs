@@ -358,6 +358,10 @@ pub struct CheckerContext<'a> {
     /// Used during migration to avoid creating duplicate DefIds for the same symbol.
     pub symbol_to_def: FxHashMap<SymbolId, DefId>,
 
+    /// Reverse mapping from Solver DefId to Binder SymbolId.
+    /// Used to look up binder symbols from DefId-based types (e.g., namespace exports).
+    pub def_to_symbol: FxHashMap<DefId, SymbolId>,
+
     /// Abstract constructor types (TypeIds) produced for abstract classes.
     pub abstract_constructor_types: FxHashSet<TypeId>,
 
@@ -500,6 +504,7 @@ impl<'a> CheckerContext<'a> {
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
             symbol_to_def: FxHashMap::default(),
+            def_to_symbol: FxHashMap::default(),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -578,6 +583,7 @@ impl<'a> CheckerContext<'a> {
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
             symbol_to_def: FxHashMap::default(),
+            def_to_symbol: FxHashMap::default(),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -658,6 +664,7 @@ impl<'a> CheckerContext<'a> {
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
             symbol_to_def: FxHashMap::default(),
+            def_to_symbol: FxHashMap::default(),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -737,6 +744,7 @@ impl<'a> CheckerContext<'a> {
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
             symbol_to_def: FxHashMap::default(),
+            def_to_symbol: FxHashMap::default(),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -901,6 +909,7 @@ impl<'a> CheckerContext<'a> {
 
         let def_id = self.definition_store.register(info);
         self.symbol_to_def.insert(sym_id, def_id);
+        self.def_to_symbol.insert(def_id, sym_id);
         def_id
     }
 
@@ -914,6 +923,11 @@ impl<'a> CheckerContext<'a> {
 
         let def_id = self.get_or_create_def_id(sym_id);
         self.types.intern(TypeKey::Lazy(def_id))
+    }
+
+    /// Look up the SymbolId for a DefId (reverse mapping).
+    pub fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
+        self.def_to_symbol.get(&def_id).copied()
     }
 
     /// Register a resolved type in the TypeEnvironment for both SymbolRef and DefId.

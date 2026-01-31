@@ -179,12 +179,24 @@ impl<'a> CheckerState<'a> {
 
         // Otherwise, fall back to type-based lookup for pure namespace/module types
         // Look up the member in the left side's exports
-        if let Some(sym_ref) =
+        // Supports both legacy Ref(SymbolRef) and new Lazy(DefId) types
+        let fallback_sym_id = if let Some(sym_ref) =
             crate::solver::type_queries::get_symbol_ref(self.ctx.types, left_type)
+        {
+            Some(crate::binder::SymbolId(sym_ref.0))
+        } else if let Some(def_id) =
+            crate::solver::type_queries_extended::get_def_id(self.ctx.types, left_type)
+        {
+            self.ctx.def_to_symbol_id(def_id)
+        } else {
+            None
+        };
+
+        if let Some(fallback_sym) = fallback_sym_id
             && let Some(symbol) = self
                 .ctx
                 .binder
-                .get_symbol_with_libs(crate::binder::SymbolId(sym_ref.0), &lib_binders)
+                .get_symbol_with_libs(fallback_sym, &lib_binders)
         {
             // Check exports table for direct export
             let mut member_sym_id = None;
@@ -966,27 +978,26 @@ impl<'a> CheckerState<'a> {
         }
 
         // Namespace / Module
-        // Return a Ref type so resolve_qualified_name can access the symbol's exports
-        // NOTE: Cannot migrate to Lazy(DefId) yet - resolve_qualified_name depends on
-        // TypeKey::Ref(SymbolRef) to look up the symbol's exports map via get_symbol_ref().
-        // The Lazy type evaluation returns ERROR for namespaces because they don't have
-        // structural types in the TypeEnvironment.
+        // Return a Ref type AND register DefId mapping for gradual migration.
+        // The Ref type is needed because resolve_qualified_name and other code
+        // extracts SymbolRef from the type to look up the symbol's exports map.
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
             use crate::solver::{SymbolRef, TypeKey};
-            // Note: We use the symbol ID directly.
-            // For merged declarations, this ID points to the unified symbol in the binder.
+            // Also create DefId mapping for future migration
+            let _ = self.ctx.get_or_create_def_id(sym_id);
             return (
                 self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0))),
                 Vec::new(),
             );
         }
 
-        // Enum - return a nominal reference type
-        // NOTE: Cannot migrate to Lazy(DefId) yet - enum type checking depends on
-        // TypeKey::Ref(SymbolRef) to access the symbol via get_symbol_ref() for
-        // enum member resolution and nominal type checking.
+        // Enum - return a Ref type AND register DefId mapping for gradual migration.
+        // The Ref type is needed because enum subtype checking depends on extracting
+        // SymbolRef to check symbol flags and nominal identity.
         if flags & symbol_flags::ENUM != 0 {
             use crate::solver::{SymbolRef, TypeKey};
+            // Also create DefId mapping for future migration
+            let _ = self.ctx.get_or_create_def_id(sym_id);
             return (
                 self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0))),
                 Vec::new(),

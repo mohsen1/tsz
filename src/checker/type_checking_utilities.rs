@@ -2422,7 +2422,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = self.get_property_name(member.name)
                     && name == property_name
                 {
-                    // Return the enum type itself, not just STRING or NUMBER
+                    // Return the enum type itself
                     // This allows proper enum assignability checking
                     return Some(self.ctx.types.intern(crate::solver::TypeKey::Ref(
                         crate::solver::SymbolRef(sym_id.0),
