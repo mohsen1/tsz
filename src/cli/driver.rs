@@ -409,7 +409,12 @@ fn compile_inner(
         update_import_symbol_ids(&program, &resolved, &base_dir, cache);
     }
 
-    let lib_contexts = load_lib_files_for_contexts(&lib_paths, resolved.printer.target);
+    // Load lib files only when type checking is needed (lazy loading for faster startup)
+    let lib_contexts = if resolved.no_check {
+        Vec::new() // Skip lib loading when --noCheck is set
+    } else {
+        load_lib_files_for_contexts(&lib_paths, resolved.printer.target)
+    };
     let mut diagnostics = collect_diagnostics(&program, &resolved, &base_dir, cache, &lib_contexts);
     diagnostics.sort_by(|left, right| {
         left.file
@@ -970,16 +975,12 @@ fn load_lib_files_for_contexts(
     let mut pending_libs = VecDeque::new();
 
     // Initially add the specified lib files to the queue
+    // Lib files are loaded from disk only (like tsgo) - no embedded fallback
     for lib_path in lib_files {
         if lib_path.exists() {
             pending_libs.push_back(lib_path.clone());
-        } else {
-            // File doesn't exist on disk, check embedded libs
-            let file_name = lib_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if crate::embedded_libs::get_lib_by_file_name(file_name).is_some() {
-                pending_libs.push_back(lib_path.clone());
-            }
         }
+        // Skip non-existent lib files - they should be in TypeScript installation
     }
 
     // Process libs recursively, resolving /// <reference lib="..." /> directives
@@ -997,30 +998,10 @@ fn load_lib_files_for_contexts(
             continue;
         }
 
-        // Read the lib file content, falling back to embedded libs if disk read fails
-        let source_text = if lib_path.exists() {
-            match std::fs::read_to_string(&lib_path) {
-                Ok(content) => content,
-                Err(_) => {
-                    // Fallback to embedded libs
-                    let file_name = lib_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                    if let Some(embedded_lib) =
-                        crate::embedded_libs::get_lib_by_file_name(file_name)
-                    {
-                        embedded_lib.content.to_string()
-                    } else {
-                        continue;
-                    }
-                }
-            }
-        } else {
-            // File doesn't exist on disk, try embedded libs
-            let file_name = lib_path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if let Some(embedded_lib) = crate::embedded_libs::get_lib_by_file_name(file_name) {
-                embedded_lib.content.to_string()
-            } else {
-                continue;
-            }
+        // Read the lib file content from disk (no embedded fallback)
+        let source_text = match std::fs::read_to_string(&lib_path) {
+            Ok(content) => content,
+            Err(_) => continue, // Skip if file can't be read
         };
 
         // Extract and queue referenced libs BEFORE moving source_text to parser
@@ -1051,13 +1032,8 @@ fn load_lib_files_for_contexts(
             // Resolve referenced lib to file path
             if let Ok(ref_paths) = resolve_lib_files(std::slice::from_ref(&ref_lib)) {
                 for ref_path in ref_paths {
-                    if !loaded_lib_names.contains(ref_lib.as_str()) {
-                        if ref_path.exists() {
-                            pending_libs.push_back(ref_path);
-                        } else if crate::embedded_libs::get_lib(ref_lib.as_str()).is_some() {
-                            // Referenced lib exists in embedded libs
-                            pending_libs.push_back(ref_path);
-                        }
+                    if !loaded_lib_names.contains(ref_lib.as_str()) && ref_path.exists() {
+                        pending_libs.push_back(ref_path);
                     }
                 }
             }

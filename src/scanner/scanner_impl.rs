@@ -128,8 +128,8 @@ impl ScannerState {
     #[wasm_bindgen(constructor)]
     pub fn new(text: String, skip_trivia: bool) -> ScannerState {
         let end = text.len(); // byte length
-        let mut interner = Interner::new();
-        interner.intern_common(); // Pre-intern common keywords
+        // Common keywords are interned on-demand for faster startup
+        let interner = Interner::new();
         let source: Arc<str> = Arc::from(text.into_boxed_str());
         ScannerState {
             source,

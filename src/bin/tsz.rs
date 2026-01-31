@@ -13,14 +13,16 @@ const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
 
 fn main() -> Result<()> {
-    // Initialize tracing with RUST_LOG environment variable support
+    // Only initialize tracing if RUST_LOG is set (saves ~2-5ms startup)
     // Use RUST_LOG=debug for detailed tracing, RUST_LOG=trace for everything
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::WARN.into()),
-        )
-        .init();
+    if std::env::var("RUST_LOG").is_ok() {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(tracing::Level::WARN.into()),
+            )
+            .init();
+    }
 
     // Preprocess args for tsc compatibility:
     // - Convert -v to -V (tsc uses lowercase -v for version, clap uses -V)

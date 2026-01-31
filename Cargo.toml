@@ -30,7 +30,8 @@ default = ["cli"]
 cli = []
 enforce_docker_tests = []
 experimental_salsa = []
-preparsed_libs = []  # Enable pre-parsed lib loading (requires preparsed_libs.bin)
+embedded_libs = []    # Embed lib.d.ts files in binary (not needed - libs load from disk)
+preparsed_libs = ["embedded_libs"]  # Pre-parsed lib loading (requires embedded_libs)
 
 [dependencies]
 anyhow = "1.0"
@@ -67,6 +68,12 @@ serde = { version = "1.0", features = ["derive"] }
 [dev-dependencies]
 criterion = "0.5"
 once_cell = "1.19"
+
+[profile.release]
+# Maximum optimization for production binary
+lto = "fat"           # Full link-time optimization for smaller, faster binary
+codegen-units = 1     # Single codegen unit for better optimization
+strip = "symbols"     # Strip debug symbols to reduce binary size
 
 [profile.test]
 # Thin LTO for faster test binaries (trade-off: slightly slower test compilation)

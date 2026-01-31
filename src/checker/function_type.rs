@@ -110,6 +110,13 @@ impl<'a> CheckerState<'a> {
             self.check_parameter_ordering(parameters);
         }
 
+        // For nested functions/methods, push enclosing type parameters first so that
+        // type parameter constraints, parameter types, and return types can reference
+        // outer generic scopes.  This is needed because get_type_of_function can be
+        // called lazily (via get_type_of_symbol) outside the enclosing function's
+        // check_function_declaration scope.
+        let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
+
         let (type_params, type_param_updates) = self.push_type_parameters(type_parameters);
 
         // Collect parameter info using solver's ParamInfo struct
@@ -493,8 +500,126 @@ impl<'a> CheckerState<'a> {
         };
 
         self.pop_type_parameters(type_param_updates);
+        self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(self.ctx.types.function(shape))
+    }
+
+    /// Push type parameters from all enclosing generic functions/classes/interfaces.
+    ///
+    /// When `get_type_of_function` is called lazily (e.g., via `get_type_of_symbol`),
+    /// outer type parameters are not in scope.  This method walks up the AST to find
+    /// enclosing declarations with type parameters and adds them to the scope so that
+    /// type parameter references in constraints, parameter types, and return types
+    /// resolve correctly.
+    ///
+    /// Returns the update list for `pop_type_parameters`.
+    fn push_enclosing_type_parameters(
+        &mut self,
+        func_idx: NodeIndex,
+    ) -> Vec<(String, Option<TypeId>)> {
+        use crate::parser::syntax_kind_ext;
+        use crate::solver::TypeKey;
+
+        // Collect enclosing type parameter node indices (inner-to-outer order)
+        let mut enclosing_param_indices: Vec<Vec<NodeIndex>> = Vec::new();
+        let mut current = func_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            let type_param_nodes: Option<Vec<NodeIndex>> = match parent.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_function(parent)
+                        .and_then(|f| f.type_parameters.as_ref())
+                        .map(|tp| tp.nodes.clone())
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_class(parent)
+                        .and_then(|c| c.type_parameters.as_ref())
+                        .map(|tp| tp.nodes.clone())
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_interface(parent)
+                    .and_then(|i| i.type_parameters.as_ref())
+                    .map(|tp| tp.nodes.clone()),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(parent)
+                    .and_then(|m| m.type_parameters.as_ref())
+                    .map(|tp| tp.nodes.clone()),
+                _ => None,
+            };
+
+            if let Some(indices) = type_param_nodes {
+                enclosing_param_indices.push(indices);
+            }
+
+            current = parent_idx;
+        }
+
+        if enclosing_param_indices.is_empty() {
+            return Vec::new();
+        }
+
+        // Push from outermost to innermost (reverse the inner-to-outer collection)
+        let mut updates = Vec::new();
+        for param_indices in enclosing_param_indices.into_iter().rev() {
+            for param_idx in param_indices {
+                let Some(node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                    continue;
+                };
+
+                let name = self
+                    .ctx
+                    .arena
+                    .get(data.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|id_data| id_data.escaped_text.clone())
+                    .unwrap_or_else(|| "T".to_string());
+                let atom = self.ctx.types.intern_string(&name);
+
+                // Create an unconstrained type parameter placeholder.
+                // Constraints are not resolved here - that happens in the proper
+                // check_function_declaration flow with full scope context.
+                let info = crate::solver::TypeParamInfo {
+                    name: atom,
+                    constraint: None,
+                    default: None,
+                };
+                let type_id = self.ctx.types.intern(TypeKey::TypeParameter(info));
+
+                // Only add if not already in scope (inner scope should shadow outer)
+                if !self.ctx.type_parameter_scope.contains_key(&name) {
+                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+                    updates.push((name, previous));
+                }
+            }
+        }
+        updates
     }
 
     // =========================================================================
