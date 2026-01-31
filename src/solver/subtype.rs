@@ -89,6 +89,19 @@ pub trait TypeResolver {
         None
     }
 
+    /// Get the Array<T> interface type from lib.d.ts.
+    /// This is used to resolve array methods via the official interface
+    /// instead of hardcoding. Returns the generic Array interface type.
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
+    /// Get the type parameters for the Array<T> interface.
+    /// Used together with get_array_base_type to instantiate Array<T> with a concrete element type.
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        &[]
+    }
+
     /// Get an export from a namespace/module by name.
     ///
     /// Used for qualified name resolution: `namespace.member`.
@@ -129,6 +142,11 @@ pub struct TypeEnvironment {
     /// Maps primitive intrinsic kinds to their boxed interface types (Rule #33).
     /// e.g., IntrinsicKind::Number -> TypeId of the Number interface
     boxed_types: std::collections::HashMap<IntrinsicKind, TypeId>,
+    /// The Array<T> interface type from lib.d.ts.
+    /// Used to resolve array methods via the official interface.
+    array_base_type: Option<TypeId>,
+    /// Type parameters for the Array<T> interface (usually just [T]).
+    array_base_type_params: Vec<TypeParamInfo>,
     /// Maps DefIds to their resolved structural types (Phase 4.3 migration).
     /// This enables `TypeKey::Lazy(DefId)` resolution.
     def_types: std::collections::HashMap<u32, TypeId>,
@@ -142,6 +160,8 @@ impl TypeEnvironment {
             types: std::collections::HashMap::new(),
             type_params: std::collections::HashMap::new(),
             boxed_types: std::collections::HashMap::new(),
+            array_base_type: None,
+            array_base_type_params: Vec::new(),
             def_types: std::collections::HashMap::new(),
             def_type_params: std::collections::HashMap::new(),
         }
@@ -161,6 +181,24 @@ impl TypeEnvironment {
     /// Get the boxed type for a primitive.
     pub fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         self.boxed_types.get(&kind).copied()
+    }
+
+    /// Register the Array<T> interface type from lib.d.ts.
+    /// This enables array property access to use lib.d.ts definitions.
+    /// `type_params` should contain the type parameters of the Array interface (usually just [T]).
+    pub fn set_array_base_type(&mut self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
+        self.array_base_type = Some(type_id);
+        self.array_base_type_params = type_params;
+    }
+
+    /// Get the Array<T> interface type.
+    pub fn get_array_base_type(&self) -> Option<TypeId> {
+        self.array_base_type
+    }
+
+    /// Get the type parameters for the Array<T> interface.
+    pub fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        &self.array_base_type_params
     }
 
     /// Register a symbol's resolved type with type parameters.
@@ -258,6 +296,14 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         TypeEnvironment::get_boxed_type(self, kind)
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        TypeEnvironment::get_array_base_type(self)
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        TypeEnvironment::get_array_base_type_params(self)
     }
 }
 
