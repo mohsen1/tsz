@@ -602,7 +602,7 @@ EOF
     local deepfn="string"
     local max_fn_depth=$((depth < 30 ? depth : 30))
     for ((i=0; i<max_fn_depth; i++)); do
-        deepfn="(x: $deepfn) => $deepfn"
+        deepfn="(x: $deepfn) => void"
     done
     echo "" >> "$output"
     echo "type DeepFunction = $deepfn;" >> "$output"
