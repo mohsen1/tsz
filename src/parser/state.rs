@@ -116,13 +116,10 @@ impl ParserState {
         self.last_error_pos = 0;
     }
 
-    /// Maximum recursion depth to prevent stack overflow on deeply nested code
-    const MAX_RECURSION_DEPTH: u32 = 1000;
-
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
     pub(crate) fn enter_recursion(&mut self) -> bool {
         self.recursion_depth += 1;
-        if self.recursion_depth > Self::MAX_RECURSION_DEPTH {
+        if self.recursion_depth > crate::limits::MAX_PARSER_RECURSION_DEPTH {
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Maximum recursion depth exceeded",
