@@ -2522,8 +2522,14 @@ impl ParserState {
             self.current_token = current;
 
             // If followed by `(`, it's a method name (e.g., `const() {}`), which is valid
-            // If followed by identifier and then `:` or `=`, it's being used as a modifier (invalid)
-            if !matches!(next_token, SyntaxKind::OpenParenToken) {
+            // If followed by `;`, `}`, `=`, `!`, `?`, or newline (ASI), treat as property name
+            // If followed by identifier, it's being used as a modifier (invalid: `const x = 1`)
+            if matches!(
+                next_token,
+                SyntaxKind::Identifier
+                    | SyntaxKind::PrivateIdentifier
+                    | SyntaxKind::OpenBracketToken
+            ) {
                 // This is likely being used as a modifier, emit error and recover
                 self.parse_error_at_current_token(
                     "A class member cannot have the 'const', 'let', or 'var' keyword.",
