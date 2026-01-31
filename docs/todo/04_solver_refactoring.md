@@ -2,7 +2,7 @@
 
 **Reference**: `docs/architecture/SOLVER_REFACTORING_PROPOSAL.md`  
 **Goal**: Query-based Judge with Sound Mode  
-**Status**: Phase 1, 3, 4.1-4.2, 6 COMPLETE. Phase 2, 4.3-4.4, 5 remain.
+**Status**: Phase 1, 3, 4.1-4.3 infra, 5.1, 6 COMPLETE. Phase 2 (Salsa prep), 4.3-4.4 (migration), 5.2-5.3 remain.
 
 ---
 
@@ -113,10 +113,14 @@
 - [x] Update all TypeKey pattern matches across solver
 - [x] Commit
 
-### 4.3 Migrate Lowering - NOT STARTED
-- [ ] Update type lowering to produce `Lazy(DefId)` for interfaces
-- [ ] Update type lowering to produce `Lazy(DefId)` for classes
-- [ ] Update type lowering to produce `Lazy(DefId)` for type aliases
+### 4.3 Migrate Lowering - INFRASTRUCTURE COMPLETE
+- [x] Add `DefinitionStore` to `CheckerContext`
+- [x] Add `symbol_to_def: FxHashMap<SymbolId, DefId>` mapping
+- [x] Add `get_or_create_def_id()` helper method
+- [x] Add `create_lazy_type_ref()` helper method
+- [ ] Update type_literal_checker to use `create_lazy_type_ref()` for interfaces
+- [ ] Update type_literal_checker to use `create_lazy_type_ref()` for classes
+- [ ] Update type_literal_checker to use `create_lazy_type_ref()` for type aliases
 - [ ] Run conformance tests after each change
 - [ ] Commit
 
