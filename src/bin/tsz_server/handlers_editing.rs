@@ -254,54 +254,180 @@ impl Server {
     ) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
-            let _line = request.arguments.get("line")?.as_u64()? as usize;
+            let line = request.arguments.get("line")?.as_u64()? as usize;
             let _offset = request.arguments.get("offset")?.as_u64().unwrap_or(1);
             let source_text = self.open_files.get(file)?;
+            let generate_return = request.arguments.get("generateReturnInDocTemplate")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
 
-            // Find the next non-whitespace content after the cursor position
-            // to determine if we're before a documentable declaration.
             let line_map = LineMap::build(source_text);
-            let position = Self::tsserver_to_lsp_position(_line as u32, _offset as u32);
+            let position = Self::tsserver_to_lsp_position(line as u32, _offset as u32);
             let offset = line_map.position_to_offset(position, source_text)? as usize;
 
-            // Look at what follows - find next non-whitespace line
-            let rest = &source_text[offset..];
-            let trimmed = rest.trim_start();
+            let line_start = source_text[..offset].rfind('\n').map_or(0, |i| i + 1);
+            let before_cursor = &source_text[line_start..offset];
+            let line_end = source_text[offset..].find('\n').map_or(source_text.len(), |i| offset + i);
+            let after_cursor_on_line = source_text[offset..line_end].trim();
 
-            // Check if cursor is before a documentable declaration
-            let is_documentable = trimmed.starts_with("function ")
-                || trimmed.starts_with("class ")
-                || trimmed.starts_with("interface ")
-                || trimmed.starts_with("type ")
-                || trimmed.starts_with("enum ")
-                || trimmed.starts_with("namespace ")
-                || trimmed.starts_with("module ")
-                || trimmed.starts_with("export ")
-                || trimmed.starts_with("const ")
-                || trimmed.starts_with("let ")
-                || trimmed.starts_with("var ")
-                || trimmed.starts_with("abstract ")
-                || trimmed.starts_with("async ")
-                || trimmed.starts_with("public ")
-                || trimmed.starts_with("private ")
-                || trimmed.starts_with("protected ")
-                || trimmed.starts_with("static ")
-                || trimmed.starts_with("readonly ")
-                || trimmed.starts_with("get ")
-                || trimmed.starts_with("set ")
-                // method-like: identifier followed by (
-                || trimmed.chars().next().map_or(false, |c| c.is_alphabetic() || c == '_');
+            // Determine declaration text: could be on the same line as cursor, or on the next line(s)
+            let decl_text: String;
+            let decl_offset: usize;
+            let decl_indent: String;
+
+            // Check if after-cursor text starts with a definite keyword
+            let after_starts_with_keyword = ["function ", "class ", "interface ", "enum ", "type "]
+                .iter()
+                .any(|kw| after_cursor_on_line.starts_with(kw));
+
+            if !after_cursor_on_line.is_empty()
+                && (before_cursor.chars().all(|c| c == ' ' || c == '\t') || after_starts_with_keyword)
+            {
+                // Text follows the cursor on the same line - this IS the declaration
+                // Allow if before_cursor is all whitespace, or after starts with a keyword
+                // (covers `const x = /*marker*/ function f(p) {}` cases)
+                decl_text = after_cursor_on_line.to_string();
+                decl_offset = offset + source_text[offset..line_end].find(after_cursor_on_line).unwrap_or(0);
+                decl_indent = if before_cursor.chars().all(|c| c == ' ' || c == '\t') {
+                    before_cursor.to_string()
+                } else {
+                    // Extract whitespace prefix from before_cursor
+                    before_cursor.chars().take_while(|c| *c == ' ' || *c == '\t').collect()
+                };
+            } else {
+                // Look at the next non-empty line(s) after cursor
+                let rest_after_line = if line_end < source_text.len() {
+                    &source_text[line_end + 1..]
+                } else {
+                    return None;
+                };
+
+                let mut found_text = String::new();
+                let mut found_indent = String::new();
+                let mut found_offset = 0usize;
+                for text_line in rest_after_line.lines() {
+                    let trimmed = text_line.trim();
+                    if !trimmed.is_empty() {
+                        found_text = trimmed.to_string();
+                        let indent_len = text_line.len() - text_line.trim_start().len();
+                        found_indent = text_line[..indent_len].to_string();
+                        found_offset = (line_end + 1) + (text_line.as_ptr() as usize - rest_after_line.as_ptr() as usize)
+                            + indent_len;
+                        break;
+                    }
+                }
+
+                if found_text.is_empty() {
+                    return None;
+                }
+
+                decl_text = found_text;
+                decl_offset = found_offset;
+                decl_indent = found_indent;
+            }
+
+            // Check if it's a documentable declaration
+            let declaration_keywords = [
+                "function ", "class ", "interface ", "type ", "enum ",
+                "namespace ", "module ", "export ", "const ", "let ",
+                "var ", "abstract ", "async ", "public ", "private ",
+                "protected ", "static ", "readonly ", "get ", "set ",
+                "constructor", "constructor(",
+            ];
+
+            // Method-like: identifier followed by ( or <
+            let is_method_like = {
+                let first_ch = decl_text.chars().next().unwrap_or(' ');
+                (first_ch.is_alphabetic() || first_ch == '_' || first_ch == '[')
+                    && (decl_text.contains('(') || decl_text.contains('<'))
+            };
+
+            // Property-like: identifier followed by : or ?: or ;
+            let is_property_like = {
+                let first_ch = decl_text.chars().next().unwrap_or(' ');
+                (first_ch.is_alphabetic() || first_ch == '_')
+                    && (decl_text.contains(':') || decl_text.contains(';') || decl_text.ends_with(','))
+            };
+
+            // Enum member: identifier optionally followed by = value, then , or end of line
+            let is_enum_member = {
+                let first_ch = decl_text.chars().next().unwrap_or(' ');
+                let trimmed_decl = decl_text.trim_end_matches(',').trim();
+                (first_ch.is_alphabetic() || first_ch == '_')
+                    && !decl_text.contains('(') && !decl_text.contains('{')
+                    && !decl_text.contains('.')
+                    && (trimmed_decl.ends_with(',') || trimmed_decl.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '=' || c == ' '))
+            };
+
+            let is_documentable = declaration_keywords.iter().any(|kw| decl_text.starts_with(kw))
+                || is_method_like
+                || is_property_like
+                || is_enum_member;
 
             if !is_documentable {
                 return None;
             }
 
-            // Basic template: /** */
-            // TODO: Parse function parameters and generate @param tags
-            Some(serde_json::json!({
-                "newText": "/** */",
-                "caretOffset": 3
-            }))
+            // Check if there's already a JSDoc comment before the cursor
+            let before_pos = source_text[..offset].trim_end();
+            if before_pos.ends_with("*/") {
+                return None;
+            }
+
+            // Determine cursor indentation for the doc comment prefix
+            let indent = if before_cursor.chars().all(|c| c == ' ' || c == '\t') {
+                before_cursor
+            } else {
+                ""
+            };
+
+            // Extract parameters from the declaration
+            let params = Self::extract_function_params(&decl_text, source_text, decl_offset);
+
+            // Check for return statement in function body if generate_return is enabled
+            let has_return = if generate_return {
+                Self::function_has_return(&decl_text, source_text, decl_offset)
+            } else {
+                false
+            };
+
+            // Build the doc comment template
+            if params.is_empty() && !has_return {
+                // Simple template
+                Some(serde_json::json!({
+                    "newText": "/** */",
+                    "caretOffset": 3
+                }))
+            } else {
+                // Multi-line template with @param and/or @returns tags
+                let mut lines = Vec::new();
+                lines.push("/**".to_string());
+                lines.push(format!("{} * ", indent));
+
+                for param in &params {
+                    lines.push(format!("{} * @param {}", indent, param));
+                }
+
+                if has_return {
+                    lines.push(format!("{} * @returns", indent));
+                }
+
+                // Add trailing indent when cursor and declaration are on the same line
+                let cursor_on_same_line = !after_cursor_on_line.is_empty();
+                lines.push(format!("{} */", indent));
+                if cursor_on_same_line {
+                    lines.push(format!("{}", decl_indent));
+                }
+
+                let new_text = lines.join("\n");
+                // Caret offset: "/**\n<indent> * " -> caret is after " * " on second line
+                let caret_offset = 3 + 1 + indent.len() + 3; // "/**" + "\n" + indent + " * "
+
+                Some(serde_json::json!({
+                    "newText": new_text,
+                    "caretOffset": caret_offset
+                }))
+            }
         })();
 
         // Always return a body so processResponse(request) works.
@@ -315,6 +441,241 @@ impl Server {
                 "caretOffset": 0
             }))),
         )
+    }
+
+    /// Extract function parameter names from a declaration line.
+    /// Handles destructured params ({x, y}) as param1, param2, etc.
+    /// Strips access modifiers (public, private, protected), rest (...), and optional (?).
+    fn extract_function_params(decl: &str, _source: &str, _decl_offset: usize) -> Vec<String> {
+        // Find the opening paren - handle methods, functions, constructors, arrow functions
+        let paren_start = match Self::find_param_list_start(decl) {
+            Some(pos) => pos,
+            None => return Vec::new(),
+        };
+
+        // Extract content between parens, handling nesting
+        let chars: Vec<char> = decl.chars().collect();
+        let mut depth = 0;
+        let mut end = paren_start;
+        for i in paren_start..chars.len() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if depth != 0 {
+            return Vec::new();
+        }
+
+        let inner: String = chars[paren_start + 1..end].iter().collect();
+        if inner.trim().is_empty() {
+            return Vec::new();
+        }
+
+        // Split by commas at depth 0
+        let parts = Self::split_params(&inner);
+        let mut params = Vec::new();
+        let mut unnamed_counter = 0;
+
+        for part in &parts {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // Strip access modifiers
+            let mut s = trimmed;
+            for modifier in &["public ", "private ", "protected ", "readonly "] {
+                if s.starts_with(modifier) {
+                    s = &s[modifier.len()..];
+                }
+            }
+            let s = s.trim();
+
+            // Handle rest parameter
+            let s = if s.starts_with("...") { &s[3..] } else { s };
+
+            // Handle destructured params
+            if s.starts_with('{') || s.starts_with('[') {
+                unnamed_counter += 1;
+                params.push(format!("param{}", unnamed_counter));
+                continue;
+            }
+
+            // Extract identifier (before : or ? or = or ,)
+            let name: String = s.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                .collect();
+
+            if !name.is_empty() {
+                params.push(name);
+            }
+        }
+
+        params
+    }
+
+    /// Find the start of the parameter list (opening paren) in a declaration.
+    fn find_param_list_start(decl: &str) -> Option<usize> {
+        let chars: Vec<char> = decl.chars().collect();
+
+        // For computed property names like [Symbol.iterator](...), skip the brackets
+        let mut i = 0;
+        if chars.first() == Some(&'[') {
+            let mut depth = 0;
+            while i < chars.len() {
+                match chars[i] {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            i += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+
+        // Skip identifier, generic params, etc. to find '('
+        let mut angle_depth = 0;
+        while i < chars.len() {
+            match chars[i] {
+                '<' => angle_depth += 1,
+                '>' => {
+                    if angle_depth > 0 {
+                        angle_depth -= 1;
+                    }
+                }
+                '(' if angle_depth == 0 => return Some(i),
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Split parameter string by commas at depth 0 (respecting nested parens/braces/brackets).
+    fn split_params(s: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0;
+        for c in s.chars() {
+            match c {
+                '(' | '{' | '[' | '<' => {
+                    depth += 1;
+                    current.push(c);
+                }
+                ')' | '}' | ']' | '>' => {
+                    depth -= 1;
+                    current.push(c);
+                }
+                ',' if depth == 0 => {
+                    parts.push(current.clone());
+                    current.clear();
+                }
+                _ => current.push(c),
+            }
+        }
+        if !current.trim().is_empty() {
+            parts.push(current);
+        }
+        parts
+    }
+
+    /// Check if a function body contains a return statement.
+    fn function_has_return(decl: &str, source: &str, decl_offset: usize) -> bool {
+        // For arrow functions like `const f = () => expr`, check if it's a concise body
+        // (no braces = implicit return)
+        if decl.contains("=>") {
+            // Check if the arrow is followed by something other than {
+            if let Some(arrow_pos) = decl.find("=>") {
+                let after_arrow = decl[arrow_pos + 2..].trim();
+                if !after_arrow.starts_with('{') && !after_arrow.is_empty() {
+                    return true;
+                }
+            }
+        }
+
+        // Find the function body (opening brace after declaration)
+        let full_decl = &source[decl_offset..];
+
+        // Find opening brace at depth 0 (skip param parens)
+        let mut paren_depth = 0;
+        let mut brace_start = None;
+        for (i, c) in full_decl.char_indices() {
+            match c {
+                '(' => paren_depth += 1,
+                ')' => paren_depth -= 1,
+                '{' if paren_depth == 0 => {
+                    brace_start = Some(i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        let brace_start = match brace_start {
+            Some(pos) => pos,
+            None => return false,
+        };
+
+        // Find the matching closing brace
+        let mut depth = 0;
+        let mut brace_end = full_decl.len();
+        for (i, c) in full_decl[brace_start..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        brace_end = brace_start + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let body = &full_decl[brace_start + 1..brace_end];
+
+        // Check for return statement (simple text search)
+        // Need to be careful not to match "return" in nested functions
+        // Simple approach: look for "return " or "return;" or "return\n" at the
+        // top-level function scope (depth 0)
+        let mut fn_depth = 0;
+        let body_chars: Vec<char> = body.chars().collect();
+        let mut i = 0;
+        while i < body_chars.len() {
+            match body_chars[i] {
+                '{' => fn_depth += 1,
+                '}' => fn_depth -= 1,
+                'r' if fn_depth == 0 => {
+                    let remaining: String = body_chars[i..].iter().take(7).collect();
+                    if remaining.starts_with("return") {
+                        // Check that "return" is followed by a non-identifier char
+                        let after = body_chars.get(i + 6).copied().unwrap_or(' ');
+                        if !after.is_alphanumeric() && after != '_' {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        false
     }
 
     pub(crate) fn handle_indentation(
