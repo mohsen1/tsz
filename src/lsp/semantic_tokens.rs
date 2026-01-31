@@ -202,6 +202,16 @@ impl<'a> SemanticTokensProvider<'a> {
             return;
         }
 
+        // Check if this identifier is the name of a type parameter (not always bound in binder)
+        if self.is_type_parameter_name(node_idx) {
+            self.emit_token_at(
+                node_idx,
+                SemanticTokenType::TypeParameter,
+                semantic_token_modifiers::DECLARATION,
+            );
+            return;
+        }
+
         // First check if this is a declaration (has a symbol directly bound to its parent)
         if let Some(sym_id) = self.find_declaration_symbol(node_idx) {
             if let Some(symbol) = self.binder.get_symbol(sym_id) {
@@ -224,6 +234,12 @@ impl<'a> SemanticTokensProvider<'a> {
                 self.emit_token_at(node_idx, token_type, modifiers);
                 return;
             }
+        }
+
+        // Check if this identifier is used as a type reference to a type parameter
+        if self.is_type_parameter_reference(node_idx) {
+            self.emit_token_at(node_idx, SemanticTokenType::TypeParameter, 0);
+            return;
         }
 
         // Unresolved identifier - don't emit a token (let editor use default highlighting)
@@ -251,9 +267,16 @@ impl<'a> SemanticTokensProvider<'a> {
                 || k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
             {
-                self.arena.get_function(parent).and_then(|f| {
-                    if f.name == ident_idx { Some(true) } else { None }
-                }).unwrap_or(false)
+                self.arena
+                    .get_function(parent)
+                    .and_then(|f| {
+                        if f.name == ident_idx {
+                            Some(true)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(false)
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::CLASS_EXPRESSION =>
@@ -401,6 +424,101 @@ impl<'a> SemanticTokensProvider<'a> {
         false
     }
 
+    /// Check if an identifier is the name child of a TYPE_PARAMETER node.
+    fn is_type_parameter_name(&self, ident_idx: NodeIndex) -> bool {
+        let Some(ext) = self.arena.get_extended(ident_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent) = self.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent.kind == syntax_kind_ext::TYPE_PARAMETER {
+            if let Some(tp) = self.arena.get_type_parameter(parent) {
+                return tp.name == ident_idx;
+            }
+        }
+        false
+    }
+
+    /// Check if an identifier is a type reference to a type parameter.
+    /// This checks if the identifier text matches any type parameter in scope.
+    fn is_type_parameter_reference(&self, ident_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(ident_idx) else {
+            return false;
+        };
+        let Some(ident_data) = self.arena.get_identifier(node) else {
+            return false;
+        };
+        let name = &ident_data.escaped_text;
+
+        // Walk up the tree to find enclosing function/class/interface with type parameters
+        let mut current = ident_idx;
+        loop {
+            let Some(ext) = self.arena.get_extended(current) else {
+                break;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent) = self.arena.get(parent_idx) else {
+                break;
+            };
+
+            // Check if parent has type parameters matching this name
+            let type_params = match parent.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+                {
+                    self.arena
+                        .get_function(parent)
+                        .and_then(|f| f.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    self.arena
+                        .get_class(parent)
+                        .and_then(|c| c.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .arena
+                    .get_interface(parent)
+                    .and_then(|i| i.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .arena
+                    .get_type_alias(parent)
+                    .and_then(|t| t.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(parent)
+                    .and_then(|m| m.type_parameters.as_ref()),
+                _ => None,
+            };
+
+            if let Some(tp_list) = type_params {
+                for &tp_idx in &tp_list.nodes {
+                    if let Some(tp_node) = self.arena.get(tp_idx) {
+                        if let Some(tp_data) = self.arena.get_type_parameter(tp_node) {
+                            if let Some(tp_name_node) = self.arena.get(tp_data.name) {
+                                if let Some(tp_ident) = self.arena.get_identifier(tp_name_node) {
+                                    if tp_ident.escaped_text == *name {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            current = parent_idx;
+        }
+        false
+    }
+
     /// Check if a node kind is a modifier keyword.
     fn is_modifier(&self, kind: u16) -> bool {
         matches!(
@@ -486,7 +604,8 @@ impl<'a> SemanticTokensProvider<'a> {
             SemanticTokenType::Function
         } else if flags & symbol_flags::METHOD != 0 {
             SemanticTokenType::Method
-        } else if flags & symbol_flags::GET_ACCESSOR != 0 || flags & symbol_flags::SET_ACCESSOR != 0 {
+        } else if flags & symbol_flags::GET_ACCESSOR != 0 || flags & symbol_flags::SET_ACCESSOR != 0
+        {
             SemanticTokenType::Property
         } else if flags & symbol_flags::PROPERTY != 0 {
             SemanticTokenType::Property
@@ -563,8 +682,13 @@ mod semantic_tokens_tests {
     }
 
     /// Find a token by its position (line, col). Returns (type, modifiers).
-    fn find_token_at(tokens: &[(u32, u32, u32, u32, u32)], line: u32, col: u32) -> Option<(u32, u32)> {
-        tokens.iter()
+    fn find_token_at(
+        tokens: &[(u32, u32, u32, u32, u32)],
+        line: u32,
+        col: u32,
+    ) -> Option<(u32, u32)> {
+        tokens
+            .iter()
             .find(|t| t.0 == line && t.1 == col)
             .map(|t| (t.3, t.4))
     }
@@ -596,7 +720,11 @@ mod semantic_tokens_tests {
         assert!(func_token.is_some(), "Should have token for myFunc");
         let (token_type, modifiers) = func_token.unwrap();
         assert_eq!(token_type, SemanticTokenType::Function as u32);
-        assert_ne!(modifiers & semantic_token_modifiers::DECLARATION, 0, "Should have DECLARATION modifier");
+        assert_ne!(
+            modifiers & semantic_token_modifiers::DECLARATION,
+            0,
+            "Should have DECLARATION modifier"
+        );
     }
 
     #[test]
@@ -619,7 +747,10 @@ mod semantic_tokens_tests {
         let tokens = get_tokens(source);
 
         // Should have at least 2 tokens (a and b)
-        assert!(tokens.len() >= 10, "Should have at least 2 tokens (10 values)");
+        assert!(
+            tokens.len() >= 10,
+            "Should have at least 2 tokens (10 values)"
+        );
 
         // First token: deltaLine=0, deltaStart=6 (position of 'a')
         assert_eq!(tokens[0], 0); // deltaLine (first token always 0)
@@ -684,30 +815,13 @@ mod semantic_tokens_tests {
 
         // Parameter "name" at col 15
         let param_token = find_token_at(&decoded, 0, 15);
-        assert!(param_token.is_some(), "Should have token for parameter 'name'");
+        assert!(
+            param_token.is_some(),
+            "Should have token for parameter 'name'"
+        );
         let (token_type, modifiers) = param_token.unwrap();
         assert_eq!(token_type, SemanticTokenType::Parameter as u32);
         assert_ne!(modifiers & semantic_token_modifiers::DECLARATION, 0);
-    }
-
-
-    #[test]
-    fn test_debug_type_parameter_tokens() {
-        let source = "function identity<T>(x: T): T { return x; }";
-        let tokens = get_tokens(source);
-        let decoded = decode_tokens(&tokens);
-        for (i, t) in decoded.iter().enumerate() {
-            let text_start = t.1 as usize;
-            let text_end = (t.1 + t.2) as usize;
-            let text = if text_end <= source.len() {
-                &source[text_start..text_end]
-            } else {
-                "???"
-            };
-            eprintln!("Token {}: line={} col={} len={} type={} mods={} text='{}'",
-                i, t.0, t.1, t.2, t.3, t.4, text);
-        }
-        // Just print - don't assert
     }
 
     #[test]
@@ -734,8 +848,11 @@ mod semantic_tokens_tests {
         assert!(var_token.is_some(), "Should have token for PI");
         let (token_type, modifiers) = var_token.unwrap();
         assert_eq!(token_type, SemanticTokenType::Variable as u32);
-        assert_ne!(modifiers & semantic_token_modifiers::READONLY, 0,
-            "const variable should have READONLY modifier");
+        assert_ne!(
+            modifiers & semantic_token_modifiers::READONLY,
+            0,
+            "const variable should have READONLY modifier"
+        );
         assert_ne!(modifiers & semantic_token_modifiers::DECLARATION, 0);
     }
 
@@ -750,8 +867,11 @@ mod semantic_tokens_tests {
         assert!(var_token.is_some(), "Should have token for 'mutable'");
         let (token_type, modifiers) = var_token.unwrap();
         assert_eq!(token_type, SemanticTokenType::Variable as u32);
-        assert_eq!(modifiers & semantic_token_modifiers::READONLY, 0,
-            "let variable should NOT have READONLY modifier");
+        assert_eq!(
+            modifiers & semantic_token_modifiers::READONLY,
+            0,
+            "let variable should NOT have READONLY modifier"
+        );
     }
 
     #[test]
@@ -790,8 +910,11 @@ mod semantic_tokens_tests {
         let (tt, m) = x_ref.unwrap();
         assert_eq!(tt, SemanticTokenType::Variable as u32);
         // Reference should NOT have DECLARATION modifier
-        assert_eq!(m & semantic_token_modifiers::DECLARATION, 0,
-            "Reference should not have DECLARATION modifier");
+        assert_eq!(
+            m & semantic_token_modifiers::DECLARATION,
+            0,
+            "Reference should not have DECLARATION modifier"
+        );
     }
 
     #[test]
@@ -809,7 +932,10 @@ mod semantic_tokens_tests {
 
         // 'add' reference at (1, 0) in call expression
         let add_ref = find_token_at(&decoded, 1, 0);
-        assert!(add_ref.is_some(), "Should have reference token for add call");
+        assert!(
+            add_ref.is_some(),
+            "Should have reference token for add call"
+        );
         let (tt, _m) = add_ref.unwrap();
         assert_eq!(tt, SemanticTokenType::Function as u32);
     }
@@ -861,7 +987,10 @@ mod semantic_tokens_tests {
 
         // 'x' reference at (1, 0)
         let x_ref = find_token_at(&decoded, 1, 0);
-        assert!(x_ref.is_some(), "Should have reference token for x in expression statement");
+        assert!(
+            x_ref.is_some(),
+            "Should have reference token for x in expression statement"
+        );
         assert_eq!(x_ref.unwrap().0, SemanticTokenType::Variable as u32);
     }
 
@@ -873,14 +1002,20 @@ mod semantic_tokens_tests {
 
         // 'x' parameter declaration at (0, 11)
         let x_decl = find_token_at(&decoded, 0, 11);
-        assert!(x_decl.is_some(), "Should have declaration token for parameter x");
+        assert!(
+            x_decl.is_some(),
+            "Should have declaration token for parameter x"
+        );
         let (tt, m) = x_decl.unwrap();
         assert_eq!(tt, SemanticTokenType::Parameter as u32);
         assert_ne!(m & semantic_token_modifiers::DECLARATION, 0);
 
         // 'x' reference at (0, 31) in return statement
         let x_ref = find_token_at(&decoded, 0, 31);
-        assert!(x_ref.is_some(), "Should have reference token for x in return");
+        assert!(
+            x_ref.is_some(),
+            "Should have reference token for x in return"
+        );
         assert_eq!(x_ref.unwrap().0, SemanticTokenType::Parameter as u32);
     }
 
@@ -892,7 +1027,10 @@ mod semantic_tokens_tests {
 
         // "static" keyword as Modifier token
         let static_token = find_token_at(&decoded, 1, 2);
-        assert!(static_token.is_some(), "Should have token for static keyword");
+        assert!(
+            static_token.is_some(),
+            "Should have token for static keyword"
+        );
         assert_eq!(static_token.unwrap().0, SemanticTokenType::Modifier as u32);
 
         // "count" property with STATIC modifier
@@ -900,7 +1038,11 @@ mod semantic_tokens_tests {
         assert!(count_token.is_some(), "Should have token for count");
         let (tt, m) = count_token.unwrap();
         assert_eq!(tt, SemanticTokenType::Property as u32);
-        assert_ne!(m & semantic_token_modifiers::STATIC, 0, "Should have STATIC modifier");
+        assert_ne!(
+            m & semantic_token_modifiers::STATIC,
+            0,
+            "Should have STATIC modifier"
+        );
     }
 
     #[test]

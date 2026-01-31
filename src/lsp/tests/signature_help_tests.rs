@@ -914,3 +914,37 @@ fn test_signature_overload_count() {
     let active = &h.signatures[h.active_signature as usize];
     assert_eq!(active.parameters.len(), 1, "Active signature should match arg count");
 }
+
+#[test]
+fn test_debug_callee_name() {
+    use crate::scanner::SyntaxKind;
+    let source = "function greet(name: string): void {}\ngreet(\"hello\");";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let arena = parser.get_arena();
+
+    // Find the call expression manually
+    let leaf = crate::lsp::utils::find_node_at_offset(arena, 43); // "hello" is around offset 43
+    let mut current = leaf;
+    for _ in 0..100 {
+        let Some(node) = arena.get(current) else { break; };
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            let call = arena.get_call_expr(node).unwrap();
+            let expr_node = arena.get(call.expression).unwrap();
+            eprintln!("Expression node kind: {}", expr_node.kind);
+            eprintln!("SyntaxKind::Identifier as u16: {}", SyntaxKind::Identifier as u16);
+            eprintln!("Is identifier? {}", expr_node.kind == SyntaxKind::Identifier as u16);
+            if let Some(ident) = arena.get_identifier(expr_node) {
+                eprintln!("Identifier text: {:?}", ident.escaped_text);
+            }
+            if let Some(text) = arena.get_identifier_text(call.expression) {
+                eprintln!("get_identifier_text: {:?}", text);
+            } else {
+                eprintln!("get_identifier_text returned None");
+            }
+            break;
+        }
+        let Some(ext) = arena.get_extended(current) else { break; };
+        current = ext.parent;
+    }
+    panic!("Debug output above");
+}

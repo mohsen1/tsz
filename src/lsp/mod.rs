@@ -66,8 +66,8 @@ mod project_tests;
 mod tests;
 
 pub use code_actions::{
-    CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, ImportCandidate,
-    ImportCandidateKind,
+    CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, CodeFixRegistry,
+    ImportCandidate, ImportCandidateKind,
 };
 pub use completions::{CompletionItem, CompletionItemKind, Completions};
 pub use definition::GoToDefinition;

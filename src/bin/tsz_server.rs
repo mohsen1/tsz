@@ -1833,7 +1833,68 @@ impl Server {
     }
 
     fn handle_get_code_fixes(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?.to_string();
+            let error_codes: Vec<u32> = request
+                .arguments
+                .get("errorCodes")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_u64().map(|n| n as u32))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if error_codes.is_empty() {
+                // If no specific error codes, get all diagnostics for the file
+                // and return fixes for all of them
+                let content = self.open_files.get(&file)?.clone();
+                let diags = self.get_semantic_diagnostics_full(&file, &content);
+                let mut all_fixes = Vec::new();
+                let mut seen_codes = rustc_hash::FxHashSet::default();
+                for diag in &diags {
+                    if !seen_codes.insert(diag.code) {
+                        continue;
+                    }
+                    let fixes = wasm::lsp::code_actions::CodeFixRegistry::fixes_for_error_code(diag.code);
+                    for (fix_name, fix_id, description, fix_all_desc) in fixes {
+                        all_fixes.push(serde_json::json!({
+                            "fixName": fix_name,
+                            "description": description,
+                            "changes": [{
+                                "fileName": file,
+                                "textChanges": []
+                            }],
+                            "commands": [],
+                            "fixId": fix_id,
+                            "fixAllDescription": fix_all_desc
+                        }));
+                    }
+                }
+                return Some(serde_json::json!(all_fixes));
+            }
+
+            let mut all_fixes = Vec::new();
+            for error_code in &error_codes {
+                let fixes = wasm::lsp::code_actions::CodeFixRegistry::fixes_for_error_code(*error_code);
+                for (fix_name, fix_id, description, fix_all_desc) in fixes {
+                    all_fixes.push(serde_json::json!({
+                        "fixName": fix_name,
+                        "description": description,
+                        "changes": [{
+                            "fileName": file,
+                            "textChanges": []
+                        }],
+                        "commands": [],
+                        "fixId": fix_id,
+                        "fixAllDescription": fix_all_desc
+                    }));
+                }
+            }
+            Some(serde_json::json!(all_fixes))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn handle_get_combined_code_fix(
@@ -1989,7 +2050,11 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let codes: Vec<String> = wasm::lsp::code_actions::CodeFixRegistry::supported_error_codes()
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        self.stub_response(seq, request, Some(serde_json::json!(codes)))
     }
 
     fn handle_encoded_semantic_classifications_full(
