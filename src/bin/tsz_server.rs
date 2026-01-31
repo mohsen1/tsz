@@ -43,7 +43,6 @@ use wasm::checker::module_resolution::build_module_resolution_maps;
 use wasm::checker::state::CheckerState;
 use wasm::checker::types::diagnostics::DiagnosticCategory;
 use wasm::cli::config::{checker_target_from_emitter, default_lib_name_for_target};
-use wasm::embedded_libs;
 use wasm::emitter::ScriptTarget;
 use wasm::lib_loader::LibFile;
 use wasm::lsp::call_hierarchy::CallHierarchyProvider;
@@ -3117,38 +3116,8 @@ impl Server {
             }
         }
 
-        // Fallback to embedded libs when disk files don't exist
-        // This is critical for conformance tests where lib files aren't on disk
-        if let Some(embedded_lib) = embedded_libs::get_lib(&normalized) {
-            let content = embedded_lib.content.to_string();
-            let references: Vec<String> = embedded_lib
-                .references
-                .iter()
-                .map(|s: &&str| s.to_string())
-                .collect();
-
-            // Load referenced libs first (dependencies)
-            for ref_lib in &references {
-                self.load_lib_recursive(ref_lib, result, loaded)?;
-            }
-
-            let file_name = embedded_lib.file_name.to_string();
-            let mut parser = ParserState::new(file_name.clone(), content);
-            let root_idx = parser.parse_source_file();
-            let mut binder = BinderState::new();
-            binder.bind_source_file(parser.get_arena(), root_idx);
-
-            let lib = Arc::new(LibFile::new(
-                file_name,
-                Arc::new(parser.into_arena()),
-                Arc::new(binder),
-            ));
-
-            self.lib_cache
-                .insert(normalized, (lib.clone(), references.clone()));
-            result.push(lib);
-        }
-
+        // No embedded libs fallback - lib files must be on disk (matching tsgo behavior)
+        // Users need TypeScript installed or TSZ_LIB_DIR set
         Ok(())
     }
 

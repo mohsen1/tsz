@@ -316,52 +316,53 @@ pub fn parse_and_bind_with_stats(files: Vec<(String, String)>) -> (Vec<BindResul
 /// Arc<LibFile> objects for use with `merge_lib_symbols`.
 pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::LibFile>> {
     use crate::parser::ParserState;
-
-    let mut lib_files_loaded = Vec::new();
+    use rayon::prelude::*;
 
     if lib_files.is_empty() {
-        return lib_files_loaded;
+        return Vec::new();
     }
-    let files_to_load = lib_files
+
+    // Collect paths that exist
+    let files_to_load: Vec<_> = lib_files
         .iter()
-        .map(|p| p.to_path_buf())
-        .collect::<Vec<_>>();
+        .filter_map(|p| {
+            let path = p.to_path_buf();
+            if path.exists() {
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    for lib_path in files_to_load {
-        // Skip if the file doesn't exist
-        if !lib_path.exists() {
-            continue;
-        }
+    // Parse and bind lib files in parallel for faster startup
+    files_to_load
+        .into_par_iter()
+        .filter_map(|lib_path| {
+            // Read the lib file content
+            let source_text = std::fs::read_to_string(&lib_path).ok()?;
 
-        // Read the lib file content
-        let source_text = match std::fs::read_to_string(&lib_path) {
-            Ok(content) => content,
-            Err(_) => continue,
-        };
+            // Parse the lib file
+            let file_name = lib_path.to_string_lossy().to_string();
+            let mut lib_parser = ParserState::new(file_name.clone(), source_text);
+            let source_file_idx = lib_parser.parse_source_file();
 
-        // Parse the lib file
-        let file_name = lib_path.to_string_lossy().to_string();
-        let mut lib_parser = ParserState::new(file_name.clone(), source_text);
-        let source_file_idx = lib_parser.parse_source_file();
+            // Skip if there are parse errors
+            if !lib_parser.get_diagnostics().is_empty() {
+                return None;
+            }
 
-        // Skip if there are parse errors
-        if !lib_parser.get_diagnostics().is_empty() {
-            continue;
-        }
+            // Bind the lib file
+            let mut lib_binder = BinderState::new();
+            lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
-        // Bind the lib file
-        let mut lib_binder = BinderState::new();
-        lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
+            // Create the LibFile
+            let arena = Arc::new(lib_parser.into_arena());
+            let binder = Arc::new(lib_binder);
 
-        // Create the LibFile
-        let arena = Arc::new(lib_parser.into_arena());
-        let binder = Arc::new(lib_binder);
-
-        let lib_file = Arc::new(lib_loader::LibFile::new(file_name, arena, binder));
-        lib_files_loaded.push(lib_file);
-    }
-
-    lib_files_loaded
+            Some(Arc::new(lib_loader::LibFile::new(file_name, arena, binder)))
+        })
+        .collect()
 }
 
 /// Parse and bind multiple files in parallel with lib symbol injection.

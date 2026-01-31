@@ -29,7 +29,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 use std::sync::{
-    Arc,
+    Arc, OnceLock,
     atomic::{AtomicU32, Ordering},
 };
 
@@ -99,33 +99,59 @@ fn literal_domain(literal: &LiteralValue) -> LiteralDomain {
     }
 }
 
-/// A single shard of the type interned storage.
-///
-/// Uses DashMap for lock-free concurrent access to type mappings.
-struct TypeShard {
+/// Inner data for a TypeShard, lazily initialized.
+struct TypeShardInner {
     /// Map from TypeKey to local index within this shard
     key_to_index: DashMap<TypeKey, u32, FxBuildHasher>,
-    /// Atomic counter for allocating new indices in this shard
-    next_index: AtomicU32,
     /// Map from local index to TypeKey (using Arc for shared access)
-    /// Note: We use a separate Vec-like structure indexed by local_index
-    /// This is stored in a DashMap for lock-free concurrent access
     index_to_key: DashMap<u32, Arc<TypeKey>, FxBuildHasher>,
+}
+
+/// A single shard of the type interned storage.
+///
+/// Uses OnceLock for lazy initialization - DashMaps are only allocated
+/// when the shard is first accessed, reducing startup overhead.
+struct TypeShard {
+    /// Lazily initialized inner maps
+    inner: OnceLock<TypeShardInner>,
+    /// Atomic counter for allocating new indices in this shard
+    /// Kept outside OnceLock for fast checks without initialization
+    next_index: AtomicU32,
 }
 
 impl TypeShard {
     fn new() -> Self {
         TypeShard {
-            key_to_index: DashMap::with_hasher(FxBuildHasher),
+            inner: OnceLock::new(),
             next_index: AtomicU32::new(0),
-            index_to_key: DashMap::with_hasher(FxBuildHasher),
         }
+    }
+
+    /// Get the inner maps, initializing on first access
+    #[inline]
+    fn get_inner(&self) -> &TypeShardInner {
+        self.inner.get_or_init(|| TypeShardInner {
+            key_to_index: DashMap::with_hasher(FxBuildHasher),
+            index_to_key: DashMap::with_hasher(FxBuildHasher),
+        })
+    }
+
+    /// Check if a key exists without initializing the shard
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.next_index.load(Ordering::Relaxed) == 0
     }
 }
 
-/// Lock-free slice interner using DashMap for concurrent access.
-struct ConcurrentSliceInterner<T> {
+/// Inner data for ConcurrentSliceInterner, lazily initialized.
+struct SliceInternerInner<T> {
     items: DashMap<u32, Arc<[T]>, FxBuildHasher>,
+}
+
+/// Lock-free slice interner using DashMap for concurrent access.
+/// Uses lazy initialization to defer DashMap allocation until first use.
+struct ConcurrentSliceInterner<T> {
+    inner: OnceLock<SliceInternerInner<T>>,
     next_id: AtomicU32,
 }
 
@@ -134,13 +160,20 @@ where
     T: Eq + Hash + Clone + Send + Sync + 'static,
 {
     fn new() -> Self {
-        let items = DashMap::with_hasher(FxBuildHasher);
-        let empty: Arc<[T]> = Arc::from(Vec::new());
-        items.insert(0, empty);
         ConcurrentSliceInterner {
-            items,
-            next_id: AtomicU32::new(1),
+            inner: OnceLock::new(),
+            next_id: AtomicU32::new(1), // Reserve 0 for empty
         }
+    }
+
+    #[inline]
+    fn get_inner(&self) -> &SliceInternerInner<T> {
+        self.inner.get_or_init(|| {
+            let items = DashMap::with_hasher(FxBuildHasher);
+            let empty: Arc<[T]> = Arc::from(Vec::new());
+            items.insert(0, empty);
+            SliceInternerInner { items }
+        })
     }
 
     fn intern(&self, items_slice: &[T]) -> u32 {
@@ -148,11 +181,13 @@ where
             return 0;
         }
 
+        let inner = self.get_inner();
+
         // Create a temporary Arc for lookup
         let temp_arc: Arc<[T]> = Arc::from(items_slice.to_vec());
 
         // Try to insert - if already exists, get existing ID
-        for entry in self.items.iter() {
+        for entry in inner.items.iter() {
             if entry.value() == &temp_arc {
                 return *entry.key();
             }
@@ -160,26 +195,33 @@ where
 
         // Allocate new ID
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.items.insert(id, temp_arc);
+        inner.items.insert(id, temp_arc);
         id
     }
 
     fn get(&self, id: u32) -> Option<Arc<[T]>> {
-        self.items.get(&id).map(|e| e.value().clone())
+        // For id 0 (empty), we can return without initializing
+        if id == 0 {
+            return Some(Arc::from(Vec::new()));
+        }
+        self.inner.get()?.items.get(&id).map(|e| e.value().clone())
     }
 
     fn empty(&self) -> Arc<[T]> {
-        self.items
-            .get(&0)
-            .map(|e| e.value().clone())
-            .unwrap_or_else(|| Arc::from(Vec::new()))
+        Arc::from(Vec::new())
     }
 }
 
-/// Lock-free value interner using DashMap for concurrent access.
-struct ConcurrentValueInterner<T> {
+/// Inner data for ConcurrentValueInterner, lazily initialized.
+struct ValueInternerInner<T> {
     items: DashMap<u32, Arc<T>, FxBuildHasher>,
     map: DashMap<Arc<T>, u32, FxBuildHasher>,
+}
+
+/// Lock-free value interner using DashMap for concurrent access.
+/// Uses lazy initialization to defer DashMap allocation until first use.
+struct ConcurrentValueInterner<T> {
+    inner: OnceLock<ValueInternerInner<T>>,
     next_id: AtomicU32,
 }
 
@@ -189,17 +231,25 @@ where
 {
     fn new() -> Self {
         ConcurrentValueInterner {
-            items: DashMap::with_hasher(FxBuildHasher),
-            map: DashMap::with_hasher(FxBuildHasher),
+            inner: OnceLock::new(),
             next_id: AtomicU32::new(0),
         }
     }
 
+    #[inline]
+    fn get_inner(&self) -> &ValueInternerInner<T> {
+        self.inner.get_or_init(|| ValueInternerInner {
+            items: DashMap::with_hasher(FxBuildHasher),
+            map: DashMap::with_hasher(FxBuildHasher),
+        })
+    }
+
     fn intern(&self, value: T) -> u32 {
+        let inner = self.get_inner();
         let value_arc = Arc::new(value);
 
         // Try to get existing ID
-        if let Some(ref_entry) = self.map.get(&value_arc) {
+        if let Some(ref_entry) = inner.map.get(&value_arc) {
             return *ref_entry.value();
         }
 
@@ -207,10 +257,10 @@ where
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         // Double-check: another thread might have inserted while we allocated
-        match self.map.entry(value_arc.clone()) {
+        match inner.map.entry(value_arc.clone()) {
             Entry::Vacant(e) => {
                 e.insert(id);
-                self.items.insert(id, value_arc);
+                inner.items.insert(id, value_arc);
                 id
             }
             Entry::Occupied(e) => *e.get(),
@@ -218,7 +268,7 @@ where
     }
 
     fn get(&self, id: u32) -> Option<Arc<T>> {
-        self.items.get(&id).map(|e| e.value().clone())
+        self.inner.get()?.items.get(&id).map(|e| e.value().clone())
     }
 }
 
@@ -226,18 +276,21 @@ where
 ///
 /// Uses sharded DashMap structures for all internal storage, enabling
 /// true parallel type checking without lock contention.
+///
+/// All internal structures use lazy initialization via OnceLock to minimize
+/// startup overhead - DashMaps are only allocated when first accessed.
 pub struct TypeInterner {
-    /// Sharded storage for user-defined types (lock-free)
+    /// Sharded storage for user-defined types (lazily initialized)
     shards: Vec<TypeShard>,
     /// String interner for property names and string literals (already lock-free)
     pub string_interner: ShardedInterner,
-    /// Concurrent interners for type components
+    /// Concurrent interners for type components (lazily initialized)
     type_lists: ConcurrentSliceInterner<TypeId>,
     tuple_lists: ConcurrentSliceInterner<TupleElement>,
     template_lists: ConcurrentSliceInterner<TemplateSpan>,
     object_shapes: ConcurrentValueInterner<ObjectShape>,
-    /// Object property maps: DashMap for lock-free concurrent access
-    object_property_maps: DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>,
+    /// Object property maps: lazily initialized DashMap
+    object_property_maps: OnceLock<DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>>,
     function_shapes: ConcurrentValueInterner<FunctionShape>,
     callable_shapes: ConcurrentValueInterner<CallableShape>,
     conditional_types: ConcurrentValueInterner<ConditionalType>,
@@ -246,28 +299,34 @@ pub struct TypeInterner {
 }
 
 impl TypeInterner {
-    /// Create a new type interner with pre-registered intrinsics
+    /// Create a new type interner with pre-registered intrinsics.
+    ///
+    /// Uses lazy initialization for all DashMap structures to minimize
+    /// startup overhead. DashMaps are only allocated when first accessed.
     pub fn new() -> Self {
         let shards: Vec<TypeShard> = (0..SHARD_COUNT).map(|_| TypeShard::new()).collect();
 
         TypeInterner {
             shards,
-            string_interner: {
-                let interner = ShardedInterner::new();
-                interner.intern_common();
-                interner
-            },
+            // String interner - common strings are interned on-demand for faster startup
+            string_interner: ShardedInterner::new(),
             type_lists: ConcurrentSliceInterner::new(),
             tuple_lists: ConcurrentSliceInterner::new(),
             template_lists: ConcurrentSliceInterner::new(),
             object_shapes: ConcurrentValueInterner::new(),
-            object_property_maps: DashMap::with_hasher(FxBuildHasher),
+            object_property_maps: OnceLock::new(),
             function_shapes: ConcurrentValueInterner::new(),
             callable_shapes: ConcurrentValueInterner::new(),
             conditional_types: ConcurrentValueInterner::new(),
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),
         }
+    }
+
+    /// Get the object property maps, initializing on first access
+    #[inline]
+    fn get_object_property_maps(&self) -> &DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher> {
+        self.object_property_maps.get_or_init(|| DashMap::with_hasher(FxBuildHasher))
     }
 
     /// Intern a string into an Atom.
@@ -343,8 +402,10 @@ impl TypeInterner {
             return None;
         }
 
+        let maps = self.get_object_property_maps();
+
         // Try to get existing map (lock-free read)
-        if let Some(map) = self.object_property_maps.get(&shape_id) {
+        if let Some(map) = maps.get(&shape_id) {
             return Some(map.clone());
         }
 
@@ -356,7 +417,7 @@ impl TypeInterner {
         let map = Arc::new(map);
 
         // Try to insert - if another thread inserted first, use theirs
-        match self.object_property_maps.entry(shape_id) {
+        match maps.entry(shape_id) {
             Entry::Vacant(e) => {
                 e.insert(map.clone());
                 Some(map)
@@ -450,9 +511,10 @@ impl TypeInterner {
         key.hash(&mut hasher);
         let shard_idx = (hasher.finish() as usize) & (SHARD_COUNT - 1);
         let shard = &self.shards[shard_idx];
+        let inner = shard.get_inner();
 
         // Try to get existing ID (lock-free read)
-        if let Some(entry) = shard.key_to_index.get(&key) {
+        if let Some(entry) = inner.key_to_index.get(&key) {
             let local_index = *entry.value();
             return self.make_id(local_index, shard_idx as u32);
         }
@@ -465,11 +527,11 @@ impl TypeInterner {
         }
 
         // Double-check: another thread might have inserted while we allocated
-        match shard.key_to_index.entry(key.clone()) {
+        match inner.key_to_index.entry(key.clone()) {
             Entry::Vacant(e) => {
                 e.insert(local_index);
                 let key_arc = Arc::new(key);
-                shard.index_to_key.insert(local_index, key_arc);
+                inner.index_to_key.insert(local_index, key_arc);
                 self.make_id(local_index, shard_idx as u32)
             }
             Entry::Occupied(e) => {
@@ -482,7 +544,7 @@ impl TypeInterner {
 
     /// Look up the TypeKey for a given TypeId.
     ///
-    /// This uses lock-free DashMap access.
+    /// This uses lock-free DashMap access with lazy shard initialization.
     pub fn lookup(&self, id: TypeId) -> Option<TypeKey> {
         if id.is_intrinsic() || id.is_error() {
             return self.get_intrinsic_key(id);
@@ -493,7 +555,12 @@ impl TypeInterner {
         let local_index = raw_val >> SHARD_BITS;
 
         let shard = self.shards.get(shard_idx)?;
+        // If shard is empty, no types have been interned there yet
+        if shard.is_empty() {
+            return None;
+        }
         shard
+            .get_inner()
             .index_to_key
             .get(&{ local_index })
             .map(|r| r.value().as_ref().clone())
