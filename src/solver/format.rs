@@ -216,6 +216,11 @@ impl<'a> TypeFormatter<'a> {
                 }
                 format!("Ref({})", sym.0)
             }
+            TypeKey::Lazy(def_id) => {
+                // Lazy types use DefId which doesn't have direct symbol access
+                // TODO: Look up definition name from DefinitionStore when available
+                format!("Lazy({})", def_id.0)
+            }
             TypeKey::Application(app) => {
                 let app = self.interner.type_application(*app);
                 let args: Vec<String> = app.args.iter().map(|&arg| self.format(arg)).collect();

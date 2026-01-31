@@ -119,6 +119,11 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
+    /// Visit a lazy type reference using DefId.
+    fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
+        Self::default_output()
+    }
+
     /// Visit a generic type application Base<Args>.
     fn visit_application(&mut self, _app_id: u32) -> Self::Output {
         Self::default_output()
@@ -225,6 +230,7 @@ pub trait TypeVisitor: Sized {
             TypeKey::Callable(id) => self.visit_callable(id.0),
             TypeKey::TypeParameter(info) => self.visit_type_parameter(info),
             TypeKey::Ref(sym_ref) => self.visit_ref(sym_ref.0),
+            TypeKey::Lazy(def_id) => self.visit_lazy(def_id.0),
             TypeKey::Application(id) => self.visit_application(id.0),
             TypeKey::Conditional(id) => self.visit_conditional(id.0),
             TypeKey::Mapped(id) => self.visit_mapped(id.0),
@@ -318,7 +324,7 @@ impl TypeKindVisitor {
             TypeKey::Application(_) => TypeKind::Generic,
             TypeKey::TypeParameter(_) | TypeKey::Infer(_) => TypeKind::TypeParameter,
             TypeKey::Conditional(_) => TypeKind::Conditional,
-            TypeKey::Ref(_) => TypeKind::Reference,
+            TypeKey::Ref(_) | TypeKey::Lazy(_) => TypeKind::Reference,
             TypeKey::Mapped(_) => TypeKind::Mapped,
             TypeKey::IndexAccess(_, _) => TypeKind::IndexAccess,
             TypeKey::TemplateLiteral(_) => TypeKind::TemplateLiteral,
@@ -836,10 +842,11 @@ impl<'a> RecursiveTypeCollector<'a> {
                 }
             }
             TypeKey::Ref(_)
+            | TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => {
-                // Symbol references - don't traverse (would need resolver)
+                // Symbol/DefId references - don't traverse (would need resolver)
             }
             TypeKey::Application(app_id) => {
                 let app = self.types.type_application(*app_id);
@@ -1019,6 +1026,7 @@ where
                     || info.default.map(|d| self.check(d)).unwrap_or(false)
             }
             TypeKey::Ref(_)
+            | TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => false,
