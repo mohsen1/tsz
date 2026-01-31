@@ -1,5 +1,7 @@
 #[cfg(feature = "experimental_salsa")]
 use crate::solver::SalsaDatabase;
+#[cfg(feature = "experimental_salsa")]
+use std::sync::Arc;
 use crate::solver::{
     LiteralValue, QueryCache, QueryDatabase, TypeDatabase, TypeId, TypeInterner, TypeKey,
 };
