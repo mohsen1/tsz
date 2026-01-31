@@ -283,7 +283,16 @@ pub fn get_leading_comments_from_cache(
             result.last().unwrap().pos
         };
         let text_between = &source[comment.end as usize..check_pos as usize];
-        let newline_count = text_between.chars().filter(|&c| c == '\n').count();
+        // Count newlines with early exit — we only need to know if count > 2
+        let mut newline_count = 0usize;
+        for byte in text_between.as_bytes() {
+            if *byte == b'\n' {
+                newline_count += 1;
+                if newline_count > 2 {
+                    break;
+                }
+            }
+        }
 
         // Allow up to 2 newlines (JSDoc pattern: /** comment */ \n function)
         if newline_count > 2 {
