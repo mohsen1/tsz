@@ -2056,7 +2056,10 @@ fn test_codefix_registry_add_missing_member_2339() {
     let fixes = CodeFixRegistry::fixes_for_error_code(2339);
     assert!(!fixes.is_empty(), "Should return fixes for error 2339");
     let fix_names: Vec<&str> = fixes.iter().map(|f| f.0).collect();
-    assert!(fix_names.contains(&"addMissingMember"), "Should contain addMissingMember fix");
+    assert!(
+        fix_names.contains(&"addMissingMember"),
+        "Should contain addMissingMember fix"
+    );
 }
 
 #[test]
@@ -2102,16 +2105,28 @@ fn test_codefix_registry_unreachable_code_7027() {
 fn test_codefix_registry_unknown_error_returns_empty() {
     // Unknown error code should return empty
     let fixes = CodeFixRegistry::fixes_for_error_code(99999);
-    assert!(fixes.is_empty(), "Should return no fixes for unknown error code");
+    assert!(
+        fixes.is_empty(),
+        "Should return no fixes for unknown error code"
+    );
 }
 
 #[test]
 fn test_codefix_registry_supported_error_codes_not_empty() {
     let codes = CodeFixRegistry::supported_error_codes();
     assert!(!codes.is_empty(), "Should return supported error codes");
-    assert!(codes.contains(&2304), "Should contain 2304 (Cannot find name)");
-    assert!(codes.contains(&2339), "Should contain 2339 (Property does not exist)");
-    assert!(codes.contains(&6133), "Should contain 6133 (Unused identifier)");
+    assert!(
+        codes.contains(&2304),
+        "Should contain 2304 (Cannot find name)"
+    );
+    assert!(
+        codes.contains(&2339),
+        "Should contain 2339 (Property does not exist)"
+    );
+    assert!(
+        codes.contains(&6133),
+        "Should contain 6133 (Unused identifier)"
+    );
     assert!(codes.contains(&2552), "Should contain 2552 (Did you mean)");
 }
 
@@ -2121,9 +2136,21 @@ fn test_codefix_registry_fix_all_description_present() {
     for code in &[2304u32, 2339, 2552, 6133, 1308, 4114, 2420, 7027] {
         let fixes = CodeFixRegistry::fixes_for_error_code(*code);
         for (fix_name, fix_id, _desc, fix_all_desc) in &fixes {
-            assert!(!fix_name.is_empty(), "fix_name should not be empty for code {}", code);
-            assert!(!fix_id.is_empty(), "fix_id should not be empty for code {}", code);
-            assert!(!fix_all_desc.is_empty(), "fix_all_description should not be empty for code {}", code);
+            assert!(
+                !fix_name.is_empty(),
+                "fix_name should not be empty for code {}",
+                code
+            );
+            assert!(
+                !fix_id.is_empty(),
+                "fix_id should not be empty for code {}",
+                code
+            );
+            assert!(
+                !fix_all_desc.is_empty(),
+                "fix_all_description should not be empty for code {}",
+                code
+            );
         }
     }
 }
@@ -2132,7 +2159,10 @@ fn test_codefix_registry_fix_all_description_present() {
 fn test_codefix_registry_strict_class_init_2564() {
     // Property has no initializer and is not definitely assigned (2564)
     let fixes = CodeFixRegistry::fixes_for_error_code(2564);
-    assert!(fixes.len() >= 2, "Should return multiple fixes for error 2564");
+    assert!(
+        fixes.len() >= 2,
+        "Should return multiple fixes for error 2564"
+    );
     let fix_names: Vec<&str> = fixes.iter().map(|f| f.0).collect();
     assert!(fix_names.contains(&"addMissingPropertyDefiniteAssignmentAssertions"));
     assert!(fix_names.contains(&"addMissingPropertyUndefinedType"));

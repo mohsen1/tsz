@@ -248,7 +248,8 @@ impl<'a> SignatureHelpProvider<'a> {
         let callee_name = self.resolve_callee_name(call_expr.expression, call_kind);
 
         // 7. Extract signatures from the type
-        let mut signatures = self.get_signatures_from_type(callee_type, &checker, call_kind, &callee_name);
+        let mut signatures =
+            self.get_signatures_from_type(callee_type, &checker, call_kind, &callee_name);
 
         if let Some(docs) = docs {
             self.apply_signature_docs(&mut signatures, &docs);
@@ -316,13 +317,21 @@ impl<'a> SignatureHelpProvider<'a> {
                 // For dotted access, take the last segment
                 if let Some(dot_pos) = text.rfind('.') {
                     let name = text[dot_pos + 1..].trim();
-                    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+                    if !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                    {
                         return name.to_string();
                     }
                 }
                 // For simple identifier, use the whole text
                 let trimmed = text.trim();
-                if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+                if !trimmed.is_empty()
+                    && trimmed
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                {
                     return trimmed.to_string();
                 }
             }
@@ -511,7 +520,12 @@ impl<'a> SignatureHelpProvider<'a> {
                             is_constructor: false,
                             is_method: false,
                         };
-                        sigs.push(self.signature_candidate(&func_shape, checker, false, callee_name));
+                        sigs.push(self.signature_candidate(
+                            &func_shape,
+                            checker,
+                            false,
+                            callee_name,
+                        ));
                     }
                 }
                 if include_construct {
@@ -526,7 +540,12 @@ impl<'a> SignatureHelpProvider<'a> {
                             is_constructor: true,
                             is_method: false,
                         };
-                        sigs.push(self.signature_candidate(&func_shape, checker, true, callee_name));
+                        sigs.push(self.signature_candidate(
+                            &func_shape,
+                            checker,
+                            true,
+                            callee_name,
+                        ));
                     }
                 }
                 sigs
@@ -536,7 +555,12 @@ impl<'a> SignatureHelpProvider<'a> {
                 let members = self.interner.type_list(members);
                 let mut sigs = Vec::new();
                 for &member in members.iter() {
-                    sigs.extend(self.get_signatures_from_type(member, checker, call_kind, callee_name));
+                    sigs.extend(self.get_signatures_from_type(
+                        member,
+                        checker,
+                        call_kind,
+                        callee_name,
+                    ));
                 }
                 sigs
             }
@@ -611,12 +635,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let suffix = format!("): {}", return_type_str);
 
         // Build full label: prefix + params joined by ", " + suffix
-        let label = format!(
-            "{}{}{}",
-            prefix,
-            param_labels.join(", "),
-            suffix,
-        );
+        let label = format!("{}{}{}", prefix, param_labels.join(", "), suffix,);
 
         SignatureInformation {
             label,

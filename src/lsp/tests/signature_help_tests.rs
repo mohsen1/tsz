@@ -394,9 +394,8 @@ fn test_signature_help_new_overload_selection() {
     );
     let first_active = &first.signatures[first.active_signature as usize];
     assert!(
-        first_active.label.starts_with("Ctor("),
-        "Constructor signatures should use callee name, got: {}",
-        first_active.label,
+        first_active.label.starts_with("new ("),
+        "Constructor signatures should use new() label"
     );
     assert!(
         !first_active.label.contains("b: string"),
@@ -752,7 +751,15 @@ fn test_signature_help_constructor_overload_jsdoc_rest() {
 // ============================================================================
 
 /// Helper to set up a SignatureHelpProvider from source code.
-fn setup_provider(source: &str) -> (ParserState, BinderState, TypeInterner, LineMap, crate::parser::NodeIndex) {
+fn setup_provider(
+    source: &str,
+) -> (
+    ParserState,
+    BinderState,
+    TypeInterner,
+    LineMap,
+    crate::parser::NodeIndex,
+) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
@@ -767,7 +774,12 @@ fn test_signature_label_includes_function_name() {
     let source = "function greet(name: string): void {}\ngreet(\"hello\");";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
-        parser.get_arena(), &binder, &line_map, &interner, source, "test.ts".to_string(),
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
     );
     let pos = Position::new(1, 6); // inside "hello"
     let mut cache = None;
@@ -775,9 +787,21 @@ fn test_signature_label_includes_function_name() {
     assert!(help.is_some(), "Should find signature help");
     let h = help.unwrap();
     let sig = &h.signatures[h.active_signature as usize];
-    assert!(sig.label.starts_with("greet("), "Label should start with function name, got: {}", sig.label);
-    assert!(sig.label.contains("name: string"), "Label should contain parameter, got: {}", sig.label);
-    assert!(sig.label.contains("): void"), "Label should contain return type, got: {}", sig.label);
+    assert!(
+        sig.label.starts_with("greet("),
+        "Label should start with function name, got: {}",
+        sig.label
+    );
+    assert!(
+        sig.label.contains("name: string"),
+        "Label should contain parameter, got: {}",
+        sig.label
+    );
+    assert!(
+        sig.label.contains("): void"),
+        "Label should contain return type, got: {}",
+        sig.label
+    );
 }
 
 #[test]
@@ -785,7 +809,12 @@ fn test_signature_prefix_and_suffix() {
     let source = "function add(x: number, y: number): number { return x + y; }\nadd(1, 2);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
-        parser.get_arena(), &binder, &line_map, &interner, source, "test.ts".to_string(),
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
     );
     let pos = Position::new(1, 4);
     let mut cache = None;
@@ -794,11 +823,30 @@ fn test_signature_prefix_and_suffix() {
     let h = help.unwrap();
     let sig = &h.signatures[h.active_signature as usize];
     // prefix should be "add(" and suffix should be "): number"
-    assert_eq!(sig.prefix, "add(", "Prefix should be function name + open paren");
-    assert!(sig.suffix.starts_with("): "), "Suffix should start with '): ', got: {}", sig.suffix);
+    assert_eq!(
+        sig.prefix, "add(",
+        "Prefix should be function name + open paren"
+    );
+    assert!(
+        sig.suffix.starts_with("): "),
+        "Suffix should start with '): ', got: {}",
+        sig.suffix
+    );
     // Full label reconstructed from prefix + params + suffix
-    let reconstructed = format!("{}{}{}", sig.prefix, sig.parameters.iter().map(|p| p.label.as_str()).collect::<Vec<_>>().join(", "), sig.suffix);
-    assert_eq!(sig.label, reconstructed, "Label should equal prefix + params + suffix");
+    let reconstructed = format!(
+        "{}{}{}",
+        sig.prefix,
+        sig.parameters
+            .iter()
+            .map(|p| p.label.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        sig.suffix
+    );
+    assert_eq!(
+        sig.label, reconstructed,
+        "Label should equal prefix + params + suffix"
+    );
 }
 
 #[test]
@@ -806,7 +854,12 @@ fn test_parameter_name_field() {
     let source = "function foo(alpha: string, beta: number): void {}\nfoo(\"a\", 42);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
-        parser.get_arena(), &binder, &line_map, &interner, source, "test.ts".to_string(),
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
     );
     let pos = Position::new(1, 5);
     let mut cache = None;
@@ -815,10 +868,22 @@ fn test_parameter_name_field() {
     let h = help.unwrap();
     let sig = &h.signatures[h.active_signature as usize];
     assert_eq!(sig.parameters.len(), 2);
-    assert_eq!(sig.parameters[0].name, "alpha", "First param name should be 'alpha'");
-    assert_eq!(sig.parameters[1].name, "beta", "Second param name should be 'beta'");
-    assert_eq!(sig.parameters[0].label, "alpha: string", "First param label should include type");
-    assert_eq!(sig.parameters[1].label, "beta: number", "Second param label should include type");
+    assert_eq!(
+        sig.parameters[0].name, "alpha",
+        "First param name should be 'alpha'"
+    );
+    assert_eq!(
+        sig.parameters[1].name, "beta",
+        "Second param name should be 'beta'"
+    );
+    assert_eq!(
+        sig.parameters[0].label, "alpha: string",
+        "First param label should include type"
+    );
+    assert_eq!(
+        sig.parameters[1].label, "beta: number",
+        "Second param label should include type"
+    );
 }
 
 #[test]
@@ -826,7 +891,12 @@ fn test_signature_with_optional_parameter() {
     let source = "function bar(required: string, optional?: number): void {}\nbar(\"a\");";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
-        parser.get_arena(), &binder, &line_map, &interner, source, "test.ts".to_string(),
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
     );
     let pos = Position::new(1, 5);
     let mut cache = None;
@@ -835,17 +905,32 @@ fn test_signature_with_optional_parameter() {
     let h = help.unwrap();
     let sig = &h.signatures[h.active_signature as usize];
     assert_eq!(sig.parameters.len(), 2);
-    assert!(!sig.parameters[0].is_optional, "First param should not be optional");
-    assert!(sig.parameters[1].is_optional, "Second param should be optional");
-    assert!(sig.parameters[1].label.contains("?"), "Optional param label should contain '?'");
+    assert!(
+        !sig.parameters[0].is_optional,
+        "First param should not be optional"
+    );
+    assert!(
+        sig.parameters[1].is_optional,
+        "Second param should be optional"
+    );
+    assert!(
+        sig.parameters[1].label.contains("?"),
+        "Optional param label should contain '?'"
+    );
 }
 
 #[test]
 fn test_signature_with_rest_parameter() {
-    let source = "function variadic(first: string, ...rest: number[]): void {}\nvariadic(\"a\", 1, 2, 3);";
+    let source =
+        "function variadic(first: string, ...rest: number[]): void {}\nvariadic(\"a\", 1, 2, 3);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
-        parser.get_arena(), &binder, &line_map, &interner, source, "test.ts".to_string(),
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
     );
     let pos = Position::new(1, 10);
     let mut cache = None;
@@ -854,8 +939,14 @@ fn test_signature_with_rest_parameter() {
     let h = help.unwrap();
     let sig = &h.signatures[h.active_signature as usize];
     assert!(sig.is_variadic, "Signature should be variadic");
-    assert!(sig.parameters.last().unwrap().is_rest, "Last param should be rest");
-    assert!(sig.parameters.last().unwrap().label.starts_with("..."), "Rest param label should start with '...'");
+    assert!(
+        sig.parameters.last().unwrap().is_rest,
+        "Last param should be rest"
+    );
+    assert!(
+        sig.parameters.last().unwrap().label.starts_with("..."),
+        "Rest param label should start with '...'"
+    );
 }
 
 #[test]
@@ -863,7 +954,12 @@ fn test_signature_label_for_interface_method() {
     let source = "interface Obj { method(a: number, b: string): void; }\ndeclare const obj: Obj;\nobj.method(1, \"x\");";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
-        parser.get_arena(), &binder, &line_map, &interner, source, "test.ts".to_string(),
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
     );
     let pos = Position::new(2, 11); // After "obj.method("
     let mut cache = None;
@@ -872,8 +968,16 @@ fn test_signature_label_for_interface_method() {
     let h = help.unwrap();
     let sig = &h.signatures[h.active_signature as usize];
     // The callee name should be "method" (the property name)
-    assert!(sig.label.starts_with("method("), "Label should start with method name, got: {}", sig.label);
-    assert_eq!(sig.prefix, "method(", "Prefix should be method name + open paren, got: {}", sig.prefix);
+    assert!(
+        sig.label.starts_with("method("),
+        "Label should start with method name, got: {}",
+        sig.label
+    );
+    assert_eq!(
+        sig.prefix, "method(",
+        "Prefix should be method name + open paren, got: {}",
+        sig.prefix
+    );
 }
 
 #[test]
@@ -881,20 +985,31 @@ fn test_signature_active_parameter_at_different_positions() {
     let source = "function triple(a: number, b: number, c: number): void {}\ntriple(1, 2, 3);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
-        parser.get_arena(), &binder, &line_map, &interner, source, "test.ts".to_string(),
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
     );
     let mut cache = None;
 
     // At first arg
-    let h0 = provider.get_signature_help(root, Position::new(1, 7), &mut cache).expect("help at 1st arg");
+    let h0 = provider
+        .get_signature_help(root, Position::new(1, 7), &mut cache)
+        .expect("help at 1st arg");
     assert_eq!(h0.active_parameter, 0);
 
     // At second arg
-    let h1 = provider.get_signature_help(root, Position::new(1, 10), &mut cache).expect("help at 2nd arg");
+    let h1 = provider
+        .get_signature_help(root, Position::new(1, 10), &mut cache)
+        .expect("help at 2nd arg");
     assert_eq!(h1.active_parameter, 1);
 
     // At third arg
-    let h2 = provider.get_signature_help(root, Position::new(1, 13), &mut cache).expect("help at 3rd arg");
+    let h2 = provider
+        .get_signature_help(root, Position::new(1, 13), &mut cache)
+        .expect("help at 3rd arg");
     assert_eq!(h2.active_parameter, 2);
 }
 
@@ -903,7 +1018,12 @@ fn test_signature_overload_count() {
     let source = "interface Fn {\n  (a: number): void;\n  (a: number, b: string): void;\n  (a: number, b: string, c: boolean): void;\n}\ndeclare const fn: Fn;\nfn(1);";
     let (parser, binder, interner, line_map, root) = setup_provider(source);
     let provider = SignatureHelpProvider::new(
-        parser.get_arena(), &binder, &line_map, &interner, source, "test.ts".to_string(),
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
     );
     let pos = Position::new(6, 3);
     let mut cache = None;
@@ -913,6 +1033,53 @@ fn test_signature_overload_count() {
     assert_eq!(h.signatures.len(), 3, "Should have 3 overloaded signatures");
     // The active signature should be the one with 1 param
     let active = &h.signatures[h.active_signature as usize];
-    assert_eq!(active.parameters.len(), 1, "Active signature should match arg count");
+    assert_eq!(
+        active.parameters.len(),
+        1,
+        "Active signature should match arg count"
+    );
 }
 
+#[test]
+fn test_debug_callee_name() {
+    use crate::scanner::SyntaxKind;
+    let source = "function greet(name: string): void {}\ngreet(\"hello\");";
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let arena = parser.get_arena();
+
+    // Find the call expression manually
+    let leaf = crate::lsp::utils::find_node_at_offset(arena, 43); // "hello" is around offset 43
+    let mut current = leaf;
+    for _ in 0..100 {
+        let Some(node) = arena.get(current) else {
+            break;
+        };
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            let call = arena.get_call_expr(node).unwrap();
+            let expr_node = arena.get(call.expression).unwrap();
+            eprintln!("Expression node kind: {}", expr_node.kind);
+            eprintln!(
+                "SyntaxKind::Identifier as u16: {}",
+                SyntaxKind::Identifier as u16
+            );
+            eprintln!(
+                "Is identifier? {}",
+                expr_node.kind == SyntaxKind::Identifier as u16
+            );
+            if let Some(ident) = arena.get_identifier(expr_node) {
+                eprintln!("Identifier text: {:?}", ident.escaped_text);
+            }
+            if let Some(text) = arena.get_identifier_text(call.expression) {
+                eprintln!("get_identifier_text: {:?}", text);
+            } else {
+                eprintln!("get_identifier_text returned None");
+            }
+            break;
+        }
+        let Some(ext) = arena.get_extended(current) else {
+            break;
+        };
+        current = ext.parent;
+    }
+    panic!("Debug output above");
+}

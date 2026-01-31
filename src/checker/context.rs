@@ -49,6 +49,8 @@ pub struct CheckerOptions {
     pub allow_synthetic_default_imports: bool,
     /// When true, disable error reporting for unreachable code (TS7027).
     pub allow_unreachable_code: bool,
+    /// When true, require bracket notation for index signature property access (TS4111).
+    pub no_property_access_from_index_signature: bool,
 }
 
 /// ECMAScript target version
