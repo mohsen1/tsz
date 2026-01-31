@@ -805,7 +805,7 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         args.push(...filesToCheck.map(f => path.join(tmpDir, f)));
         
         // Run from project directory so CLI can find its built-in lib files
-        const projectDir = path.resolve(__dirname, '../..');
+        const projectDir = path.resolve(__dirname, '../../..');
         const child = spawn(nativeBinaryPath, args, {
           cwd: projectDir,
           stdio: ['ignore', 'pipe', 'pipe'],

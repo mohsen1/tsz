@@ -62,16 +62,17 @@ yarn.lock
 /*.md
 
 
-# Claude Code Plugins - ignore everything in .claude except local settings
+# Claude Code - ignore everything in .claude except local settings and skills
 .claude/*
 !.claude/settings.local.json
+!.claude/skills/
 # Runaway process daemon files
 .runaway-daemon.pid
 .runaway-daemon.log
 
 .env
 logs/
-conformance/.tsc-cache
+scripts/conformance/.tsc-cache
 
 # Generated lib assets (fetched from typescript npm package at build time)
 /lib-assets/

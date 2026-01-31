@@ -7,11 +7,11 @@
 
 const commands = {
   "Conformance Tests": {
-    "Run 500 tests": "./conformance/run-conformance.sh",
-    "Run 100 tests": "./conformance/run-conformance.sh --max=100",
-    "Run all tests": "./conformance/run-conformance.sh --all",
-    "Compiler tests only": "./conformance/run-conformance.sh --category=compiler",
-    "Verbose output": "./conformance/run-conformance.sh --verbose",
+    "Run 500 tests": "./scripts/conformance/run.sh",
+    "Run 100 tests": "./scripts/conformance/run.sh --max=100",
+    "Run all tests": "./scripts/conformance/run.sh --all",
+    "Compiler tests only": "./scripts/conformance/run.sh --category=compiler",
+    "Verbose output": "./scripts/conformance/run.sh --verbose",
   },
   
   "Rust Unit Tests": {
@@ -27,7 +27,7 @@ const commands = {
 
   "Build": {
     "Build WASM": "./scripts/build-wasm.sh",
-    "Build runner": "cd conformance && npm run build",
+    "Build runner": "cd scripts/conformance && npm run build",
   }
 };
 

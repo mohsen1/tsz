@@ -50,16 +50,14 @@ cargo test --lib checker
 Conformance tests compare Zang's output against the official TypeScript compiler.
 
 ```bash
-cd conformance
-
-# Run quick test (500 tests)
-npm run test
+# Run conformance tests (server mode, fast)
+./scripts/conformance/run.sh --server --max=500
 
 # Run all conformance tests
-npm run test:native:all
+./scripts/conformance/run.sh --all
 
 # Run with WASM
-npm run test:wasm:500
+./scripts/conformance/run.sh --wasm --max=500
 ```
 
 See [TESTING.md](./TESTING.md) for more details on the testing infrastructure.
@@ -99,10 +97,9 @@ tsz/
 │   ├── checker/           # Type checker
 │   ├── solver/            # Type constraint solver
 │   └── ...
-├── conformance/           # Conformance test runner
 ├── TypeScript/            # TypeScript submodule (tests source)
 ├── docs/                  # Documentation
-└── scripts/               # Build and utility scripts
+└── scripts/               # Build, utility scripts, conformance & fourslash test runners
 ```
 
 ## Updating TypeScript Version
@@ -118,7 +115,7 @@ cd ..
 git add TypeScript
 
 # Update the version mapping
-# Edit conformance/typescript-versions.json with the new SHA
+# Edit scripts/conformance/typescript-versions.json with the new SHA
 ```
 
 ## Tips

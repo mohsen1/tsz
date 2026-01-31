@@ -40,7 +40,7 @@ function getTypescriptNpmVersion() {
     return overrideNpmVersion;
   }
 
-  const versionsFile = path.join(ROOT_DIR, 'conformance/typescript-versions.json');
+  const versionsFile = path.join(ROOT_DIR, 'scripts/conformance/typescript-versions.json');
   try {
     const data = JSON.parse(fs.readFileSync(versionsFile, 'utf8'));
 
@@ -168,7 +168,7 @@ function getLibSourceDir() {
   }
 
   // Use conformance node_modules typescript
-  const conformanceTs = path.join(ROOT_DIR, 'conformance/node_modules/typescript/lib');
+  const conformanceTs = path.join(ROOT_DIR, 'scripts/conformance/node_modules/typescript/lib');
   if (fs.existsSync(conformanceTs)) {
     return conformanceTs;
   }
@@ -198,7 +198,7 @@ function isUpToDate(targetDir, expectedVersion) {
  * Ensure typescript is installed in conformance/
  */
 function ensureTypescriptInstalled(version) {
-  const pkgPath = path.join(ROOT_DIR, 'conformance/node_modules/typescript/package.json');
+  const pkgPath = path.join(ROOT_DIR, 'scripts/conformance/node_modules/typescript/package.json');
 
   if (fs.existsSync(pkgPath)) {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
@@ -211,7 +211,7 @@ function ensureTypescriptInstalled(version) {
   console.log(`Installing typescript@${version}...`);
   try {
     execSync(`npm install --no-save typescript@${version}`, {
-      cwd: path.join(ROOT_DIR, 'conformance'),
+      cwd: path.join(ROOT_DIR, 'scripts/conformance'),
       stdio: 'inherit',
     });
     return true;
@@ -346,7 +346,7 @@ function generateRustIncludes(manifest, outputPath) {
     '//! separate lib file installation.',
     '//!',
     '//! The lib files are sourced from the TypeScript npm package, versioned via',
-    '//! `conformance/typescript-versions.json`.',
+    '//! `scripts/conformance/typescript-versions.json`.',
     '//!',
     '//! # Build Requirements',
     '//!',

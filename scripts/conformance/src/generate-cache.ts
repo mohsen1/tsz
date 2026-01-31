@@ -31,7 +31,7 @@ import {
 } from './tsc-cache.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '../..');
+const ROOT_DIR = path.resolve(__dirname, '../../..');
 const TESTS_BASE_PATH = path.join(ROOT_DIR, 'TypeScript/tests/cases');
 
 const colors = {
