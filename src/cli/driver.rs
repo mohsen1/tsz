@@ -2015,6 +2015,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_implicit_returns {
         options.checker.no_implicit_returns = true;
     }
+    if let Some(val) = args.allow_unreachable_code {
+        options.checker.allow_unreachable_code = val;
+    }
     if args.no_emit {
         options.no_emit = true;
     }

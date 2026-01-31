@@ -799,6 +799,7 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         if (opts.checkjs) args.push('--checkJs');
         if (opts.declaration) args.push('--declaration');
         if (opts.noemit) args.push('--noEmit');
+        if (opts.allowunreachablecode !== undefined) args.push(opts.allowunreachablecode ? '--allowUnreachableCode' : '--allowUnreachableCode=false');
         
         // Add file paths
         args.push(...filesToCheck.map(f => path.join(tmpDir, f)));
