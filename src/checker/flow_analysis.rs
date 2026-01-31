@@ -1643,6 +1643,26 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // If the variable is declared in a for-in or for-of loop header,
+        // it's always assigned by the loop iteration itself
+        if let Some(decl_list_info) = self.ctx.arena.node_info(decl_id) {
+            let decl_list_idx = decl_list_info.parent;
+            if let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx) {
+                if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                    if let Some(for_info) = self.ctx.arena.node_info(decl_list_idx) {
+                        let for_idx = for_info.parent;
+                        if let Some(for_node) = self.ctx.arena.get(for_idx) {
+                            if for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                                || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Walk up the parent chain to check:
         // 1. Skip definite assignment checks in ambient declarations (declare const/let)
         // 2. Skip for module/global-level variables (TypeScript only checks function-local variables)
