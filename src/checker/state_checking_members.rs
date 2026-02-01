@@ -2010,13 +2010,33 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
                 if should_emit_ts2705 {
                     use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages,
+                        diagnostic_codes, diagnostic_messages, format_message,
                     };
-                    self.error_at_node(
-                        func.type_annotation,
-                        diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                        diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                    use crate::checker::context::ScriptTarget;
+
+                    // For ES5/ES3 targets, emit TS1055 instead of TS2705
+                    let is_es5_or_lower = matches!(
+                        self.ctx.compiler_options.target,
+                        ScriptTarget::ES3 | ScriptTarget::ES5
                     );
+
+                    if is_es5_or_lower {
+                        let type_name = self.format_type(return_type);
+                        self.error_at_node(
+                            func.type_annotation,
+                            &format_message(
+                                diagnostic_messages::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+                                &[&type_name],
+                            ),
+                            diagnostic_codes::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+                        );
+                    } else {
+                        self.error_at_node(
+                            func.type_annotation,
+                            diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
+                            diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                        );
+                    }
                 }
             }
 

@@ -15,6 +15,7 @@
 
 use crate::binder::symbol_flags;
 use crate::checker::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
+use crate::checker::types::diagnostics::format_message;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
@@ -375,11 +376,34 @@ impl<'a> CheckerState<'a> {
                         use crate::checker::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages,
                         };
-                        self.error_at_node(
-                            type_annotation,
-                            diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                            diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                        use crate::checker::context::ScriptTarget;
+
+                        // For ES5/ES3 targets, emit TS1055 instead of TS2705
+                        // TS1055: "Type 'X' is not a valid async function return type in ES5 because
+                        //          it does not refer to a Promise-compatible constructor value."
+                        // TS2705: "Async function return type must be Promise."
+                        let is_es5_or_lower = matches!(
+                            self.ctx.compiler_options.target,
+                            ScriptTarget::ES3 | ScriptTarget::ES5
                         );
+
+                        if is_es5_or_lower {
+                            let type_name = self.format_type(return_type);
+                            self.error_at_node(
+                                type_annotation,
+                                &format_message(
+                                    diagnostic_messages::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+                                    &[&type_name],
+                                ),
+                                diagnostic_codes::TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5,
+                            );
+                        } else {
+                            self.error_at_node(
+                                type_annotation,
+                                diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
+                                diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                            );
+                        }
                     }
                 }
 

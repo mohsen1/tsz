@@ -1259,7 +1259,15 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             // Resolve the property on the boxed interface type
             // This handles inheritance (e.g., String extends Object) automatically
             // and allows user-defined augmentations to lib.d.ts to work
-            return self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+
+            // If the property was found (or we got a definitive answer like IsUnknown), return it.
+            // Only fall back if the property was NOT found on the boxed type.
+            // This ensures that if the environment defines the interface but is incomplete
+            // (e.g., during bootstrapping or partial lib loading), we still find the intrinsic methods.
+            if !matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
+                return result;
+            }
         }
 
         // STEP 2: Fallback to hardcoded apparent members (bootstrapping/no-lib behavior)

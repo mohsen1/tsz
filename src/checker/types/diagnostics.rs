@@ -165,6 +165,8 @@ pub mod diagnostic_messages {
         "Property '{0}' is {1} and only accessible within class '{2}'.";
     pub const PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT: &str =
         "Private identifiers are not allowed in ambient contexts.";
+    pub const INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS: &str =
+        "Initializers are not allowed in ambient contexts.";
     pub const THIS_IMPLICITLY_HAS_TYPE_ANY: &str =
         "'this' implicitly has type 'any' because it does not have a type annotation.";
 
@@ -215,6 +217,7 @@ pub mod diagnostic_messages {
     pub const FUNCTION_LACKS_ENDING_RETURN_STATEMENT: &str =
         "Function lacks ending return statement and return type does not include 'undefined'.";
     pub const ASYNC_FUNCTION_RETURNS_PROMISE: &str = "Async function return type must be Promise.";
+    pub const TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5: &str = "Type '{0}' is not a valid async function return type in ES5 because it does not refer to a Promise-compatible constructor value.";
     pub const ASYNC_FUNCTION_REQUIRES_PROMISE_CONSTRUCTOR: &str = "An async function or method in ES5/ES3 requires the 'Promise' constructor. \
          Make sure you have a declaration for the 'Promise' constructor or include 'ES2015' in your `--lib` option.";
     pub const ASYNC_FUNCTION_MUST_RETURN_PROMISE: &str = "An async function or method must return a 'Promise'. \
@@ -312,6 +315,7 @@ pub mod diagnostic_codes {
     pub const REST_PARAMETER_MUST_BE_LAST: u32 = 1014;
     pub const PARAMETER_CANNOT_HAVE_INITIALIZER: u32 = 1015;
     pub const REQUIRED_PARAMETER_AFTER_OPTIONAL: u32 = 1016; // A required parameter cannot follow an optional parameter.
+    pub const INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS: u32 = 1039; // Initializers are not allowed in ambient contexts.
     pub const ASYNC_MODIFIER_IN_AMBIENT_CONTEXT: u32 = 1040; // 'async' modifier cannot be used in an ambient context.
     pub const ASYNC_MODIFIER_CANNOT_BE_USED_HERE: u32 = 1042; // 'async' modifier cannot be used here.
     pub const SETTER_MUST_HAVE_EXACTLY_ONE_PARAMETER: u32 = 1049;
@@ -416,6 +420,7 @@ pub mod diagnostic_codes {
     pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPE: u32 = 2469; // The '{0}' operator cannot be applied to type '{1}'.
     pub const FUNCTION_LACKS_RETURN_TYPE: u32 = 2355;
     pub const FUNCTION_RETURN_TYPE_MISMATCH: u32 = 2322;
+    pub const TYPE_NOT_VALID_ASYNC_RETURN_TYPE_ES5: u32 = 1055; // Type 'X' is not a valid async function return type in ES5
     pub const ASYNC_FUNCTION_RETURNS_PROMISE: u32 = 2705; // Async function must return Promise
     pub const PARAMETER_PROPERTY_NOT_ALLOWED: u32 = 2369; // A parameter property is only allowed in a constructor implementation.
 
@@ -510,7 +515,7 @@ pub mod diagnostic_codes {
     pub const EXPORT_ASSIGNMENT_WITH_OTHER_EXPORTS: u32 = 2309; // An export assignment cannot be used in a module with other exported elements.
     pub const HAS_NO_DEFAULT_EXPORT: u32 = 2613;
     pub const EXPORT_ASSIGNMENT_CANNOT_BE_USED: u32 = 2714;
-    pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: u32 = 5061;
+    pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: u32 = 2436;
     pub const AMBIENT_MODULES_CANNOT_BE_NESTED: u32 = 2435; // Ambient modules cannot be nested in other modules or namespaces.
 
     // Promise/async errors
