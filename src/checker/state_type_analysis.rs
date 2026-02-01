@@ -1467,7 +1467,7 @@ impl<'a> CheckerState<'a> {
         name_idx: NodeIndex,
         object_type: TypeId,
     ) -> TypeId {
-        use crate::solver::{PropertyAccessResult};
+        use crate::solver::PropertyAccessResult;
 
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -1500,7 +1500,7 @@ impl<'a> CheckerState<'a> {
             let resolved_type = self.resolve_type_for_property_access(object_type_for_check);
 
             // Try to find the property directly in the resolved object type
-            use crate::solver::{PropertyAccessResult};
+            use crate::solver::PropertyAccessResult;
             match self
                 .ctx
                 .types

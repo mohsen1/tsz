@@ -381,12 +381,11 @@ impl<'a> SignatureHelpProvider<'a> {
                             let delim_pos = (call_start + delim_offset) as u32;
                             // Cursor must be strictly after the opening delimiter
                             if cursor_offset > delim_pos {
-                                let kind =
-                                    if node.kind == syntax_kind_ext::NEW_EXPRESSION {
-                                        CallKind::New
-                                    } else {
-                                        CallKind::Call
-                                    };
+                                let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
+                                    CallKind::New
+                                } else {
+                                    CallKind::Call
+                                };
                                 return Some((current, data, kind));
                             }
                         }

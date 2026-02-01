@@ -50,6 +50,7 @@ struct FlowResult {
     exits: Option<HashSet<PropertyKey>>,
 }
 
+#[allow(dead_code)]
 impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Create a new declaration checker with a mutable context reference.
     pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {

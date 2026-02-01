@@ -70,7 +70,8 @@ impl<'a> CheckerState<'a> {
 
         let mut visited = FxHashSet::default();
         let mut visited_nodes = FxHashSet::default();
-        let result = self.get_class_instance_type_inner(class_idx, class, &mut visited, &mut visited_nodes);
+        let result =
+            self.get_class_instance_type_inner(class_idx, class, &mut visited, &mut visited_nodes);
 
         // Cache the result only when not in active resolution and type is valid
         if can_use_cache && result != TypeId::ERROR {

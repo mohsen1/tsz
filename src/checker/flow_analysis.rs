@@ -1592,11 +1592,6 @@ impl<'a> CheckerState<'a> {
     // Definite Assignment Checking
     // =========================================================================
 
-    /// Check if a symbol should be checked for definite assignment.
-    ///
-    /// Definite assignment checking applies to:
-    /// - Block-scoped variables (let/const) without initializers
-    /// - Parameters in certain contexts
     /// Check if definite assignment checking should be skipped for a given type.
     /// TypeScript skips TS2454 when the declared type is `any`, `unknown`, or includes `undefined`.
     pub(crate) fn skip_definite_assignment_for_type(&self, declared_type: TypeId) -> bool {
