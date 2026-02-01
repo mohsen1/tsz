@@ -29065,6 +29065,8 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             allow_unreachable_code: false,
             sound_mode: false,
             experimental_decorators: false,
+            no_unused_locals: false,
+            no_unused_parameters: false,
         },
     );
     assert!(
