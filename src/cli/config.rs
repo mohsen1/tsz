@@ -721,9 +721,13 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
         }
     }
 
-    // Return empty vec if no lib files found - lib files are loaded from disk only
-    // (matching tsgo behavior). Users need TypeScript installed or TSZ_LIB_DIR set.
-    Ok(Vec::new())
+    // Fall back to embedded libs when disk libs are not available.
+    // This ensures global types (Array, String, etc.) are always resolved.
+    let embedded = crate::embedded_libs::get_default_libs_for_target(target);
+    Ok(embedded
+        .into_iter()
+        .map(|lib| PathBuf::from(lib.file_name))
+        .collect())
 }
 
 /// Get the default lib name for a target.

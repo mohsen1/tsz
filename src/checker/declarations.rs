@@ -1061,7 +1061,8 @@ class Foo {
             let mut checker = DeclarationChecker::new(&mut ctx);
             checker.check(stmt_idx);
 
-            // Should have one TS2564 error for property 'x'
+            // TS2564 check was moved from DeclarationChecker to CheckerState::check_property_initialization
+            // DeclarationChecker no longer emits TS2564
             let ts2564_errors: Vec<_> = ctx
                 .diagnostics
                 .iter()
@@ -1070,19 +1071,10 @@ class Foo {
 
             assert_eq!(
                 ts2564_errors.len(),
-                1,
-                "Expected 1 TS2564 error, got {}",
+                0,
+                "DeclarationChecker should not emit TS2564 (handled by CheckerState), got {}",
                 ts2564_errors.len()
             );
-
-            // Verify the error message contains 'x'
-            if let Some(err) = ts2564_errors.first() {
-                assert!(
-                    err.message_text.contains("x"),
-                    "Error message should contain 'x', got: {}",
-                    err.message_text
-                );
-            }
         }
     }
 
@@ -1387,7 +1379,7 @@ class Foo {
             let mut checker = DeclarationChecker::new(&mut ctx);
             checker.check(stmt_idx);
 
-            // Should have 1 TS2564 error (property not initialized on all paths)
+            // TS2564 check was moved from DeclarationChecker to CheckerState
             let ts2564_errors: Vec<_> = ctx
                 .diagnostics
                 .iter()
@@ -1396,8 +1388,8 @@ class Foo {
 
             assert_eq!(
                 ts2564_errors.len(),
-                1,
-                "Expected 1 TS2564 error for property not initialized on all paths, got {}",
+                0,
+                "DeclarationChecker should not emit TS2564 (handled by CheckerState), got {}",
                 ts2564_errors.len()
             );
         }
@@ -1443,7 +1435,7 @@ class Foo {
             let mut checker = DeclarationChecker::new(&mut ctx);
             checker.check(stmt_idx);
 
-            // Should have 1 TS2564 error (property not initialized on all exit paths)
+            // TS2564 check was moved from DeclarationChecker to CheckerState
             let ts2564_errors: Vec<_> = ctx
                 .diagnostics
                 .iter()
@@ -1452,8 +1444,8 @@ class Foo {
 
             assert_eq!(
                 ts2564_errors.len(),
-                1,
-                "Expected 1 TS2564 error for property not initialized before early return, got {}",
+                0,
+                "DeclarationChecker should not emit TS2564 (handled by CheckerState), got {}",
                 ts2564_errors.len()
             );
         }
@@ -1498,7 +1490,7 @@ class Foo {
             let mut checker = DeclarationChecker::new(&mut ctx);
             checker.check(stmt_idx);
 
-            // Should have 1 TS2564 error for 'y'
+            // TS2564 check was moved from DeclarationChecker to CheckerState
             let ts2564_errors: Vec<_> = ctx
                 .diagnostics
                 .iter()
@@ -1507,8 +1499,8 @@ class Foo {
 
             assert_eq!(
                 ts2564_errors.len(),
-                1,
-                "Expected 1 TS2564 error for property 'y', got {}",
+                0,
+                "DeclarationChecker should not emit TS2564 (handled by CheckerState), got {}",
                 ts2564_errors.len()
             );
 

@@ -96,14 +96,12 @@ fn test_missing_set_emits_ts2583_without_lib() {
 fn test_missing_symbol_emits_ts2585_without_lib() {
     let diagnostics = check_without_lib(r#"const s = Symbol("foo");"#);
 
-    // Should emit TS2585 for Symbol when lib.d.ts is not loaded
-    // TypeScript emits: "'Symbol' only refers to a type, but is being used as a value here.
-    // Do you need to change your target library?"
-    let ts2585_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2585).collect();
+    // TypeScript emits TS2583: "Cannot find name 'Symbol'. Do you need to change your target library?"
+    let ts2583_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2583).collect();
 
     assert!(
-        !ts2585_errors.is_empty(),
-        "Expected TS2585 error for Symbol without lib.d.ts, got: {:?}",
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 error for Symbol without lib.d.ts, got: {:?}",
         diagnostics
     );
 }

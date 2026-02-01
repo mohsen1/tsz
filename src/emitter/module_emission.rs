@@ -283,8 +283,7 @@ impl<'a> Printer<'a> {
         let is_namespace_only = bindings.len() == 1
             && bindings[0].contains("__importStar(")
             && !bindings[0].contains(".default");
-        let is_default_only = bindings.len() == 1
-            && bindings[0].contains(".default");
+        let is_default_only = bindings.len() == 1 && bindings[0].contains(".default");
 
         if is_namespace_only {
             // Inline: var ns = __importStar(require("mod"));

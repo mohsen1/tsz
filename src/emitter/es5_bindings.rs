@@ -60,6 +60,7 @@ impl<'a> Printer<'a> {
         self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
     }
 
+    #[allow(dead_code)]
     fn emit_es5_destructuring_from_value(
         &mut self,
         pattern_idx: NodeIndex,
@@ -768,15 +769,9 @@ impl<'a> Printer<'a> {
         let index_name = if counter == 0 {
             "_i".to_string()
         } else {
-            format!(
-                "_{}",
-                (b'a' + (counter * 2 - 1) as u8) as char
-            )
+            format!("_{}", (b'a' + (counter * 2 - 1) as u8) as char)
         };
-        let array_name = format!(
-            "_{}",
-            (b'a' + (counter * 2) as u8) as char
-        );
+        let array_name = format!("_{}", (b'a' + (counter * 2) as u8) as char);
         self.ctx.destructuring_state.for_of_counter += 1;
 
         self.write("for (var ");
@@ -819,6 +814,7 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
+    #[allow(dead_code)]
     fn emit_for_of_value_binding_es5(&mut self, initializer: NodeIndex, result_name: &str) {
         if initializer.is_none() {
             return;
@@ -851,6 +847,7 @@ impl<'a> Printer<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn emit_for_of_declaration_value_es5(
         &mut self,
         decl_idx: NodeIndex,

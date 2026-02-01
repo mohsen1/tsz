@@ -887,7 +887,7 @@ impl<'a> CheckerState<'a> {
     /// * `idx` - The node index of the expression being accessed
     /// * `cause` - The nullish type (null, undefined, or null|undefined)
     /// * `is_definitely_nullish` - If true, the entire type is nullish (emit TS18050).
-    ///                             If false, the type includes nullish but also non-nullish parts (emit TS2531/2532/2533).
+    ///   If false, the type includes nullish but also non-nullish parts (emit TS2531/2532/2533).
     pub(crate) fn report_nullish_object(
         &mut self,
         idx: NodeIndex,
@@ -935,8 +935,10 @@ impl<'a> CheckerState<'a> {
                 }
             });
 
-            let message =
-                format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[value_name]);
+            let message = format_message(
+                diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
+                &[value_name],
+            );
             self.error_at_node(idx, &message, diagnostic_codes::VALUE_CANNOT_BE_USED_HERE);
             return;
         }

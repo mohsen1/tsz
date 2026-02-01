@@ -947,6 +947,13 @@ impl<'a> IRPrinter<'a> {
                 self.write_line();
             }
         } else {
+            // Emit var declaration for nested namespace
+            let next_name = &name_parts[index + 1];
+            self.write_indent();
+            self.write("var ");
+            self.write(next_name);
+            self.write(";");
+            self.write_line();
             // Recurse for nested namespace
             self.emit_namespace_iife(name_parts, index + 1, body, is_exported, attach_to_exports);
         }

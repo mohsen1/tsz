@@ -26,7 +26,7 @@ path = "src/bin/tsz_server/main.rs"
 required-features = ["cli"]
 
 [features]
-default = ["cli"]
+default = ["cli", "embedded_libs"]
 cli = []
 experimental_salsa = []
 embedded_libs = []    # Embed lib.d.ts files in binary (not needed - libs load from disk)

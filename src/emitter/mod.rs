@@ -1740,11 +1740,10 @@ impl<'a> Printer<'a> {
 
             // Collect and emit exports initialization
             // Function exports get direct assignment (hoisted), others get void 0
-            let (func_exports, other_exports) =
-                module_commonjs::collect_export_names_categorized(
-                    self.arena,
-                    &source.statements.nodes,
-                );
+            let (func_exports, other_exports) = module_commonjs::collect_export_names_categorized(
+                self.arena,
+                &source.statements.nodes,
+            );
             // Emit function exports: exports.compile = compile;
             for name in &func_exports {
                 self.write("exports.");
