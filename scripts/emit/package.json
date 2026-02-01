@@ -1,0 +1,17 @@
+{
+  "name": "tsz-emit-tests",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/runner.js"
+  },
+  "dependencies": {
+    "typescript": "^5.5.0",
+    "diff": "^5.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/diff": "^5.2.0"
+  }
+}
