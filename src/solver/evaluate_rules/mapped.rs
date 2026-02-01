@@ -117,6 +117,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Get the constraint - this tells us what keys to iterate over
         let constraint = mapped.constraint;
 
+        // SPECIAL CASE: Don't expand mapped types over type parameters.
+        // When the constraint is `keyof T` where T is a type parameter, we should
+        // keep the mapped type deferred. Even though we might be able to evaluate
+        // `keyof T` to concrete keys (via T's constraint), the template instantiation
+        // would fail because T[key] can't be resolved for a type parameter.
+        //
+        // This is critical for patterns like:
+        //   function f<T extends any[]>(a: Boxified<T>) { a.pop(); }
+        // where Boxified<T> = { [P in keyof T]: Box<T[P]> }
+        //
+        // If we expand this, T["pop"] becomes ERROR. We need to keep it deferred
+        // and handle property access on the deferred mapped type specially.
+        if self.is_mapped_type_over_type_parameter(mapped) {
+            return self.interner().mapped(mapped.clone());
+        }
+
         // Evaluate the constraint to get concrete keys
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
@@ -282,6 +298,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else {
             self.interner().object(properties)
         }
+    }
+
+    /// Check if a mapped type's constraint is `keyof T` where T is a type parameter.
+    ///
+    /// When this is true, we should not expand the mapped type because the template
+    /// instantiation would fail (T[key] can't be resolved for a type parameter).
+    fn is_mapped_type_over_type_parameter(&self, mapped: &MappedType) -> bool {
+        // Check if the constraint is `keyof T`
+        let Some(TypeKey::KeyOf(source)) = self.interner().lookup(mapped.constraint) else {
+            return false;
+        };
+
+        // Check if the source is a type parameter
+        matches!(
+            self.interner().lookup(source),
+            Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+        )
     }
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
