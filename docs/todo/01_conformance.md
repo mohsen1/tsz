@@ -344,3 +344,29 @@ Instead of fixing Phase 2 first, we should:
 - `src/solver/operations_property.rs` - property lookup
 - `src/solver/apparent.rs` - hardcoded primitive methods
 - `src/checker/state_checking_members.rs` - member resolution
+
+---
+
+#### Additional Investigation (2026-02-01)
+
+**Property Resolution Deep Dive:**
+
+Tested property resolution manually:
+- `"hello".length` → Works ✓ (basic ES5 property)
+- `"hello".includes("x")` → TS2339 with ES5 target ✗ (ES2015+ method)
+- `"hello".includes("x")` → Works ✓ with ES2015 target
+
+**Gemini Analysis:**
+
+The `register_boxed_types()` function in `checker/type_checking.rs` IS correctly loading the boxed types from lib.d.ts. The issue is:
+
+1. **Target-dependent libs:** Default target is ES5, which only loads `lib.es5.d.ts`
+2. **ES2015+ methods missing:** Methods like `includes()`, `find()`, `at()` are defined in `lib.es2015.core.d.ts` and later
+3. **Conformance comparison is fair:** Both TSC and tsz use the same target/lib defaults, so this isn't causing the extra TS2339 errors
+
+**Current Pass Rate:** 48.0% (baseline before any changes)
+
+**Remaining Questions:**
+- Why do we have ~1966 extra TS2339 when TSC and tsz should have the same libs loaded?
+- Could be interface augmentation failures (lib.es2015 extends interfaces from lib.es5)
+- Could be inheritance chain not being followed correctly
