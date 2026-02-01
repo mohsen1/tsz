@@ -1409,7 +1409,8 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Emit errors for binary operator type mismatches.
-    /// Emits TS2362 for left-hand side, TS2363 for right-hand side, or TS2365 for general operator errors.
+    /// Emits TS18050 for null/undefined operands, TS2362 for left-hand side,
+    /// TS2363 for right-hand side, or TS2365 for general operator errors.
     pub(crate) fn emit_binary_operator_error(
         &mut self,
         node_idx: NodeIndex,
@@ -1425,6 +1426,60 @@ impl<'a> CheckerState<'a> {
             || left_type == TypeId::UNKNOWN
             || right_type == TypeId::UNKNOWN
         {
+            return;
+        }
+
+        // TS18050: "The value 'X' cannot be used here" for null/undefined operands
+        // TSC emits TS18050 for the null/undefined operand AND TS2362/TS2363 for any OTHER invalid operand
+        let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
+        let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
+        let mut emitted_nullish_error = false;
+
+        // Emit TS18050 for null/undefined operands
+        if left_is_nullish {
+            let value_name = if left_type == TypeId::NULL {
+                "null"
+            } else {
+                "undefined"
+            };
+            if let Some(loc) = self.get_source_location(left_idx) {
+                let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[value_name]);
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+                emitted_nullish_error = true;
+            }
+        }
+
+        if right_is_nullish {
+            let value_name = if right_type == TypeId::NULL {
+                "null"
+            } else {
+                "undefined"
+            };
+            if let Some(loc) = self.get_source_location(right_idx) {
+                let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[value_name]);
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+                emitted_nullish_error = true;
+            }
+        }
+
+        // If BOTH operands are null/undefined, we're done (no TS2362/TS2363 needed)
+        if left_is_nullish && right_is_nullish {
             return;
         }
 
@@ -1461,8 +1516,9 @@ impl<'a> CheckerState<'a> {
 
             if is_arithmetic_context {
                 // Treat as arithmetic operation
-                let mut emitted_specific_error = false;
-                if !left_is_valid_arithmetic {
+                // Skip operands that already got TS18050 (null/undefined)
+                let mut emitted_specific_error = emitted_nullish_error;
+                if !left_is_valid_arithmetic && !left_is_nullish {
                     if let Some(loc) = self.get_source_location(left_idx) {
                         let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                         self.ctx.diagnostics.push(Diagnostic {
@@ -1477,7 +1533,7 @@ impl<'a> CheckerState<'a> {
                         emitted_specific_error = true;
                     }
                 }
-                if !right_is_valid_arithmetic {
+                if !right_is_valid_arithmetic && !right_is_nullish {
                     if let Some(loc) = self.get_source_location(right_idx) {
                         let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                         self.ctx.diagnostics.push(Diagnostic {
@@ -1535,8 +1591,9 @@ impl<'a> CheckerState<'a> {
 
         if is_arithmetic {
             // For arithmetic operators, emit specific left/right errors (TS2362, TS2363)
-            let mut emitted_specific_error = false;
-            if !left_is_valid_arithmetic {
+            // Skip operands that already got TS18050 (null/undefined)
+            let mut emitted_specific_error = emitted_nullish_error;
+            if !left_is_valid_arithmetic && !left_is_nullish {
                 if let Some(loc) = self.get_source_location(left_idx) {
                     let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                     self.ctx.diagnostics.push(Diagnostic {
@@ -1551,7 +1608,7 @@ impl<'a> CheckerState<'a> {
                     emitted_specific_error = true;
                 }
             }
-            if !right_is_valid_arithmetic {
+            if !right_is_valid_arithmetic && !right_is_nullish {
                 if let Some(loc) = self.get_source_location(right_idx) {
                     let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                     self.ctx.diagnostics.push(Diagnostic {
