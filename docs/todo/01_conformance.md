@@ -367,6 +367,24 @@ The `register_boxed_types()` function in `checker/type_checking.rs` IS correctly
 **Current Pass Rate:** 48.0% (baseline before any changes)
 
 **Remaining Questions:**
-- Why do we have ~1966 extra TS2339 when TSC and tsz should have the same libs loaded?
-- Could be interface augmentation failures (lib.es2015 extends interfaces from lib.es5)
+- Why do we have ~1288 extra TS2339 at baseline?
 - Could be inheritance chain not being followed correctly
+- Need to investigate specific failing test cases
+
+---
+
+#### Fix Implemented (2026-02-01)
+
+**Type Parameter Canonicalization for Lib Types**
+
+When multiple lib files define the same generic interface (e.g., `Array<T>`), each
+lowering created its own type parameter TypeIds. This caused `Array<T1> & Array<T2>`
+with T1 != T2, breaking property lookup.
+
+**Fix Applied:**
+- Track canonical type parameter TypeIds from first lib definition
+- Substitute subsequent definitions' params with canonical ones
+- Applied to `resolve_lib_type_by_name` and `resolve_lib_type_with_params`
+
+**Result:** Prevents TS2339 regression (1966 → 1288) when lib types are merged.
+Pass rate maintained at 48.4% baseline.
