@@ -13,7 +13,7 @@ use crate::lsp::utils::find_node_at_or_before_offset;
 use crate::parser::node::{CallExprData, NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::solver::{FunctionShape, TypeId, TypeInterner, TypeKey};
+use crate::solver::{FunctionShape, TypeId, TypeInterner, TypeKey, TypePredicateTarget};
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -45,6 +45,8 @@ pub struct SignatureInformation {
     pub parameters: Vec<ParameterInformation>,
     /// Whether this signature is variadic (has rest parameter)
     pub is_variadic: bool,
+    /// Whether this is a constructor signature (affects display part kinds)
+    pub is_constructor: bool,
 }
 
 /// The response for a signature help request.
@@ -58,6 +60,10 @@ pub struct SignatureHelp {
     pub active_parameter: u32,
     /// The total number of arguments at the call site
     pub argument_count: u32,
+    /// The byte offset of the applicable span start (after opening delimiter)
+    pub applicable_span_start: u32,
+    /// The length of the applicable span
+    pub applicable_span_length: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -311,11 +317,35 @@ impl<'a> SignatureHelpProvider<'a> {
         let active_signature =
             self.select_active_signature(&signatures, arg_count, active_parameter);
 
+        // Compute applicable span (byte offsets for the argument region)
+        let (span_start, span_length) = match &call_site {
+            CallSite::Regular(call_expr) => {
+                self.compute_applicable_span(call_node_idx, call_expr)
+            }
+            CallSite::TaggedTemplate(tagged) => {
+                // For tagged templates, span covers the template
+                if let Some(tmpl_node) = self.arena.get(tagged.template) {
+                    let tmpl_start = tmpl_node.pos as usize;
+                    let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
+                    let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
+                    if let Some(bt) = tmpl_text.find('`') {
+                        ((tmpl_start + bt + 1) as u32, 0)
+                    } else {
+                        (tmpl_node.pos, 0)
+                    }
+                } else {
+                    (offset as u32, 0)
+                }
+            }
+        };
+
         Some(SignatureHelp {
             signatures: signatures.into_iter().map(|sig| sig.info).collect(),
             active_signature,
             active_parameter,
             argument_count: arg_count as u32,
+            applicable_span_start: span_start,
+            applicable_span_length: span_length,
         })
     }
 
@@ -574,6 +604,51 @@ impl<'a> SignatureHelpProvider<'a> {
         false
     }
 
+    /// Compute the applicable span for a regular call expression.
+    /// Returns (start_offset, length) as byte offsets in the source text.
+    fn compute_applicable_span(
+        &self,
+        call_idx: NodeIndex,
+        data: &CallExprData,
+    ) -> (u32, u32) {
+        let call_node = match self.arena.get(call_idx) {
+            Some(n) => n,
+            None => return (0, 0),
+        };
+        let call_start = call_node.pos as usize;
+        let call_end = (call_node.end as usize).min(self.source_text.len());
+        let call_text = &self.source_text[call_start..call_end];
+
+        // Find opening paren
+        let paren_rel = match call_text.find('(') {
+            Some(p) => p,
+            None => return (call_node.pos, 0),
+        };
+        let after_paren = (call_start + paren_rel + 1) as u32;
+
+        // If there are arguments, span from after '(' to before ')'
+        if let Some(ref args) = data.arguments {
+            if !args.nodes.is_empty() {
+                let first_start = args
+                    .nodes
+                    .first()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map(|n| n.pos)
+                    .unwrap_or(after_paren);
+                let last_end = args
+                    .nodes
+                    .last()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map(|n| n.end)
+                    .unwrap_or(after_paren);
+                return (first_start, last_end.saturating_sub(first_start));
+            }
+        }
+
+        // No arguments - zero-length span at after-paren position
+        (after_paren, 0)
+    }
+
     /// Determine the active parameter for a tagged template expression.
     ///
     /// For tagged templates like `tag\`text ${expr1} text ${expr2} text\``:
@@ -656,9 +731,8 @@ impl<'a> SignatureHelpProvider<'a> {
                 let shape = self.interner.callable_shape(shape_id);
                 let mut sigs = Vec::new();
                 let include_call =
-                    call_kind == CallKind::Call || shape.construct_signatures.is_empty();
-                let include_construct =
-                    call_kind == CallKind::New || shape.call_signatures.is_empty();
+                    call_kind == CallKind::Call || call_kind == CallKind::TaggedTemplate;
+                let include_construct = call_kind == CallKind::New;
 
                 if include_call {
                     // Add call signatures
@@ -784,11 +858,33 @@ impl<'a> SignatureHelpProvider<'a> {
 
         // Build prefix and suffix
         // For return type display:
+        // - Type predicate → "paramName is Type" or "this is Type"
         // - UNKNOWN → "any" (matches TypeScript's display for untyped returns)
         // - Constructor with OBJECT/UNKNOWN → class name (TypeScript shows class name)
         let return_type_str = if is_constructor {
             // Constructors return the class instance type
             callee_name.to_string()
+        } else if let Some(ref predicate) = shape.type_predicate {
+            // Format type predicate: "x is Type" or "asserts x is Type"
+            let target_name = match &predicate.target {
+                TypePredicateTarget::This => "this".to_string(),
+                TypePredicateTarget::Identifier(atom) => checker.ctx.types.resolve_atom(*atom),
+            };
+            let type_part = predicate
+                .type_id
+                .map(|tid| checker.format_type(tid))
+                .unwrap_or_default();
+            if predicate.asserts {
+                if type_part.is_empty() {
+                    format!("asserts {}", target_name)
+                } else {
+                    format!("asserts {} is {}", target_name, type_part)
+                }
+            } else if type_part.is_empty() {
+                target_name
+            } else {
+                format!("{} is {}", target_name, type_part)
+            }
         } else if shape.return_type == TypeId::UNKNOWN {
             // Functions without return type annotation display as 'any' in TypeScript
             "any".to_string()
@@ -808,6 +904,7 @@ impl<'a> SignatureHelpProvider<'a> {
             documentation: None,
             parameters,
             is_variadic: has_rest,
+            is_constructor,
         }
     }
 

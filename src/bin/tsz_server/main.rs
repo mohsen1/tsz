@@ -1707,10 +1707,10 @@ impl Server {
                         .parameters
                         .iter()
                         .map(|p| {
+                            let display_parts = Self::tokenize_param_label(&p.label);
                             let mut param = serde_json::json!({
                                 "name": p.name,
-                                "display": [{"text": &p.label, "kind": "text"}],
-                                "displayParts": [{"text": &p.label, "kind": "text"}],
+                                "displayParts": display_parts,
                                 "isOptional": p.is_optional,
                                 "isRest": p.is_rest,
                             });
@@ -1723,27 +1723,48 @@ impl Server {
                             param
                         })
                         .collect();
+                    let name_kind = if sig.is_constructor { "className" } else { "functionName" };
+                    let prefix_parts = Self::tokenize_sig_prefix(&sig.prefix, name_kind);
+                    let suffix_parts = Self::tokenize_sig_suffix(&sig.suffix, name_kind);
                     let mut item = serde_json::json!({
                         "isVariadic": sig.is_variadic,
-                        "prefixDisplayParts": [{"text": &sig.prefix, "kind": "text"}],
-                        "suffixDisplayParts": [{"text": &sig.suffix, "kind": "text"}],
-                        "separatorDisplayParts": [{"text": ", ", "kind": "punctuation"}],
+                        "prefixDisplayParts": prefix_parts,
+                        "suffixDisplayParts": suffix_parts,
+                        "separatorDisplayParts": [
+                            {"text": ",", "kind": "punctuation"},
+                            {"text": " ", "kind": "space"}
+                        ],
                         "parameters": params,
-                        "tags": [],
                     });
                     if let Some(ref doc) = sig.documentation {
                         item["documentation"] = serde_json::json!([{"text": doc, "kind": "text"}]);
                     } else {
                         item["documentation"] = serde_json::json!([]);
                     }
+                    // Build tags from parameter documentation
+                    let tags: Vec<serde_json::Value> = sig.parameters.iter()
+                        .filter_map(|p| {
+                            let doc = p.documentation.as_ref()?;
+                            if doc.is_empty() { return None; }
+                            Some(serde_json::json!({
+                                "name": "param",
+                                "text": [
+                                    {"text": &p.name, "kind": "parameterName"},
+                                    {"text": " ", "kind": "space"},
+                                    {"text": doc, "kind": "text"}
+                                ]
+                            }))
+                        })
+                        .collect();
+                    item["tags"] = serde_json::json!(tags);
                     item
                 })
                 .collect();
             Some(serde_json::json!({
                 "items": items,
                 "applicableSpan": {
-                    "start": Self::lsp_to_tsserver_position(&position),
-                    "end": Self::lsp_to_tsserver_position(&position),
+                    "start": sig_help.applicable_span_start,
+                    "length": sig_help.applicable_span_length,
                 },
                 "selectedItemIndex": sig_help.active_signature,
                 "argumentIndex": sig_help.active_parameter,
@@ -1756,13 +1777,169 @@ impl Server {
         let body = result.unwrap_or_else(|| {
             serde_json::json!({
                 "items": [],
-                "applicableSpan": { "start": { "line": 1, "offset": 1 }, "end": { "line": 1, "offset": 1 } },
+                "applicableSpan": { "start": 0, "length": 0 },
                 "selectedItemIndex": 0,
                 "argumentIndex": 0,
                 "argumentCount": 0,
             })
         });
         self.stub_response(seq, request, Some(body))
+    }
+
+    /// Determine the display part kind for a type string.
+    fn type_display_kind(type_str: &str) -> &'static str {
+        match type_str {
+            "void" | "number" | "string" | "boolean" | "any" | "never" | "undefined" | "null"
+            | "unknown" | "object" | "symbol" | "bigint" | "true" | "false" => "keyword",
+            _ => "text",
+        }
+    }
+
+    /// Tokenize a signature prefix like "foo(" or "foo<T>(" into display parts.
+    fn tokenize_sig_prefix(prefix: &str, name_kind: &str) -> Vec<serde_json::Value> {
+        let mut parts = Vec::new();
+        // The prefix ends with '('
+        if let Some(stripped) = prefix.strip_suffix('(') {
+            // Check for type params like "foo<T>"
+            if let Some(angle_pos) = stripped.find('<') {
+                let name = &stripped[..angle_pos];
+                if !name.is_empty() {
+                    parts.push(serde_json::json!({"text": name, "kind": name_kind}));
+                }
+                parts.push(serde_json::json!({"text": "<", "kind": "punctuation"}));
+                let type_params_inner = &stripped[angle_pos + 1..];
+                let type_params_inner = type_params_inner.strip_suffix('>').unwrap_or(type_params_inner);
+                // Tokenize type parameters
+                Self::tokenize_type_params(type_params_inner, &mut parts);
+                parts.push(serde_json::json!({"text": ">", "kind": "punctuation"}));
+            } else if !stripped.is_empty() {
+                parts.push(serde_json::json!({"text": stripped, "kind": name_kind}));
+            }
+            parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+        } else {
+            // Fallback
+            parts.push(serde_json::json!({"text": prefix, "kind": "text"}));
+        }
+        parts
+    }
+
+    /// Tokenize type parameters like "T, U extends string" into display parts.
+    fn tokenize_type_params(input: &str, parts: &mut Vec<serde_json::Value>) {
+        let params: Vec<&str> = input.split(',').collect();
+        for (i, param) in params.iter().enumerate() {
+            if i > 0 {
+                parts.push(serde_json::json!({"text": ",", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            }
+            let trimmed = param.trim();
+            if let Some(ext_pos) = trimmed.find(" extends ") {
+                let name = &trimmed[..ext_pos];
+                parts.push(serde_json::json!({"text": name, "kind": "typeParameterName"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": "extends", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                let constraint = &trimmed[ext_pos + 9..];
+                let kind = Self::type_display_kind(constraint);
+                parts.push(serde_json::json!({"text": constraint, "kind": kind}));
+            } else {
+                parts.push(serde_json::json!({"text": trimmed, "kind": "typeParameterName"}));
+            }
+        }
+    }
+
+    /// Tokenize a signature suffix like "): void" into display parts.
+    fn tokenize_sig_suffix(suffix: &str, name_kind: &str) -> Vec<serde_json::Value> {
+        let mut parts = Vec::new();
+        // Suffix is typically "): returnType"
+        if let Some(rest) = suffix.strip_prefix(')') {
+            parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+            if let Some(rest) = rest.strip_prefix(':') {
+                parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                if let Some(rest) = rest.strip_prefix(' ') {
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    // For constructors, use className kind for return type
+                    if name_kind == "className" {
+                        parts.push(serde_json::json!({"text": rest, "kind": "className"}));
+                    } else {
+                        Self::tokenize_type_expr(rest, &mut parts);
+                    }
+                } else if !rest.is_empty() {
+                    if name_kind == "className" {
+                        parts.push(serde_json::json!({"text": rest, "kind": "className"}));
+                    } else {
+                        Self::tokenize_type_expr(rest, &mut parts);
+                    }
+                }
+            } else if !rest.is_empty() {
+                parts.push(serde_json::json!({"text": rest, "kind": "text"}));
+            }
+        } else {
+            parts.push(serde_json::json!({"text": suffix, "kind": "text"}));
+        }
+        parts
+    }
+
+    /// Tokenize a type expression into display parts.
+    fn tokenize_type_expr(type_str: &str, parts: &mut Vec<serde_json::Value>) {
+        // Handle type predicates: "x is Type"
+        if let Some(is_pos) = type_str.find(" is ") {
+            let before = &type_str[..is_pos];
+            // Check for "asserts x is Type"
+            if let Some(param_name) = before.strip_prefix("asserts ") {
+                parts.push(serde_json::json!({"text": "asserts", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": param_name, "kind": "parameterName"}));
+            } else {
+                parts.push(serde_json::json!({"text": before, "kind": "parameterName"}));
+            }
+            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            parts.push(serde_json::json!({"text": "is", "kind": "keyword"}));
+            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            let after = &type_str[is_pos + 4..];
+            let kind = Self::type_display_kind(after);
+            parts.push(serde_json::json!({"text": after, "kind": kind}));
+            return;
+        }
+        let kind = Self::type_display_kind(type_str);
+        parts.push(serde_json::json!({"text": type_str, "kind": kind}));
+    }
+
+    /// Tokenize a parameter label like "x: number" or "...args: string[]" into display parts.
+    fn tokenize_param_label(label: &str) -> Vec<serde_json::Value> {
+        let mut parts = Vec::new();
+        let remaining = label;
+
+        // Handle rest parameter prefix
+        let remaining = if let Some(rest) = remaining.strip_prefix("...") {
+            parts.push(serde_json::json!({"text": "...", "kind": "punctuation"}));
+            rest
+        } else {
+            remaining
+        };
+
+        // Split at ": " for name and type
+        if let Some(colon_pos) = remaining.find(": ") {
+            let name_part = &remaining[..colon_pos];
+            // Handle optional marker
+            let (name, has_question) = if let Some(n) = name_part.strip_suffix('?') {
+                (n, true)
+            } else {
+                (name_part, false)
+            };
+            parts.push(serde_json::json!({"text": name, "kind": "parameterName"}));
+            if has_question {
+                parts.push(serde_json::json!({"text": "?", "kind": "punctuation"}));
+            }
+            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            let type_str = &remaining[colon_pos + 2..];
+            Self::tokenize_type_expr(type_str, &mut parts);
+        } else {
+            // No colon - just a parameter name
+            parts.push(serde_json::json!({"text": remaining, "kind": "parameterName"}));
+        }
+
+        parts
     }
 
     fn handle_suggestion_diagnostics_sync(
