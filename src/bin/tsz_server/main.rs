@@ -82,9 +82,19 @@ fn content_appears_binary(content: &str) -> bool {
         return false;
     }
 
-    // Count problematic patterns in first 512 chars
-    let check_len = content.len().min(512);
-    let check_slice = &content[..check_len];
+    // Count problematic patterns in first 512 bytes (slice at character boundary)
+    let max_bytes = content.len().min(512);
+    // Find the character boundary closest to max_bytes
+    let check_slice = if max_bytes >= content.len() {
+        content
+    } else {
+        // Find the last character boundary at or before max_bytes
+        let mut boundary = max_bytes;
+        while !content.is_char_boundary(boundary) && boundary > 0 {
+            boundary -= 1;
+        }
+        &content[..boundary]
+    };
 
     // Check for replacement character (common when invalid UTF-8 sequences are read)
     let replacement_count = check_slice.matches('\u{FFFD}').count();
