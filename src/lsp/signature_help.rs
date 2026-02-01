@@ -13,7 +13,7 @@ use crate::lsp::utils::find_node_at_or_before_offset;
 use crate::parser::node::{CallExprData, NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::solver::{FunctionShape, TypeId, TypeInterner, TypeKey};
+use crate::solver::{FunctionShape, TypeId, TypeInterner, TypeKey, TypePredicateTarget};
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -45,6 +45,8 @@ pub struct SignatureInformation {
     pub parameters: Vec<ParameterInformation>,
     /// Whether this signature is variadic (has rest parameter)
     pub is_variadic: bool,
+    /// Whether this is a constructor signature (affects display part kinds)
+    pub is_constructor: bool,
 }
 
 /// The response for a signature help request.
@@ -56,12 +58,34 @@ pub struct SignatureHelp {
     pub active_signature: u32,
     /// The active parameter index based on cursor position
     pub active_parameter: u32,
+    /// The total number of arguments at the call site
+    pub argument_count: u32,
+    /// The byte offset of the applicable span start (after opening delimiter)
+    pub applicable_span_start: u32,
+    /// The length of the applicable span
+    pub applicable_span_length: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CallKind {
     Call,
     New,
+    TaggedTemplate,
+}
+
+/// Abstraction over regular calls and tagged template expressions.
+enum CallSite<'a> {
+    Regular(&'a CallExprData),
+    TaggedTemplate(&'a crate::parser::node::TaggedTemplateData),
+}
+
+impl<'a> CallSite<'a> {
+    fn expression(&self) -> NodeIndex {
+        match self {
+            CallSite::Regular(data) => data.expression,
+            CallSite::TaggedTemplate(data) => data.tag,
+        }
+    }
 }
 
 struct SignatureCandidate {
@@ -181,18 +205,27 @@ impl<'a> SignatureHelpProvider<'a> {
         // 1. Find the deepest node at the cursor
         let leaf_node = find_node_at_or_before_offset(self.arena, offset, self.source_text);
 
-        // 2. Walk up to find the nearest CallExpression or NewExpression
-        let (call_node_idx, call_expr, call_kind) = self.find_containing_call(leaf_node, offset)?;
+        // 2. Walk up to find the nearest CallExpression, NewExpression, or TaggedTemplateExpression
+        let (call_node_idx, call_site, call_kind) = self.find_containing_call(leaf_node, offset)?;
 
-        // 3. Determine active parameter by counting commas
-        let active_parameter = self.determine_active_parameter(call_node_idx, call_expr, offset);
+        // 3. Determine active parameter
+        let active_parameter = match &call_site {
+            CallSite::Regular(call_expr) => {
+                self.determine_active_parameter(call_node_idx, call_expr, offset)
+            }
+            CallSite::TaggedTemplate(tagged) => {
+                self.determine_tagged_template_active_param(tagged, offset)
+            }
+        };
+
+        let callee_expr = call_site.expression();
 
         // 4. Resolve the symbol being called using ScopeWalker
         let mut walker = crate::lsp::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(root, call_expr.expression, scope_cache, scope_stats)
+            walker.resolve_node_cached(root, callee_expr, scope_cache, scope_stats)
         } else {
-            walker.resolve_node(root, call_expr.expression)
+            walker.resolve_node(root, callee_expr)
         };
 
         // 5. Create checker with persistent cache if available
@@ -228,7 +261,7 @@ impl<'a> SignatureHelpProvider<'a> {
         };
 
         let access_docs = if call_kind == CallKind::Call {
-            self.signature_documentation_for_property_access(root, call_expr.expression)
+            self.signature_documentation_for_property_access(root, callee_expr)
         } else {
             None
         };
@@ -241,11 +274,11 @@ impl<'a> SignatureHelpProvider<'a> {
                 }),
             )
         } else {
-            (checker.get_type_of_node(call_expr.expression), access_docs)
+            (checker.get_type_of_node(callee_expr), access_docs)
         };
 
         // 6. Resolve the callee name for display
-        let callee_name = self.resolve_callee_name(call_expr.expression, call_kind);
+        let callee_name = self.resolve_callee_name(callee_expr, call_kind);
 
         // 7. Extract signatures from the type
         let mut signatures =
@@ -262,18 +295,57 @@ impl<'a> SignatureHelpProvider<'a> {
             return None;
         }
 
-        let arg_count = call_expr
-            .arguments
-            .as_ref()
-            .map(|args| args.nodes.len())
-            .unwrap_or(0);
+        let arg_count = match &call_site {
+            CallSite::Regular(call_expr) => call_expr
+                .arguments
+                .as_ref()
+                .map(|args| args.nodes.len())
+                .unwrap_or(0),
+            CallSite::TaggedTemplate(tagged) => {
+                // For tagged templates, arg count = 1 (templateStrings) + number of ${} expressions
+                if let Some(tmpl_node) = self.arena.get(tagged.template) {
+                    if let Some(tmpl_expr) = self.arena.get_template_expr(tmpl_node) {
+                        1 + tmpl_expr.template_spans.nodes.len()
+                    } else {
+                        1 // NoSubstitutionTemplateLiteral = just templateStrings
+                    }
+                } else {
+                    1
+                }
+            }
+        };
         let active_signature =
             self.select_active_signature(&signatures, arg_count, active_parameter);
+
+        // Compute applicable span (byte offsets for the argument region)
+        let (span_start, span_length) = match &call_site {
+            CallSite::Regular(call_expr) => {
+                self.compute_applicable_span(call_node_idx, call_expr)
+            }
+            CallSite::TaggedTemplate(tagged) => {
+                // For tagged templates, span covers the template
+                if let Some(tmpl_node) = self.arena.get(tagged.template) {
+                    let tmpl_start = tmpl_node.pos as usize;
+                    let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
+                    let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
+                    if let Some(bt) = tmpl_text.find('`') {
+                        ((tmpl_start + bt + 1) as u32, 0)
+                    } else {
+                        (tmpl_node.pos, 0)
+                    }
+                } else {
+                    (offset as u32, 0)
+                }
+            }
+        };
 
         Some(SignatureHelp {
             signatures: signatures.into_iter().map(|sig| sig.info).collect(),
             active_signature,
             active_parameter,
+            argument_count: arg_count as u32,
+            applicable_span_start: span_start,
+            applicable_span_length: span_length,
         })
     }
 
@@ -343,12 +415,12 @@ impl<'a> SignatureHelpProvider<'a> {
         String::new()
     }
 
-    /// Walk up the AST to find the call expression containing the cursor.
+    /// Walk up the AST to find the call expression or tagged template containing the cursor.
     fn find_containing_call(
         &self,
         start_node: NodeIndex,
         cursor_offset: u32,
-    ) -> Option<(NodeIndex, &'a CallExprData, CallKind)> {
+    ) -> Option<(NodeIndex, CallSite<'a>, CallKind)> {
         let mut current = start_node;
 
         // Safety limit to prevent infinite loops
@@ -368,29 +440,51 @@ impl<'a> SignatureHelpProvider<'a> {
                         let call_start = node.pos as usize;
                         let call_end = (node.end as usize).min(self.source_text.len());
                         let call_text = &self.source_text[call_start..call_end];
-                        // Find the first `(` or `<` (for type args) that opens
-                        // the argument/type-argument list. We look for `(` first
-                        // since type args `<` may also appear in comparisons.
                         let delimiter = if data.type_arguments.is_some() {
-                            // For type args, find `<` after expression name
                             call_text.find('<')
                         } else {
                             call_text.find('(')
                         };
                         if let Some(delim_offset) = delimiter {
                             let delim_pos = (call_start + delim_offset) as u32;
-                            // Cursor must be strictly after the opening delimiter
                             if cursor_offset > delim_pos {
                                 let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
                                     CallKind::New
                                 } else {
                                     CallKind::Call
                                 };
-                                return Some((current, data, kind));
+                                return Some((current, CallSite::Regular(data), kind));
                             }
                         }
                     }
-                    // No args/type-args or cursor before delimiter - skip
+                }
+
+                // Check for tagged template expression
+                if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
+                    if let Some(data) = self.arena.get_tagged_template(node) {
+                        // Cursor must be strictly inside the template backticks.
+                        // tmpl_node.pos may include leading trivia, so find the
+                        // actual opening backtick position in the source text.
+                        if let Some(tmpl_node) = self.arena.get(data.template) {
+                            let tmpl_start = tmpl_node.pos as usize;
+                            let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
+                            let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
+                            if let Some(backtick_rel) = tmpl_text.find('`') {
+                                let backtick_pos = (tmpl_start + backtick_rel) as u32;
+                                // Cursor must be strictly after opening backtick
+                                // and strictly before closing backtick
+                                if cursor_offset > backtick_pos
+                                    && cursor_offset < tmpl_node.end
+                                {
+                                    return Some((
+                                        current,
+                                        CallSite::TaggedTemplate(data),
+                                        CallKind::TaggedTemplate,
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Move up to parent
@@ -510,6 +604,109 @@ impl<'a> SignatureHelpProvider<'a> {
         false
     }
 
+    /// Compute the applicable span for a regular call expression.
+    /// Returns (start_offset, length) as byte offsets in the source text.
+    fn compute_applicable_span(
+        &self,
+        call_idx: NodeIndex,
+        data: &CallExprData,
+    ) -> (u32, u32) {
+        let call_node = match self.arena.get(call_idx) {
+            Some(n) => n,
+            None => return (0, 0),
+        };
+        let call_start = call_node.pos as usize;
+        let call_end = (call_node.end as usize).min(self.source_text.len());
+        let call_text = &self.source_text[call_start..call_end];
+
+        // Find opening paren
+        let paren_rel = match call_text.find('(') {
+            Some(p) => p,
+            None => return (call_node.pos, 0),
+        };
+        let after_paren = (call_start + paren_rel + 1) as u32;
+
+        // If there are arguments, span from after '(' to before ')'
+        if let Some(ref args) = data.arguments {
+            if !args.nodes.is_empty() {
+                let first_start = args
+                    .nodes
+                    .first()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map(|n| n.pos)
+                    .unwrap_or(after_paren);
+                let last_end = args
+                    .nodes
+                    .last()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map(|n| n.end)
+                    .unwrap_or(after_paren);
+                return (first_start, last_end.saturating_sub(first_start));
+            }
+        }
+
+        // No arguments - zero-length span at after-paren position
+        (after_paren, 0)
+    }
+
+    /// Determine the active parameter for a tagged template expression.
+    ///
+    /// For tagged templates like `tag\`text ${expr1} text ${expr2} text\``:
+    /// - Parameter 0 is always the templateStrings array
+    /// - Parameter N (1-based) corresponds to the Nth ${} expression
+    /// - Cursor in static template text maps to parameter 0
+    /// - Cursor inside ${expr} maps to the corresponding parameter index
+    fn determine_tagged_template_active_param(
+        &self,
+        tagged: &crate::parser::node::TaggedTemplateData,
+        cursor_offset: u32,
+    ) -> u32 {
+        let Some(tmpl_node) = self.arena.get(tagged.template) else {
+            return 0;
+        };
+
+        // If the template is a NoSubstitutionTemplateLiteral, active param is always 0
+        let Some(tmpl_expr) = self.arena.get_template_expr(tmpl_node) else {
+            return 0;
+        };
+
+        // Use head/literal boundaries to determine active parameter.
+        // The head token covers `text${` - cursor before head.end is in template text (param 0).
+        // Each span's literal covers `}text${` or `}text` - cursor in literal is in template text (param 0).
+        // Everything between head.end and span[i].literal.pos is the expression area (param i+1).
+        // This avoids gaps caused by trivia between AST node boundaries.
+        let Some(head_node) = self.arena.get(tmpl_expr.head) else {
+            return 0;
+        };
+
+        // Cursor in head (before the first ${) → param 0 (templateStrings)
+        if cursor_offset < head_node.end as u32 {
+            return 0;
+        }
+
+        // Walk spans: region from head.end/prev-literal.end to this literal.pos is expression area
+        for (i, &span_idx) in tmpl_expr.template_spans.nodes.iter().enumerate() {
+            let Some(span_node) = self.arena.get(span_idx) else { continue };
+            if let Some(span_data) = self.arena.get_template_span(span_node) {
+                if let Some(lit_node) = self.arena.get(span_data.literal) {
+                    // Cursor at or before the literal's `}` → in expression area → param i+1
+                    // The literal starts with `}` which closes the expression; cursor there
+                    // is still conceptually "at the expression" (matches TypeScript behavior).
+                    if cursor_offset <= lit_node.pos as u32 {
+                        return (i + 1) as u32;
+                    }
+                    // Cursor within the literal (template text after `}`) → param 0
+                    if cursor_offset < lit_node.end as u32 {
+                        return 0;
+                    }
+                    // Cursor past this literal → continue to next span
+                }
+            }
+        }
+
+        0
+    }
+
     /// Extract signature information from a TypeId.
     fn get_signatures_from_type(
         &self,
@@ -534,9 +731,8 @@ impl<'a> SignatureHelpProvider<'a> {
                 let shape = self.interner.callable_shape(shape_id);
                 let mut sigs = Vec::new();
                 let include_call =
-                    call_kind == CallKind::Call || shape.construct_signatures.is_empty();
-                let include_construct =
-                    call_kind == CallKind::New || shape.call_signatures.is_empty();
+                    call_kind == CallKind::Call || call_kind == CallKind::TaggedTemplate;
+                let include_construct = call_kind == CallKind::New;
 
                 if include_call {
                     // Add call signatures
@@ -640,7 +836,11 @@ impl<'a> SignatureHelpProvider<'a> {
                 .name
                 .map(|atom| checker.ctx.types.resolve_atom(atom))
                 .unwrap_or_else(|| "arg".to_string());
-            let type_str = checker.format_type(param.type_id);
+            let type_str = if param.type_id == TypeId::UNKNOWN {
+                "any".to_string()
+            } else {
+                checker.format_type(param.type_id)
+            };
             let optional = if param.optional { "?" } else { "" };
             let rest = if param.rest { "..." } else { "" };
 
@@ -657,12 +857,41 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         // Build prefix and suffix
-        let return_type_str = checker.format_type(shape.return_type);
-        let prefix = if is_constructor {
-            format!("{}{}(", callee_name, type_params_str)
+        // For return type display:
+        // - Type predicate → "paramName is Type" or "this is Type"
+        // - UNKNOWN → "any" (matches TypeScript's display for untyped returns)
+        // - Constructor with OBJECT/UNKNOWN → class name (TypeScript shows class name)
+        let return_type_str = if is_constructor {
+            // Constructors return the class instance type
+            callee_name.to_string()
+        } else if let Some(ref predicate) = shape.type_predicate {
+            // Format type predicate: "x is Type" or "asserts x is Type"
+            let target_name = match &predicate.target {
+                TypePredicateTarget::This => "this".to_string(),
+                TypePredicateTarget::Identifier(atom) => checker.ctx.types.resolve_atom(*atom),
+            };
+            let type_part = predicate
+                .type_id
+                .map(|tid| checker.format_type(tid))
+                .unwrap_or_default();
+            if predicate.asserts {
+                if type_part.is_empty() {
+                    format!("asserts {}", target_name)
+                } else {
+                    format!("asserts {} is {}", target_name, type_part)
+                }
+            } else if type_part.is_empty() {
+                target_name
+            } else {
+                format!("{} is {}", target_name, type_part)
+            }
+        } else if shape.return_type == TypeId::UNKNOWN {
+            // Functions without return type annotation display as 'any' in TypeScript
+            "any".to_string()
         } else {
-            format!("{}{}(", callee_name, type_params_str)
+            checker.format_type(shape.return_type)
         };
+        let prefix = format!("{}{}(", callee_name, type_params_str);
         let suffix = format!("): {}", return_type_str);
 
         // Build full label: prefix + params joined by ", " + suffix
@@ -675,6 +904,7 @@ impl<'a> SignatureHelpProvider<'a> {
             documentation: None,
             parameters,
             is_variadic: has_rest,
+            is_constructor,
         }
     }
 

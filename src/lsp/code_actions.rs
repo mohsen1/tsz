@@ -2885,6 +2885,7 @@ impl CodeFixRegistry {
             // Type '{0}' does not satisfy the expected type '{1}'.
             1360 => {
                 vec![
+                    ("addMissingProperties", "fixMissingProperties", "Add missing properties", "Add all missing properties"),
                     ("addMissingMember", "fixMissingMember", "Add missing member", "Add all missing members"),
                     ("spelling", "fixSpelling", "Change spelling", "Fix all detected spelling errors"),
                 ]
@@ -3230,7 +3231,11 @@ impl CodeFixRegistry {
             // === returnValueCorrect ===
             // A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.
             2355 => {
-                vec![("returnValueCorrect", "fixReturnValueCorrect", "Fix return value", "Fix all return values")]
+                vec![
+                    ("addReturnStatement", "fixAddReturnStatement", "Add a return statement", "Add all missing return statements"),
+                    ("removeBlockBodyBrace", "fixRemoveBlockBodyBrace", "Remove braces from arrow function body", "Remove braces from all arrow function bodies"),
+                    ("wrapBodyWithParentheses", "fixWrapBodyWithParentheses", "Wrap the following body with parentheses which should be an object literal", "Wrap all object literal bodies with parentheses"),
+                ]
             }
 
             // === fixPropertyAssignment ===
