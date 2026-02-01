@@ -2534,11 +2534,15 @@ impl<'a> CheckerState<'a> {
         // Check if lib files are loaded
         let has_lib = self.ctx.has_lib_loaded();
 
-        // Only emit TS2318 errors when:
-        // - no_lib is false (user expects lib files to be loaded)
-        // - AND lib files are not loaded (something went wrong with lib loading)
-        // When no_lib is true, the user explicitly opted out of lib files.
-        if !has_lib && !self.ctx.no_lib() {
+        // Emit TS2318 errors when core global types are not available.
+        // This happens when:
+        // - noLib is specified (user opted out of lib files)
+        // - OR lib files failed to load for some reason
+        //
+        // TypeScript always requires these core global types to exist.
+        // With --noLib, users must provide their own declarations.
+        // Note: tsc emits these errors BOTH with and without --noLib.
+        if !has_lib {
             for &type_name in CORE_GLOBAL_TYPES {
                 // Check if the type is declared in the current file
                 if !self.ctx.binder.file_locals.has(type_name) {
