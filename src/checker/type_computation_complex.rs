@@ -1230,7 +1230,10 @@ impl<'a> CheckerState<'a> {
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
             self.ctx.configure_compat_checker(&mut checker);
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-            evaluator.resolve_call(callee_type_for_call, &arg_types)
+            let res = evaluator.resolve_call(callee_type_for_call, &arg_types);
+            eprintln!("[DEBUG] CallEvaluator result: {:?}, callee_type_for_call={:?}, key={:?}", 
+                res, callee_type_for_call, self.ctx.types.lookup(callee_type_for_call));
+            res
         };
 
         match result {
