@@ -77,14 +77,25 @@ impl<'a> IRPrinter<'a> {
 
     /// Emit an IR node to a string
     pub fn emit(&mut self, node: &IRNode) -> &str {
-        self.emit_node(node);
+        // For top-level Sequences, add newlines between statements
+        if let IRNode::Sequence(nodes) = node {
+            for (i, child) in nodes.iter().enumerate() {
+                if i > 0 {
+                    self.write_line();
+                    self.write_indent();
+                }
+                self.emit_node(child);
+            }
+        } else {
+            self.emit_node(node);
+        }
         &self.output
     }
 
     /// Emit an IR node and return the output
     pub fn emit_to_string(node: &IRNode) -> String {
         let mut printer = Self::new();
-        printer.emit_node(node);
+        printer.emit(node);
         printer.output
     }
 
@@ -132,18 +143,18 @@ impl<'a> IRPrinter<'a> {
             }
             IRNode::CallExpr { callee, arguments } => {
                 // Check if this is an IIFE (immediately invoked function expression)
-                // IIFEs should be wrapped in parentheses: (function() { ... })()
+                // IIFEs should be wrapped in parentheses: (function() { ... })(args)
                 let is_iife = matches!(&**callee, IRNode::FunctionExpr { .. });
                 if is_iife {
                     self.write("(");
                 }
                 self.emit_node(callee);
-                self.write("(");
-                self.emit_comma_separated(arguments);
-                self.write(")");
                 if is_iife {
                     self.write(")");
                 }
+                self.write("(");
+                self.emit_comma_separated(arguments);
+                self.write(")");
             }
             IRNode::NewExpr { callee, arguments } => {
                 self.write("new ");
@@ -220,8 +231,14 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                // Check if we have default params (don't use short-form for expression body with defaults)
                 let has_defaults = parameters.iter().any(|p| p.default_value.is_some());
+                // For anonymous functions with empty bodies, use inline format: { }
+                // Named functions (constructors) keep multi-line format
+                if !has_defaults && body.is_empty() && name.is_none() {
+                    self.write("{ }");
+                    return;
+                }
+                // Arrow-to-function with single return: { return expr; }
                 if !has_defaults
                     && *is_expression_body
                     && body.len() == 1
@@ -237,7 +254,18 @@ impl<'a> IRPrinter<'a> {
             IRNode::LogicalOr { left, right } => {
                 self.emit_node(left);
                 self.write(" || ");
+                // Wrap assignment expressions in parens for correctness: E || (E = {})
+                let needs_parens = matches!(
+                    &**right,
+                    IRNode::BinaryExpr { operator, .. } if operator == "="
+                );
+                if needs_parens {
+                    self.write("(");
+                }
                 self.emit_node(right);
+                if needs_parens {
+                    self.write(")");
+                }
             }
             IRNode::LogicalAnd { left, right } => {
                 self.emit_node(left);
@@ -798,6 +826,7 @@ impl<'a> IRPrinter<'a> {
                 self.write(name);
                 self.write(";");
                 self.write_line();
+                self.write_indent();
                 self.write("(function (");
                 self.write(name);
                 self.write(") {");
@@ -811,11 +840,12 @@ impl<'a> IRPrinter<'a> {
                 }
 
                 self.decrease_indent();
-                self.write("}(");
+                self.write_indent();
+                self.write("})(");
                 self.write(name);
                 self.write(" || (");
                 self.write(name);
-                self.write(" = {})));");
+                self.write(" = {}));");
             }
 
             // Namespace Transform Specific
@@ -893,13 +923,16 @@ impl<'a> IRPrinter<'a> {
         let current_name = &name_parts[index];
         let is_last = index == name_parts.len() - 1;
 
-        // var name;
-        self.write("var ");
-        self.write(current_name);
-        self.write(";");
-        self.write_line();
+        // Emit var declaration only for the outermost namespace
+        if index == 0 {
+            self.write("var ");
+            self.write(current_name);
+            self.write(";");
+            self.write_line();
+        }
 
-        // Open IIFE
+        // Open IIFE: (function (name) {
+        self.write_indent();
         self.write("(function (");
         self.write(current_name);
         self.write(") {");
@@ -914,19 +947,13 @@ impl<'a> IRPrinter<'a> {
                 self.write_line();
             }
         } else {
-            // var next_name;
-            let next_name = &name_parts[index + 1];
-            self.write_indent();
-            self.write("var ");
-            self.write(next_name);
-            self.write(";");
-            self.write_line();
-            // Recurse
+            // Recurse for nested namespace
             self.emit_namespace_iife(name_parts, index + 1, body, is_exported, attach_to_exports);
         }
 
         self.decrease_indent();
-        self.write("}(");
+        self.write_indent();
+        self.write("})(");
 
         // Argument
         if index == 0 {
@@ -957,6 +984,7 @@ impl<'a> IRPrinter<'a> {
         }
 
         self.write(");");
+        self.write_line();
     }
 
     fn emit_block(&mut self, stmts: &[IRNode]) {
@@ -986,7 +1014,10 @@ impl<'a> IRPrinter<'a> {
         let has_defaults = params.iter().any(|p| p.default_value.is_some());
 
         if !has_defaults && body.is_empty() {
-            self.write("{ }");
+            self.write("{");
+            self.write_line();
+            self.write_indent();
+            self.write("}");
             return;
         }
 

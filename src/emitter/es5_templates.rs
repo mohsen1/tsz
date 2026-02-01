@@ -63,11 +63,12 @@ impl<'a> Printer<'a> {
             .arena
             .get(tpl.head)
             .and_then(|node| self.arena.get_literal(node))
-            .map(|lit| lit.text.as_str())
-            .unwrap_or("");
+            .map(|lit| lit.text.clone())
+            .unwrap_or_default();
 
-        self.write("(");
-        self.emit_string_literal_text(head_text);
+        // TypeScript 5.x uses .concat() for template literal downleveling:
+        // `hello ${name} world` → "hello ".concat(name, " world")
+        self.emit_string_literal_text(&head_text);
 
         for &span_idx in &tpl.template_spans.nodes {
             let Some(span_node) = self.arena.get(span_idx) else {
@@ -77,22 +78,21 @@ impl<'a> Printer<'a> {
                 continue;
             };
 
-            self.write(" + ");
-            self.write("(");
-            self.emit_expression(span.expression);
-            self.write(")");
-
             let literal_text = self
                 .arena
                 .get(span.literal)
                 .and_then(|node| self.arena.get_literal(node))
-                .map(|lit| lit.text.as_str())
-                .unwrap_or("");
-            self.write(" + ");
-            self.emit_string_literal_text(literal_text);
-        }
+                .map(|lit| lit.text.clone())
+                .unwrap_or_default();
 
-        self.write(")");
+            self.write(".concat(");
+            self.emit_expression(span.expression);
+            if !literal_text.is_empty() {
+                self.write(", ");
+                self.emit_string_literal_text(&literal_text);
+            }
+            self.write(")");
+        }
     }
 
     fn emit_string_array_literal(&mut self, parts: &[String]) {

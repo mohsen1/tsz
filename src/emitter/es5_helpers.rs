@@ -909,17 +909,9 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn needs_values_helper(&self) -> bool {
-        self.arena.nodes.iter().any(|node| {
-            if node.kind != syntax_kind_ext::FOR_OF_STATEMENT {
-                return false;
-            }
-
-            if let Some(for_in_of) = self.arena.get_for_in_of(node) {
-                return !for_in_of.await_modifier;
-            }
-
-            false
-        })
+        // Simple array-indexing for-of doesn't need __values helper
+        // __values is only needed with --downlevelIteration
+        false
     }
 
     pub(super) fn needs_rest_helper(&self) -> bool {
