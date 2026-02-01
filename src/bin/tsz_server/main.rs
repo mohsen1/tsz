@@ -4518,4 +4518,26 @@ x;"
             "references must have symbolName"
         );
     }
+
+    #[test]
+    fn test_check_options_experimental_decorators_deserialize() {
+        // Verify that experimentalDecorators in JSON is correctly deserialized
+        let json = r#"{"experimentalDecorators": true}"#;
+        let options: CheckOptions = serde_json::from_str(json).unwrap();
+        assert!(
+            options.experimental_decorators,
+            "experimentalDecorators should be true after deserialize"
+        );
+    }
+
+    #[test]
+    fn test_check_options_experimental_decorators_default_false() {
+        // Verify that default value is false
+        let json = r#"{}"#;
+        let options: CheckOptions = serde_json::from_str(json).unwrap();
+        assert!(
+            !options.experimental_decorators,
+            "experimentalDecorators should default to false"
+        );
+    }
 }
