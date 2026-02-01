@@ -879,9 +879,6 @@ impl<'a> CheckerState<'a> {
     /// that needs to resolve type references.
     pub fn build_type_environment(&mut self) -> crate::solver::TypeEnvironment {
         use crate::binder::symbol_flags;
-        use crate::solver::{SymbolRef, TypeEnvironment};
-
-        let mut env = TypeEnvironment::new();
 
         // Collect all unique symbols from node_symbols map using BTreeSet for
         // deterministic ordering. Non-deterministic HashSet caused type parameter
@@ -973,28 +970,17 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the type for this symbol
-            let type_id = self.get_type_of_symbol(sym_id);
-            if type_id != TypeId::ANY && type_id != TypeId::ERROR {
-                // Get type parameters if this is a generic type
-                let type_params = self.get_type_params_for_symbol(sym_id);
-                // Get the DefId if one exists (Phase 4.3 migration)
-                let def_id = self.ctx.symbol_to_def.get(&sym_id).copied();
-
-                if type_params.is_empty() {
-                    env.insert(SymbolRef(sym_id.0), type_id);
-                    if let Some(def_id) = def_id {
-                        env.insert_def(def_id, type_id);
-                    }
-                } else {
-                    env.insert_with_params(SymbolRef(sym_id.0), type_id, type_params.clone());
-                    if let Some(def_id) = def_id {
-                        env.insert_def_with_params(def_id, type_id, type_params);
-                    }
-                }
-            }
+            // IMPORTANT: get_type_of_symbol internally calls compute_type_of_symbol which
+            // returns both the type AND the correct type_params, then inserts them into
+            // ctx.type_env. We MUST NOT separately call get_type_params_for_symbol because
+            // that creates fresh type parameter IDs that won't match those used in the type body.
+            // This was causing generic type instantiation to fail (e.g., Promise<string>.then()).
+            let _type_id = self.get_type_of_symbol(sym_id);
         }
 
-        env
+        // Return a clone of ctx.type_env which was correctly populated by get_type_of_symbol
+        // with matching type parameter IDs
+        self.ctx.type_env.borrow().clone()
     }
 
     /// Get type parameters for a symbol (generic types).
