@@ -1789,8 +1789,9 @@ impl<'a> Printer<'a> {
         }
 
         // Emit statements with their comments using shared comment_emit_idx.
-        // Inner blocks (via emit_block) also advance comment_emit_idx,
-        // so no explicit skip logic is needed here.
+        // Inner blocks (via emit_block) advance comment_emit_idx for their contents.
+        // For non-block constructs (classes, etc.), we use stmt_node.end as skip boundary
+        // to prevent inner comments from leaking to the top level.
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 // Emit any comments that appear before this statement
@@ -1818,6 +1819,19 @@ impl<'a> Printer<'a> {
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 self.write_line();
+            }
+
+            // Skip past comments inside this statement to prevent inner comments
+            // (e.g., inside class bodies) from leaking to the top level.
+            // For statements with blocks (functions, if/while/for), emit_block may have
+            // already advanced comment_emit_idx past these; this ensures we also handle
+            // non-block constructs like classes.
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < stmt_node.end
+                {
+                    self.comment_emit_idx += 1;
+                }
             }
         }
 
