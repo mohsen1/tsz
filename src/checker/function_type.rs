@@ -514,7 +514,7 @@ impl<'a> CheckerState<'a> {
     /// resolve correctly.
     ///
     /// Returns the update list for `pop_type_parameters`.
-    fn push_enclosing_type_parameters(
+    pub(crate) fn push_enclosing_type_parameters(
         &mut self,
         func_idx: NodeIndex,
     ) -> Vec<(String, Option<TypeId>)> {
