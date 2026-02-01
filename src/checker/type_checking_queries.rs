@@ -5,7 +5,7 @@
 
 use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MemberAccessLevel};
-use crate::parser::NodeIndex;
+use crate::parser::{NodeArena, NodeIndex};
 use crate::parser::node::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
