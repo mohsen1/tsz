@@ -425,6 +425,11 @@ impl<'a> Printer<'a> {
         // Emit modifiers (static, async only for JavaScript)
         self.emit_method_modifiers_js(&method.modifiers);
 
+        // Emit generator asterisk
+        if method.asterisk_token {
+            self.write("*");
+        }
+
         self.emit(method.name);
         self.write("(");
         self.emit_function_parameters_js(&method.parameters.nodes);
