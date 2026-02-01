@@ -59,6 +59,7 @@ CFG_TIMEOUT=600
 CFG_CATEGORIES="conformance,compiler"
 CFG_VERBOSE=false
 CFG_FILTER=""
+CFG_ERROR_CODE=""
 CFG_PRINT_TEST=false
 CFG_DUMP_RESULTS=""
 CFG_PASS_RATE_ONLY=false
@@ -179,6 +180,9 @@ print_banner() {
     if [[ -n "$CFG_FILTER" ]]; then
         echo -e "${CYAN}║${RESET}  Filter:     $(printf '%-48s' "$CFG_FILTER")${CYAN}║${RESET}"
     fi
+    if [[ -n "$CFG_ERROR_CODE" ]]; then
+        echo -e "${CYAN}║${RESET}  Error Code: $(printf '%-48s' "TS$CFG_ERROR_CODE")${CYAN}║${RESET}"
+    fi
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 }
@@ -228,6 +232,7 @@ OPTIONS:
     --max=N             Maximum number of tests
     --category=CAT      Categories: conformance,compiler,projects (default: conformance,compiler)
     --filter=PATTERN    Only run tests matching pattern
+    --error-code=TSXXXX Only run tests with this error code (expected or extra)
 
   Execution:
     --workers=N         Parallel workers (default: auto-detect, capped at 8)
@@ -314,6 +319,7 @@ build_runner_args() {
     local args="--max=$CFG_MAX --workers=$CFG_WORKERS --category=$CFG_CATEGORIES"
     [[ "$CFG_VERBOSE" == "true" ]]    && args="$args --verbose"
     [[ -n "$CFG_FILTER" ]]            && args="$args --filter=$CFG_FILTER"
+    [[ -n "$CFG_ERROR_CODE" ]]        && args="$args --error-code=$CFG_ERROR_CODE"
     [[ "$CFG_PRINT_TEST" == "true" ]] && args="$args --print-test"
     [[ -n "$CFG_DUMP_RESULTS" ]]      && args="$args --dump-results=$CFG_DUMP_RESULTS"
     echo "$args"
@@ -402,6 +408,7 @@ parse_args() {
             --max=*)           CFG_MAX="${1#*=}" ;;
             --category=*)      CFG_CATEGORIES="${1#*=}" ;;
             --filter=*)        CFG_FILTER="${1#*=}" ;;
+            --error-code=*)    CFG_ERROR_CODE="${1#*=}"; CFG_ERROR_CODE="${CFG_ERROR_CODE#TS}" ;;
             --print-test)      CFG_PRINT_TEST=true ;;
             --dump-results=*)  CFG_DUMP_RESULTS="${1#*=}" ;;
             --dump-results)    CFG_DUMP_RESULTS="$SCRIPT_DIR/.tsc-cache/test-results.json" ;;
@@ -456,6 +463,7 @@ main() {
         echo "  Categories: $CFG_CATEGORIES"
         echo "  Verbose:    $CFG_VERBOSE"
         [[ -n "$CFG_FILTER" ]] && echo "  Filter:     $CFG_FILTER"
+        [[ -n "$CFG_ERROR_CODE" ]] && echo "  Error Code: TS$CFG_ERROR_CODE"
         exit 0
     fi
 

@@ -990,6 +990,7 @@ interface ServerRunnerConfig {
   categories?: string[];
   memoryLimitMB?: number;
   filter?: string;
+  errorCode?: number;  // Only run tests with this error code (expected or extra)
   printTest?: boolean;
   dumpResults?: string;  // Path to dump per-test results JSON
 }
@@ -1230,6 +1231,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   const categories = config.categories ?? ['conformance', 'compiler'];
   const testTimeout = config.testTimeout ?? 10000;
   const filter = config.filter;
+  const errorCode = config.errorCode;
   const printTest = config.printTest ?? false;
   const dumpResults = config.dumpResults;
   // Calculate memory limit: 80% of total memory / number of workers
@@ -1292,12 +1294,13 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     workerStats: { spawned: workerCount, crashed: 0, respawned: 0 },
   };
 
-  // Discover test files
+  // Discover test files - when filtering by error code, discover all first then filter
   let testFiles: string[] = [];
+  const discoveryLimit = errorCode ? Infinity : maxTests;
   for (const category of categories) {
     const categoryPath = path.join(testsBasePath, category);
     if (fs.existsSync(categoryPath)) {
-      discoverTests(categoryPath, testFiles, maxTests - testFiles.length);
+      discoverTests(categoryPath, testFiles, discoveryLimit - testFiles.length);
     }
   }
 
@@ -1306,6 +1309,24 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     const filterLower = filter.toLowerCase();
     testFiles = testFiles.filter(f => f.toLowerCase().includes(filterLower));
     log(`Filter "${filter}": ${formatNumber(testFiles.length)} tests match\n`, colors.yellow);
+  }
+
+  // Apply error code filter if specified
+  if (errorCode) {
+    const beforeCount = testFiles.length;
+    testFiles = testFiles.filter(f => {
+      const relativePath = path.relative(testsBasePath, f);
+      const entry = cacheEntries[relativePath];
+      // Include test if TSC expects this error code
+      return entry?.codes?.includes(errorCode) ?? false;
+    });
+    log(`Error code TS${errorCode}: ${formatNumber(testFiles.length)} tests match (from ${formatNumber(beforeCount)})\n`, colors.yellow);
+    
+    // Apply max limit after error code filter
+    if (testFiles.length > maxTests) {
+      testFiles = testFiles.slice(0, maxTests);
+      log(`Limited to first ${formatNumber(maxTests)} tests\n`, colors.dim);
+    }
   }
 
   if (testFiles.length === 0) {
