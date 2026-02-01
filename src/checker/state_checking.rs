@@ -92,15 +92,17 @@ impl<'a> CheckerState<'a> {
             self.ctx.compiler_options.allow_unreachable_code =
                 self.resolve_allow_unreachable_code_from_source(&sf.text);
 
-            // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
-            // This enables primitive property access to use lib definitions instead of hardcoded lists
-            self.register_boxed_types();
-
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeKey::Ref(Error) returns ERROR, causing TS2339 false positives
             let populated_env = self.build_type_environment();
             *self.ctx.type_env.borrow_mut() = populated_env;
+
+            // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
+            // This enables primitive property access to use lib definitions instead of hardcoded lists
+            // IMPORTANT: Must run AFTER build_type_environment() because it replaces the
+            // TypeEnvironment, which would erase the boxed/array type registrations.
+            self.register_boxed_types();
 
             // Type check each top-level statement
             for &stmt_idx in &sf.statements.nodes {
