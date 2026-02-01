@@ -806,11 +806,10 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
             }
 
-            // Use solver QueryDatabase to resolve the property access
-            let result = self
-                .ctx
-                .types
-                .property_access_type(object_type_for_access, property_name);
+            // Use the environment-aware resolver so that array methods, boxed
+            // primitive types, and other lib-registered types are available.
+            let result =
+                self.resolve_property_access_with_env(object_type_for_access, property_name);
 
             match result {
                 PropertyAccessResult::Success {

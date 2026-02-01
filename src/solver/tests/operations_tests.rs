@@ -7298,3 +7298,93 @@ fn test_is_arithmetic_operand_mixed_union_invalid() {
         "union of number and string should NOT be a valid arithmetic operand"
     );
 }
+
+/// Regression test: verify that array property access works when using the
+/// environment-aware resolver (with_resolver) that has the Array<T> base type
+/// registered. Previously, get_type_of_property_access_inner used
+/// `types.property_access_type()` which created a NoopResolver without the
+/// Array base type, causing TS2339 false positives like "Property 'push'
+/// does not exist on type 'any[]'".
+#[test]
+fn test_property_access_array_push_with_env_resolver() {
+    use crate::solver::TypeEnvironment;
+    use crate::solver::types::TypeParamInfo;
+
+    let interner = TypeInterner::new();
+
+    // Create a mock Array<T> interface with a "push" method
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+
+    // push(...items: T[]): number
+    let push_func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("items")),
+            type_id: interner.array(t_type),
+            optional: false,
+            rest: true,
+        }],
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Create an interface with push method
+    let array_interface = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("push"),
+        type_id: push_func,
+        write_type: push_func,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // Set up TypeEnvironment with Array<T> registered
+    let mut env = TypeEnvironment::new();
+    env.set_array_base_type(array_interface, vec![t_param]);
+
+    // Create evaluator with the environment
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+
+    // Test: string[].push should resolve successfully
+    let string_array = interner.array(TypeId::STRING);
+    let result = evaluator.resolve_property_access(string_array, "push");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => {
+            // The push method should be a function returning number
+            match interner.lookup(type_id) {
+                Some(TypeKey::Function(func_id)) => {
+                    let func = interner.function_shape(func_id);
+                    assert_eq!(
+                        func.return_type,
+                        TypeId::NUMBER,
+                        "push should return number"
+                    );
+                }
+                other => panic!("Expected function for push, got {:?}", other),
+            }
+        }
+        _ => panic!(
+            "Expected Success for array.push with env resolver, got {:?}",
+            result
+        ),
+    }
+
+    // Test: without env resolver (NoopResolver), push should NOT be found
+    // (unless hardcoded fallback exists, which is separate)
+    let noop_evaluator = PropertyAccessEvaluator::new(&interner);
+    let noop_result = noop_evaluator.resolve_property_access(string_array, "push");
+    // With NoopResolver, resolve_array_property falls through because
+    // get_array_base_type() returns None
+    assert!(
+        matches!(noop_result, PropertyAccessResult::PropertyNotFound { .. }),
+        "Without env resolver, array.push should not be found (no lib fallback)"
+    );
+}
