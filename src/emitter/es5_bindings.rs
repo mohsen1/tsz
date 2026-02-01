@@ -759,19 +759,36 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_for_of_statement_es5(&mut self, for_in_of: &ForInOfData) {
         // Simple array indexing pattern (default, no --downlevelIteration):
-        // for (var _i = 0, _a = expr; _i < _a.length; _i++) {
-        //     var v = _a[_i];
+        // for (var _i = 0, arr_1 = arr; _i < arr_1.length; _i++) {
+        //     var v = arr_1[_i];
         //     <body>
         // }
-        // TypeScript uses _i for the first index, then _b, _d for nested loops
-        // and _a, _c, _e for arrays
+        // TypeScript uses descriptive names for simple identifiers (e.g., array_1)
+        // and generic _a, _b for complex expressions
         let counter = self.ctx.destructuring_state.for_of_counter;
         let index_name = if counter == 0 {
             "_i".to_string()
         } else {
             format!("_{}", (b'a' + (counter * 2 - 1) as u8) as char)
         };
-        let array_name = format!("_{}", (b'a' + (counter * 2) as u8) as char);
+
+        // Derive array name from expression:
+        // - Simple identifier `arr` -> `arr_1`
+        // - Complex expression -> `_a`, `_b`, etc.
+        let array_name = if let Some(expr_node) = self.arena.get(for_in_of.expression) {
+            if expr_node.kind == SyntaxKind::Identifier as u16 {
+                if let Some(ident) = self.arena.get_identifier(expr_node) {
+                    let name = self.arena.resolve_identifier_text(ident).to_string();
+                    format!("{}_1", name)
+                } else {
+                    format!("_{}", (b'a' + (counter * 2) as u8) as char)
+                }
+            } else {
+                format!("_{}", (b'a' + (counter * 2) as u8) as char)
+            }
+        } else {
+            format!("_{}", (b'a' + (counter * 2) as u8) as char)
+        };
         self.ctx.destructuring_state.for_of_counter += 1;
 
         self.write("for (var ");

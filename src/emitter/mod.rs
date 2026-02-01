@@ -1454,10 +1454,13 @@ impl<'a> Printer<'a> {
                 self.emit_case_block(node);
             }
             k if k == syntax_kind_ext::BREAK_STATEMENT => {
-                self.emit_break_statement();
+                self.emit_break_statement(node);
             }
             k if k == syntax_kind_ext::CONTINUE_STATEMENT => {
-                self.emit_continue_statement();
+                self.emit_continue_statement(node);
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                self.emit_labeled_statement(node);
             }
             k if k == syntax_kind_ext::DO_STATEMENT => {
                 self.emit_do_statement(node);
@@ -1602,8 +1605,13 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Auto-detect module: if enabled and file has imports/exports, switch to CommonJS
-        if self.ctx.auto_detect_module && self.file_is_module(&source.statements) {
+        // Auto-detect module: if enabled and module is None (not explicitly set),
+        // switch to CommonJS when file has imports/exports.
+        // Do NOT override explicit module targets like ES2015/ESNext.
+        if self.ctx.auto_detect_module
+            && matches!(self.ctx.options.module, ModuleKind::None)
+            && self.file_is_module(&source.statements)
+        {
             self.ctx.options.module = ModuleKind::CommonJS;
         }
 
@@ -1803,8 +1811,16 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
 
-            // Update last processed position after emitting statement
+            // Update last processed position and skip comments inside this statement
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                // Advance comment_idx past all comments within this statement's range.
+                // This prevents comments inside class bodies, function bodies, etc.
+                // from being emitted as orphaned trailing comments at EOF.
+                while comment_idx < all_comments.len()
+                    && all_comments[comment_idx].pos < stmt_node.end
+                {
+                    comment_idx += 1;
+                }
                 self.last_processed_pos = stmt_node.end;
             }
         }

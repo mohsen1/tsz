@@ -31,6 +31,15 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Single-line blocks: if source was single-line and block has one statement, keep it single-line
+        if self.is_single_line(node) && block.statements.nodes.len() == 1 {
+            self.write("{ ");
+            self.emit(block.statements.nodes[0]);
+            self.write(" }");
+            self.emit_trailing_comments(node.end);
+            return;
+        }
+
         self.write("{");
         self.write_line();
         self.increase_indent();
@@ -78,6 +87,9 @@ impl<'a> Printer<'a> {
             self.emit(decl_list_idx);
         }
         self.write_semicolon();
+
+        // Emit trailing comments (e.g., var x = 1; // comment)
+        self.emit_trailing_comment_after_semicolon(node);
 
         // CommonJS: emit exports.X = X; after the declaration
         if is_exported && !export_names.is_empty() {
@@ -185,46 +197,44 @@ impl<'a> Printer<'a> {
 
         self.emit(expr_stmt.expression);
         self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(node);
+    }
 
-        // Emit trailing comments: find the position after the semicolon
-        // We scan backwards from the expression end to find the semicolon.
-        if let Some(text) = self.source_text {
-            // Find the semicolon by scanning backwards from the statement end
-            let bytes = text.as_bytes();
-            let stmt_end = std::cmp::min(node.end as usize, bytes.len());
+    /// Emit trailing comments after a semicolon. Scans backward through the
+    /// entire node range to find the semicolon, allowing it to work even when
+    /// node.end is past the newline (at the start of the next statement).
+    pub(super) fn emit_trailing_comment_after_semicolon(&mut self, node: &Node) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
 
-            // Scan backwards to find the semicolon
-            let mut semi_pos = None;
-            let mut i = stmt_end;
-            while i > 0 {
-                i -= 1;
-                let ch = bytes[i] as char;
-                if ch == ';' {
-                    semi_pos = Some(i + 1); // Position after semicolon
-                    break;
-                } else if ch == '\n' || ch == '\r' {
-                    // Stop at newline if no semicolon found (ASI case)
-                    break;
-                } else if ch == ' ' || ch == '\t' || ch == '/' {
-                    // Skip whitespace and potential comment start (scanning backwards)
-                    continue;
-                } else {
-                    // Some other character
-                    continue;
-                }
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        let bytes = text.as_bytes();
+        let stmt_end = std::cmp::min(node.end as usize, bytes.len());
+        let stmt_start = node.pos as usize;
+
+        // Scan backwards to find the semicolon within this node's range
+        let mut semi_pos = None;
+        let mut i = stmt_end;
+        while i > stmt_start {
+            i -= 1;
+            if bytes[i] == b';' {
+                semi_pos = Some(i + 1);
+                break;
             }
+        }
 
-            // Emit trailing comments from after the semicolon
-            if let Some(pos) = semi_pos {
-                let comments = get_trailing_comment_ranges(text, pos);
-                for comment in comments {
-                    self.write_space();
-                    // Use safe slicing to avoid panics
-                    let comment_text =
-                        safe_slice::slice(text, comment.pos as usize, comment.end as usize);
-                    if !comment_text.is_empty() {
-                        self.write(comment_text);
-                    }
+        if let Some(pos) = semi_pos {
+            let comments = get_trailing_comment_ranges(text, pos);
+            for comment in comments {
+                self.write_space();
+                let comment_text =
+                    safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+                if !comment_text.is_empty() {
+                    self.write(comment_text);
                 }
             }
         }
@@ -264,10 +274,16 @@ impl<'a> Printer<'a> {
 
         self.write("for (");
         self.emit(loop_stmt.initializer);
-        self.write("; ");
-        self.emit(loop_stmt.condition);
-        self.write("; ");
-        self.emit(loop_stmt.incrementor);
+        self.write(";");
+        if !loop_stmt.condition.is_none() {
+            self.write(" ");
+            self.emit(loop_stmt.condition);
+        }
+        self.write(";");
+        if !loop_stmt.incrementor.is_none() {
+            self.write(" ");
+            self.emit(loop_stmt.incrementor);
+        }
         self.write(") ");
         self.emit(loop_stmt.statement);
     }
@@ -439,14 +455,36 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
     }
 
-    pub(super) fn emit_break_statement(&mut self) {
+    pub(super) fn emit_break_statement(&mut self, node: &Node) {
         self.write("break");
+        if let Some(jump) = self.arena.get_jump_data(node) {
+            if !jump.label.is_none() {
+                self.write(" ");
+                self.emit(jump.label);
+            }
+        }
         self.write_semicolon();
     }
 
-    pub(super) fn emit_continue_statement(&mut self) {
+    pub(super) fn emit_continue_statement(&mut self, node: &Node) {
         self.write("continue");
+        if let Some(jump) = self.arena.get_jump_data(node) {
+            if !jump.label.is_none() {
+                self.write(" ");
+                self.emit(jump.label);
+            }
+        }
         self.write_semicolon();
+    }
+
+    pub(super) fn emit_labeled_statement(&mut self, node: &Node) {
+        let Some(labeled) = self.arena.get_labeled_statement(node) else {
+            return;
+        };
+
+        self.emit(labeled.label);
+        self.write(": ");
+        self.emit(labeled.statement);
     }
 
     pub(super) fn emit_do_statement(&mut self, node: &Node) {

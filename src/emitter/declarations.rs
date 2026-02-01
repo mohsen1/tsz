@@ -377,6 +377,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Skip ambient module declarations (declare namespace/module)
+        if self.has_declare_modifier(&module.modifiers) {
+            return;
+        }
+
         self.write("namespace ");
         self.emit(module.name);
         self.write(" ");
@@ -424,6 +429,11 @@ impl<'a> Printer<'a> {
 
         // Emit modifiers (static, async only for JavaScript)
         self.emit_method_modifiers_js(&method.modifiers);
+
+        // Emit generator asterisk
+        if method.asterisk_token {
+            self.write("*");
+        }
 
         self.emit(method.name);
         self.write("(");
