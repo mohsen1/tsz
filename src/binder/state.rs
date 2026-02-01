@@ -1425,8 +1425,7 @@ impl BinderState {
                             let init = loop_data.initializer;
                             if !init.is_none() {
                                 if let Some(init_node) = arena.get(init) {
-                                    if init_node.kind
-                                        == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                                    if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                                     {
                                         self.collect_hoisted_var_decl(arena, init);
                                     }

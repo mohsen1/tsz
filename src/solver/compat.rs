@@ -1,7 +1,7 @@
 //! TypeScript compatibility layer for assignability rules.
 
-use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::db::QueryDatabase;
+use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::solver::types::{PropertyInfo, TypeId, TypeKey};
 use crate::solver::visitor::is_empty_object_type_db;

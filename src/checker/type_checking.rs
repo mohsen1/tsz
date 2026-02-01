@@ -2662,7 +2662,6 @@ impl<'a> CheckerState<'a> {
         }
 
         for sym_id in symbol_ids {
-
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };

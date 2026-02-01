@@ -157,11 +157,7 @@ fn is_subtype_of_recover(
 }
 
 /// Cycle recovery for type evaluation: identity.
-fn evaluate_type_recover(
-    _db: &dyn SolverDatabase,
-    _cycle: &[String],
-    type_id: &TypeId,
-) -> TypeId {
+fn evaluate_type_recover(_db: &dyn SolverDatabase, _cycle: &[String], type_id: &TypeId) -> TypeId {
     *type_id
 }
 
@@ -240,8 +236,7 @@ impl crate::solver::db::TypeDatabase for SalsaDatabase {
     }
 
     fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
-        self.interner_ref()
-            .object_property_index(shape_id, name)
+        self.interner_ref().object_property_index(shape_id, name)
     }
 
     fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {

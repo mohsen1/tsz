@@ -938,9 +938,7 @@ impl ScannerState {
                     match escaped {
                         CharacterCodes::_0 => {
                             // \0 - null character (only if not followed by digit)
-                            if self.pos < self.end
-                                && is_digit(self.char_code_unchecked(self.pos))
-                            {
+                            if self.pos < self.end && is_digit(self.char_code_unchecked(self.pos)) {
                                 // Legacy octal escape: \0N - scan as octal
                                 let mut value = 0u32;
                                 // Back up to include the '0' we already consumed
@@ -951,8 +949,7 @@ impl ScannerState {
                                     && is_octal_digit(self.char_code_unchecked(self.pos))
                                 {
                                     value = value * 8
-                                        + (self.char_code_unchecked(self.pos)
-                                            - CharacterCodes::_0);
+                                        + (self.char_code_unchecked(self.pos) - CharacterCodes::_0);
                                     self.pos += 1;
                                 }
                                 if let Some(c) = char::from_u32(value) {
@@ -1130,9 +1127,7 @@ impl ScannerState {
                     match escaped {
                         CharacterCodes::_0 => {
                             // \0 in template literals - only valid if not followed by digit
-                            if self.pos < self.end
-                                && is_digit(self.char_code_unchecked(self.pos))
-                            {
+                            if self.pos < self.end && is_digit(self.char_code_unchecked(self.pos)) {
                                 self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
                                 result.push('\\');
                                 result.push('0');
@@ -1175,8 +1170,7 @@ impl ScannerState {
                                         result.push(c);
                                     }
                                 } else {
-                                    self.token_flags |=
-                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
                                     result.push('\\');
                                     result.push('x');
                                 }
@@ -1189,8 +1183,7 @@ impl ScannerState {
                         CharacterCodes::LOWER_U => {
                             // Unicode escape \uHHHH or \u{H+}
                             if self.pos < self.end
-                                && self.char_code_unchecked(self.pos)
-                                    == CharacterCodes::OPEN_BRACE
+                                && self.char_code_unchecked(self.pos) == CharacterCodes::OPEN_BRACE
                             {
                                 // \u{...}
                                 self.pos += 1;
@@ -1212,8 +1205,7 @@ impl ScannerState {
                                         }
                                     }
                                 } else {
-                                    self.token_flags |=
-                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
                                     result.push('\\');
                                     result.push('u');
                                 }
@@ -1226,8 +1218,7 @@ impl ScannerState {
                                         result.push(c);
                                     }
                                 } else {
-                                    self.token_flags |=
-                                        TokenFlags::ContainsInvalidEscape as u32;
+                                    self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
                                     result.push('\\');
                                     result.push('u');
                                 }
@@ -1481,14 +1472,16 @@ impl ScannerState {
         if bytes.get(self.pos + 2).copied() == Some(b'{') {
             let start = self.pos + 3;
             let mut end = start;
-            while end < self.end && bytes.get(end).map_or(false, |b| b.is_ascii_hexdigit()) {
+            while end < self.end && bytes.get(end).is_some_and(|b| b.is_ascii_hexdigit()) {
                 end += 1;
             }
             if end == start || bytes.get(end).copied() != Some(b'}') {
                 return None;
             }
             let hex = &self.source[start..end];
-            u32::from_str_radix(hex, 16).ok().filter(|&cp| cp <= 0x10FFFF)
+            u32::from_str_radix(hex, 16)
+                .ok()
+                .filter(|&cp| cp <= 0x10FFFF)
         } else {
             // \uXXXX form (exactly 4 hex digits)
             if self.pos + 5 >= self.end {
@@ -1521,7 +1514,9 @@ impl ScannerState {
                 // Another unicode escape in identifier
                 if let Some(code_point) = self.peek_unicode_escape() {
                     if is_identifier_part(code_point) {
-                        if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
+                        if let Some(c) =
+                            char::from_u32(self.scan_unicode_escape_value().unwrap_or(0))
+                        {
                             result.push(c);
                         }
                         continue;
@@ -1558,7 +1553,13 @@ impl ScannerState {
             // \u{XXXXX} form
             self.pos += 1;
             let start = self.pos;
-            while self.pos < self.end && self.source.as_bytes().get(self.pos).map_or(false, |b| b.is_ascii_hexdigit()) {
+            while self.pos < self.end
+                && self
+                    .source
+                    .as_bytes()
+                    .get(self.pos)
+                    .is_some_and(|b| b.is_ascii_hexdigit())
+            {
                 self.pos += 1;
             }
             let result = u32::from_str_radix(&self.source[start..self.pos], 16).ok();
