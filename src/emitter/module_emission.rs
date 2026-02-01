@@ -467,9 +467,20 @@ impl<'a> Printer<'a> {
         }
 
         if export.is_default_export {
+            // Check if the clause is a declaration (function/class) that doesn't need semicolon
+            let clause_is_func_or_class = if let Some(clause_node) =
+                self.arena.get(export.export_clause)
+            {
+                clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            } else {
+                false
+            };
             self.write("export default ");
             self.emit(export.export_clause);
-            self.write_semicolon();
+            if !clause_is_func_or_class {
+                self.write_semicolon();
+            }
             return;
         }
 
@@ -516,6 +527,13 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Check if the clause is a declaration that handles its own semicolons
+        let is_declaration = clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            || clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
+            || clause_node.kind == syntax_kind_ext::MODULE_DECLARATION;
+
         self.write("export ");
         self.emit(export.export_clause);
 
@@ -524,7 +542,10 @@ impl<'a> Printer<'a> {
             self.emit(export.module_specifier);
         }
 
-        self.write_semicolon();
+        // Don't add semicolon for declarations - they handle their own
+        if !is_declaration {
+            self.write_semicolon();
+        }
     }
 
     pub(super) fn emit_export_declaration_commonjs(&mut self, node: &Node) {
