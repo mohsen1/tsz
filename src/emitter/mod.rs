@@ -1803,8 +1803,16 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
 
-            // Update last processed position after emitting statement
+            // Update last processed position and skip comments inside this statement
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                // Advance comment_idx past all comments within this statement's range.
+                // This prevents comments inside class bodies, function bodies, etc.
+                // from being emitted as orphaned trailing comments at EOF.
+                while comment_idx < all_comments.len()
+                    && all_comments[comment_idx].pos < stmt_node.end
+                {
+                    comment_idx += 1;
+                }
                 self.last_processed_pos = stmt_node.end;
             }
         }
