@@ -8,7 +8,6 @@ use crate::lowering_pass::LoweringPass;
 use crate::parser::ParserState;
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_block_body() {
     let source = "const greet = (name: string) => { console.log('Hello ' + name); };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -59,7 +58,6 @@ fn test_parity_es5_arrow_block_body() {
 /// Parity test for ES5 arrow function with this capture.
 /// Arrow functions should capture outer this.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_this_capture() {
     let source = r#"class Counter {
     count = 0;
@@ -113,7 +111,6 @@ fn test_parity_es5_arrow_this_capture() {
 /// Parity test for ES5 arrow function with multiple parameters.
 /// (a, b, c) => expr should convert correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_multi_params() {
     let source = "const sum = (a: number, b: number, c: number) => a + b + c;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -164,7 +161,6 @@ fn test_parity_es5_arrow_multi_params() {
 /// Parity test for ES5 arrow with typed params and inference.
 /// Arrow with explicit param types and inferred return type.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_typed_params_inference() {
     let source = r#"
 interface Point { x: number; y: number }
@@ -219,7 +215,6 @@ const origin: Point = { x: 0, y: 0 };
 /// Parity test for ES5 arrow with default params and complex types.
 /// Arrow with default values that have type annotations.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_defaults_complex() {
     let source = r#"
 type Options = { timeout: number; retries: number };
@@ -284,7 +279,6 @@ const fetchData = (url: string, options: Options = { timeout: 3000, retries: 3 }
 /// Parity test for ES5 arrow with rest params and tuple types.
 /// Arrow with rest parameter that has a tuple type annotation.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_rest_tuple() {
     let source = r#"
 type NumTuple = [number, number, number];
@@ -338,7 +332,6 @@ const sum = (...nums: NumTuple) => nums.reduce((a, b) => a + b, 0);
 /// Parity test for ES5 generic arrow functions.
 /// Arrow function with generic type parameters.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_generic() {
     let source = r#"
 const identity = <T>(value: T): T => value;
@@ -391,7 +384,6 @@ const mapArray = <T, U>(arr: T[], fn: (item: T) => U): U[] => arr.map(fn);
 /// Parity test for ES5 arrow with nested destructuring params.
 /// Arrow with deeply nested destructuring in parameters.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_nested_destructuring() {
     let source = r#"
 interface User { name: string; address: { city: string; zip: number } }
@@ -453,7 +445,6 @@ const getData = ([first, [second, third]]: [number, [string, boolean]]) => first
 /// Parity test for ES5 arrow returning arrow (curried function).
 /// Arrow function that returns another arrow function.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_returning_arrow() {
     let source = r#"
 type Fn<A, B> = (a: A) => B;
@@ -519,7 +510,6 @@ const add = (x: number) => (y: number) => x + y;
 /// Parity test for ES5 getter-only accessor with return type.
 /// get prop(): Type should downlevel and erase type.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_getter_only_typed() {
     let source = "class Config { get timeout(): number { return 5000; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -570,7 +560,6 @@ fn test_parity_es5_getter_only_typed() {
 /// Parity test for ES5 setter-only accessor with param type.
 /// set prop(v: Type) should downlevel and erase type.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_setter_only_typed() {
     let source =
         "class Counter { private _count = 0; set count(val: number) { this._count = val; } }";
@@ -622,7 +611,6 @@ fn test_parity_es5_setter_only_typed() {
 /// Parity test for ES5 getter/setter pair with types.
 /// Both getter return type and setter param type should be erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_pair_typed() {
     let source = "class Box<T> { private _value: T; get value(): T { return this._value; } set value(v: T) { this._value = v; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -671,7 +659,6 @@ fn test_parity_es5_accessor_pair_typed() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_getter_inheritance() {
     let source = r#"
 abstract class Shape {
@@ -760,7 +747,6 @@ class Square extends Rectangle {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_setter_validation() {
     let source = r#"
 interface ValidatedField<T> {
@@ -861,7 +847,6 @@ class BoundedValue<T extends number> {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_pair_caching() {
     let source = r#"
 class LazyLoader<T> {
@@ -960,7 +945,6 @@ class MemoizedComputation {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_static_class() {
     let source = r#"
 class Configuration {
@@ -1054,7 +1038,6 @@ class Counter {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_computed_dynamic() {
     let source = r#"
 const propName = "dynamicValue";
@@ -1147,7 +1130,6 @@ class SymbolAccessors {
 /// Parity test for ES5 static setter.
 /// Static setters should be defined on constructor, not prototype.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_setter_typed() {
     let source = "class Logger { private static _level: string = 'info'; static set level(val: string) { Logger._level = val; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1199,7 +1181,6 @@ fn test_parity_es5_static_setter_typed() {
 /// Parity test for ES5 static block with this reference.
 /// Static block using this should downlevel correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_this_ref() {
     let source = r#"class Registry {
     static items: string[] = [];
@@ -1255,7 +1236,6 @@ fn test_parity_es5_static_block_this_ref() {
 /// Parity test for ES5 multiple static blocks in same class.
 /// Multiple static blocks should all be downleveled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_multiple() {
     let source = r#"class App {
     static name = "";
@@ -1372,7 +1352,6 @@ fn test_parity_es5_static_block_typed_var() {
 /// Parity test for ES5 static block with function call.
 /// Function calls inside static block should be preserved.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_function_call() {
     let source = r#"class Logger {
     static initialized = false;
@@ -1481,7 +1460,6 @@ fn test_parity_es5_private_method_multi_params() {
 /// Parity test for ES5 private static method.
 /// Private static methods should be downleveled correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_static_method() {
     let source = r#"class IdGenerator {
     static #nextId: number = 0;
@@ -1534,7 +1512,6 @@ fn test_parity_es5_private_static_method() {
 /// Parity test for ES5 private async method.
 /// Private async methods should combine async and private downleveling.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_async_method() {
     let source = r#"class DataFetcher {
     async #fetchData(url: string): Promise<string> {
@@ -1641,7 +1618,6 @@ fn test_parity_es5_private_method_chain() {
 /// Parity test for ES5 multiple class decorators.
 /// Multiple decorators should all be applied.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_multiple() {
     let source = r#"function sealed(ctor: Function) {}
 function logged(ctor: Function) {}
@@ -1695,7 +1671,6 @@ class Service {
 /// Parity test for ES5 class decorator factory.
 /// Decorator factory with arguments should be downleveled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_factory() {
     let source = r#"function component(name: string) {
     return function(ctor: Function) {};
@@ -1755,7 +1730,6 @@ class Widget {
 /// Parity test for ES5 class decorator with generic class.
 /// Decorator on generic class should erase type params.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_generic() {
     let source = r#"function observable(ctor: Function) {}
 
@@ -1814,7 +1788,6 @@ class Store<T> {
 /// Parity test for ES5 class decorator with extends.
 /// Decorator on derived class should work correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_extends() {
     let source = r#"function injectable(ctor: Function) {}
 
@@ -2103,7 +2076,6 @@ class ApiClient {
 /// Parity test for ES5 multiple property decorators.
 /// Multiple decorators on a property should be lowered without decorator syntax.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator_multiple() {
     let source = r#"function observable(target: any, key: string) {}
 function validate(target: any, key: string) {}
@@ -2159,7 +2131,6 @@ class FormField {
 /// Parity test for ES5 property decorator factory.
 /// Decorator factories with arguments should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator_factory() {
     let source = r#"function column(name: string) {
     return function(target: any, key: string) {};
@@ -2211,7 +2182,6 @@ class Entity {
 /// Parity test for ES5 static property decorator.
 /// Decorators on static properties should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator_static() {
     let source = r#"function readonly(target: any, key: string) {}
 
@@ -2261,7 +2231,6 @@ class Config {
 /// Parity test for ES5 property decorator with complex initializer.
 /// Property decorators with arrow function initializers should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator_initializer() {
     let source = r#"function lazy(target: any, key: string) {}
 
@@ -2535,7 +2504,6 @@ class AppConfig {
 /// Parity test for ES5 multiple parameter decorators.
 /// Multiple decorators on a single parameter should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator_multiple() {
     let source = r#"function required(target: any, key: string, index: number) {}
 function validate(target: any, key: string, index: number) {}
@@ -2585,7 +2553,6 @@ class UserService {
 /// Parity test for ES5 parameter decorator on method.
 /// Parameter decorator on regular method should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator_method() {
     let source = r#"function log(target: any, key: string, index: number) {}
 
@@ -2636,7 +2603,6 @@ class Logger {
 /// Parity test for ES5 parameter decorator factory.
 /// Parameter decorator factories with arguments should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator_factory() {
     let source = r#"function maxLength(max: number) {
     return function(target: any, key: string, index: number) {};
@@ -2689,7 +2655,6 @@ class FormValidator {
 /// Parity test for ES5 multiple parameters with decorators.
 /// Multiple parameters each with decorators should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator_multi_params() {
     let source = r#"function inject(target: any, key: string, index: number) {}
 
@@ -2738,7 +2703,6 @@ class Container {
 /// Parity test for ES5 async generator with try/catch.
 /// Async generator with error handling should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_try_catch() {
     let source = r#"async function* safeFetch(urls: string[]): AsyncGenerator<string> {
     for (const url of urls) {
@@ -2787,7 +2751,6 @@ fn test_parity_es5_async_generator_try_catch() {
 /// Parity test for ES5 static async generator method.
 /// Static async generator methods should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_static() {
     let source = r#"class StreamFactory {
     static async *createStream(): AsyncGenerator<number> {
@@ -2832,7 +2795,6 @@ fn test_parity_es5_async_generator_static() {
 /// Parity test for ES5 async generator with multiple yields.
 /// Async generator with multiple sequential yields should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_multi_yield() {
     let source = r#"async function* countdown(start: number): AsyncGenerator<number> {
     yield start;
@@ -2876,7 +2838,6 @@ fn test_parity_es5_async_generator_multi_yield() {
 /// Parity test for ES5 async generator with yield delegation.
 /// Async generator using yield* should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_yield_star() {
     let source = r#"async function* concat(a: AsyncGenerator<number>, b: AsyncGenerator<number>): AsyncGenerator<number> {
     yield* a;
@@ -3199,7 +3160,6 @@ namespace Utils {
 /// Parity test for ES5 namespace with exported functions and types.
 /// Namespace with various exported members.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace_exports() {
     let source = r#"
 namespace Validation {
@@ -3387,7 +3347,6 @@ namespace Company {
 /// Parity test for ES5 enum with explicit numeric values.
 /// Enum with explicit numeric values should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_explicit_values() {
     let source = r#"enum HttpStatus {
     OK = 200,
@@ -3438,7 +3397,6 @@ fn test_parity_es5_enum_explicit_values() {
 /// Parity test for ES5 const enum.
 /// Const enum should be inlined at usage sites.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_const() {
     let source = r#"const enum Flags {
     None = 0,
@@ -3477,7 +3435,6 @@ fn test_parity_es5_enum_const() {
 /// Parity test for ES5 enum with computed member.
 /// Enum with computed values should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_computed() {
     let source = r#"enum FileAccess {
     None,
@@ -3521,7 +3478,6 @@ fn test_parity_es5_enum_computed() {
 /// Parity test for ES5 heterogeneous enum.
 /// Enum with mixed string and numeric values should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_heterogeneous() {
     let source = r#"enum Mixed {
     No = 0,
@@ -3570,7 +3526,6 @@ fn test_parity_es5_enum_heterogeneous() {
 /// Parity test for ES5 export with alias.
 /// Named exports with aliases should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_export_alias() {
     let source = r#"const internalName: string = "value";
 export { internalName as publicName };"#;
@@ -3616,7 +3571,6 @@ export { internalName as publicName };"#;
 /// Parity test for ES5 default export function.
 /// Default export function should be lowered to CommonJS.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_export_default_function() {
     let source = r#"export default function greet(name: string): string {
     return "Hello, " + name;
@@ -3663,7 +3617,6 @@ fn test_parity_es5_export_default_function() {
 /// Parity test for ES5 export interface erasure.
 /// Interface exports should be erased entirely.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_export_interface() {
     let source = r#"export interface User {
     name: string;
@@ -3712,7 +3665,6 @@ export const DEFAULT_AGE: number = 0;"#;
 /// Parity test for ES5 export type alias erasure.
 /// Type alias exports should be erased entirely.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_export_type_alias() {
     let source = r#"export type ID = string | number;
 export type Handler = (event: Event) => void;
@@ -3761,7 +3713,6 @@ export const VERSION: string = "1.0";"#;
 // ============================================================================
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_anonymous() {
     let source = r#"
 const MyClass = class {
@@ -3809,7 +3760,6 @@ const MyClass = class {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_named() {
     let source = r#"
 const Factory = class InnerClass {
@@ -3857,7 +3807,6 @@ const Factory = class InnerClass {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_static() {
     let source = r#"
 const Counter = class {
@@ -3905,7 +3854,6 @@ const Counter = class {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_accessor() {
     let source = r#"
 const Rectangle = class {
@@ -3969,7 +3917,6 @@ const Rectangle = class {
 /// Parity test for ES5 class expression in return statement.
 /// Class expression returned from a factory function.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_return() {
     let source = r#"
 interface Component { render(): string }
@@ -4037,7 +3984,6 @@ function createComponent(name: string): new () => Component {
 /// Parity test for ES5 class expression as argument.
 /// Class expression passed as an argument to a function.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_argument() {
     let source = r#"
 interface Handler { handle(data: any): void }
@@ -4109,7 +4055,6 @@ registerHandler(class implements Handler {
 /// Parity test for ES5 class expression extending expression.
 /// Class expression extending a computed base class.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_extends_computed() {
     let source = r#"
 interface Serializable { serialize(): string }
@@ -4169,7 +4114,6 @@ function getMixin<T extends new (...args: any[]) => Serializable>(Base: T) {
 /// Parity test for ES5 class expression with implements.
 /// Class expression implementing multiple interfaces.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_implements() {
     let source = r#"
 interface Readable { read(): string }
@@ -4246,7 +4190,6 @@ const Stream = class implements Readable, Writable, Closable {
 /// Parity test for ES5 class expression in array.
 /// Class expressions stored in an array.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_array() {
     let source = r#"
 interface Shape { area(): number }
@@ -4315,7 +4258,6 @@ const shapes: ShapeConstructor[] = [
 /// Parity test for ES5 class expression in IIFE.
 /// Class expression inside an immediately-invoked function expression.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_iife() {
     let source = r#"
 interface Singleton { getInstance(): Singleton }
@@ -4384,7 +4326,6 @@ const singleton = (function(): new () => Singleton {
 // ============================================================================
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_return_value() {
     let source = r#"
 function* countdown(start: number): Generator<number, string, unknown> {
@@ -4435,7 +4376,6 @@ function* countdown(start: number): Generator<number, string, unknown> {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_multiple_yields() {
     let source = r#"
 function* multiYield(): Generator<string> {
@@ -4480,7 +4420,6 @@ function* multiYield(): Generator<string> {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_try_catch() {
     let source = r#"
 function* safeGenerator(): Generator<number> {
@@ -4535,7 +4474,6 @@ function* safeGenerator(): Generator<number> {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_expression() {
     let source = r#"
 const gen = function* (limit: number): Generator<number> {
@@ -4581,7 +4519,6 @@ const gen = function* (limit: number): Generator<number> {
 /// Parity test for ES5 generator with typed yields.
 /// Generator function with complex typed yield expressions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_typed_yields() {
     let source = r#"
 interface Item { id: number; name: string }
@@ -4639,7 +4576,6 @@ function* itemGenerator(): Generator<Item, void, undefined> {
 /// Parity test for ES5 generator with delegation (yield*).
 /// Generator function that delegates to another generator.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_delegation() {
     let source = r#"
 function* innerGen(): Generator<number> {
@@ -4694,7 +4630,6 @@ function* outerGen(): Generator<number> {
 /// Parity test for ES5 async generator with await.
 /// Async generator function combining yield and await.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_async_await() {
     let source = r#"
 interface DataChunk { data: string; hasMore: boolean }
@@ -4758,7 +4693,6 @@ async function* streamData(url: string): AsyncGenerator<DataChunk> {
 /// Parity test for ES5 generator in class methods.
 /// Generator method with this binding in a class.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_class_method_this() {
     let source = r#"
 class NumberSequence {
@@ -4825,7 +4759,6 @@ class NumberSequence {
 /// Parity test for ES5 generator with try/finally.
 /// Generator function with cleanup in finally block.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_try_finally() {
     let source = r#"
 interface Connection { close(): void }
@@ -4892,7 +4825,6 @@ function* processWithCleanup(conn: Connection): Generator<string, void, undefine
 /// Parity test for ES5 generator with complex return value.
 /// Generator function with typed return value after yields.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_complex_return() {
     let source = r#"
 interface Summary { count: number; total: number }
@@ -4955,7 +4887,6 @@ function* accumulator(values: number[]): Generator<number, Summary, undefined> {
 // ============================================================================
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_init_order_properties() {
     let source = r#"
 class Counter {
@@ -4999,7 +4930,6 @@ class Counter {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_init_order_blocks() {
     let source = r#"
 class Logger {
@@ -5050,7 +4980,6 @@ class Logger {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_init_order_interleaved() {
     let source = r#"
 class Interleaved {
@@ -5101,7 +5030,6 @@ class Interleaved {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_init_order_derived() {
     let source = r#"
 class Base {
@@ -5157,7 +5085,6 @@ class Derived extends Base {
 // ============================================================================
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_super_call_basic() {
     let source = r#"
 class Base {
@@ -5207,7 +5134,6 @@ class Derived extends Base {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_super_call_with_args() {
     let source = r#"
 class Calculator {
@@ -5258,7 +5184,6 @@ class AsyncCalculator extends Calculator {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_super_call_static() {
     let source = r#"
 class BaseService {
@@ -5308,7 +5233,6 @@ class DerivedService extends BaseService {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_super_call_with_await() {
     let source = r#"
 class DataFetcher {
@@ -5362,7 +5286,6 @@ class AsyncDataFetcher extends DataFetcher {
 /// Parity test for ES5 async with try/finally.
 /// Async function with try/finally should downlevel properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_try_finally() {
     let source = r#"
 interface Resource { close(): void }
@@ -5434,7 +5357,6 @@ async function withResource<T>(resource: Resource, fn: () => Promise<T>): Promis
 /// Parity test for ES5 async with Promise.all destructuring.
 /// Async function with Promise.all and destructuring assignment.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_promise_all_destructure() {
     let source = r#"
 interface User { id: number; name: string }
@@ -5508,7 +5430,6 @@ declare function fetchOrders(id: number): Promise<Order[]>;
 /// Parity test for ES5 async IIFE (Immediately Invoked Function Expression).
 /// Async IIFE should downlevel to non-async IIFE with __awaiter.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_iife() {
     let source = r#"
 type Config = { apiUrl: string; timeout: number };
@@ -5577,7 +5498,6 @@ const result = (async (): Promise<Config> => {
 /// Parity test for ES5 nested async arrows.
 /// Multiple levels of nested async arrow functions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_nested_arrows() {
     let source = r#"
 interface Data { value: number }
@@ -5839,7 +5759,6 @@ class Temperature {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_accessor_static() {
     let source = r#"
 class Registry {
@@ -5893,7 +5812,6 @@ class Registry {
 // ============================================================================
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_try_catch() {
     let source = r#"
 class SafeInit {
@@ -6003,7 +5921,6 @@ class LookupTable {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_conditional() {
     let source = r#"
 class Environment {
@@ -6060,7 +5977,6 @@ class Environment {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_derived_class() {
     let source = r#"
 class Parent {
@@ -6112,7 +6028,6 @@ class Child extends Parent {
 /// Parity test for ES5 static block with async IIFE.
 /// Static block containing async immediately-invoked function expression.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_async() {
     let source = r#"
 interface Config { endpoint: string; timeout: number }
@@ -6181,7 +6096,6 @@ class ApiClient {
 /// Parity test for ES5 static block with private field access.
 /// Static block accessing private static fields.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_private_access() {
     let source = r#"
 class Counter {
@@ -6252,7 +6166,6 @@ class Counter {
 /// Parity test for ES5 static block initialization order.
 /// Multiple static blocks verifying initialization order.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_init_order() {
     let source = r#"
 class OrderTest {
@@ -6323,7 +6236,6 @@ class OrderTest {
 /// Parity test for ES5 static block with super access.
 /// Static block in derived class accessing parent static members via super.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_super() {
     let source = r#"
 class BaseConfig {
@@ -6395,7 +6307,6 @@ class DerivedConfig extends BaseConfig {
 // ============================================================================
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_symbol() {
     let source = r#"
 const sym = Symbol("key");
@@ -6442,7 +6353,6 @@ const obj = {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_class_method() {
     let source = r#"
 const methodName = "dynamicMethod";
@@ -6492,7 +6402,6 @@ class DynamicClass {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_expression() {
     let source = r#"
 const prefix = "prop";
@@ -6539,7 +6448,6 @@ const obj: Record<string, number> = {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_accessor() {
     let source = r#"
 const propName = "value";
@@ -6597,7 +6505,6 @@ class ComputedAccessor {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_template() {
     let source = r#"
 const prefix = "user";
