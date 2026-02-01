@@ -1661,8 +1661,17 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
                 // Get the symbol's declaration(s)
                 if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
-                    // Create a resolver that looks up symbols in all lib binders
-                    let arena_ref = lib_ctx.arena.as_ref();
+                    // When lib binders are merged, symbol_arenas maps symbols to their
+                    // original arenas. The lib_ctx.arena might only be the first lib file's
+                    // arena, so declarations from other files won't be found.
+                    // Check symbol_arenas first, fall back to lib_ctx.arena.
+                    let arena_ref: &NodeArena = lib_ctx
+                        .binder
+                        .symbol_arenas
+                        .get(&sym_id)
+                        .map(|arc| arc.as_ref())
+                        .unwrap_or_else(|| lib_ctx.arena.as_ref());
+
                     let resolver = |node_idx: NodeIndex| -> Option<u32> {
                         // Get the identifier name from the node
                         let ident_name = arena_ref.get_identifier_text(node_idx)?;
@@ -1681,9 +1690,9 @@ impl<'a> CheckerState<'a> {
                         None
                     };
 
-                    // Lower the type from the lib file's arena with the resolver
+                    // Lower the type from the correct arena with the resolver
                     let lowering = TypeLowering::with_resolver(
-                        lib_ctx.arena.as_ref(),
+                        arena_ref,
                         self.ctx.types,
                         &resolver,
                     );
@@ -1779,7 +1788,17 @@ impl<'a> CheckerState<'a> {
         for lib_ctx in &lib_contexts {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
                 if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
-                    let arena_ref = lib_ctx.arena.as_ref();
+                    // When lib binders are merged, symbol_arenas maps symbols to their
+                    // original arenas. The lib_ctx.arena might only be the first lib file's
+                    // arena, so declarations from other files won't be found.
+                    // Check symbol_arenas first, fall back to lib_ctx.arena.
+                    let arena_ref: &NodeArena = lib_ctx
+                        .binder
+                        .symbol_arenas
+                        .get(&sym_id)
+                        .map(|arc| arc.as_ref())
+                        .unwrap_or_else(|| lib_ctx.arena.as_ref());
+
                     let resolver = |node_idx: NodeIndex| -> Option<u32> {
                         let ident_name = arena_ref.get_identifier_text(node_idx)?;
                         if is_compiler_managed_type(ident_name) {
@@ -1794,7 +1813,7 @@ impl<'a> CheckerState<'a> {
                     };
 
                     let lowering = TypeLowering::with_resolver(
-                        lib_ctx.arena.as_ref(),
+                        arena_ref,
                         self.ctx.types,
                         &resolver,
                     );
