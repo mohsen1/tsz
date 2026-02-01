@@ -193,6 +193,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Check if `source` is assignable to `target` using TS compatibility rules.
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
+        // Without strictNullChecks, null and undefined are assignable to and from any type.
+        // This check is at the top-level only (not in subtype member iteration) to avoid
+        // incorrectly accepting types within union member comparisons.
+        if !self.strict_null_checks
+            && (target == TypeId::NULL || target == TypeId::UNDEFINED)
+        {
+            return true;
+        }
+
         let key = (source, target);
         if let Some(&cached) = self.cache.get(&key) {
             return cached;
@@ -300,6 +309,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
             return true;
         }
+        // Without strictNullChecks, null and undefined are assignable to and from any type.
+        // This check is at the top-level only (not in subtype member iteration).
+        if !self.strict_null_checks && (target == TypeId::NULL || target == TypeId::UNDEFINED) {
+            return true;
+        }
         if target == TypeId::UNKNOWN {
             return true;
         }
@@ -345,6 +359,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return None;
         }
         if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+            return None;
+        }
+        // Without strictNullChecks, null and undefined are assignable to and from any type.
+        if !self.strict_null_checks && (target == TypeId::NULL || target == TypeId::UNDEFINED) {
             return None;
         }
         if source == TypeId::NEVER {
