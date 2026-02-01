@@ -372,20 +372,25 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if a node spans a single line in the source.
-    /// For blocks like `{ }`, we look for the closing `}` and check if there's a newline
-    /// between the opening `{` and the first `}`.
+    /// Finds the first `{` and last `}` within the node's source span and checks
+    /// if there's a newline between them. Uses `rfind` to handle nested braces correctly.
     fn is_single_line(&self, node: &Node) -> bool {
         if let Some(text) = self.source_text {
             let start = node.pos as usize;
-            if start < text.len() {
-                // Find the first closing brace after the opening
-                // For a block, the source starts with `{` and we want to find the matching `}`
-                let slice = &text[start..];
-                if let Some(close_idx) = slice.find('}') {
-                    // Check if there's a newline between `{` and `}`
-                    let inner = &slice[..close_idx + 1];
-                    return !inner.contains('\n');
+            let end = std::cmp::min(node.end as usize, text.len());
+            if start < end {
+                let slice = &text[start..end];
+                // Find the first `{` and last `}` in the node's range
+                if let Some(open) = slice.find('{') {
+                    if let Some(close) = slice.rfind('}') {
+                        if close > open {
+                            let inner = &slice[open..close + 1];
+                            return !inner.contains('\n');
+                        }
+                    }
                 }
+                // Fallback: check entire span for newlines
+                return !slice.contains('\n');
             }
         }
         // Default to multi-line if we can't determine
