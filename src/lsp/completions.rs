@@ -56,16 +56,31 @@ pub enum CompletionItemKind {
 /// Sort priority categories matching tsserver's sort text conventions.
 /// Lower numbers appear first in the completion list.
 pub mod sort_priority {
+    // Values match TypeScript's `ts.Completions.SortText` enum.
     /// Local variables, parameters, and function-scoped identifiers.
-    pub const LOCAL_DECLARATION: &str = "0";
+    pub const LOCAL_DECLARATION: &str = "10";
+    /// Properties, methods, and other location-based completions.
+    pub const LOCATION_PRIORITY: &str = "11";
+    /// Optional members.
+    pub const OPTIONAL_MEMBER: &str = "12";
     /// Properties and methods on a member completion.
-    pub const MEMBER: &str = "1";
+    pub const MEMBER: &str = "11";
     /// Type-level completions (interfaces, type aliases, enums).
-    pub const TYPE_DECLARATION: &str = "2";
+    pub const TYPE_DECLARATION: &str = "11";
+    /// Suggested class members.
+    pub const SUGGESTED_CLASS_MEMBERS: &str = "14";
+    /// Global variables and keywords.
+    pub const GLOBALS_OR_KEYWORDS: &str = "15";
     /// Completions from auto-import candidates.
-    pub const AUTO_IMPORT: &str = "3";
-    /// Keywords -- shown after identifiers.
-    pub const KEYWORD: &str = "5";
+    pub const AUTO_IMPORT: &str = "16";
+    /// Legacy alias for GLOBALS_OR_KEYWORDS.
+    pub const KEYWORD: &str = "15";
+
+    /// Produce a deprecated sort text by prefixing "z" to the base sort text.
+    /// This matches TypeScript's `SortText.Deprecated()` transformation.
+    pub fn deprecated(base: &str) -> String {
+        format!("z{}", base)
+    }
 }
 
 /// Result of a completion request, matching tsserver's `CompletionInfo`.
@@ -226,21 +241,12 @@ impl CompletionItem {
 }
 
 /// Derive a default sort text from the completion kind, following tsserver
-/// conventions where identifiers sort before keywords.
+/// conventions. Most scope-visible items get LocationPriority ("11").
 pub fn default_sort_text(kind: CompletionItemKind) -> &'static str {
     match kind {
-        CompletionItemKind::Variable
-        | CompletionItemKind::Function
-        | CompletionItemKind::Parameter
-        | CompletionItemKind::Constructor => sort_priority::LOCAL_DECLARATION,
+        CompletionItemKind::Keyword => sort_priority::GLOBALS_OR_KEYWORDS,
         CompletionItemKind::Property | CompletionItemKind::Method => sort_priority::MEMBER,
-        CompletionItemKind::Class
-        | CompletionItemKind::Interface
-        | CompletionItemKind::Enum
-        | CompletionItemKind::TypeAlias
-        | CompletionItemKind::Module
-        | CompletionItemKind::TypeParameter => sort_priority::TYPE_DECLARATION,
-        CompletionItemKind::Keyword => sort_priority::KEYWORD,
+        _ => sort_priority::LOCATION_PRIORITY,
     }
 }
 
@@ -292,7 +298,6 @@ const KEYWORDS: &[&str] = &[
     "finally",
     "for",
     "function",
-    "get",
     "if",
     "implements",
     "import",
@@ -310,14 +315,9 @@ const KEYWORDS: &[&str] = &[
     "number",
     "object",
     "package",
-    "private",
-    "protected",
-    "public",
     "readonly",
     "return",
     "satisfies",
-    "set",
-    "static",
     "string",
     "super",
     "switch",
@@ -424,12 +424,10 @@ const GLOBAL_VARS: &[(&str, CompletionItemKind)] = &[
     ("Object", CompletionItemKind::Variable),
     ("parseFloat", CompletionItemKind::Function),
     ("parseInt", CompletionItemKind::Function),
-    ("Promise", CompletionItemKind::Variable),
     ("RangeError", CompletionItemKind::Variable),
     ("ReferenceError", CompletionItemKind::Variable),
     ("RegExp", CompletionItemKind::Variable),
     ("String", CompletionItemKind::Variable),
-    ("Symbol", CompletionItemKind::Variable),
     ("SyntaxError", CompletionItemKind::Variable),
     ("TypeError", CompletionItemKind::Variable),
     ("Uint16Array", CompletionItemKind::Variable),
@@ -440,6 +438,83 @@ const GLOBAL_VARS: &[(&str, CompletionItemKind)] = &[
     ("unescape", CompletionItemKind::Function),
     ("URIError", CompletionItemKind::Variable),
 ];
+
+/// Global variables that are deprecated. These get kindModifiers "deprecated,declare"
+/// and sort text prefixed with "z" to push them to the end of the completion list.
+const DEPRECATED_GLOBALS: &[&str] = &["escape", "unescape"];
+
+/// Compare two strings using a case-sensitive UI sort order that matches
+/// TypeScript's `compareStringsCaseSensitiveUI` (Intl.Collator with
+/// sensitivity: "variant", numeric: true). Uses multi-pass comparison like
+/// the Unicode Collation Algorithm: primary pass resolves case-insensitive
+/// differences (with numeric segments compared as numbers), then tertiary
+/// pass resolves case (lowercase before uppercase).
+fn compare_case_sensitive_ui(a: &str, b: &str) -> std::cmp::Ordering {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+
+    // Primary pass: case-insensitive with numeric comparison
+    let mut ai = 0;
+    let mut bi = 0;
+    let mut case_diff: Option<std::cmp::Ordering> = None;
+    while ai < a_chars.len() && bi < b_chars.len() {
+        let ac = a_chars[ai];
+        let bc = b_chars[bi];
+
+        // If both are digits, compare numeric segments
+        if ac.is_ascii_digit() && bc.is_ascii_digit() {
+            let a_start = ai;
+            while ai < a_chars.len() && a_chars[ai].is_ascii_digit() {
+                ai += 1;
+            }
+            let b_start = bi;
+            while bi < b_chars.len() && b_chars[bi].is_ascii_digit() {
+                bi += 1;
+            }
+            let a_num: u64 = a_chars[a_start..ai]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0);
+            let b_num: u64 = b_chars[b_start..bi]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0);
+            if a_num != b_num {
+                return a_num.cmp(&b_num);
+            }
+            continue;
+        }
+
+        let al = ac.to_ascii_lowercase();
+        let bl = bc.to_ascii_lowercase();
+        if al != bl {
+            return al.cmp(&bl);
+        }
+        // Track first case difference for tertiary pass
+        if case_diff.is_none() && ac != bc {
+            if ac.is_lowercase() && bc.is_uppercase() {
+                case_diff = Some(std::cmp::Ordering::Less);
+            } else if ac.is_uppercase() && bc.is_lowercase() {
+                case_diff = Some(std::cmp::Ordering::Greater);
+            }
+        }
+        ai += 1;
+        bi += 1;
+    }
+
+    // Length difference (shorter first)
+    if ai < a_chars.len() {
+        return std::cmp::Ordering::Greater;
+    }
+    if bi < b_chars.len() {
+        return std::cmp::Ordering::Less;
+    }
+
+    // Tertiary: first case difference determines order
+    case_diff.unwrap_or(std::cmp::Ordering::Equal)
+}
 
 impl<'a> Completions<'a> {
     /// Create a new Completions provider.
@@ -1688,7 +1763,18 @@ impl<'a> Completions<'a> {
             if !seen_names.contains(name) {
                 seen_names.insert(name.to_string());
                 let mut item = CompletionItem::new(name.to_string(), kind);
-                item.sort_text = Some(sort_priority::KEYWORD.to_string());
+                let is_deprecated = DEPRECATED_GLOBALS.contains(&name);
+                if is_deprecated {
+                    item.sort_text =
+                        Some(sort_priority::deprecated(sort_priority::GLOBALS_OR_KEYWORDS));
+                    item.kind_modifiers = Some("deprecated,declare".to_string());
+                } else {
+                    item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+                    // globalThis and undefined don't get "declare" modifier
+                    if name != "globalThis" && name != "undefined" {
+                        item.kind_modifiers = Some("declare".to_string());
+                    }
+                }
                 if kind == CompletionItemKind::Function {
                     item.insert_text = Some(format!("{}($1)", name));
                     item.is_snippet = true;
@@ -1728,7 +1814,8 @@ impl<'a> Completions<'a> {
             completions.sort_by(|a, b| {
                 let sa = a.effective_sort_text();
                 let sb = b.effective_sort_text();
-                sa.cmp(sb).then_with(|| a.label.cmp(&b.label))
+                compare_case_sensitive_ui(sa, sb)
+                    .then_with(|| compare_case_sensitive_ui(&a.label, &b.label))
             });
             Some(completions)
         }
