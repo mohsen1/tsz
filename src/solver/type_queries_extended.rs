@@ -1316,6 +1316,8 @@ pub enum InstanceTypeKind {
     Readonly(TypeId),
     /// Type parameter with constraint - follow constraint
     TypeParameter { constraint: Option<TypeId> },
+    /// Symbol reference (Ref or TypeQuery) - needs resolution to class instance type
+    SymbolRef(crate::solver::types::SymbolRef),
     /// Complex types (Conditional, Mapped, IndexAccess, KeyOf) - need evaluation
     NeedsEvaluation,
     /// Not a constructor type
@@ -1343,10 +1345,15 @@ pub fn classify_for_instance_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ins
         TypeKey::TypeParameter(info) | TypeKey::Infer(info) => InstanceTypeKind::TypeParameter {
             constraint: info.constraint,
         },
+        // Symbol references (class names, typeof expressions) need resolution to instance type
+        TypeKey::Ref(sym_ref) | TypeKey::TypeQuery(sym_ref) => {
+            InstanceTypeKind::SymbolRef(sym_ref)
+        }
         TypeKey::Conditional(_)
         | TypeKey::Mapped(_)
         | TypeKey::IndexAccess(_, _)
-        | TypeKey::KeyOf(_) => InstanceTypeKind::NeedsEvaluation,
+        | TypeKey::KeyOf(_)
+        | TypeKey::Application(_) => InstanceTypeKind::NeedsEvaluation,
         _ => InstanceTypeKind::NotConstructor,
     }
 }
