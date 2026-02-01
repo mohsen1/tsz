@@ -103,14 +103,28 @@ impl<'a> BinaryOpEvaluator<'a> {
             return BinaryOpResult::Success(TypeId::UNKNOWN);
         }
 
+        // TS2469: Symbol cannot be used in arithmetic
+        if self.is_symbol_like(left) || self.is_symbol_like(right) {
+            return BinaryOpResult::TypeError { left, right, op: "+" };
+        }
+
         // any + anything = any (and vice versa)
         if left == TypeId::ANY || right == TypeId::ANY {
             return BinaryOpResult::Success(TypeId::ANY);
         }
 
-        // string-like + anything = string (and vice versa)
+        // String concatenation: string + primitive = string
         if self.is_string_like(left) || self.is_string_like(right) {
-            return BinaryOpResult::Success(TypeId::STRING);
+            // Check if the non-string side is a valid operand (primitive)
+            let valid_left = self.is_string_like(left) || self.is_valid_string_concat_operand(left);
+            let valid_right = self.is_string_like(right) || self.is_valid_string_concat_operand(right);
+            
+            if valid_left && valid_right {
+                return BinaryOpResult::Success(TypeId::STRING);
+            } else {
+                // TS2365: Operator '+' cannot be applied to types 'string' and 'object'
+                return BinaryOpResult::TypeError { left, right, op: "+" };
+            }
         }
 
         // number-like + number-like = number
@@ -141,6 +155,11 @@ impl<'a> BinaryOpEvaluator<'a> {
             return BinaryOpResult::Success(TypeId::UNKNOWN);
         }
 
+        // TS2469: Symbol cannot be used in arithmetic
+        if self.is_symbol_like(left) || self.is_symbol_like(right) {
+            return BinaryOpResult::TypeError { left, right, op };
+        }
+
         // any allows all operations
         if left == TypeId::ANY || right == TypeId::ANY {
             return BinaryOpResult::Success(TypeId::NUMBER);
@@ -160,9 +179,48 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Evaluate comparison operators (<, >, <=, >=).
-    fn evaluate_comparison(&self, _left: TypeId, _right: TypeId) -> BinaryOpResult {
-        // Comparison operators always return boolean
-        BinaryOpResult::Success(TypeId::BOOLEAN)
+    fn evaluate_comparison(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
+        // Don't emit errors for error/unknown types - prevents cascading errors
+        if left == TypeId::ERROR
+            || right == TypeId::ERROR
+            || left == TypeId::UNKNOWN
+            || right == TypeId::UNKNOWN
+        {
+            return BinaryOpResult::Success(TypeId::BOOLEAN);
+        }
+
+        // TS2469: Symbol cannot be used in comparison operators
+        if self.is_symbol_like(left) || self.is_symbol_like(right) {
+            return BinaryOpResult::TypeError { left, right, op: "<" };
+        }
+
+        // Any allows comparison
+        if left == TypeId::ANY || right == TypeId::ANY {
+            return BinaryOpResult::Success(TypeId::BOOLEAN);
+        }
+
+        // Numbers (and Enums) can be compared
+        if self.is_number_like(left) && self.is_number_like(right) {
+            return BinaryOpResult::Success(TypeId::BOOLEAN);
+        }
+
+        // Strings can be compared
+        if self.is_string_like(left) && self.is_string_like(right) {
+            return BinaryOpResult::Success(TypeId::BOOLEAN);
+        }
+
+        // BigInts can be compared
+        if self.is_bigint_like(left) && self.is_bigint_like(right) {
+            return BinaryOpResult::Success(TypeId::BOOLEAN);
+        }
+
+        // Booleans can be compared (valid in JS/TS)
+        if self.is_boolean_like(left) && self.is_boolean_like(right) {
+            return BinaryOpResult::Success(TypeId::BOOLEAN);
+        }
+
+        // Mismatch - emit TS2365
+        BinaryOpResult::TypeError { left, right, op: "<" }
     }
 
     /// Evaluate logical operators (&&, ||).
@@ -351,6 +409,45 @@ impl<'a> BinaryOpEvaluator<'a> {
             TypeKey::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
             _ => None,
         }
+    }
+
+    /// Check if a type is symbol-like (symbol or unique symbol).
+    pub fn is_symbol_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::SYMBOL {
+            return true;
+        }
+        if let Some(key) = self.interner.lookup(type_id) {
+            matches!(key, TypeKey::Intrinsic(IntrinsicKind::Symbol) | TypeKey::UniqueSymbol(_))
+        } else {
+            false
+        }
+    }
+
+    /// Check if a type is boolean-like (boolean or boolean literal).
+    fn is_boolean_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::BOOLEAN || type_id == TypeId::ANY {
+            return true;
+        }
+        if let Some(key) = self.interner.lookup(type_id) {
+            matches!(key, TypeKey::Literal(LiteralValue::Boolean(_)))
+        } else {
+            false
+        }
+    }
+
+    /// Check if a type is a valid operand for string concatenation.
+    /// Valid operands are: string, number, boolean, bigint, null, undefined, void, any.
+    fn is_valid_string_concat_operand(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::ANY {
+            return true;
+        }
+        // Primitives are valid
+        self.is_number_like(type_id)
+            || self.is_boolean_like(type_id)
+            || self.is_bigint_like(type_id)
+            || type_id == TypeId::NULL
+            || type_id == TypeId::UNDEFINED
+            || type_id == TypeId::VOID
     }
 }
 

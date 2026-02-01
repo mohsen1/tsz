@@ -1485,6 +1485,65 @@ impl<'a> CheckerState<'a> {
 
         use crate::solver::{BinaryOpEvaluator, TypeFormatter};
 
+        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+
+        // TS2469: Check if either operand is a symbol type
+        // TS2469 is emitted when an operator cannot be applied to type 'symbol'
+        // We check both operands and emit TS2469 for the symbol operand(s)
+        let left_is_symbol = evaluator.is_symbol_like(left_type);
+        let right_is_symbol = evaluator.is_symbol_like(right_type);
+
+        if left_is_symbol || right_is_symbol {
+            let mut formatter = TypeFormatter::new(self.ctx.types);
+            
+            // Emit TS2469 for symbol operands
+            if left_is_symbol {
+                if let Some(loc) = self.get_source_location(left_idx) {
+                    let type_str = formatter.format(left_type);
+                    let message = format_message(
+                        diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                        &[op, &type_str],
+                    );
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+            
+            if right_is_symbol {
+                if let Some(loc) = self.get_source_location(right_idx) {
+                    let type_str = formatter.format(right_type);
+                    let message = format_message(
+                        diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                        &[op, &type_str],
+                    );
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+            
+            // If both are symbols, we're done (no need for TS2365)
+            if left_is_symbol && right_is_symbol {
+                return;
+            }
+            
+            // If only one is symbol, continue to check the other operand
+            // (but we've already emitted TS2469 for the symbol)
+        }
+
         let mut formatter = TypeFormatter::new(self.ctx.types);
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
@@ -1495,9 +1554,10 @@ impl<'a> CheckerState<'a> {
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-        let left_is_valid_arithmetic = evaluator.is_arithmetic_operand(left_type);
-        let right_is_valid_arithmetic = evaluator.is_arithmetic_operand(right_type);
+        // Note: evaluator was already created above for symbol checking
+        // Skip arithmetic checks for symbol operands (we already emitted TS2469)
+        let left_is_valid_arithmetic = !left_is_symbol && evaluator.is_arithmetic_operand(left_type);
+        let right_is_valid_arithmetic = !right_is_symbol && evaluator.is_arithmetic_operand(right_type);
 
         // For + operator, check if we should emit TS2362/TS2363 or TS2365
         // TS2362/TS2363 are emitted when the operation cannot be string concatenation
