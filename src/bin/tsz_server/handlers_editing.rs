@@ -888,14 +888,25 @@ impl Server {
             let file = request.arguments.get("file")?.as_str()?;
             let start_line = request.arguments.get("startLine")?.as_u64()? as usize;
             let end_line = request.arguments.get("endLine")?.as_u64()? as usize;
+            let end_offset = request
+                .arguments
+                .get("endOffset")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as usize;
             let source_text = self.open_files.get(file)?.clone();
 
             let all_lines: Vec<&str> = source_text.lines().collect();
             // Convert 1-based to 0-based
             let first = start_line.saturating_sub(1);
-            let last = end_line
+            let mut last = end_line
                 .saturating_sub(1)
                 .min(all_lines.len().saturating_sub(1));
+
+            // When the selection ends at the beginning of a line (offset 1),
+            // exclude that line from commenting (TypeScript behavior)
+            if first != last && end_offset == 1 && last > 0 {
+                last -= 1;
+            }
 
             // Collect the lines in range, skipping empty lines for analysis
             let non_empty_lines: Vec<(usize, &str)> = (first..=last)
@@ -927,8 +938,7 @@ impl Server {
                     let rest = &line[ws_len..];
                     if rest.starts_with("//") {
                         let one_line = line_idx + 1; // 1-based
-                        // If there's a space before //, remove it too (symmetric with comment)
-                        let start_col = if ws_len > 0 { ws_len - 1 } else { ws_len };
+                        let start_col = ws_len;
                         let end_col = ws_len + 2; // past the //
                         edits.push(serde_json::json!({
                             "start": {"line": one_line, "offset": start_col + 1},
@@ -947,21 +957,13 @@ impl Server {
 
                 for &(line_idx, _) in &non_empty_lines {
                     let one_line = line_idx + 1; // 1-based
-                    if min_indent > 0 {
-                        // Replace the space at min_indent-1 with //
-                        edits.push(serde_json::json!({
-                            "start": {"line": one_line, "offset": min_indent},
-                            "end": {"line": one_line, "offset": min_indent + 1},
-                            "newText": "//"
-                        }));
-                    } else {
-                        // No indent: insert // at position 0
-                        edits.push(serde_json::json!({
-                            "start": {"line": one_line, "offset": 1},
-                            "end": {"line": one_line, "offset": 1},
-                            "newText": "//"
-                        }));
-                    }
+                        // Insert // at min_indent position (zero-length insertion)
+                    let insert_col = min_indent + 1; // 1-based offset
+                    edits.push(serde_json::json!({
+                        "start": {"line": one_line, "offset": insert_col},
+                        "end": {"line": one_line, "offset": insert_col},
+                        "newText": "//"
+                    }));
                 }
             }
 
