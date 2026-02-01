@@ -197,39 +197,7 @@ impl<'a> Printer<'a> {
 
         self.emit(expr_stmt.expression);
         self.write_semicolon();
-
-        // Emit trailing comments using conservative scan (stops at newline)
-        if !self.ctx.options.remove_comments {
-            if let Some(text) = self.source_text {
-                let bytes = text.as_bytes();
-                let stmt_end = std::cmp::min(node.end as usize, bytes.len());
-
-                let mut semi_pos = None;
-                let mut i = stmt_end;
-                while i > 0 {
-                    i -= 1;
-                    let ch = bytes[i];
-                    if ch == b';' {
-                        semi_pos = Some(i + 1);
-                        break;
-                    } else if ch == b'\n' || ch == b'\r' {
-                        break;
-                    }
-                }
-
-                if let Some(pos) = semi_pos {
-                    let comments = get_trailing_comment_ranges(text, pos);
-                    for comment in comments {
-                        self.write_space();
-                        let comment_text =
-                            safe_slice::slice(text, comment.pos as usize, comment.end as usize);
-                        if !comment_text.is_empty() {
-                            self.write(comment_text);
-                        }
-                    }
-                }
-            }
-        }
+        self.emit_trailing_comment_after_semicolon(node);
     }
 
     /// Emit trailing comments after a semicolon. Scans backward through the
