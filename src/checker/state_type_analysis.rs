@@ -1031,7 +1031,7 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if func.body.is_none() {
-                    overloads.push(self.call_signature_from_function(func));
+                    overloads.push(self.call_signature_from_function(func, decl_idx));
                 } else {
                     implementation_decl = decl_idx;
                 }

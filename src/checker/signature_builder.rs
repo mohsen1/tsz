@@ -27,15 +27,24 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Build a CallSignature from a function declaration/expression.
+    /// `func_idx` is the node index of the function declaration, used to resolve
+    /// enclosing type parameters from outer generic scopes (e.g., inner function
+    /// overloads referencing outer function type parameters).
     pub(crate) fn call_signature_from_function(
         &mut self,
         func: &crate::parser::node::FunctionData,
+        func_idx: crate::parser::NodeIndex,
     ) -> crate::solver::CallSignature {
+        // Push enclosing type parameters so that overload signatures can reference
+        // type parameters from outer function/class/interface scopes.
+        let enclosing_updates = self.push_enclosing_type_parameters(func_idx);
+
         let (type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&func.parameters);
         let (return_type, type_predicate) = self.return_type_and_predicate(func.type_annotation);
 
         self.pop_type_parameters(type_param_updates);
+        self.pop_type_parameters(enclosing_updates);
 
         crate::solver::CallSignature {
             type_params,
