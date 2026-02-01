@@ -56,12 +56,30 @@ pub struct SignatureHelp {
     pub active_signature: u32,
     /// The active parameter index based on cursor position
     pub active_parameter: u32,
+    /// The total number of arguments at the call site
+    pub argument_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CallKind {
     Call,
     New,
+    TaggedTemplate,
+}
+
+/// Abstraction over regular calls and tagged template expressions.
+enum CallSite<'a> {
+    Regular(&'a CallExprData),
+    TaggedTemplate(&'a crate::parser::node::TaggedTemplateData),
+}
+
+impl<'a> CallSite<'a> {
+    fn expression(&self) -> NodeIndex {
+        match self {
+            CallSite::Regular(data) => data.expression,
+            CallSite::TaggedTemplate(data) => data.tag,
+        }
+    }
 }
 
 struct SignatureCandidate {
@@ -181,18 +199,27 @@ impl<'a> SignatureHelpProvider<'a> {
         // 1. Find the deepest node at the cursor
         let leaf_node = find_node_at_or_before_offset(self.arena, offset, self.source_text);
 
-        // 2. Walk up to find the nearest CallExpression or NewExpression
-        let (call_node_idx, call_expr, call_kind) = self.find_containing_call(leaf_node, offset)?;
+        // 2. Walk up to find the nearest CallExpression, NewExpression, or TaggedTemplateExpression
+        let (call_node_idx, call_site, call_kind) = self.find_containing_call(leaf_node, offset)?;
 
-        // 3. Determine active parameter by counting commas
-        let active_parameter = self.determine_active_parameter(call_node_idx, call_expr, offset);
+        // 3. Determine active parameter
+        let active_parameter = match &call_site {
+            CallSite::Regular(call_expr) => {
+                self.determine_active_parameter(call_node_idx, call_expr, offset)
+            }
+            CallSite::TaggedTemplate(tagged) => {
+                self.determine_tagged_template_active_param(tagged, offset)
+            }
+        };
+
+        let callee_expr = call_site.expression();
 
         // 4. Resolve the symbol being called using ScopeWalker
         let mut walker = crate::lsp::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(root, call_expr.expression, scope_cache, scope_stats)
+            walker.resolve_node_cached(root, callee_expr, scope_cache, scope_stats)
         } else {
-            walker.resolve_node(root, call_expr.expression)
+            walker.resolve_node(root, callee_expr)
         };
 
         // 5. Create checker with persistent cache if available
@@ -228,7 +255,7 @@ impl<'a> SignatureHelpProvider<'a> {
         };
 
         let access_docs = if call_kind == CallKind::Call {
-            self.signature_documentation_for_property_access(root, call_expr.expression)
+            self.signature_documentation_for_property_access(root, callee_expr)
         } else {
             None
         };
@@ -241,11 +268,11 @@ impl<'a> SignatureHelpProvider<'a> {
                 }),
             )
         } else {
-            (checker.get_type_of_node(call_expr.expression), access_docs)
+            (checker.get_type_of_node(callee_expr), access_docs)
         };
 
         // 6. Resolve the callee name for display
-        let callee_name = self.resolve_callee_name(call_expr.expression, call_kind);
+        let callee_name = self.resolve_callee_name(callee_expr, call_kind);
 
         // 7. Extract signatures from the type
         let mut signatures =
@@ -262,11 +289,25 @@ impl<'a> SignatureHelpProvider<'a> {
             return None;
         }
 
-        let arg_count = call_expr
-            .arguments
-            .as_ref()
-            .map(|args| args.nodes.len())
-            .unwrap_or(0);
+        let arg_count = match &call_site {
+            CallSite::Regular(call_expr) => call_expr
+                .arguments
+                .as_ref()
+                .map(|args| args.nodes.len())
+                .unwrap_or(0),
+            CallSite::TaggedTemplate(tagged) => {
+                // For tagged templates, arg count = 1 (templateStrings) + number of ${} expressions
+                if let Some(tmpl_node) = self.arena.get(tagged.template) {
+                    if let Some(tmpl_expr) = self.arena.get_template_expr(tmpl_node) {
+                        1 + tmpl_expr.template_spans.nodes.len()
+                    } else {
+                        1 // NoSubstitutionTemplateLiteral = just templateStrings
+                    }
+                } else {
+                    1
+                }
+            }
+        };
         let active_signature =
             self.select_active_signature(&signatures, arg_count, active_parameter);
 
@@ -274,6 +315,7 @@ impl<'a> SignatureHelpProvider<'a> {
             signatures: signatures.into_iter().map(|sig| sig.info).collect(),
             active_signature,
             active_parameter,
+            argument_count: arg_count as u32,
         })
     }
 
@@ -343,12 +385,12 @@ impl<'a> SignatureHelpProvider<'a> {
         String::new()
     }
 
-    /// Walk up the AST to find the call expression containing the cursor.
+    /// Walk up the AST to find the call expression or tagged template containing the cursor.
     fn find_containing_call(
         &self,
         start_node: NodeIndex,
         cursor_offset: u32,
-    ) -> Option<(NodeIndex, &'a CallExprData, CallKind)> {
+    ) -> Option<(NodeIndex, CallSite<'a>, CallKind)> {
         let mut current = start_node;
 
         // Safety limit to prevent infinite loops
@@ -368,29 +410,51 @@ impl<'a> SignatureHelpProvider<'a> {
                         let call_start = node.pos as usize;
                         let call_end = (node.end as usize).min(self.source_text.len());
                         let call_text = &self.source_text[call_start..call_end];
-                        // Find the first `(` or `<` (for type args) that opens
-                        // the argument/type-argument list. We look for `(` first
-                        // since type args `<` may also appear in comparisons.
                         let delimiter = if data.type_arguments.is_some() {
-                            // For type args, find `<` after expression name
                             call_text.find('<')
                         } else {
                             call_text.find('(')
                         };
                         if let Some(delim_offset) = delimiter {
                             let delim_pos = (call_start + delim_offset) as u32;
-                            // Cursor must be strictly after the opening delimiter
                             if cursor_offset > delim_pos {
                                 let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
                                     CallKind::New
                                 } else {
                                     CallKind::Call
                                 };
-                                return Some((current, data, kind));
+                                return Some((current, CallSite::Regular(data), kind));
                             }
                         }
                     }
-                    // No args/type-args or cursor before delimiter - skip
+                }
+
+                // Check for tagged template expression
+                if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
+                    if let Some(data) = self.arena.get_tagged_template(node) {
+                        // Cursor must be strictly inside the template backticks.
+                        // tmpl_node.pos may include leading trivia, so find the
+                        // actual opening backtick position in the source text.
+                        if let Some(tmpl_node) = self.arena.get(data.template) {
+                            let tmpl_start = tmpl_node.pos as usize;
+                            let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
+                            let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
+                            if let Some(backtick_rel) = tmpl_text.find('`') {
+                                let backtick_pos = (tmpl_start + backtick_rel) as u32;
+                                // Cursor must be strictly after opening backtick
+                                // and strictly before closing backtick
+                                if cursor_offset > backtick_pos
+                                    && cursor_offset < tmpl_node.end
+                                {
+                                    return Some((
+                                        current,
+                                        CallSite::TaggedTemplate(data),
+                                        CallKind::TaggedTemplate,
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Move up to parent
@@ -508,6 +572,64 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         false
+    }
+
+    /// Determine the active parameter for a tagged template expression.
+    ///
+    /// For tagged templates like `tag\`text ${expr1} text ${expr2} text\``:
+    /// - Parameter 0 is always the templateStrings array
+    /// - Parameter N (1-based) corresponds to the Nth ${} expression
+    /// - Cursor in static template text maps to parameter 0
+    /// - Cursor inside ${expr} maps to the corresponding parameter index
+    fn determine_tagged_template_active_param(
+        &self,
+        tagged: &crate::parser::node::TaggedTemplateData,
+        cursor_offset: u32,
+    ) -> u32 {
+        let Some(tmpl_node) = self.arena.get(tagged.template) else {
+            return 0;
+        };
+
+        // If the template is a NoSubstitutionTemplateLiteral, active param is always 0
+        let Some(tmpl_expr) = self.arena.get_template_expr(tmpl_node) else {
+            return 0;
+        };
+
+        // Use head/literal boundaries to determine active parameter.
+        // The head token covers `text${` - cursor before head.end is in template text (param 0).
+        // Each span's literal covers `}text${` or `}text` - cursor in literal is in template text (param 0).
+        // Everything between head.end and span[i].literal.pos is the expression area (param i+1).
+        // This avoids gaps caused by trivia between AST node boundaries.
+        let Some(head_node) = self.arena.get(tmpl_expr.head) else {
+            return 0;
+        };
+
+        // Cursor in head (before the first ${) → param 0 (templateStrings)
+        if cursor_offset < head_node.end as u32 {
+            return 0;
+        }
+
+        // Walk spans: region from head.end/prev-literal.end to this literal.pos is expression area
+        for (i, &span_idx) in tmpl_expr.template_spans.nodes.iter().enumerate() {
+            let Some(span_node) = self.arena.get(span_idx) else { continue };
+            if let Some(span_data) = self.arena.get_template_span(span_node) {
+                if let Some(lit_node) = self.arena.get(span_data.literal) {
+                    // Cursor at or before the literal's `}` → in expression area → param i+1
+                    // The literal starts with `}` which closes the expression; cursor there
+                    // is still conceptually "at the expression" (matches TypeScript behavior).
+                    if cursor_offset <= lit_node.pos as u32 {
+                        return (i + 1) as u32;
+                    }
+                    // Cursor within the literal (template text after `}`) → param 0
+                    if cursor_offset < lit_node.end as u32 {
+                        return 0;
+                    }
+                    // Cursor past this literal → continue to next span
+                }
+            }
+        }
+
+        0
     }
 
     /// Extract signature information from a TypeId.

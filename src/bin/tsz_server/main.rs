@@ -1747,7 +1747,7 @@ impl Server {
                 },
                 "selectedItemIndex": sig_help.active_signature,
                 "argumentIndex": sig_help.active_parameter,
-                "argumentCount": sig_help.active_parameter + 1,
+                "argumentCount": sig_help.argument_count,
             }))
         })();
         // Always return a body - processResponse asserts !!response.body.
