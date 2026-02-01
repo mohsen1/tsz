@@ -3348,6 +3348,8 @@ impl Server {
                 .no_property_access_from_index_signature,
             sound_mode: false, // Sound mode not yet exposed in server protocol
             experimental_decorators: options.experimental_decorators,
+            no_unused_locals: options.no_unused_locals,
+            no_unused_parameters: options.no_unused_parameters,
         }
     }
 }

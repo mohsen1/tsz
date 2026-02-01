@@ -610,6 +610,8 @@ impl CompilerOptions {
             no_property_access_from_index_signature: false,
             sound_mode: false,
             experimental_decorators: false,
+            no_unused_locals: false,
+            no_unused_parameters: false,
         }
     }
 }

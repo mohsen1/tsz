@@ -309,6 +309,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns None if the identifier cannot be resolved to any symbol.
     pub(crate) fn resolve_identifier_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+        let result = self.resolve_identifier_symbol_inner(idx);
+        if let Some(sym_id) = result {
+            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+        result
+    }
+
+    fn resolve_identifier_symbol_inner(&self, idx: NodeIndex) -> Option<SymbolId> {
         let node = self.ctx.arena.get(idx)?;
         let name = self.ctx.arena.get_identifier(node)?.escaped_text.as_str();
 
@@ -790,6 +798,17 @@ impl<'a> CheckerState<'a> {
 
     /// Resolve an identifier symbol for type positions, skipping value-only symbols.
     pub(crate) fn resolve_identifier_symbol_in_type_position(
+        &self,
+        idx: NodeIndex,
+    ) -> TypeSymbolResolution {
+        let result = self.resolve_identifier_symbol_in_type_position_inner(idx);
+        if let TypeSymbolResolution::Type(sym_id) = result {
+            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+        result
+    }
+
+    fn resolve_identifier_symbol_in_type_position_inner(
         &self,
         idx: NodeIndex,
     ) -> TypeSymbolResolution {

@@ -65,6 +65,10 @@ pub struct CheckerOptions {
     /// This is required for the @experimentalDecorators flag.
     /// When decorators are used, TypedPropertyDescriptor must be available.
     pub experimental_decorators: bool,
+    /// When true, report errors for unused local variables (TS6133).
+    pub no_unused_locals: bool,
+    /// When true, report errors for unused function parameters (TS6133).
+    pub no_unused_parameters: bool,
 }
 
 /// ECMAScript target version
@@ -297,6 +301,10 @@ pub struct CheckerContext<'a> {
     /// Stack of symbols currently being evaluated for dependency tracking.
     pub symbol_dependency_stack: Vec<SymbolId>,
 
+    /// Set of symbols that have been referenced (used for TS6133 unused checking).
+    /// Uses RefCell to allow tracking from &self methods (e.g., resolve_identifier_symbol).
+    pub referenced_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
+
     // --- Diagnostics ---
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,
@@ -487,6 +495,7 @@ impl<'a> CheckerContext<'a> {
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
+            referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -567,6 +576,7 @@ impl<'a> CheckerContext<'a> {
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
+            referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -649,6 +659,7 @@ impl<'a> CheckerContext<'a> {
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
+            referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -730,6 +741,7 @@ impl<'a> CheckerContext<'a> {
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
+            referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -1340,6 +1352,16 @@ impl<'a> CheckerContext<'a> {
         checker.set_exact_optional_property_types(self.exact_optional_property_types());
         checker.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
         checker.set_query_db(self.types);
+    }
+
+    /// Check if noUnusedLocals is enabled.
+    pub fn no_unused_locals(&self) -> bool {
+        self.compiler_options.no_unused_locals
+    }
+
+    /// Check if noUnusedParameters is enabled.
+    pub fn no_unused_parameters(&self) -> bool {
+        self.compiler_options.no_unused_parameters
     }
 
     /// Check if noLib is enabled.

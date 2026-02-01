@@ -274,6 +274,7 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(idx)
             {
+                // Reference tracking is handled by resolve_identifier_symbol_in_type_position wrapper
                 return self.type_reference_symbol_type(sym_id);
             }
 

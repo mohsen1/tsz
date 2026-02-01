@@ -122,10 +122,8 @@ impl<'a> CheckerState<'a> {
             // Emits errors at file start for essential types when libs are not loaded
             self.check_missing_global_types();
 
-            // Check for unused declarations (6133)
-            // Only check for unused declarations when no_implicit_any is enabled (strict mode)
-            // This prevents test files from reporting unused variable errors when they're testing specific behaviors
-            if self.ctx.no_implicit_any() {
+            // Check for unused declarations (TS6133/TS6196)
+            if self.ctx.no_unused_locals() || self.ctx.no_unused_parameters() {
                 self.check_unused_declarations();
             }
         }
