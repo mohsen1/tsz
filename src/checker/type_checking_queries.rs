@@ -879,43 +879,66 @@ impl<'a> CheckerState<'a> {
         crate::solver::split_nullish_type(self.ctx.types.as_type_database(), type_id)
     }
 
-    /// Report an error for possibly nullish object access.
-    /// Reports the appropriate error code based on the nullable cause type.
-    /// When the node is directly a `null` or `undefined` keyword, emits TS18050.
+    /// Report an error for nullish object access.
+    /// Emits TS18050 when the value IS definitively null/undefined,
+    /// or TS2531/2532/2533 when the value is POSSIBLY null/undefined.
     ///
-    /// TS2531/2532/2533 are only emitted when strictNullChecks is enabled.
-    /// TS18050 is always emitted for literal null/undefined keywords.
-    pub(crate) fn report_possibly_nullish_object(&mut self, idx: NodeIndex, cause: TypeId) {
+    /// # Arguments
+    /// * `idx` - The node index of the expression being accessed
+    /// * `cause` - The nullish type (null, undefined, or null|undefined)
+    /// * `is_definitely_nullish` - If true, the entire type is nullish (emit TS18050).
+    ///                             If false, the type includes nullish but also non-nullish parts (emit TS2531/2532/2533).
+    pub(crate) fn report_nullish_object(
+        &mut self,
+        idx: NodeIndex,
+        cause: TypeId,
+        is_definitely_nullish: bool,
+    ) {
         use crate::checker::types::diagnostics::{
             diagnostic_codes, diagnostic_messages, format_message,
         };
         use crate::scanner::SyntaxKind;
 
-        // Check if the node is directly a null or undefined keyword - emit TS18050
-        // TS18050 is not gated by strictNullChecks
-        if let Some(node) = self.ctx.arena.get(idx) {
-            if node.kind == SyntaxKind::NullKeyword as u16 {
-                let message =
-                    format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &["null"]);
-                self.error_at_node(idx, &message, diagnostic_codes::VALUE_CANNOT_BE_USED_HERE);
-                return;
-            }
-            if node.kind == SyntaxKind::Identifier as u16 {
-                if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                    if ident.escaped_text == "undefined" {
-                        let message = format_message(
-                            diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
-                            &["undefined"],
-                        );
-                        self.error_at_node(
-                            idx,
-                            &message,
-                            diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
-                        );
-                        return;
+        // TS18050: "The value 'X' cannot be used here" - emitted when value IS null/undefined
+        // This is NOT gated by strictNullChecks because the value is definitively unusable.
+        if is_definitely_nullish {
+            // Check for literal null/undefined keywords for the specific value name
+            let value_name = if let Some(node) = self.ctx.arena.get(idx) {
+                if node.kind == SyntaxKind::NullKeyword as u16 {
+                    Some("null")
+                } else if node.kind == SyntaxKind::Identifier as u16 {
+                    if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                        if ident.escaped_text == "undefined" {
+                            Some("undefined")
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
                     }
+                } else {
+                    None
                 }
-            }
+            } else {
+                None
+            };
+
+            // Determine the value name from cause type if not a literal keyword
+            let value_name = value_name.unwrap_or_else(|| {
+                if cause == TypeId::NULL {
+                    "null"
+                } else if cause == TypeId::UNDEFINED {
+                    "undefined"
+                } else {
+                    // Union of null | undefined
+                    "null"
+                }
+            });
+
+            let message =
+                format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[value_name]);
+            self.error_at_node(idx, &message, diagnostic_codes::VALUE_CANNOT_BE_USED_HERE);
+            return;
         }
 
         // TS2531/2532/2533 require strictNullChecks. When strictNullChecks is off,
@@ -942,6 +965,28 @@ impl<'a> CheckerState<'a> {
         };
 
         self.error_at_node(idx, message, code);
+    }
+
+    /// Report an error for possibly nullish object access (legacy wrapper).
+    /// Use `report_nullish_object` directly for new code.
+    pub(crate) fn report_possibly_nullish_object(&mut self, idx: NodeIndex, cause: TypeId) {
+        // Legacy behavior: check if this is a literal null/undefined keyword
+        // If so, it's definitely nullish; otherwise, it's possibly nullish
+        use crate::scanner::SyntaxKind;
+
+        let is_definitely_nullish = if let Some(node) = self.ctx.arena.get(idx) {
+            node.kind == SyntaxKind::NullKeyword as u16
+                || (node.kind == SyntaxKind::Identifier as u16
+                    && self
+                        .ctx
+                        .arena
+                        .get_identifier(node)
+                        .is_some_and(|ident| ident.escaped_text == "undefined"))
+        } else {
+            false
+        };
+
+        self.report_nullish_object(idx, cause, is_definitely_nullish);
     }
 
     // =========================================================================
