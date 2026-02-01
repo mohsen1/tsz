@@ -271,7 +271,7 @@ fn resolve_primitive_property(...) -> PropertyAccessResult {
 }
 ```
 
-**Status:** TODO
+**Status:** DONE (Feb 2, 2026) - Added fallback to apparent members when boxed type property not found
 
 ---
 
@@ -293,7 +293,7 @@ pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: u32 = 
 pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: u32 = 2436;
 ```
 
-**Status:** TODO
+**Status:** DONE (Feb 2, 2026)
 
 ---
 
@@ -309,7 +309,7 @@ pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: u32 = 
 
 **Solution:** Check target mode and use TS1055 for ES5, TS2705 for ES2017+
 
-**Status:** TODO
+**Status:** DONE (Feb 2, 2026) - Added TS1055 diagnostic and target mode check
 
 ---
 
@@ -333,7 +333,7 @@ Argument of type '(s: string) => error' is not assignable to parameter of type '
 2. Create `PendingDiagnostic` containing raw `TypeId`s
 3. Checker renders diagnostic later using `TypeFormatter::with_symbols`
 
-**Status:** TODO
+**Status:** TODO - COMPLEX, needs architecture review
 
 ---
 
@@ -352,7 +352,7 @@ Argument of type '(s: string) => error' is not assignable to parameter of type '
 
 **Solution:** Check if identifier is an ES2015+ type name and emit TS2585 with lib suggestion
 
-**Status:** TODO
+**Status:** DONE (Feb 2, 2026) - Fixed Symbol intrinsic handler to check VALUE flag before proceeding
 
 ---
 
@@ -378,7 +378,7 @@ if !var_decl.initializer.is_none() && self.is_ambient_declaration(decl_idx) {
 }
 ```
 
-**Status:** TODO
+**Status:** DONE (Feb 2, 2026) - Added check in check_variable_declaration
 
 ---
 
@@ -392,7 +392,7 @@ if !var_decl.initializer.is_none() && self.is_ambient_declaration(decl_idx) {
 
 **Analysis (from Gemini):** Module resolution correctly uses specificity - `"./a.foo"` won't match `b.foo`. The issue may be in how tsz incorrectly merges the specific declaration with the wildcard.
 
-**Status:** TODO - needs deeper investigation
+**Status:** TODO - needs module resolution fix (MISSING error, not extra)
 
 ---
 
