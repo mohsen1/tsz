@@ -200,7 +200,7 @@ class Derived extends Base { #count = 0; }
         helpers.awaiter && helpers.generator,
         "Expected async helpers to be set"
     );
-    assert!(helpers.values, "Expected __values helper to be set");
+    // Note: for-of no longer uses __values helper (uses simple array indexing)
     assert!(helpers.rest, "Expected __rest helper to be set");
     assert!(
         helpers.make_template_object,
@@ -3530,13 +3530,13 @@ fn test_two_phase_emission_es5_for_of_statement() {
 
     let output = printer.get_output();
     assert!(
-        output.contains("__values(arr)"),
-        "ES5 output should downlevel for-of with __values helper: {}",
+        output.contains("_i < _a.length"),
+        "ES5 output should downlevel for-of with array indexing: {}",
         output
     );
     assert!(
-        output.contains(".return"),
-        "ES5 output should close iterators: {}",
+        output.contains("var v = _a[_i]"),
+        "ES5 output should bind loop variable from array: {}",
         output
     );
     assert!(
@@ -4048,7 +4048,7 @@ fn test_two_phase_emission_es5_template_expression_downlevel() {
         output
     );
     assert!(
-        output.contains("+ (name)"),
+        output.contains(".concat(name)"),
         "ES5 template expression should concatenate expression: {}",
         output
     );

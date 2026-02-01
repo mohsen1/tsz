@@ -256,15 +256,11 @@ impl ParserState {
                             self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
                         }
                         SyntaxKind::InterfaceKeyword => {
-                            self.parse_interface_declaration_with_modifiers(
-                                start_pos, modifiers,
-                            )
+                            self.parse_interface_declaration_with_modifiers(start_pos, modifiers)
                         }
                         SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
                             if self.look_ahead_is_module_declaration() {
-                                self.parse_module_declaration_with_modifiers(
-                                    start_pos, modifiers,
-                                )
+                                self.parse_module_declaration_with_modifiers(start_pos, modifiers)
                             } else {
                                 self.parse_expression_statement()
                             }
@@ -2573,7 +2569,8 @@ impl ParserState {
                     SyntaxKind::Identifier
                         | SyntaxKind::PrivateIdentifier
                         | SyntaxKind::OpenBracketToken
-                ) {
+                )
+            {
                 // This is likely being used as a modifier, emit error and recover
                 self.parse_error_at_current_token(
                     "A class member cannot have the 'const', 'let', or 'var' keyword.",
