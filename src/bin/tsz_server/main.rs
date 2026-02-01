@@ -67,6 +67,41 @@ use wasm::parser::base::NodeIndex;
 use wasm::parser::node::{NodeAccess, NodeArena};
 use wasm::solver::TypeInterner;
 
+// Diagnostic code for "File appears to be binary."
+const TS1490_FILE_APPEARS_TO_BE_BINARY: i32 = 1490;
+
+/// Check if content appears to be garbled binary (e.g., UTF-16 read as UTF-8).
+///
+/// When Node.js reads a UTF-16 file as UTF-8, it produces garbled output with:
+/// - Replacement characters (U+FFFD)
+/// - Many null bytes interspersed with ASCII
+///
+/// Returns true if content looks like corrupted binary that should emit TS1490.
+fn content_appears_binary(content: &str) -> bool {
+    if content.is_empty() {
+        return false;
+    }
+
+    // Count problematic patterns in first 512 chars
+    let check_len = content.len().min(512);
+    let check_slice = &content[..check_len];
+
+    // Check for replacement character (common when invalid UTF-8 sequences are read)
+    let replacement_count = check_slice.matches('\u{FFFD}').count();
+    if replacement_count >= 3 {
+        return true;
+    }
+
+    // Check for null bytes (common in UTF-16 content read as UTF-8)
+    // UTF-16 has null bytes between ASCII characters
+    let null_count = check_slice.chars().filter(|&c| c == '\0').count();
+    if null_count >= 4 {
+        return true;
+    }
+
+    false
+}
+
 // =============================================================================
 // CLI Arguments (tsserver-compatible)
 // =============================================================================
@@ -3068,11 +3103,19 @@ impl Server {
         }
 
         let mut parsed_files: Vec<ParsedFile> = Vec::with_capacity(files.len());
+        let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
         for (file_name, content) in &files {
             // Skip non-TypeScript/JavaScript files (e.g. .json, .txt).
             // They may be present in multi-file tests for module resolution
             // fixtures but must not be parsed as TypeScript source.
             if !Self::is_checkable_file(file_name) {
+                continue;
+            }
+
+            // Check if content appears to be garbled binary (e.g., UTF-16 read as UTF-8)
+            // If so, emit TS1490 "File appears to be binary." instead of parsing
+            if content_appears_binary(content) {
+                binary_file_errors.push((file_name.clone(), TS1490_FILE_APPEARS_TO_BE_BINARY));
                 continue;
             }
 
@@ -3134,6 +3177,11 @@ impl Server {
         // PHASE 4: Type check all files
         let query_cache = wasm::solver::QueryCache::new(&type_interner);
         let mut all_codes: Vec<i32> = Vec::new();
+
+        // Add TS1490 for binary files detected earlier
+        for (_file_name, code) in binary_file_errors {
+            all_codes.push(code);
+        }
         for (file_idx, bound) in bound_files.iter().enumerate() {
             all_codes.extend(&bound.parse_errors);
 

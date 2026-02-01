@@ -347,6 +347,7 @@ pub mod diagnostic_codes {
     pub const YIELD_EXPRESSION_ONLY_IN_GENERATOR: u32 = 1163; // A 'yield' expression is only allowed in a generator body.
     pub const AWAIT_IN_STATIC_BLOCK: u32 = 18037; // 'await' expression cannot be used inside a class static block.
     pub const YIELD_IN_STATIC_BLOCK: u32 = 18041; // 'yield' expression cannot be used inside a class static block. (Note: TSC uses same code for return)
+    pub const FILE_APPEARS_TO_BE_BINARY: u32 = 1490; // File appears to be binary.
     pub const NUMERIC_SEPARATORS_NOT_ALLOWED_HERE: u32 = 6188;
     pub const MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_NOT_PERMITTED: u32 = 6189;
 

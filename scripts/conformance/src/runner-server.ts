@@ -27,6 +27,68 @@ import {
 import { runTscOnFiles, type DiagnosticInfo } from './tsc-runner.js';
 
 // ============================================================================
+// Binary File Detection
+// ============================================================================
+
+/**
+ * Check if a file appears to be binary (UTF-16, corrupted, etc.)
+ * Returns true if the file should emit TS1490 instead of being parsed.
+ */
+function isBinaryFile(filePath: string): boolean {
+  try {
+    const buffer = fs.readFileSync(filePath);
+    if (buffer.length === 0) return false;
+
+    // Check for UTF-16 BOM
+    // UTF-16 BE: FE FF
+    // UTF-16 LE: FF FE
+    if (buffer.length >= 2) {
+      if ((buffer[0] === 0xFE && buffer[1] === 0xFF) ||
+          (buffer[0] === 0xFF && buffer[1] === 0xFE)) {
+        return true;
+      }
+    }
+
+    // Check for many null bytes (binary file indicator)
+    const nullCount = buffer.slice(0, 1024).filter(b => b === 0).length;
+    if (nullCount > 10) {
+      return true;
+    }
+
+    // Check for consecutive null bytes (UTF-16 or binary)
+    let consecutiveNulls = 0;
+    for (let i = 0; i < Math.min(512, buffer.length); i++) {
+      if (buffer[i] === 0) {
+        consecutiveNulls++;
+        if (consecutiveNulls >= 4) return true;
+      } else {
+        consecutiveNulls = 0;
+      }
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Safely read a source file, returning empty content for binary files.
+ * Binary files should have TS1490 emitted by the checker.
+ */
+function readSourceFile(filePath: string): { content: string; isBinary: boolean } {
+  if (isBinaryFile(filePath)) {
+    return { content: '', isBinary: true };
+  }
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return { content, isBinary: false };
+  } catch {
+    return { content: '', isBinary: true }; // Treat read errors as binary
+  }
+}
+
+// ============================================================================
 // tsz Binary Runner (for --print-test mode)
 // ============================================================================
 
