@@ -38,6 +38,17 @@ Progress: [██░░░░░░░░░░░░░░░░░░] 11.1% (
 ```
 <!-- FOURSLASH_END -->
 
+### Emit Progress
+
+We compare tsz JavaScript/declaration emit output against TypeScript's baseline files
+to ensure correct code generation.
+
+<!-- EMIT_START -->
+```
+JavaScript:  [██░░░░░░░░░░░░░░░░░░] 8.3% (37 / 448 tests)
+Declaration: [░░░░░░░░░░░░░░░░░░░░] 0.0% (0 / 0 tests)
+```
+<!-- EMIT_END -->
 
 ## Documentation
 

@@ -25,7 +25,9 @@ node scripts/help.mjs
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/conformance/run.sh` | Run conformance tests |
+| `scripts/conformance/run.sh` | Run type checker conformance tests |
+| `scripts/emit/run.sh` | Run emit tests (JS + declaration output) |
+| `scripts/run-fourslash.sh` | Run language service fourslash tests |
 | `scripts/test.sh` | Run Rust unit tests |
 | `scripts/bench.sh` | Run benchmarks |
 | `scripts/build-wasm.sh` | Build WASM module |
