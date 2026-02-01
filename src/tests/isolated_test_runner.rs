@@ -481,7 +481,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO: Isolated runner panic handling platform-specific"]
     fn test_isolated_runner_panic() {
         let config = IsolatedTestConfig::default();
 
@@ -494,7 +493,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO: Isolated runner timeout handling platform-specific"]
     fn test_isolated_runner_timeout() {
         let config = IsolatedTestConfig {
             limits: ResourceLimits {

@@ -58,6 +58,7 @@ pub struct CheckerOptions {
     /// - Method parameter bivariance (TS9003)
     /// - `any` escapes (TS9004)
     /// - Excess properties via sticky freshness (TS9001)
+    ///
     /// Activated via: `--sound` CLI flag or `// @ts-sound` pragma
     pub sound_mode: bool,
     /// When true, enables experimental support for decorators (legacy decorators).

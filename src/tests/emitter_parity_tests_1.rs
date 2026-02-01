@@ -7,7 +7,6 @@ use crate::lowering_pass::LoweringPass;
 use crate::parser::ParserState;
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class() {
     assert_parity(
         "class Point { constructor(x, y) { this.x = x; this.y = y; } }",
@@ -17,7 +16,6 @@ fn test_parity_es5_class() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_commonjs_export() {
     assert_parity(
         "export class Foo {}",
@@ -27,7 +25,6 @@ fn test_parity_commonjs_export() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow() {
     assert_parity(
         "const add = (a, b) => a + b;",
@@ -37,7 +34,6 @@ fn test_parity_es5_arrow() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_async_es5() {
     assert_parity(
         "async function foo() { await bar(); }",
@@ -112,7 +108,6 @@ fn test_parity_es5_class_async_super_method() {
 /// In ES5, class accessors should be downleveled to Object.defineProperty calls.
 /// tsc emits: Object.defineProperty(Foo.prototype, "value", { get: function() {...}, set: function(v) {...}, ... });
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_getter_setter() {
     let source = "class Foo { private _value: number = 0; get value() { return this._value; } set value(v) { this._value = v; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -180,7 +175,6 @@ fn test_parity_es5_class_getter_setter() {
 /// Parity test for ES5 class with static getter.
 /// Static accessors should be defined on the class constructor, not the prototype.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_static_getter() {
     let source = "class Foo { private static _instance: Foo; static get instance() { return Foo._instance; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -235,7 +229,6 @@ fn test_parity_es5_class_static_getter() {
 /// In static methods, `this` refers to the class constructor.
 /// The async static method should be wrapped in __awaiter and properly capture `this`.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_static_async_this_capture() {
     let source = "class Foo { static value = 42; static async getValue() { return this.value; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -295,7 +288,6 @@ fn test_parity_es5_class_static_async_this_capture() {
 /// Class expressions should be downleveled similarly to class declarations,
 /// using __extends helper and IIFE pattern.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_extends() {
     let source =
         "const Derived = class extends Base { constructor() { super(); this.value = 1; } };";
@@ -366,7 +358,6 @@ fn test_parity_es5_class_expression_extends() {
 /// Instance fields should be initialized in constructor after super().
 /// Static fields should be assigned on class constructor after IIFE.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_derived_class_instance_static_fields() {
     let source = r#"
 class Derived extends Base {
@@ -443,7 +434,6 @@ class Derived extends Base {
 /// Async generators (`async function*`) should be downleveled using
 /// __awaiter, __generator, and __asyncGenerator helpers.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_function() {
     let source = "async function* gen() { yield 1; yield await Promise.resolve(2); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -492,7 +482,6 @@ fn test_parity_es5_async_generator_function() {
 /// Parity test for ES5 arrow function with rest parameters.
 /// Rest parameters should be converted to use arguments with slice.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_rest_parameters() {
     let source = "const sum = (...nums) => nums.reduce((a, b) => a + b, 0);";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -549,7 +538,6 @@ fn test_parity_es5_arrow_rest_parameters() {
 /// Parity test for ES5 default export class in CommonJS.
 /// Default exported class should be downleveled and exported via exports.default.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_default_export_class() {
     let source = "export default class Foo { constructor(x) { this.x = x; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -611,7 +599,6 @@ fn test_parity_es5_default_export_class() {
 /// Parity test for ES5 async iteration (for await...of).
 /// Async iteration should be downleveled using __asyncValues helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_iteration() {
     let source =
         "async function process(items) { for await (const item of items) { console.log(item); } }";
@@ -673,7 +660,6 @@ fn test_parity_es5_async_iteration() {
 /// Parity test for ES5 for-await-of with destructuring.
 /// Tests a more complex for-await-of scenario with object destructuring.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_await_of_destructuring() {
     let source = "async function processItems(stream) { for await (const { id, value } of stream) { console.log(id, value); } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -826,7 +812,6 @@ class StreamProcessor {
 /// Parity test for ES5 for-await-of with error handling.
 /// Async iteration with try/catch/finally for error handling.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_await_of_error_handling() {
     let source = r#"
 interface StreamError { code: number; message: string }
@@ -913,7 +898,6 @@ async function safeIterate<T>(stream: AsyncIterable<T>): Promise<T[]> {
 /// Parity test for ES5 for-await-of with nested destructuring.
 /// Async iteration with complex nested destructuring patterns.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_await_of_nested_destructuring() {
     let source = r#"
 interface NestedData { outer: { inner: { value: number } }; meta: string }
@@ -988,7 +972,6 @@ async function extractValues(stream: AsyncIterable<NestedData>): Promise<number[
 /// Parity test for ES5 template literals.
 /// Template literals should be downleveled to string concatenation.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_literal() {
     let source = r#"const greeting = `Hello, ${name}!`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1040,7 +1023,6 @@ fn test_parity_es5_template_literal() {
 /// Parity test for ES5 computed property names.
 /// Computed properties in object literals should be downleveled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property() {
     let source = r#"const key = "foo"; const obj = { [key]: 42 };"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1091,7 +1073,6 @@ fn test_parity_es5_computed_property() {
 /// Parity test for ES5 shorthand property syntax.
 /// Shorthand properties { x, y } should be expanded to { x: x, y: y }.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_property() {
     let source = "const x = 1; const y = 2; const obj = { x, y };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1146,7 +1127,6 @@ fn test_parity_es5_shorthand_property() {
 /// Parity test for ES5 method shorthand in object literals.
 /// Method shorthand { foo() {} } should be expanded to { foo: function() {} }.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_method_shorthand() {
     let source = "const obj = { greet() { return 'hello'; } };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1197,7 +1177,6 @@ fn test_parity_es5_method_shorthand() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_method_definitions() {
     let source = r#"
 interface Calculator {
@@ -1278,7 +1257,6 @@ class MathOps {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_method_computed() {
     let source = r#"
 const methodName = "process";
@@ -1355,7 +1333,6 @@ class DynamicMethods {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_method_async() {
     let source = r#"
 interface AsyncService {
@@ -1450,7 +1427,6 @@ class AsyncHandler {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_method_generator() {
     let source = r#"
 interface Iterable<T> {
@@ -1560,7 +1536,6 @@ class GeneratorContainer<T> {
 /// Parity test for ES5 default parameters.
 /// Default parameters should be downleveled to undefined checks.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_default_parameters() {
     let source = "function greet(name = 'World') { return 'Hello, ' + name; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1611,7 +1586,6 @@ fn test_parity_es5_default_parameters() {
 /// Parity test for ES5 for...of loop.
 /// for...of should be downleveled to iterator pattern or indexed loop.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_loop() {
     let source = "const arr = [1, 2, 3]; for (const x of arr) { console.log(x); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1662,7 +1636,6 @@ fn test_parity_es5_for_of_loop() {
 /// Parity test for ES5 array destructuring in function parameters.
 /// Array destructuring params should be downleveled to indexed access.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_array_destructuring_param() {
     let source = "function swap([a, b]) { return [b, a]; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1708,7 +1681,6 @@ fn test_parity_es5_array_destructuring_param() {
 /// Parity test for ES5 object destructuring in function parameters.
 /// Object destructuring params should be downleveled to property access.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_destructuring_param() {
     let source = "function greet({ name, age }) { return name + ' is ' + age; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1754,7 +1726,6 @@ fn test_parity_es5_object_destructuring_param() {
 /// Parity test for ES5 arrow function with expression body.
 /// Arrow with expression body should be converted to function with return.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_expression_body() {
     let source = "const double = (x) => x * 2;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1810,7 +1781,6 @@ fn test_parity_es5_arrow_expression_body() {
 /// Parity test for ES5 derived class with constructor and super call.
 /// Derived class constructor should call _super with proper arguments.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_constructor_super() {
     let source = "class Animal { constructor(name) { this.name = name; } } class Dog extends Animal { constructor(name, breed) { super(name); this.breed = breed; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1865,7 +1835,6 @@ fn test_parity_es5_class_constructor_super() {
 /// Parity test for ES5 class with prototype methods.
 /// Class methods should be added to the prototype.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_prototype_method() {
     let source =
         "class Calculator { add(a, b) { return a + b; } multiply(a, b) { return a * b; } }";
@@ -1916,7 +1885,6 @@ fn test_parity_es5_class_prototype_method() {
 /// Parity test for ES5 async arrow function.
 /// Async arrow should be converted to function with __awaiter/__generator.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_arrow() {
     let source =
         "const fetchData = async () => { const result = await fetch('/api'); return result; };";
@@ -1976,7 +1944,6 @@ fn test_parity_es5_async_arrow() {
 /// Parity test for ES5 let in for loop.
 /// let/const should be converted to var.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_let_in_for_loop() {
     let source = "for (let i = 0; i < 10; i++) { console.log(i); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2020,7 +1987,6 @@ fn test_parity_es5_let_in_for_loop() {
 /// Parity test for ES5 const declaration.
 /// const should be converted to var.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_const_declaration() {
     let source = "const PI = 3.14159; const E = 2.71828;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2069,7 +2035,6 @@ fn test_parity_es5_const_declaration() {
 /// Parity test for ES5 CommonJS named exports.
 /// Named exports should be assigned to exports object.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_commonjs_named_exports() {
     let source = "const foo = 1; const bar = 2; export { foo, bar };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2129,7 +2094,6 @@ fn test_parity_es5_commonjs_named_exports() {
 /// Parity test for ES5 class with static property initialization.
 /// Static properties should be assigned after the class IIFE.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_static_property() {
     let source = "class Config { static version = '1.0.0'; static count = 0; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2187,7 +2151,6 @@ fn test_parity_es5_class_static_property() {
 /// Abstract classes should be downleveled just like regular classes,
 /// with the abstract keyword removed (only TypeScript type checking uses it).
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class() {
     let source = "abstract class Shape { abstract area(): number; getName() { return 'shape'; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2244,7 +2207,6 @@ fn test_parity_es5_abstract_class() {
 /// Parity test for ES5 namespace/module downlevel.
 /// TypeScript namespaces should be downleveled to IIFE with exports.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace() {
     let source = "namespace Utils { export function add(a: number, b: number) { return a + b; } export const PI = 3.14; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2300,7 +2262,6 @@ fn test_parity_es5_namespace() {
 /// Parity test for ES5 enum downlevel.
 /// TypeScript enums should be downleveled to IIFE with bidirectional mapping.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum() {
     let source = "enum Color { Red, Green, Blue }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2351,7 +2312,6 @@ fn test_parity_es5_enum() {
 /// Parity test for ES5 string enum downlevel.
 /// String enums should be downleveled without reverse mapping.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_string_enum() {
     let source = r#"enum Direction { Up = "UP", Down = "DOWN", Left = "LEFT", Right = "RIGHT" }"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2405,7 +2365,6 @@ fn test_parity_es5_string_enum() {
 /// Parity test for type-only import erasure.
 /// Type-only imports should be completely removed from output.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_type_only_import_erasure() {
     let source = "import type { Foo } from './foo'; import { bar } from './bar'; bar();";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2450,7 +2409,6 @@ fn test_parity_type_only_import_erasure() {
 /// Parity test for interface erasure.
 /// TypeScript interfaces should be completely removed from output.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_interface_erasure() {
     let source = "interface User { name: string; age: number; } const user: User = { name: 'Alice', age: 30 };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2495,7 +2453,6 @@ fn test_parity_interface_erasure() {
 /// Parity test for type alias erasure.
 /// TypeScript type aliases should be completely removed from output.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_type_alias_erasure() {
     let source = "type StringOrNumber = string | number; const value: StringOrNumber = 42;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2540,7 +2497,6 @@ fn test_parity_type_alias_erasure() {
 /// Parity test for function parameter type erasure.
 /// Function parameter types should be removed from output.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_function_param_type_erasure() {
     let source = "function greet(name: string, age: number): string { return name + age; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2591,7 +2547,6 @@ fn test_parity_function_param_type_erasure() {
 /// Parity test for generic type parameter erasure.
 /// Generic type parameters should be removed from output.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_generic_type_erasure() {
     let source = "function identity<T>(value: T): T { return value; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2642,7 +2597,6 @@ fn test_parity_generic_type_erasure() {
 /// Parity test for optional parameter question mark erasure.
 /// The ? marker on optional parameters should be removed.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_optional_param_erasure() {
     let source = "function greet(name?: string) { return name || 'World'; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2693,7 +2647,6 @@ fn test_parity_optional_param_erasure() {
 /// Parity test for rest parameters ES5 downlevel.
 /// Rest parameters should be converted to arguments slicing.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params() {
     let source = "function sum(...nums: number[]) { return nums.reduce((a, b) => a + b, 0); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2738,7 +2691,6 @@ fn test_parity_es5_rest_params() {
 /// Parity test for ES5 class static block downlevel.
 /// Static blocks should be converted to static initialization code.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block() {
     let source = r#"class Counter {
     static count = 0;
@@ -2788,7 +2740,6 @@ fn test_parity_es5_static_block() {
 /// Parity test for ES5 class static block with multiple statements.
 /// Multiple statements in static block should be preserved.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_multi_stmt() {
     let source = r#"class Config {
     static debug = false;
@@ -2847,7 +2798,6 @@ fn test_parity_es5_static_block_multi_stmt() {
 /// Parity test for ES5 object spread downlevel.
 /// Object spread should be converted to Object.assign or helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread() {
     let source = "const merged = { ...obj1, ...obj2, extra: true };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2884,7 +2834,6 @@ fn test_parity_es5_object_spread() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_typed() {
     let source = r#"
 interface Person {
@@ -2966,7 +2915,6 @@ const partial: PartialEmployee = { ...employee, salary: undefined };
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_multiple() {
     let source = r#"
 interface Config {
@@ -3043,7 +2991,6 @@ const combined = { ...a, ...b, ...c, ...d };
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_overrides() {
     let source = r#"
 interface Theme {
@@ -3125,7 +3072,6 @@ const result = withDefaults(lightTheme, { primary: "navy" });
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_nested_deep() {
     let source = r#"
 interface DeepConfig {
@@ -3227,7 +3173,6 @@ function deepMerge<T extends object>(a: T, b: Partial<T>): T {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_computed() {
     let source = r#"
 const propName = "dynamicKey";
@@ -3432,7 +3377,6 @@ fn test_parity_es5_private_field() {
 /// Parity test for ES5 private static field access downlevel.
 /// Static private field access should use __classPrivateFieldGet helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_static_field_access() {
     let source = r#"class Counter {
     static #count = 0;
@@ -3531,7 +3475,6 @@ fn test_parity_es5_private_method() {
 /// Parity test for ES5 private getter downlevel.
 /// Private getters should be converted using helper functions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_getter() {
     let source = r#"class Box {
     #value = 0;
@@ -3578,7 +3521,6 @@ fn test_parity_es5_private_getter() {
 /// Parity test for ES5 private setter downlevel.
 /// Private setters should be converted using helper functions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_setter() {
     let source = r#"class Container {
     #data = "";
@@ -3631,7 +3573,6 @@ fn test_parity_es5_private_setter() {
 /// Parity test for ES5 nullish coalescing downlevel.
 /// The ?? operator should be converted to ternary checks.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_coalescing() {
     let source = "const result = value ?? 'default';";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3664,7 +3605,6 @@ fn test_parity_es5_nullish_coalescing() {
 /// Parity test for ES5 optional chaining downlevel.
 /// The ?. operator should be converted to conditional checks.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining() {
     let source = "const name = obj?.person?.name;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3697,7 +3637,6 @@ fn test_parity_es5_optional_chaining() {
 /// Parity test for ES5 generator function type erasure.
 /// Generator function type annotations should be erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_type_erasure() {
     let source = r#"function* range(start: number, end: number): Generator<number> {
     yield start;
@@ -3738,7 +3677,6 @@ fn test_parity_es5_generator_type_erasure() {
 /// Parity test for ES5 generator method in class downlevel.
 /// Generator methods should be converted to __generator helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_method() {
     let source = r#"class Sequence {
     *items() {
@@ -3783,7 +3721,6 @@ fn test_parity_es5_generator_method() {
 /// Parity test for ES5 generator yield type erasure.
 /// Generator yield expressions should have types erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_yield_type_erasure() {
     let source = r#"function* gen(): Generator<string, void, unknown> {
     const result: string = yield "hello";
@@ -3825,7 +3762,6 @@ fn test_parity_es5_generator_yield_type_erasure() {
 /// Parity test for ES5 async generator function type erasure.
 /// Async generator type annotations should be erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_type_erasure() {
     let source = r#"async function* fetchPages(urls: string[]): AsyncGenerator<string> {
     for (const url of urls) {
@@ -3868,7 +3804,6 @@ fn test_parity_es5_async_generator_type_erasure() {
 /// Parity test for ES5 async generator method in class.
 /// Async generator methods should have types erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_method() {
     let source = r#"class DataStream {
     async *items(): AsyncGenerator<number> {
@@ -3912,7 +3847,6 @@ fn test_parity_es5_async_generator_method() {
 /// Parity test for ES5 async generator with await and yield.
 /// Both await and yield should be preserved in output.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_await_yield() {
     let source = r#"async function* process(items: Promise<number>[]): AsyncGenerator<number> {
     for (const item of items) {
@@ -3956,7 +3890,6 @@ fn test_parity_es5_async_generator_await_yield() {
 /// Parity test for ES5 class decorator downlevel.
 /// Class decorators should use __decorate helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator() {
     let source = r#"function sealed(constructor: Function) {}
 
@@ -4060,7 +3993,6 @@ class Calculator {
 /// Parity test for ES5 property decorator downlevel.
 /// Property decorators should use __decorate helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator() {
     let source = r#"function observable(target: any, key: string) {}
 
@@ -4110,7 +4042,6 @@ class User {
 /// Parity test for ES5 parameter decorator downlevel.
 /// Parameter decorators should use __param helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator() {
     let source = r#"function inject(target: any, key: string, index: number) {}
 
@@ -4412,7 +4343,6 @@ class Container<T> {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_function_call() {
     let source = r#"
 function sum(...nums: number[]): number {
@@ -4492,7 +4422,6 @@ const logger: Logger = {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_new_expression() {
     let source = r#"
 class Vector {
@@ -4698,7 +4627,6 @@ const flat = ArrayUtils.flatten(nested);
 /// Parity test for ES5 array destructuring assignment downlevel.
 /// Array destructuring should be converted to indexed access.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_array_destructuring_assignment() {
     let source = "const [first, second, third] = items;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4737,7 +4665,6 @@ fn test_parity_es5_array_destructuring_assignment() {
 /// Parity test for ES5 object destructuring assignment downlevel.
 /// Object destructuring should be converted to property access.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_destructuring_assignment() {
     let source = "const { name, age, city } = person;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4776,7 +4703,6 @@ fn test_parity_es5_object_destructuring_assignment() {
 /// Parity test for ES5 nested destructuring downlevel.
 /// Nested destructuring should be fully expanded.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nested_destructuring() {
     let source = "const { user: { name, address: { city } } } = data;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4809,7 +4735,6 @@ fn test_parity_es5_nested_destructuring() {
 /// Parity test for ES5 destructuring with default values downlevel.
 /// Default values in destructuring should be preserved.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_defaults() {
     let source = "const { name = 'Anonymous', age = 0 } = config;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4848,7 +4773,6 @@ fn test_parity_es5_destructuring_defaults() {
 /// Parity test for ES5 destructuring with rest element downlevel.
 /// Rest element in destructuring should be handled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_rest() {
     let source = "const [first, ...remaining] = items;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4887,7 +4811,6 @@ fn test_parity_es5_destructuring_rest() {
 /// Parity test for ES5 optional method call downlevel.
 /// Optional method calls (?.) should be transformed.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_method_call() {
     let source = "const result = obj?.method?.();";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4920,7 +4843,6 @@ fn test_parity_es5_optional_method_call() {
 /// Parity test for ES5 optional element access downlevel.
 /// Optional element access (?.[ ]) should be transformed.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_element_access() {
     let source = "const value = arr?.[0]?.name;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4953,7 +4875,6 @@ fn test_parity_es5_optional_element_access() {
 /// Parity test for ES5 optional chaining with nullish coalescing.
 /// Combined ?. and ?? should both be handled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining_with_nullish() {
     let source = "const name = user?.profile?.name ?? 'Anonymous';";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4992,7 +4913,6 @@ fn test_parity_es5_optional_chaining_with_nullish() {
 /// Parity test for ES5 optional chaining in function call.
 /// Optional chaining before function call should be handled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining_call() {
     let source = "const result = callback?.(arg1, arg2);";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5031,7 +4951,6 @@ fn test_parity_es5_optional_chaining_call() {
 /// Parity test for ES5 nullish coalescing with function call.
 /// Nullish coalescing with function call as fallback.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_coalescing_call() {
     let source = "const value = config ?? getDefault();";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5070,7 +4989,6 @@ fn test_parity_es5_nullish_coalescing_call() {
 /// Parity test for ES5 nullish coalescing assignment operator.
 /// The ??= operator should be downleveled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_assignment() {
     let source = "x ??= defaultValue;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5103,7 +5021,6 @@ fn test_parity_es5_nullish_assignment() {
 /// Parity test for ES5 chained nullish coalescing.
 /// Multiple ?? operators in chain.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_chained() {
     let source = "const result = a ?? b ?? c ?? 'fallback';";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5148,7 +5065,6 @@ fn test_parity_es5_nullish_chained() {
 /// Parity test for ES5 nullish coalescing with object property.
 /// Nullish coalescing on object property access.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_property() {
     let source = "const name = obj.name ?? obj.defaultName ?? 'Unknown';";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5187,7 +5103,6 @@ fn test_parity_es5_nullish_property() {
 /// Parity test for ES5 template literal with multiple expressions.
 /// Multiple expressions should all be concatenated.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_multi_expr() {
     let source = r#"const msg = `Hello ${first} ${middle} ${last}!`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5232,7 +5147,6 @@ fn test_parity_es5_template_multi_expr() {
 /// Parity test for ES5 tagged template literal.
 /// Tagged templates should be converted to function calls.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tagged_template() {
     let source = r#"const result = tag`Hello ${name}!`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5271,7 +5185,6 @@ fn test_parity_es5_tagged_template() {
 /// Parity test for ES5 template literal with function call expression.
 /// Function calls in template expressions should be preserved.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_with_call() {
     let source = r#"const msg = `Result: ${compute(x, y)}`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5316,7 +5229,6 @@ fn test_parity_es5_template_with_call() {
 /// Parity test for ES5 nested template literals.
 /// Nested templates should all be converted.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_nested() {
     let source = r#"const msg = `outer ${`inner ${value}`}`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5361,7 +5273,6 @@ fn test_parity_es5_template_nested() {
 /// Parity test for ES5 for-of with array destructuring.
 /// for (const [a, b] of pairs) should downlevel both for-of and destructuring.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_array_destructuring() {
     let source = "const pairs = [[1,2],[3,4]]; for (const [a, b] of pairs) { console.log(a + b); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5412,7 +5323,6 @@ fn test_parity_es5_for_of_array_destructuring() {
 /// Parity test for ES5 for-of with object destructuring.
 /// for (const {x, y} of points) should downlevel both for-of and destructuring.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_object_destructuring() {
     let source =
         "const points = [{x:1,y:2},{x:3,y:4}]; for (const {x, y} of points) { console.log(x, y); }";
@@ -5464,7 +5374,6 @@ fn test_parity_es5_for_of_object_destructuring() {
 /// Parity test for ES5 nested for-of loops.
 /// Nested for-of should both be downleveled correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_nested() {
     let source = "const matrix = [[1,2],[3,4]]; for (const row of matrix) { for (const cell of row) { console.log(cell); } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5509,7 +5418,6 @@ fn test_parity_es5_for_of_nested() {
 /// Parity test for ES5 for-of with let binding.
 /// for (let x of arr) should downlevel to var in ES5.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_let() {
     let source = "const items = [1, 2, 3]; for (let item of items) { item++; console.log(item); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5560,7 +5468,6 @@ fn test_parity_es5_for_of_let() {
 /// Parity test for ES5 logical OR assignment (||=).
 /// x ||= y should downlevel to x || (x = y) or equivalent.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_logical_or_assignment() {
     let source = "let x = null; x ||= 'default';";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5605,7 +5512,6 @@ fn test_parity_es5_logical_or_assignment() {
 /// Parity test for ES5 logical AND assignment (&&=).
 /// x &&= y should downlevel to x && (x = y) or equivalent.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_logical_and_assignment() {
     let source = "let obj = { value: 1 }; obj.value &&= 42;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5650,7 +5556,6 @@ fn test_parity_es5_logical_and_assignment() {
 /// Parity test for ES5 nullish coalescing assignment (??=).
 /// x ??= y should downlevel to x ?? (x = y) or null check equivalent.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_assignment_operator() {
     let source = "let config = { timeout: undefined }; config.timeout ??= 5000;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5695,7 +5600,6 @@ fn test_parity_es5_nullish_assignment_operator() {
 /// Parity test for ES5 logical assignment with property access.
 /// obj.prop ||= value should downlevel correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_logical_assignment_property() {
     let source = "const settings = {}; settings.theme ||= 'dark'; settings.debug &&= false;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5740,7 +5644,6 @@ fn test_parity_es5_logical_assignment_property() {
 /// Parity test for ES5 exponentiation operator with type erasure.
 /// Verifies type annotations are erased alongside exponentiation usage.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_exponentiation_type_erasure() {
     let source = "function power(base: number, exp: number): number { return base ** exp; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5785,7 +5688,6 @@ fn test_parity_es5_exponentiation_type_erasure() {
 /// Parity test for ES5 exponentiation with const to var.
 /// const with exponentiation should convert to var in ES5.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_exponentiation_const_to_var() {
     let source = "const squared = 5 ** 2;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5824,7 +5726,6 @@ fn test_parity_es5_exponentiation_const_to_var() {
 /// Parity test for ES5 exponentiation with let to var.
 /// let with exponentiation should convert to var in ES5.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_exponentiation_let_to_var() {
     let source = "let result = 2 ** 10; result = result ** 2;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5863,7 +5764,6 @@ fn test_parity_es5_exponentiation_let_to_var() {
 /// Parity test for ES5 exponentiation in arrow function.
 /// Arrow function with exponentiation should downlevel correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_exponentiation_arrow() {
     let source = "const cube = (n: number) => n ** 3;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5908,7 +5808,6 @@ fn test_parity_es5_exponentiation_arrow() {
 /// Parity test for ES5 arrow function with typed expression body.
 /// () => expr should convert to function() { return expr; }.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_typed_expression() {
     let source = "const double = (x: number) => x * 2;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

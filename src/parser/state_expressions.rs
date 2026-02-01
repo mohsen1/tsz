@@ -441,7 +441,10 @@ impl ParserState {
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
-                    modifiers.push(self.arena.add_token(SyntaxKind::ConstKeyword as u16, pos, end));
+                    modifiers.push(
+                        self.arena
+                            .add_token(SyntaxKind::ConstKeyword as u16, pos, end),
+                    );
                 }
                 SyntaxKind::InKeyword => {
                     let pos = self.token_pos();
@@ -453,7 +456,10 @@ impl ParserState {
                     let pos = self.token_pos();
                     let end = self.token_end();
                     self.next_token();
-                    modifiers.push(self.arena.add_token(SyntaxKind::OutKeyword as u16, pos, end));
+                    modifiers.push(
+                        self.arena
+                            .add_token(SyntaxKind::OutKeyword as u16, pos, end),
+                    );
                 }
                 _ => break,
             }

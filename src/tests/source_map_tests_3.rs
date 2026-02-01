@@ -3544,7 +3544,6 @@ widgets.push(new Widget("checkbox"));"#;
 }
 
 #[test]
-#[ignore = "Test times out/hangs - needs performance investigation"]
 fn test_source_map_expression_delete_void_typeof() {
     // Test delete, void, typeof expression statements
     let source = r#"const obj: { [key: string]: number } = { a: 1, b: 2 };

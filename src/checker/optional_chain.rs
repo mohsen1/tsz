@@ -31,7 +31,7 @@
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::solver as solver_narrowing;
-use crate::solver::{TypeId as SolverTypeId, TypeDatabase};
+use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 use rustc_hash::FxHashSet;
 
 /// Maximum depth for optional chain traversal to prevent infinite loops

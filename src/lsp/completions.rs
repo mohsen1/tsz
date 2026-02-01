@@ -815,8 +815,17 @@ impl<'a> Completions<'a> {
         let has_trailing_ws = text.len() > trimmed.len();
 
         let definition_keywords = [
-            "var", "let", "const", "function", "class", "interface", "type", "enum",
-            "namespace", "module", "infer",
+            "var",
+            "let",
+            "const",
+            "function",
+            "class",
+            "interface",
+            "type",
+            "enum",
+            "namespace",
+            "module",
+            "infer",
         ];
 
         // Helper to check whole-word boundary
@@ -832,14 +841,21 @@ impl<'a> Completions<'a> {
         };
 
         // Case 1: "keyword |" - cursor after keyword + whitespace
-        if has_trailing_ws && definition_keywords.iter().any(|kw| is_whole_word(trimmed, kw)) {
+        if has_trailing_ws
+            && definition_keywords
+                .iter()
+                .any(|kw| is_whole_word(trimmed, kw))
+        {
             return true;
         }
 
         // Case 2: "keyword partialId|" - cursor while typing identifier after keyword
         if !has_trailing_ws && !last_word.is_empty() {
             let before_word = trimmed[..last_word_start].trim_end();
-            if definition_keywords.iter().any(|kw| is_whole_word(before_word, kw)) {
+            if definition_keywords
+                .iter()
+                .any(|kw| is_whole_word(before_word, kw))
+            {
                 return true;
             }
             // "function* name|" - generator function name
@@ -856,7 +872,11 @@ impl<'a> Completions<'a> {
         }
 
         // The text before the cursor (or before the partial identifier being typed)
-        let check_before = if has_trailing_ws { trimmed } else { trimmed[..last_word_start].trim_end() };
+        let check_before = if has_trailing_ws {
+            trimmed
+        } else {
+            trimmed[..last_word_start].trim_end()
+        };
 
         // Case 3: comma in declarations: "var a, |", "function f(a, |", "<T, |"
         if check_before.ends_with(',') {
@@ -951,19 +971,22 @@ impl<'a> Completions<'a> {
                 let between = &text_before_comma[pos + kw.len()..];
                 let mut brace_depth: i32 = 0;
                 let mut paren_depth: i32 = 0;
-                let mut bracket_depth: i32 = 0;
+                let mut _bracket_depth: i32 = 0;
                 let mut has_boundary = false;
                 for &b in between.as_bytes() {
                     match b {
                         b'{' => brace_depth += 1,
                         b'}' => {
                             brace_depth -= 1;
-                            if brace_depth < 0 { has_boundary = true; break; }
+                            if brace_depth < 0 {
+                                has_boundary = true;
+                                break;
+                            }
                         }
                         b'(' => paren_depth += 1,
                         b')' => paren_depth -= 1,
-                        b'[' => bracket_depth += 1,
-                        b']' => bracket_depth -= 1,
+                        b'[' => _bracket_depth += 1,
+                        b']' => _bracket_depth -= 1,
                         b';' if brace_depth == 0 && paren_depth == 0 => {
                             has_boundary = true;
                             break;
@@ -1029,14 +1052,11 @@ impl<'a> Completions<'a> {
                                     b'<' => {
                                         angle_depth -= 1;
                                         if angle_depth == 0 {
-                                            let before_angle =
-                                                before_paren[..j].trim_end();
+                                            let before_angle = before_paren[..j].trim_end();
                                             if !before_angle.is_empty() {
                                                 let ws = before_angle
                                                     .rfind(|c: char| {
-                                                        !c.is_alphanumeric()
-                                                            && c != '_'
-                                                            && c != '$'
+                                                        !c.is_alphanumeric() && c != '_' && c != '$'
                                                     })
                                                     .map(|p| p + 1)
                                                     .unwrap_or(0);
@@ -1077,9 +1097,7 @@ impl<'a> Completions<'a> {
                 b'<' => {
                     if angle_depth == 0 {
                         // Found unmatched '<' - check if it's a type param opener
-                        return Self::text_before_angle_is_type_param(
-                            &text_before[..i],
-                        );
+                        return Self::text_before_angle_is_type_param(&text_before[..i]);
                     }
                     angle_depth -= 1;
                 }
@@ -1115,12 +1133,10 @@ impl<'a> Completions<'a> {
         for kw in &type_param_keywords {
             if before_word.ends_with(kw) {
                 let kw_start = before_word.len() - kw.len();
-                if kw_start == 0
-                    || {
-                        let c = before_word.as_bytes()[kw_start - 1];
-                        !c.is_ascii_alphanumeric() && c != b'_' && c != b'$'
-                    }
-                {
+                if kw_start == 0 || {
+                    let c = before_word.as_bytes()[kw_start - 1];
+                    !c.is_ascii_alphanumeric() && c != b'_' && c != b'$'
+                } {
                     return true;
                 }
             }
@@ -1332,7 +1348,12 @@ impl<'a> Completions<'a> {
         // First check if cursor is right after potential regex flags
         let mut pos = i;
         // Skip back over potential regex flags
-        while pos > 0 && matches!(bytes[pos - 1], b'g' | b'i' | b'm' | b's' | b'u' | b'y' | b'd') {
+        while pos > 0
+            && matches!(
+                bytes[pos - 1],
+                b'g' | b'i' | b'm' | b's' | b'u' | b'y' | b'd'
+            )
+        {
             pos -= 1;
         }
 
@@ -1352,11 +1373,26 @@ impl<'a> Completions<'a> {
                             return true; // Start of file
                         }
                         let before = bytes[j - 1];
-                        if before == b'=' || before == b'(' || before == b',' || before == b':'
-                            || before == b';' || before == b'!' || before == b'&' || before == b'|'
-                            || before == b'?' || before == b'{' || before == b'}' || before == b'['
-                            || before == b'\n' || before == b'\r' || before == b'\t' || before == b' '
-                            || before == b'+' || before == b'-' || before == b'~' || before == b'^'
+                        if before == b'='
+                            || before == b'('
+                            || before == b','
+                            || before == b':'
+                            || before == b';'
+                            || before == b'!'
+                            || before == b'&'
+                            || before == b'|'
+                            || before == b'?'
+                            || before == b'{'
+                            || before == b'}'
+                            || before == b'['
+                            || before == b'\n'
+                            || before == b'\r'
+                            || before == b'\t'
+                            || before == b' '
+                            || before == b'+'
+                            || before == b'-'
+                            || before == b'~'
+                            || before == b'^'
                         {
                             return true;
                         }
@@ -3257,5 +3293,4 @@ obj.";
         );
         assert!(!result.entries.is_empty(), "Should have entries");
     }
-
 }

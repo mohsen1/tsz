@@ -34,7 +34,7 @@ use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver as solver_narrowing;
-use crate::solver::{TypeId as SolverTypeId, TypeDatabase};
+use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 
 /// Computes the result type of a nullish coalescing expression
 ///
