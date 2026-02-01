@@ -2654,6 +2654,7 @@ fn is_white_space_single_line(ch: u32) -> bool {
         || ch == CharacterCodes::VERTICAL_TAB
         || ch == CharacterCodes::FORM_FEED
         || ch == CharacterCodes::NON_BREAKING_SPACE
+        || ch == CharacterCodes::NEXT_LINE // U+0085 NEL (Next Line)
         || ch == CharacterCodes::OGHAM
         || (CharacterCodes::EN_QUAD..=CharacterCodes::ZERO_WIDTH_SPACE).contains(&ch)
         || ch == CharacterCodes::NARROW_NO_BREAK_SPACE
@@ -2707,15 +2708,81 @@ fn is_identifier_part(ch: u32) -> bool {
     }
 
     // Unicode path: is_alphanumeric covers alphabetic chars + numeric chars (Nd category)
-    // Also allow Unicode combining marks (Mn, Mc) and connector punctuation (Pc)
-    // For simplicity, use is_alphanumeric which covers most cases correctly
+    // ECMAScript ID_Continue includes: ID_Start + Mn + Mc + Nd + Pc + ZWNJ + ZWJ
     if let Some(c) = char::from_u32(ch) {
-        // ECMAScript ID_Continue includes: ID_Start + Mn + Mc + Nd + Pc + ZWNJ + ZWJ
         // is_alphanumeric covers letters and numbers
-        // We also need to allow U+200C (ZWNJ) and U+200D (ZWJ)
-        return c.is_alphanumeric() || ch == 0x200C || ch == 0x200D;
+        if c.is_alphanumeric() {
+            return true;
+        }
     }
 
+    // ZWNJ and ZWJ
+    if ch == 0x200C || ch == 0x200D {
+        return true;
+    }
+
+    // Unicode combining marks (Mn, Mc categories) - needed for scripts like Devanagari, Arabic, etc.
+    // This covers the most common combining mark ranges used in identifiers:
+    // - Combining Diacritical Marks (U+0300-U+036F)
+    // - Devanagari combining marks (U+0900-U+097F range includes vowel signs and virama)
+    // - Arabic combining marks (U+064B-U+0652)
+    // - Hebrew combining marks (U+0591-U+05C7)
+    // - And other Indic scripts
+    is_unicode_combining_mark(ch)
+}
+
+/// Check if a character is a Unicode combining mark (Mn or Mc category).
+/// These are characters that modify the preceding base character.
+fn is_unicode_combining_mark(ch: u32) -> bool {
+    // Combining Diacritical Marks
+    if (0x0300..=0x036F).contains(&ch) {
+        return true;
+    }
+    // Devanagari vowel signs, virama, etc. (U+0900-U+0903, U+093A-U+094F, U+0951-U+0957, U+0962-U+0963)
+    if (0x0900..=0x0903).contains(&ch)
+        || (0x093A..=0x094F).contains(&ch)
+        || (0x0951..=0x0957).contains(&ch)
+        || (0x0962..=0x0963).contains(&ch)
+    {
+        return true;
+    }
+    // Bengali combining marks
+    if (0x0981..=0x0983).contains(&ch) || (0x09BC..=0x09CD).contains(&ch) {
+        return true;
+    }
+    // Arabic combining marks (tashkil/harakat)
+    if (0x064B..=0x0652).contains(&ch) || (0x0670..=0x0670).contains(&ch) {
+        return true;
+    }
+    // Hebrew combining marks
+    if (0x0591..=0x05C7).contains(&ch) {
+        return true;
+    }
+    // Other Indic scripts - Tamil, Telugu, Kannada, Malayalam, etc.
+    if (0x0B01..=0x0B03).contains(&ch)  // Oriya
+        || (0x0B3C..=0x0B4D).contains(&ch)
+        || (0x0B82..=0x0B83).contains(&ch)  // Tamil
+        || (0x0BBE..=0x0BCD).contains(&ch)
+        || (0x0C00..=0x0C04).contains(&ch)  // Telugu
+        || (0x0C3E..=0x0C4D).contains(&ch)
+        || (0x0C81..=0x0C83).contains(&ch)  // Kannada
+        || (0x0CBC..=0x0CCD).contains(&ch)
+        || (0x0D00..=0x0D03).contains(&ch)  // Malayalam
+        || (0x0D3B..=0x0D4D).contains(&ch)
+    {
+        return true;
+    }
+    // Thai and other Southeast Asian
+    if (0x0E31..=0x0E3A).contains(&ch) || (0x0E47..=0x0E4E).contains(&ch) {
+        return true;
+    }
+    // Combining Diacritical Marks Extended, Supplement, for Symbols
+    if (0x1AB0..=0x1AFF).contains(&ch)
+        || (0x1DC0..=0x1DFF).contains(&ch)
+        || (0x20D0..=0x20FF).contains(&ch)
+    {
+        return true;
+    }
     false
 }
 
