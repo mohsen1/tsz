@@ -16,6 +16,14 @@ use crate::test_fixtures::TestContext;
 /// Helper function to create a checker without lib.d.ts and check source code.
 /// This creates the checker with the parser's arena directly to ensure proper node resolution.
 fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+    check_without_lib_with_options(source, CheckerOptions::default())
+}
+
+/// Helper function to create a checker without lib.d.ts with custom options.
+fn check_without_lib_with_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<crate::checker::types::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -31,7 +39,6 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     // Don't merge any lib symbols - simulates @noLib
 
     let types = TypeInterner::new();
-    let options = CheckerOptions::default();
 
     let mut checker = CheckerState::new(
         parser.get_arena(), // Use parser's arena directly
@@ -261,5 +268,161 @@ fn test_object_no_error_with_lib() {
         ts2304_errors.is_empty(),
         "Object should NOT emit TS2304 with lib.d.ts loaded, got: {:?}",
         ts2304_errors
+    );
+}
+
+// Tests for decorator-related global types (TS2318 for TypedPropertyDescriptor)
+
+#[test]
+fn test_missing_typed_property_descriptor_with_decorators() {
+    // When experimentalDecorators is enabled and a method has decorators,
+    // TypedPropertyDescriptor must be available. If not, emit TS2318.
+    let options = CheckerOptions {
+        experimental_decorators: true,
+        ..Default::default()
+    };
+
+    let diagnostics = check_without_lib_with_options(
+        r#"
+declare function dec(t: any, k: string, d: any): any;
+
+class C {
+    @dec
+    method() {}
+}
+"#,
+        options,
+    );
+
+    // Should emit TS2318 for TypedPropertyDescriptor when lib.d.ts is not loaded
+    // and experimentalDecorators is enabled
+    let ts2318_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2318).collect();
+
+    eprintln!("All diagnostics: {:?}", diagnostics);
+    eprintln!("TS2318 errors: {:?}", ts2318_errors);
+
+    assert!(
+        !ts2318_errors.is_empty(),
+        "Expected TS2318 error for TypedPropertyDescriptor without lib.d.ts, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_no_ts2318_without_experimental_decorators() {
+    // Without experimentalDecorators, decorators should not trigger TS2318
+    let options = CheckerOptions {
+        experimental_decorators: false,
+        ..Default::default()
+    };
+
+    let diagnostics = check_without_lib_with_options(
+        r#"
+declare function dec(t: any, k: string, d: any): any;
+
+class C {
+    @dec
+    method() {}
+}
+"#,
+        options,
+    );
+
+    // Should NOT emit TS2318 when experimentalDecorators is disabled
+    let ts2318_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2318).collect();
+
+    assert!(
+        ts2318_errors.is_empty(),
+        "Should NOT emit TS2318 without experimentalDecorators, got: {:?}",
+        ts2318_errors
+    );
+}
+
+#[test]
+fn test_decorator_ts2318_with_lib_contexts() {
+    // Simulate the multi-file test: a.ts has core interfaces, b.ts has decorated class
+    // This tests that lib_contexts don't wrongly suppress the TS2318 error
+    use std::sync::Arc;
+    use crate::checker::context::LibContext;
+
+    let options = CheckerOptions {
+        experimental_decorators: true,
+        ..Default::default()
+    };
+
+    // Parse and bind a.ts (the "lib" file with core interfaces)
+    let a_source = r#"
+interface Object { }
+interface Array<T> { }
+interface String { }
+interface Boolean { }
+interface Number { }
+interface Function { }
+interface RegExp { }
+interface IArguments { }
+"#;
+    let mut parser_a = ParserState::new("a.ts".to_string(), a_source.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    // Parse and bind b.ts (the file with decorated class)
+    let b_source = r#"
+declare function dec(t: any, k: string, d: any): any;
+
+class C {
+    @dec
+    method() {}
+}
+"#;
+    let mut parser_b = ParserState::new("b.ts".to_string(), b_source.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    // Create lib_contexts with BOTH a.ts and b.ts (same as server does)
+    let arena_a = Arc::new(parser_a.into_arena());
+    let binder_a = Arc::new(binder_a);
+    let arena_b = Arc::new(parser_b.into_arena());
+    let binder_b = Arc::new(binder_b);
+
+    let lib_contexts = vec![
+        LibContext {
+            arena: arena_a.clone(),
+            binder: binder_a.clone(),
+        },
+        LibContext {
+            arena: arena_b.clone(),
+            binder: binder_b.clone(),
+        },
+    ];
+
+    // Check b.ts with lib_contexts set (including both a.ts and b.ts)
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena_b,
+        &binder_b,
+        &types,
+        "b.ts".to_string(),
+        options,
+    );
+    checker.ctx.set_lib_contexts(lib_contexts);
+
+    checker.check_source_file(root_b);
+    let diagnostics = checker.ctx.diagnostics.clone();
+
+    // Should emit TS2318 for TypedPropertyDescriptor
+    let ts2318_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2318 && d.message_text.contains("TypedPropertyDescriptor"))
+        .collect();
+
+    eprintln!("All diagnostics for b.ts: {:?}", diagnostics);
+    eprintln!("TS2318 for TypedPropertyDescriptor: {:?}", ts2318_errors);
+
+    assert!(
+        !ts2318_errors.is_empty(),
+        "Expected TS2318 for TypedPropertyDescriptor even with lib_contexts, got: {:?}",
+        diagnostics
     );
 }

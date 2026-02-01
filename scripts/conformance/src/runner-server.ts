@@ -1709,7 +1709,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     }
 
     log('\n' + '═'.repeat(60), colors.dim);
-    log(`Tip: Use --verbose for full category breakdown, --filter=PATTERN --print-test for details`, colors.dim);
+    log(`Tip: Use --error-code=TSXXXX to investigate specific errors, --filter=PATTERN --print-test for details`, colors.dim);
 
     // Dump per-test results if requested
     if (dumpResults) {
