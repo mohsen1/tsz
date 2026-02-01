@@ -1410,6 +1410,9 @@ fn collect_diagnostics(
         // Set lib contexts for global symbol resolution (console, Array, Promise, etc.)
         if !lib_contexts.is_empty() {
             checker.ctx.set_lib_contexts(lib_contexts.to_vec());
+            // Set actual lib file count for has_lib_loaded() check
+            // This enables proper filtering of lib symbols in check_duplicate_identifiers
+            checker.ctx.set_actual_lib_file_count(lib_contexts.len());
         }
         // Set cross-file resolution context for import type resolution
         checker.ctx.set_all_arenas(all_arenas.clone());
