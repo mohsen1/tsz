@@ -1507,17 +1507,32 @@ impl<'a> CheckerState<'a> {
             "NaN" | "Infinity" => TypeId::NUMBER,
             // Symbol constructor - only synthesize if available in lib contexts or merged into binder
             "Symbol" => {
-                // Check if Symbol is available from lib contexts or merged lib symbols
-                // This uses has_symbol_in_lib which checks lib_contexts, current_scope, and file_locals
-                let symbol_available = self.ctx.has_symbol_in_lib();
+                // Check if Symbol is available as a VALUE from lib contexts or merged lib symbols
+                // This is critical for ES5 mode where Symbol exists as TYPE but not VALUE
+                // In ES5: interface Symbol exists (TYPE) but declare var Symbol doesn't (no VALUE)
+                // In ES2015+: both interface Symbol (TYPE) and declare var Symbol (VALUE) exist
 
-                if !symbol_available {
-                    // Symbol is not available via lib — emit TS2583 (same as Promise, Map, etc.)
-                    // tsc emits "Cannot find name 'Symbol'" when lib target doesn't include it
+                // First check if Symbol exists at all in libs
+                let symbol_exists = self.ctx.has_symbol_in_lib();
+
+                if !symbol_exists {
+                    // Symbol is not available via lib at all — emit TS2583
                     self.error_cannot_find_name_change_lib(name, idx);
                     return TypeId::ERROR;
                 }
-                self.get_symbol_constructor_type()
+
+                // Symbol exists in lib - check if it has VALUE flag (is usable as a value)
+                // This distinguishes ES5 (type-only) from ES2015+ (type and value)
+                if let Some(val_sym_id) = self.find_value_symbol_in_libs(name) {
+                    // Symbol has VALUE flag - it's available as a constructor
+                    return self.get_type_of_symbol(val_sym_id);
+                }
+
+                // Symbol exists but only as TYPE (ES5 case) - emit TS2585
+                // "'Symbol' only refers to a type, but is being used as a value here.
+                // Do you need to change your target library?"
+                self.error_type_only_value_at(name, idx);
+                return TypeId::ERROR;
             }
             _ if self.is_known_global_value_name(name) => {
                 // Node.js runtime globals are always available (injected by runtime)

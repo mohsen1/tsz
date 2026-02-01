@@ -94,6 +94,7 @@ function readSourceFile(filePath: string): { content: string; isBinary: boolean 
 
 /**
  * Run tsz binary on test files and capture full output.
+ * For multi-file tests, uses the server protocol instead of CLI.
  */
 function runTszWithFullOutput(
   files: Record<string, string>,
@@ -106,7 +107,62 @@ function runTszWithFullOutput(
     return { stdout: '', stderr: '', codes: [] };
   }
 
-  // Get the first (or only) file
+  // For multi-file tests or tests needing special options, use server protocol
+  // The CLI doesn't support all options (experimentalDecorators, etc.)
+  const needsServer = fileEntries.length > 1 || 
+    options.experimentalDecorators ||
+    options.emitDecoratorMetadata ||
+    options.esModuleInterop ||
+    options.allowSyntheticDefaultImports;
+
+  if (needsServer) {
+    // Use server protocol for full option support
+    const serverPath = tszBinaryPath.replace(/tsz$/, 'tsz-server');
+    const request = {
+      type: 'check',
+      id: 1,
+      files,
+      options,
+    };
+
+    try {
+      const result = spawnSync(serverPath, ['--protocol', 'legacy'], {
+        input: JSON.stringify(request) + '\n',
+        encoding: 'utf-8',
+        env: { ...process.env, TSZ_LIB_DIR: libDir },
+        timeout: 30000,
+      });
+
+      const stdout = result.stdout || '';
+      const stderr = result.stderr || '';
+
+      // Parse response from server
+      const codes: number[] = [];
+      for (const line of stdout.split('\n')) {
+        if (line.trim().startsWith('{')) {
+          try {
+            const response = JSON.parse(line);
+            if (response.codes) {
+              codes.push(...response.codes);
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      // Also check stderr for error codes (in case of CLI-style output)
+      for (const match of stderr.matchAll(/TS(\d{4,5})/g)) {
+        codes.push(parseInt(match[1], 10));
+      }
+
+      return { stdout, stderr, codes };
+    } catch (err) {
+      return { stdout: '', stderr: String(err), codes: [] };
+    }
+  }
+
+  // Single file with basic options - use CLI directly
   const [filePath, content] = fileEntries[0];
 
   // Build args

@@ -235,6 +235,181 @@ Before diving into full phases, test the theory with minimal changes:
 
 ---
 
+## Extra Errors Analysis (Feb 2, 2026)
+
+**Current Extra Error Summary:**
+```
+Extra: TS2339(1968) TS2322(1412) TS1005(1085) TS2345(1007) TS2304(682)
+```
+
+These are **false positives** - errors tsz emits that TSC doesn't. Investigated using `--error-code` and `--print-test`.
+
+---
+
+### Issue 1: TS2339 Extra - "Property does not exist on type" (~1968 extra)
+
+**Impact:** Highest extra error count
+
+**Root Cause:** The solver's `resolve_primitive_property` in `src/solver/operations_property.rs` doesn't fall back to hardcoded apparent members when the boxed type property lookup fails. This causes `string.toUpperCase()` to fail when lib.d.ts has incomplete definitions.
+
+**Example:** `await_incorrectThisType.ts` - tsz reports `Property 'toUpperCase' does not exist on type 'string'` 
+
+**Fix Location:** `src/solver/operations_property.rs`
+
+**Solution:**
+```rust
+fn resolve_primitive_property(...) -> PropertyAccessResult {
+    if let Some(boxed_type) = self.resolver.get_boxed_type(kind) {
+        let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+        // Only fall back if property NOT found on boxed type
+        if !matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
+            return result;
+        }
+    }
+    // STEP 2: Fallback to hardcoded apparent members
+    self.resolve_apparent_property(kind, type_id, prop_name, prop_atom)
+}
+```
+
+**Status:** TODO
+
+---
+
+### Issue 2: TS5061 vs TS2436 - Wrong error code (1 extra)
+
+**Impact:** Using wrong diagnostic code
+
+**Root Cause:** Wrong constant value in `src/checker/types/diagnostics.rs`
+
+**Example:** `ambientErrors.ts` - tsz uses TS5061 for "Ambient module declaration cannot specify relative module name" but TSC uses TS2436
+
+**Fix Location:** `src/checker/types/diagnostics.rs`
+
+**Solution:**
+```rust
+// Change from:
+pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: u32 = 5061;
+// To:
+pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: u32 = 2436;
+```
+
+**Status:** TODO
+
+---
+
+### Issue 3: TS2705 vs TS1055 - Async return type in ES5 (4 extra)
+
+**Impact:** Using wrong diagnostic for ES5 async functions
+
+**Root Cause:** tsz uses TS2705 "Async function return type must be Promise" for all async return type validation, but TSC uses TS1055 "Type X is not a valid async function return type in ES5" specifically for ES5 mode.
+
+**Example:** `asyncFunctionDeclaration15_es5.ts`
+
+**Fix Location:** `src/checker/function_type.rs` and `src/checker/state_checking_members.rs`
+
+**Solution:** Check target mode and use TS1055 for ES5, TS2705 for ES2017+
+
+**Status:** TODO
+
+---
+
+### Issue 4: Ref() leaking in error messages
+
+**Impact:** Degrades user experience - error messages show internal type IDs
+
+**Root Cause:** Solver formats types eagerly without symbol arena access, causing `Ref(234)<Ref(533)<never, A>>` instead of proper names like `PromiseLike<Either<E, A>>`.
+
+**Example:** `await_incorrectThisType.ts` - tsz shows:
+```
+Argument of type '(s: string) => error' is not assignable to parameter of type 'undefined | null | (value: string) => string | Ref(234)<string>'
+```
+
+**Fix Approach:** Use lazy formatting (PendingDiagnostic) that gets rendered later in Checker with symbol arena access
+
+**Fix Location:** `src/solver/diagnostics.rs`
+
+**Solution:**
+1. Instead of `DiagnosticBuilder` (eager), use `PendingDiagnosticBuilder` (lazy)
+2. Create `PendingDiagnostic` containing raw `TypeId`s
+3. Checker renders diagnostic later using `TypeFormatter::with_symbols`
+
+**Status:** TODO
+
+---
+
+### Issue 5: Missing TS2585 - Symbol type vs value in ES5
+
+**Impact:** Multiple missing errors when using Symbol in ES5 mode
+
+**Root Cause:** Not detecting "Symbol" as an ES2015+ type that requires lib upgrade suggestion
+
+**Example:** `parserES5SymbolProperty1.ts` - using `Symbol.iterator` in interface property with ES5 target should error but tsz doesn't detect it
+
+**Fix Location:** 
+- `src/checker/state_type_resolution.rs` - `get_type_of_identifier` detects type-only symbol
+- `src/checker/error_reporter.rs` - `error_type_only_value_at` selects TS2585 vs TS2693
+- `src/lib_loader` - ensure `is_es2015_plus_type("Symbol")` returns true
+
+**Solution:** Check if identifier is an ES2015+ type name and emit TS2585 with lib suggestion
+
+**Status:** TODO
+
+---
+
+### Issue 6: Missing TS1039 - Ambient initializers
+
+**Impact:** Multiple missing errors for `declare var x = 4` patterns
+
+**Root Cause:** Check not implemented for initializers in ambient contexts
+
+**Example:** `ambientErrors1.ts` has `declare var x = 4` but tsz doesn't error
+
+**Fix Location:** `src/checker/state_checking.rs` in `check_variable_declaration`
+
+**Solution:**
+```rust
+// In check_variable_declaration:
+if !var_decl.initializer.is_none() && self.is_ambient_declaration(decl_idx) {
+    self.error_at_node(
+        var_decl.initializer,
+        "Initializers are not allowed in ambient contexts.",
+        diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS, // 1039
+    );
+}
+```
+
+**Status:** TODO
+
+---
+
+### Issue 7: Wildcard module pattern scope
+
+**Impact:** Affects tests using wildcard module declarations
+
+**Root Cause:** When declaring `module "a.foo"` it was incorrectly affecting `import from "b.foo"` when `"*.foo"` pattern exists
+
+**Example:** `ambientDeclarationsPatterns_merging3.ts`
+
+**Analysis (from Gemini):** Module resolution correctly uses specificity - `"./a.foo"` won't match `b.foo`. The issue may be in how tsz incorrectly merges the specific declaration with the wildcard.
+
+**Status:** TODO - needs deeper investigation
+
+---
+
+### Priority Order for Extra Error Fixes
+
+| Priority | Issue | Impact | Complexity |
+|----------|-------|--------|------------|
+| **1** | TS2339 property fallback | ~1968 tests | Medium |
+| **2** | TS5061→TS2436 error code | 1 test | Easy |
+| **3** | TS1039 ambient initializers | ~10 tests | Easy |
+| **4** | TS2585 Symbol type vs value | ~5 tests | Easy |
+| **5** | TS2705→TS1055 async ES5 | 4 tests | Medium |
+| **6** | Ref() in error messages | UX only | Hard |
+| **7** | Wildcard module scope | ~3 tests | Medium |
+
+---
+
 ## Progress Tracking
 
 ### Phase 1: Fix Any Poisoning

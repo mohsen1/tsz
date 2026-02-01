@@ -351,6 +351,16 @@ impl<'a> CheckerState<'a> {
 
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
+        // TS1039: Initializers are not allowed in ambient contexts
+        if !var_decl.initializer.is_none() && self.is_ambient_declaration(decl_idx) {
+            use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                var_decl.initializer,
+                diagnostic_messages::INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                diagnostic_codes::INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+            );
+        }
+
         let compute_final_type = |checker: &mut CheckerState| -> TypeId {
             let mut has_type_annotation = !var_decl.type_annotation.is_none();
             let mut declared_type = if has_type_annotation {
