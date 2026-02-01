@@ -286,6 +286,10 @@ pub struct CheckerContext<'a> {
     /// Populated by `get_class_instance_type_inner` when creating class instance types.
     pub class_instance_type_to_decl: FxHashMap<TypeId, NodeIndex>,
 
+    /// Forward cache: class declaration NodeIndex -> computed instance TypeId.
+    /// Avoids recomputing the full class instance type on every member check.
+    pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
+
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 
@@ -479,6 +483,7 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
+            class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -558,6 +563,7 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
+            class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -639,6 +645,7 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
+            class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
@@ -719,6 +726,7 @@ impl<'a> CheckerContext<'a> {
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
+            class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
