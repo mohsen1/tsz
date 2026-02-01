@@ -642,6 +642,79 @@ impl Server {
         params
     }
 
+    /// Check if a line ending with ')' is a braceless control flow statement
+    /// like `if (...)`, `for (...)`, `while (...)`, `for ... of (...)`, etc.
+    fn is_control_flow_paren(line: &str) -> bool {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("if ")
+            || trimmed.starts_with("if(")
+            || trimmed.starts_with("else if ")
+            || trimmed.starts_with("else if(")
+            || trimmed.starts_with("for ")
+            || trimmed.starts_with("for(")
+            || trimmed.starts_with("with ")
+            || trimmed.starts_with("with(")
+    }
+
+    /// Check if `while (...)` is a standalone while loop (not part of do-while).
+    /// Look at the line before it: if it ends with `}`, this is likely `do {...} while(...)`.
+    fn is_standalone_while(lines: &[&str], prev_line_idx: usize) -> bool {
+        // Find the non-empty line before the while line
+        let mut check_idx = if prev_line_idx > 0 {
+            prev_line_idx - 1
+        } else {
+            return true; // while on first line → standalone
+        };
+        while check_idx > 0 && lines[check_idx].trim().is_empty() {
+            check_idx -= 1;
+        }
+        let before_while = lines[check_idx].trim();
+        // If the line before the while ends with '}', it's do-while
+        !before_while.ends_with('}')
+    }
+
+    /// Check if the previous line is an incomplete statement/keyword needing
+    /// continuation indentation on the next line.
+    fn needs_keyword_continuation(prev_trimmed: &str) -> bool {
+        // Bare control flow keywords without parens or braces
+        let bare_keywords = [
+            "if", "else", "while", "for", "do", "else if",
+        ];
+        for kw in &bare_keywords {
+            if prev_trimmed == *kw {
+                return true;
+            }
+        }
+        // Incomplete function/class declarations (no opening brace)
+        if (prev_trimmed.starts_with("function ")
+            || prev_trimmed.starts_with("function(")
+            || prev_trimmed == "function"
+            || prev_trimmed.starts_with("class ")
+            || prev_trimmed == "class")
+            && !prev_trimmed.ends_with('{')
+            && !prev_trimmed.ends_with('}')
+            && !prev_trimmed.ends_with(';')
+        {
+            return true;
+        }
+        // Incomplete variable declarations (var/let/const without semicolon)
+        if (prev_trimmed.starts_with("var ")
+            || prev_trimmed.starts_with("let ")
+            || prev_trimmed.starts_with("const ")
+            || prev_trimmed == "var"
+            || prev_trimmed == "let"
+            || prev_trimmed == "const")
+            && !prev_trimmed.ends_with(';')
+            && !prev_trimmed.ends_with('{')
+            && !prev_trimmed.ends_with('}')
+        {
+            return true;
+        }
+        // `else` keyword (already covered by bare_keywords above, but
+        // also handle `else` followed by something that's not `if` or `{`)
+        false
+    }
+
     /// Check if a declaration is a multi-declarator variable statement.
     /// E.g. `let a = 1, b = 2;` has multiple `=` at depth 0.
     fn is_multi_declarator_var(decl: &str, source: &str, decl_offset: usize) -> bool {
@@ -1025,17 +1098,16 @@ impl Server {
             let lines: Vec<&str> = source_text.lines().collect();
             let target_line_idx = if line > 0 { line - 1 } else { 0 };
 
-            if target_line_idx >= lines.len() {
-                return Some(serde_json::json!({"position": position, "indentation": 0}));
-            }
-
             // Smart indentation: compute brace/bracket/paren depth up to the target line
             // by scanning all lines before it, then adjust for the current line.
+            // When target_line_idx >= lines.len() (e.g. cursor past EOF), scan all
+            // available lines and treat the target as an empty line.
+            let scan_end = target_line_idx.min(lines.len());
             let mut depth: i32 = 0;
             let mut in_block_comment = false;
             let _in_single_line_string = false;
 
-            for line_idx in 0..target_line_idx {
+            for line_idx in 0..scan_end {
                 let line_text = lines[line_idx];
                 let bytes = line_text.as_bytes();
                 let mut j = 0;
@@ -1106,17 +1178,23 @@ impl Server {
             }
 
             // Check if the current line starts with a closing bracket
-            let current_trimmed = lines[target_line_idx].trim();
+            // If target is past EOF, treat as empty line
+            let current_trimmed = if target_line_idx < lines.len() {
+                lines[target_line_idx].trim()
+            } else {
+                ""
+            };
             let starts_with_closing = current_trimmed.starts_with('}')
                 || current_trimmed.starts_with(')')
                 || current_trimmed.starts_with(']');
 
             // Also look at the previous non-empty line for context
-            let mut prev_line_idx = if target_line_idx > 0 {
-                target_line_idx - 1
+            let prev_search_start = if target_line_idx > 0 {
+                (target_line_idx - 1).min(lines.len().saturating_sub(1))
             } else {
                 0
             };
+            let mut prev_line_idx = prev_search_start;
             while prev_line_idx > 0 && lines[prev_line_idx].trim().is_empty() {
                 prev_line_idx -= 1;
             }
@@ -1141,10 +1219,35 @@ impl Server {
 
             if !prev_ends_with_opener && !starts_with_closing {
                 // Check for continuation contexts that need extra indentation
+                let is_braceless_control = prev_trimmed.ends_with(')')
+                    && !current_trimmed.starts_with('{')
+                    && (Self::is_control_flow_paren(prev_trimmed)
+                        || ((prev_trimmed.trim_start().starts_with("while ")
+                            || prev_trimmed.trim_start().starts_with("while("))
+                            && Self::is_standalone_while(&lines, prev_line_idx)));
+
+                // Check if prev line has unbalanced openers - if so, the depth
+                // counter already accounts for the indentation increase.
+                let prev_has_unbalanced_opener = {
+                    let mut d = 0i32;
+                    for c in prev_trimmed.chars() {
+                        match c {
+                            '(' | '[' | '{' => d += 1,
+                            ')' | ']' | '}' => d -= 1,
+                            _ => {}
+                        }
+                    }
+                    d > 0
+                };
+
                 let needs_continuation = prev_trimmed.ends_with("=>")
                     || (prev_trimmed.ends_with(':')
                         && (prev_trimmed.starts_with("case ")
-                            || prev_trimmed.starts_with("default:")));
+                            || prev_trimmed.starts_with("default:")))
+                    || is_braceless_control
+                    || (!prev_has_unbalanced_opener
+                        && !current_trimmed.starts_with('{')
+                        && Self::needs_keyword_continuation(prev_trimmed));
                 if needs_continuation {
                     indentation += indent_size;
                 }
