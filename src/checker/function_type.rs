@@ -917,25 +917,55 @@ impl<'a> CheckerState<'a> {
                             .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
                     }
 
-                    let (code, message) = if cause == TypeId::NULL {
-                        (
-                            diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
-                            "Object is possibly 'null'.",
-                        )
-                    } else if cause == TypeId::UNDEFINED {
-                        (
-                            diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
-                            "Object is possibly 'undefined'.",
-                        )
+                    // Try to get the name if the expression is an identifier
+                    // Use specific error codes (TS18047/18048/18049) when name is available
+                    let name = self
+                        .ctx
+                        .arena
+                        .get(access.expression)
+                        .and_then(|node| self.ctx.arena.get_identifier(node))
+                        .map(|ident| ident.escaped_text.clone());
+
+                    let (code, message): (u32, String) = if let Some(ref name) = name {
+                        // Use specific error codes with the variable name
+                        if cause == TypeId::NULL {
+                            (
+                                diagnostic_codes::NAME_IS_POSSIBLY_NULL,
+                                format!("'{}' is possibly 'null'.", name),
+                            )
+                        } else if cause == TypeId::UNDEFINED {
+                            (
+                                diagnostic_codes::NAME_IS_POSSIBLY_UNDEFINED,
+                                format!("'{}' is possibly 'undefined'.", name),
+                            )
+                        } else {
+                            (
+                                diagnostic_codes::NAME_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                                format!("'{}' is possibly 'null' or 'undefined'.", name),
+                            )
+                        }
                     } else {
-                        (
-                            diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
-                            "Object is possibly 'null' or 'undefined'.",
-                        )
+                        // Fall back to generic error codes
+                        if cause == TypeId::NULL {
+                            (
+                                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
+                                "Object is possibly 'null'.".to_string(),
+                            )
+                        } else if cause == TypeId::UNDEFINED {
+                            (
+                                diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
+                                "Object is possibly 'undefined'.".to_string(),
+                            )
+                        } else {
+                            (
+                                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                                "Object is possibly 'null' or 'undefined'.".to_string(),
+                            )
+                        }
                     };
 
                     // Report the error on the expression part
-                    self.error_at_node(access.expression, message, code);
+                    self.error_at_node(access.expression, &message, code);
 
                     // Error recovery: return the property type found in valid members
                     self.apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR))
