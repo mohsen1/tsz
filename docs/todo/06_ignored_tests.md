@@ -1,13 +1,13 @@
 # Ignored Tests Tracker
 
-**Total ignored: 578 tests across 40 files**
+**Total ignored: 576 tests across 40 files**
 **Last updated: 2026-02-01**
 
 ## Summary by Component
 
 | Component | Ignored | Files | Priority |
 |-----------|---------|-------|----------|
-| Checker   | 243     | 7     | High     |
+| Checker   | 241     | 7     | High     |
 | LSP       | 154     | 9     | Medium   |
 | Emitter   | 112     | 7     | Medium   |
 | Solver    | 37      | 7     | High     |
@@ -24,7 +24,7 @@
 |------|-------|-------------------|
 | `src/tests/checker_state_tests.rs` | 221 | Generic TODO (majority), namespace-as-type detection, stack overflow in deep recursion, various unimplemented features |
 | `src/checker/tests/control_flow_tests.rs` | 10 | Switch fallthrough narrowing, loop back-edge unions, closure START node antecedents (8 tests share same root cause) |
-| `src/checker/tests/value_usage_tests.rs` | 4 | Bitwise operator error checking, enum arithmetic, TS18050 null/undefined property access |
+| `src/checker/tests/value_usage_tests.rs` | 2 | Bitwise operator error checking, enum arithmetic |
 | `src/checker/tests/ts2322_tests.rs` | 3 | Object literal property type mismatch detection |
 | `src/checker/tests/ts2304_tests.rs` | 2 | Generic TODO |
 | `src/checker/module_resolution.rs` | 1 | Generic TODO |
@@ -32,7 +32,7 @@
 
 **Quick wins:**
 - [ ] `control_flow_tests.rs` closure tests (8 tests, single root cause in flow analysis)
-- [ ] `value_usage_tests.rs` TS18050 checks (2 tests, straightforward diagnostic additions)
+- [x] `value_usage_tests.rs` TS18050 checks (2 tests, straightforward diagnostic additions)
 - [ ] `ts2322_tests.rs` object property mismatch (3 tests, same feature)
 
 ### LSP (154 tests)

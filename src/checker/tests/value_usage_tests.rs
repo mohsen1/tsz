@@ -624,7 +624,6 @@ const result = MyEnum.A + MyEnum.B;  // OK: enum arithmetic is valid
 }
 
 #[test]
-#[ignore = "TODO: TS18050 for null property access not yet implemented"]
 fn test_null_property_access_emits_ts18050() {
     // Test accessing property on null literal - should emit TS18050
     let source = r#"
@@ -662,7 +661,6 @@ const x = null.toString();  // TS18050: The value 'null' cannot be used here.
 }
 
 #[test]
-#[ignore = "TODO: TS18050 for undefined property access not yet implemented"]
 fn test_undefined_property_access_emits_ts18050() {
     // Test accessing property on undefined - should emit TS18050
     let source = r#"

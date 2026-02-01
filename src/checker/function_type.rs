@@ -874,9 +874,20 @@ impl<'a> CheckerState<'a> {
                     // Check for optional chaining (?.)
                     if access.question_dot_token {
                         // Suppress error, return (property_type | undefined)
-                        let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
-                        return self.ctx.types.union(vec![base_type, TypeId::UNDEFINED]);
+                        if let Some(base_type) = property_type {
+                            return self.ctx.types.union(vec![base_type, TypeId::UNDEFINED]);
+                        }
+                        return TypeId::UNDEFINED;
                     }
+
+                    let property_type = match property_type {
+                        Some(ty) => ty,
+                        None => {
+                            // Type is entirely nullish - emit TS18050
+                            self.report_nullish_object(access.expression, cause, true);
+                            return TypeId::ERROR;
+                        }
+                    };
 
                     // Report error based on the cause (TS2531/TS2532/TS2533)
                     // These errors only apply with strictNullChecks enabled
@@ -884,13 +895,12 @@ impl<'a> CheckerState<'a> {
 
                     // Suppress cascade errors when cause is ERROR/ANY/UNKNOWN
                     if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {
-                        return property_type.unwrap_or(TypeId::ERROR);
+                        return property_type;
                     }
 
                     // TS2531/2532/2533 require strictNullChecks
                     if !self.ctx.compiler_options.strict_null_checks {
-                        return self
-                            .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));
+                        return self.apply_flow_narrowing(idx, property_type);
                     }
 
                     let (code, message) = if cause == TypeId::NULL {
@@ -914,7 +924,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(access.expression, message, code);
 
                     // Error recovery: return the property type found in valid members
-                    self.apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR))
+                    self.apply_flow_narrowing(idx, property_type)
                 }
 
                 PropertyAccessResult::IsUnknown => {
