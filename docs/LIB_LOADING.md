@@ -2,20 +2,67 @@
 
 This document explains how TypeScript declaration library files (lib files) are loaded in tsz and how conformance tests are run.
 
+> **See Also**: [TSC_LIB_LOADING.md](architecture/TSC_LIB_LOADING.md) - Complete reference for how `tsc` handles library loading (target, lib, noLib, etc.)
+
 ## Table of Contents
 
 1. [Lib Loading Overview](#lib-loading-overview)
-2. [Lib Resolution Rules](#lib-resolution-rules)
-3. [Conformance Test Infrastructure](#conformance-test-infrastructure)
-4. [TSC Cache System](#tsc-cache-system)
-5. [Running Tests](#running-tests)
-6. [Debugging](#debugging)
+2. [tsc vs tsz: Current Gap](#tsc-vs-tsz-current-gap)
+3. [Lib Resolution Rules](#lib-resolution-rules)
+4. [Conformance Test Infrastructure](#conformance-test-infrastructure)
+5. [TSC Cache System](#tsc-cache-system)
+6. [Running Tests](#running-tests)
+7. [Debugging](#debugging)
 
 ---
 
 ## Lib Loading Overview
 
 TypeScript uses lib files (`lib.es5.d.ts`, `lib.es2015.d.ts`, etc.) to provide type definitions for built-in JavaScript features. The lib loaded depends on the `--target` and `--lib` compiler options.
+
+---
+
+## tsc vs tsz: Current Gap
+
+### How tsc Works
+
+When no `--lib` is specified, tsc loads the `.full` lib file for the target, which includes:
+- Core ES types (Array, Object, Promise, etc.)
+- DOM types (document, window, console, fetch, etc.)
+- ScriptHost types (legacy Windows scripting)
+
+| Target | tsc Default | Includes |
+|--------|-------------|----------|
+| ES5 | `lib.d.ts` | ES5 + DOM + ScriptHost |
+| ES2015 | `lib.es6.d.ts` | ES2015 + DOM + ScriptHost |
+| ES2020 | `lib.es2020.full.d.ts` | ES2020 + DOM + ScriptHost |
+| ESNext | `lib.esnext.full.d.ts` | ESNext + DOM + ScriptHost |
+
+### How tsz Currently Works
+
+tsz loads only **core libs** (without DOM):
+
+| Target | tsz Default | Includes |
+|--------|-------------|----------|
+| ES5 | `lib.es5.d.ts` | ES5 only |
+| ES2015 | `lib.es2015.d.ts` | ES2015 only |
+| ES2020 | `lib.es2020.d.ts` | ES2020 only |
+| ESNext | `lib.esnext.d.ts` | ESNext only |
+
+### Why This Matters
+
+This causes ~1646 conformance test failures related to:
+- TS2318: Cannot find global type 'X'
+- TS2583: Cannot find name 'X'
+- TS2584: Cannot find name 'X'. Do you need to change your target library?
+
+Many tests expect `console`, DOM types, or utility types that are available in `.full` libs.
+
+### The Fix
+
+See [TSC_LIB_LOADING.md](architecture/TSC_LIB_LOADING.md) for the complete analysis. The solution involves:
+1. Matching tsc's default lib selection (use `.full` files)
+2. Ensuring the conformance cache is regenerated with the same lib selection
 
 ## Canonical Lib Path
 
