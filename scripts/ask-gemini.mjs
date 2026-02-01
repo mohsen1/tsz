@@ -7,8 +7,10 @@ import 'dotenv/config';
 /**
  * Extract code skeletons using ast-grep for better Gemini context.
  * Returns function/struct/enum/trait/impl signatures grouped by file.
+ * @param targetDir - Directory to scan for skeletons
+ * @param excludeBasenames - Set of file basenames to exclude (files already included in full)
  */
-function extractSkeletons(targetDir = 'src/') {
+function extractSkeletons(targetDir = 'src/', excludeBasenames = new Set()) {
   const patterns = [
     { type: 'fn', pattern: 'fn $NAME' },
     { type: 'struct', pattern: 'struct $NAME' },
@@ -34,6 +36,12 @@ function extractSkeletons(targetDir = 'src/') {
         const file = match.file;
         const text = match.text || '';
         const line = match.range?.start?.line || 0;
+
+        // Skip files already included in full content (match by basename)
+        const basename = file.split('/').pop();
+        if (excludeBasenames.has(basename)) {
+          continue;
+        }
 
         // Skip test files and test functions
         if (file.includes('/tests/') || file.includes('_test.rs') || file.includes('/benches/')) {
@@ -66,8 +74,8 @@ function extractSkeletons(targetDir = 'src/') {
   }
 
   // Build the skeleton output
-  let output = 'CODE SKELETONS (API Surface):\n';
-  output += '=============================\n\n';
+  let output = 'CODE SKELETONS (API Surface - files not included in full):\n';
+  output += '==========================================================\n\n';
 
   const sortedFiles = [...skeletonsByFile.keys()].sort();
   for (const file of sortedFiles) {
@@ -162,7 +170,7 @@ function extractSignature(text, type) {
 // ./scripts/ask-gemini.mjs --include="src/solver" "Custom path question"
 // ./scripts/ask-gemini.mjs --no-use-vertex "Use direct Gemini API instead of Vertex"
 
-const DEFAULT_CONTEXT_LENGTH = '850k';
+const DEFAULT_CONTEXT_LENGTH = '950k'; // Gemini has 1M context, leave room for response
 const DEFAULT_MODEL = 'gemini-3-pro-preview';
 
 // Focused presets for different areas of the codebase
@@ -239,10 +247,10 @@ const { values, positionals } = parseArgs({
     lsp: { type: 'boolean', default: false },
     types: { type: 'boolean', default: false },
     modules: { type: 'boolean', default: false },
-    // Show what files would be included without sending to API
+    // Dry run - show what would be sent without calling API
     dry: { type: 'boolean', default: false },
-    // Print the full query payload without sending to API
-    'print-query-only': { type: 'boolean', default: false },
+    // Also print the full query payload (use with --dry)
+    query: { type: 'boolean', default: false },
     // List available presets
     list: { type: 'boolean', default: false },
     // Use Vertex AI (default) or direct Gemini API (--no-use-vertex)
@@ -283,17 +291,16 @@ General Options:
   -t, --tokens=SIZE   Max context size (default: ${DEFAULT_CONTEXT_LENGTH}, or preset default)
   -m, --model=NAME    Gemini model (default: ${DEFAULT_MODEL})
   --dry               Show files that would be included without calling API
-  --print-query-only  Print the full query payload (system prompt + context + prompt)
-                      without sending to API. Useful for inspecting what would be sent.
-  --no-skeleton       Disable code skeleton extraction (signatures for all Rust files).
-                      Skeletons are included by default to show the full API surface.
+  --query             Print the full query payload (system prompt + context + prompt)
+  --no-skeleton       Disable code skeleton extraction. Skeletons show fn/struct/enum/
+                      trait/impl signatures for files NOT fully included in context.
   --list              List all available presets with descriptions
   --no-use-vertex     Use direct Gemini API instead of Vertex AI (fallback for
                       rate limits or when Vertex credentials aren't available)
   -h, --help          Show this help message
 
-Note: Test files (*_test.rs, tests/, benches/) are excluded by default.
-      To include tests, use --include with a path containing "test" or "bench".
+Note: Test files (*_test.rs, tests/, benches/) and markdown files (*.md) are excluded
+      from full content by default (skeletons still include code signatures).
 
 Environment:
   GCP_VERTEX_EXPRESS_API_KEY  Required for Vertex AI Express (default).
@@ -342,19 +349,21 @@ const useVertex = values['use-vertex'];
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GCP_VERTEX_EXPRESS_API_KEY = process.env.GCP_VERTEX_EXPRESS_API_KEY;
 
-if (!values.dry && !values['print-query-only']) {
+const isDryRun = values.dry || values.query;
+
+if (!isDryRun) {
   if (useVertex) {
     if (!GCP_VERTEX_EXPRESS_API_KEY) {
       console.error('Error: GCP_VERTEX_EXPRESS_API_KEY environment variable is not set.');
       console.error('Get an API key from Vertex AI Express Mode, or use --no-use-vertex for direct Gemini API.');
-      console.error('(Use --dry or --print-query-only to see files/query without calling API)');
+      console.error('(Use --dry to see files, --query to see full query without calling API)');
       process.exit(1);
     }
   } else {
     if (!GEMINI_API_KEY) {
       console.error('Error: GEMINI_API_KEY environment variable is not set.');
       console.error('Get an API key at: https://aistudio.google.com/apikey');
-      console.error('(Use --dry or --print-query-only to see files/query without calling API)');
+      console.error('(Use --dry to see files, --query to see full query without calling API)');
       process.exit(1);
     }
   }
@@ -362,7 +371,7 @@ if (!values.dry && !values['print-query-only']) {
 
 const prompt = positionals[0];
 
-if (!prompt && !values.dry) {
+if (!prompt && !isDryRun) {
   console.error('Error: No prompt provided.');
   console.error('Usage: ./scripts/ask-gemini.mjs [--preset] "your prompt"');
   console.error('Run with --help for more options, --list for presets.');
@@ -378,21 +387,7 @@ try {
   console.log(`Token limit: ${tokenLimit}`);
   console.log('Gathering context...');
 
-  // Extract code skeletons for API surface overview
-  let skeletonOutput = '';
-  if (values.skeleton) {
-    console.log('  - Extracting code skeletons with ast-grep...');
-    try {
-      const skeletonDir = includePaths ? includePaths.split(' ')[0] : 'src/';
-      const { output, fileCount, entryCount } = extractSkeletons(skeletonDir);
-      skeletonOutput = output;
-      console.log(`  - Extracted ${entryCount} signatures from ${fileCount} files`);
-    } catch (err) {
-      console.log(`  - Skeleton extraction failed: ${err.message}`);
-    }
-  }
-
-  // Now get the actual file contents
+  // First, gather file contents to know which files are fully included
   console.log('  - Gathering file contents...');
   let yekCommand = `yek --config-file yek.yaml --tokens ${tokenLimit}`;
   if (includePaths) {
@@ -420,6 +415,7 @@ try {
 
   const sections = context.split(/^(?=>>>> )/m);
   let testFilesFiltered = 0;
+  let mdFilesFiltered = 0;
   const filteredSections = sections.filter(section => {
     const match = section.match(/^>>>> (.+)\n/);
     if (!match) return true;
@@ -448,23 +444,25 @@ try {
       }
     }
 
+    // Skip markdown files (often long docs that consume token budget)
+    // Keep AGENTS.md as it's essential context
+    if (filePath.endsWith('.md') && !filePath.endsWith('AGENTS.md')) {
+      mdFilesFiltered++;
+      return false;
+    }
+
     return true;
   });
 
   if (testFilesFiltered > 0) {
     console.log(`  - Filtered out ${testFilesFiltered} test file(s)`);
   }
+  if (mdFilesFiltered > 0) {
+    console.log(`  - Filtered out ${mdFilesFiltered} markdown file(s) (keeping AGENTS.md)`);
+  }
   context = filteredSections.join('');
 
-  // Prepend skeletons to context
-  let contextParts = [];
-  if (skeletonOutput) {
-    contextParts.push(skeletonOutput);
-  }
-  contextParts.push(`${'='.repeat(50)}\nFILE CONTENTS:\n${'='.repeat(50)}\n\n${context}`);
-  context = contextParts.join('\n');
-
-  // Extract file paths from yek markers (>>>> FILE_PATH)
+  // Extract file paths from yek markers (>>>> FILE_PATH) to know which files are fully included
   const fileMarkerRegex = /^>>>> (.+)$/gm;
   const files = [];
   let match;
@@ -472,8 +470,39 @@ try {
     files.push(match[1]);
   }
 
+  // Build a set of fully included files for exclusion from skeletons
+  // yek outputs short names like "apparent.rs", ast-grep outputs "src/solver/apparent.rs"
+  // We'll store basenames and match by basename
+  const includedBasenames = new Set(files.map(f => {
+    // Extract basename (last part of path)
+    const parts = f.split('/');
+    return parts[parts.length - 1];
+  }));
+
+  // Extract code skeletons for API surface overview, excluding files already fully included
+  let skeletonOutput = '';
+  if (values.skeleton) {
+    console.log('  - Extracting code skeletons with ast-grep...');
+    try {
+      const skeletonDir = includePaths ? includePaths.split(' ')[0] : 'src/';
+      const { output, fileCount, entryCount } = extractSkeletons(skeletonDir, includedBasenames);
+      skeletonOutput = output;
+      console.log(`  - Extracted ${entryCount} signatures from ${fileCount} files (excluding ${files.length} fully-included files)`);
+    } catch (err) {
+      console.log(`  - Skeleton extraction failed: ${err.message}`);
+    }
+  }
+
+  // Prepend skeletons to context
+  let contextParts = [];
+  if (skeletonOutput) {
+    contextParts.push(skeletonOutput);
+  }
+  contextParts.push(`${'='.repeat(50)}\nFILE CONTENTS (${files.length} files):\n${'='.repeat(50)}\n\n${context}`);
+  context = contextParts.join('\n');
+
   const contextBytes = Buffer.byteLength(context, 'utf-8');
-  console.log(`Context gathered (${(contextBytes / 1024).toFixed(0)} KB, ${files.length} files).`);
+  console.log(`Context gathered (${(contextBytes / 1024).toFixed(0)} KB, ${files.length} full files + skeletons).`);
 
   // Show files included
   if (files.length > 0) {
@@ -484,9 +513,9 @@ try {
     console.log('');
   }
 
-  // Dry run mode - just show what would be included
-  if (values.dry) {
-    console.log('Dry run complete. No API call made.');
+  // Dry run mode - show files only (unless --query is also set)
+  if (values.dry && !values.query) {
+    console.log('Dry run complete. Use --query to also see full payload.');
     process.exit(0);
   }
 
@@ -585,15 +614,15 @@ Answer questions accurately based on the provided context. Reference specific fi
     }
   };
 
-  // Print query only mode - show full payload without sending
-  if (values['print-query-only']) {
+  // Query mode - show full payload without sending
+  if (values.query) {
     console.log('\n=== SYSTEM INSTRUCTION ===\n');
     console.log(systemPrompt);
     console.log('\n=== USER MESSAGE ===\n');
     console.log(`Codebase context:\n${context}\n\nQuestion: ${prompt}`);
     console.log('\n=== GENERATION CONFIG ===\n');
     console.log(JSON.stringify(payload.generationConfig, null, 2));
-    console.log('\n--- Print query only mode. No API call made. ---');
+    console.log('\n--- Query mode. No API call made. ---');
     process.exit(0);
   }
 

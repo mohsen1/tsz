@@ -486,6 +486,146 @@ Multiple interconnected issues causing 1288 extra TS2339 errors:
 
 ---
 
+## Deep Analysis: Global/Lib Type Resolution & Module Resolution (Feb 1, 2026)
+
+### Summary
+
+Using the new `--error-code` conformance filter, I conducted a deep analysis of the two major categories of failures:
+
+| Category | Tests Affected | Error Codes | Root Cause |
+|----------|----------------|-------------|------------|
+| Global/lib type resolution | ~556 | TS2318, TS2583, TS2584 | Lib aliasing not implemented + Any Poisoning |
+| Module/import resolution | ~517 | TS2307, TS2792 | `report_unresolved_imports=false` + missing module resolver |
+
+### Root Cause 1: Lib File Aliasing Not Implemented
+
+**Evidence from `--error-code=TS2318`:**
+
+Test `importCallExpressionES5AMD.ts` specifies `@lib: es6` but TSC emits:
+```
+Cannot find global type 'Array'.
+Cannot find global type 'Promise'.
+Cannot find global type 'Object'.
+...
+```
+
+**Problem:** Our `load_lib_recursive` in tsz-server looks for:
+- `lib.es6.d.ts` (doesn't exist)
+- `es6.d.ts` (doesn't exist)
+
+**TSC's libMap** (in `commandLineParser.ts`) maps:
+- `es6` → `lib.es2015.d.ts`
+- `es7` → `lib.es2016.d.ts`
+- `esnext` → `lib.esnext.d.ts`
+- `dom` → `lib.dom.d.ts`
+
+**Fix:** Add lib aliasing in tsz-server's `determine_libs()`:
+
+```rust
+fn normalize_lib_name(name: &str) -> &str {
+    match name.to_lowercase().as_str() {
+        "es6" => "es2015",
+        "es7" => "es2016",
+        "lib" => "es5.full",
+        _ => name
+    }
+}
+```
+
+### Root Cause 2: Any Poisoning (TS2584 Missing)
+
+**Evidence from `--error-code=TS2584`:**
+
+Test `quotedConstructors.ts` uses `console.log()` with `@lib: es5` (no DOM).
+- TSC emits: TS2584 "Cannot find name 'console'. Include 'dom' lib."
+- tsz emits: NO ERRORS
+
+**Problem:** When `resolve_identifier_symbol` fails to find `console`:
+1. It returns `None`
+2. The caller returns `TypeId::ANY` instead of emitting an error
+3. Code using `console` silently passes type checking
+
+**Why this happens:** In `src/checker/context.rs`, `report_unresolved_imports = false` by default.
+When this is false, unresolved symbols become ANY instead of ERROR.
+
+### Root Cause 3: SymbolId Collision (Partially Fixed)
+
+**Evidence from Gemini analysis:**
+
+When lib files are loaded in tsz-server, each has its own `BinderState`:
+- lib.es5.d.ts might have `SymbolId(50)` = 'Array'
+- User file also has symbols starting from `SymbolId(0)`
+
+When `resolve_identifier_symbol` finds 'Array' in a lib binder, it returns `SymbolId(50)`.
+But `get_type_of_symbol` uses the USER file's binder, which has a DIFFERENT symbol at index 50.
+
+**Fix:** Call `binder.merge_lib_contexts_into_binder(&lib_contexts)` AFTER binding each file.
+This remaps lib SymbolIds to avoid collisions.
+
+### Root Cause 4: Module Resolution (TS2307)
+
+**Evidence from `--error-code=TS2307`:**
+
+Test `tsxInferenceShouldNotYieldAnyOnUnions.tsx` imports 'react':
+- TSC emits: TS2307 "Cannot find module 'react'"
+- tsz emits: TS2339 (property errors from Any types)
+
+**Problem:** Our module resolution in `src/checker/module_resolution.rs` only handles:
+- Simple relative imports like `./types` → `/path/types.ts`
+
+**What's missing:**
+- Non-relative imports (e.g., `lodash`, `react`) 
+- node_modules resolution
+- paths/baseUrl mapping
+- package.json exports field
+
+### Prioritized Fix Order
+
+| Priority | Fix | Impact | Dependency |
+|----------|-----|--------|------------|
+| **1** | Lib file aliasing (es6→es2015) | ~336 tests | None |
+| **2** | Call merge_lib_contexts_into_binder in tsz-server | ~200 tests | Fix #1 |
+| **3** | Enable report_unresolved_imports | ~556 tests | Fix #1 and #2 |
+| **4** | Implement node_modules module resolution | ~200 tests | Fix #3 |
+
+### Concrete Implementation Steps
+
+**Step 1: Add lib aliasing in tsz-server**
+
+In `src/bin/tsz_server/main.rs`, modify `determine_libs()`:
+
+```rust
+fn normalize_lib_alias(name: &str) -> String {
+    match name.to_lowercase().trim() {
+        "es6" => "es2015".to_string(),
+        "es7" => "es2016".to_string(),
+        "lib" | "lib.d.ts" => "es5".to_string(),
+        other => other.to_string(),
+    }
+}
+```
+
+**Step 2: Merge lib contexts after binding**
+
+In `run_check()`, after `binder.bind_source_file()`:
+
+```rust
+let mut binder = BinderState::new();
+binder.bind_source_file(&parsed.arena, parsed.root);
+
+// FIX: Merge lib symbols to prevent ID collisions
+let lib_ctx: Vec<LibContext> = lib_files.iter()
+    .map(|lib| LibContext { arena: lib.arena.clone(), binder: lib.binder.clone() })
+    .collect();
+binder.merge_lib_contexts_into_binder(&lib_ctx);
+```
+
+**Step 3: Enable error reporting**
+
+After fixes #1 and #2, set `ctx.report_unresolved_imports = true` in tsz-server.
+
+---
+
 ## Latest Conformance Run (Feb 1, 2026)
 
 ```

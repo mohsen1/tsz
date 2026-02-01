@@ -1701,6 +1701,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
 
     // Summary counts
     log('\nSummary:', colors.bold);
+    log(`  Pass Rate: ${passRate}%  Time: ${elapsed.toFixed(1)}s  (${(effectiveTotal / elapsed).toFixed(0)} tests/sec)`, stats.passed === effectiveTotal ? colors.green : colors.yellow);
     log(`  Passed:  ${formatNumber(stats.passed)}  Failed: ${formatNumber(actualFailed)}  Skipped: ${formatNumber(stats.skipped)}`, 
       actualFailed > 0 ? colors.yellow : colors.green);
     if (stats.crashed > 0 || stats.oom > 0 || stats.timedOut > 0) {
