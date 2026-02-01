@@ -18,7 +18,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as semver from 'semver';
 import { fileURLToPath } from 'url';
-import { normalizeLibName } from './lib-manifest.js';
+import { normalizeLibName, getDefaultLibNameForTarget as getCoreLibNameForTarget } from './lib-manifest.js';
 import {
   isHarnessBuilt,
   loadHarness,
@@ -789,8 +789,14 @@ export function directivesToCheckOptions(
     } else if (Array.isArray(libVal)) {
       options.lib = libVal.map(s => String(s).trim().toLowerCase()).filter(Boolean);
     }
+  } else if (!directives.nolib) {
+    // For conformance testing: explicitly use CORE libs (without DOM) when no @lib specified.
+    // This matches how the TSC cache was generated and avoids loading 1.8MB of DOM types.
+    // Production tsz defaults to FULL libs (with DOM) to match tsc's actual behavior.
+    // Tests that need DOM should specify @lib: dom explicitly.
+    const targetName = String(directives.target ?? 'es5').toLowerCase();
+    options.lib = [getCoreLibNameForTarget(targetName)];
   }
-  // If no @lib specified, don't set options.lib - let tsz decide defaults
 
   // Strict mode flags
   if (directives.strict !== undefined) {
