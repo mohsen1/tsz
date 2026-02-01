@@ -232,3 +232,115 @@ Before diving into full phases, test the theory with minimal changes:
 ---
 
 **Bottom Line:** The fundamental issue is that the checker was designed for "graceful degradation" which silently accepts broken code. TypeScript expects errors to be emitted, not suppressed. Phase 1 (stopping any poisoning) is the single most impactful change.
+
+---
+
+## Progress Tracking
+
+### Phase 1: Fix Any Poisoning
+
+**Status:** BLOCKED (waiting for Phase 2)
+
+**Root Cause Identified:**
+- CLI driver (`src/cli/driver.rs:1409`) sets `report_unresolved_imports = true`
+- tsz-server (`src/bin/tsz_server/main.rs`) does NOT set this flag
+- Conformance tests run through tsz-server, so all unresolved symbols return `TypeId::ANY`
+
+**Experiment Results (Feb 1, 2026):**
+
+Tried enabling `report_unresolved_imports = true` in tsz-server:
+
+| Metric | Before | After | Delta |
+|--------|--------|-------|-------|
+| Pass Rate | 48.4% | 45.2% | **-3.2%** |
+| Missing TS2304 | 1,412 | 676 | -736 (good!) |
+| Extra TS2304 | 829 | 1,946 | +1,117 (bad!) |
+| Extra TS2307 | 604 | 1,677 | +1,073 (bad!) |
+
+**Analysis:** Enabling error reporting fixed 736 missing TS2304 errors but created 1,117 *additional* extra errors. The net effect is negative because **our resolution is broken** - we emit errors for symbols that TSC successfully resolves.
+
+**Conclusion:** Must fix global type and module resolution (Phase 2) BEFORE enabling error reporting.
+
+**Completed:**
+- [x] Identified `report_unresolved_imports` as the suppression mechanism
+- [x] Tested enabling it - confirms resolution is the real problem
+- [x] Reverted change, added comments explaining the blocker
+
+**Blocked on:**
+- Phase 2: Global type resolution must work first
+- Module resolution improvements needed
+
+---
+
+### Phase 2: Fix Global Type Resolution (EXPERIMENTAL)
+
+**Status:** EXPERIMENT COMPLETED - APPROACH IDENTIFIED BUT COMPLEX TRADEOFFS
+
+**Root Cause (via ask-gemini):** SymbolId collision!
+
+When `resolve_identifier_symbol` finds `Promise` in a lib binder, it returns a `SymbolId` that's **local to that lib binder** (e.g., `SymbolId(50)`). But `get_symbol_globally` first checks the **current file's binder** with that same ID. If the current file has any symbol at index 50, it returns the wrong symbol!
+
+**Why CLI driver works but tsz-server fails:**
+
+| Component | Lib Symbol Handling |
+|-----------|---------------------|
+| **CLI driver** | Uses `parse_and_bind_parallel_with_lib_files` → calls `merge_lib_contexts_into_binder` → **remaps SymbolIds** to avoid collisions |
+| **tsz-server** | Creates fresh binder per file → sets `lib_contexts` separately → **NO remapping** → SymbolId collisions |
+
+---
+
+#### Experiment 1: Enable `report_unresolved_imports` (WITHOUT lib merging)
+
+| Metric | Before | After | Delta |
+|--------|--------|-------|-------|
+| Pass Rate | 48.4% | 45.2% | -3.2% |
+| Missing TS2304 | 1412 | 736 | -676 (good) |
+| Extra TS2304 | 829 | 1946 | +1117 (bad) |
+| Extra TS2307 | - | 1677 | +1677 (bad) |
+| Extra TS2749 | - | 1664 | +1664 (bad) |
+
+**Conclusion:** We emit MORE errors than we fix because global/module resolution fails.
+
+---
+
+#### Experiment 2: Add lib symbol merging (WITH `report_unresolved_imports` enabled)
+
+| Metric | Before | After | Delta |
+|--------|--------|-------|-------|
+| Pass Rate | 45.2% | 45.4% | +0.2% |
+| Extra TS2304 | 1946 | 2058 | +112 (worse!) |
+| Extra TS2307 | 1677 | 2180 | +503 (worse!) |
+
+**Conclusion:** Lib merging didn't help when error reporting is enabled.
+
+---
+
+#### Experiment 3: Add lib symbol merging (WITH `report_unresolved_imports` disabled)
+
+| Metric | Baseline | After Merging | Delta |
+|--------|----------|---------------|-------|
+| Pass Rate | 48.4% | 48.0% | -0.4% |
+| Extra TS2339 | 1288 | 1966 | +678 (bad) |
+| Extra TS2304 | 829 | 697 | -132 (good) |
+
+**Conclusion:** Lib merging fixes some TS2304 but causes MORE TS2339 (property not found) errors. 
+When types resolve correctly (instead of becoming `any`), property checks that were silently passing now fail.
+
+---
+
+**Key Insight:** The issues are interconnected:
+1. **SymbolId collision** prevents correct global type resolution
+2. **But** fixing it exposes property resolution bugs (TS2339)
+3. **And** exposes module resolution bugs (TS2307)
+
+**Revised Strategy:**
+
+Instead of fixing Phase 2 first, we should:
+1. **Phase 3 first:** Fix property resolution on primitives (TS2339)
+2. **Then Phase 2:** Fix global type resolution (will now work without regressions)
+3. **Then Phase 1:** Enable `report_unresolved_imports`
+
+**Files to Investigate for TS2339:**
+- `src/solver/operations_property.rs` - property lookup
+- `src/solver/apparent.rs` - hardcoded primitive methods
+- `src/checker/state_checking_members.rs` - member resolution
