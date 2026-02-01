@@ -108,12 +108,14 @@ function runTszWithFullOutput(
   }
 
   // For multi-file tests or tests needing special options, use server protocol
-  // The CLI doesn't support all options (experimentalDecorators, etc.)
+  // The CLI doesn't support all options (experimentalDecorators, strictNullChecks, etc.)
   const needsServer = fileEntries.length > 1 || 
     options.experimentalDecorators ||
     options.emitDecoratorMetadata ||
     options.esModuleInterop ||
-    options.allowSyntheticDefaultImports;
+    options.allowSyntheticDefaultImports ||
+    options.strict ||
+    options.strictNullChecks;
 
   if (needsServer) {
     // Use server protocol for full option support

@@ -429,12 +429,16 @@ pub mod diagnostic_codes {
     pub const CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE: u32 = 2451; // Cannot redeclare block-scoped variable '{0}'.
     pub const VARIABLE_USED_BEFORE_ASSIGNED: u32 = 2454; // Variable '{0}' is used before being assigned.
 
-    // Null/undefined errors
+    // Null/undefined errors - generic (when name is not available)
     pub const OBJECT_IS_POSSIBLY_UNDEFINED: u32 = 2532;
     pub const OBJECT_IS_POSSIBLY_NULL: u32 = 2531;
     pub const OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED: u32 = 2533;
     pub const OBJECT_IS_OF_TYPE_UNKNOWN: u32 = 2571;
     pub const CANNOT_READ_PROPERTY_OF_UNDEFINED: u32 = 2532;
+    // Null/undefined errors - specific with name (preferred when name is available)
+    pub const NAME_IS_POSSIBLY_NULL: u32 = 18047; // '{0}' is possibly 'null'.
+    pub const NAME_IS_POSSIBLY_UNDEFINED: u32 = 18048; // '{0}' is possibly 'undefined'.
+    pub const NAME_IS_POSSIBLY_NULL_OR_UNDEFINED: u32 = 18049; // '{0}' is possibly 'null' or 'undefined'.
 
     // Class errors
     pub const CLASS_NAME_CANNOT_BE_ANY: u32 = 2414; // Class name cannot be 'any'.
