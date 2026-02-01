@@ -44,7 +44,37 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        for &stmt_idx in &block.statements.nodes {
+        // Distribute comments from self.all_comments to block statements.
+        // Uses shared self.comment_emit_idx which is also advanced by
+        // nested emit_block calls, preventing double-emission.
+        let block_end = node.end;
+
+        let stmts = block.statements.nodes.clone();
+        for &stmt_idx in stmts.iter() {
+            // Emit comments that appear before this statement
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                if let Some(text) = self.source_text {
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                        if c_pos >= block_end {
+                            break;
+                        }
+                        if c_end <= stmt_node.pos {
+                            let comment_text = crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                            self.write(comment_text);
+                            if c_trailing {
+                                self.write_line();
+                            }
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
             let before_len = self.writer.len();
             self.emit(stmt_idx);
             // Only add newline if something was actually emitted
@@ -52,6 +82,11 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+
+        // Note: We intentionally don't emit "remaining comments before closing brace" here
+        // because block.end extends past subsequent trivia (parser skip_trivia behavior).
+        // Comments after the last statement will be correctly emitted by the parent scope's
+        // "before next statement" loop or emit_source_file's trailing comment handler.
 
         self.decrease_indent();
         self.write("}");
@@ -412,7 +447,6 @@ impl<'a> Printer<'a> {
 
         for &clause_idx in &case_block.statements.nodes {
             self.emit(clause_idx);
-            self.write_line();
         }
 
         self.decrease_indent();
