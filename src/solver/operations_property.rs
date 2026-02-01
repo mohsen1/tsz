@@ -149,6 +149,23 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
         let mapped = self.interner.mapped_type(mapped_id);
 
+        // SPECIAL CASE: Mapped types over array-like sources
+        // When a mapped type like Boxified<T> = { [P in keyof T]: Box<T[P]> } is applied
+        // to an array type, array methods (pop, push, concat, etc.) should NOT be mapped
+        // through the template. They should be resolved from the resulting array type.
+        //
+        // For example: Boxified<T> where T extends any[]
+        // - Numeric properties (0, 1, 2) → Box<T[number]>
+        // - Array methods (pop, push) → resolved from Array<Box<T[number]>>
+        if let Some(result) = self.resolve_array_mapped_type_method(
+            &mapped,
+            mapped_id,
+            prop_name,
+            prop_atom,
+        ) {
+            return Some(result);
+        }
+
         // Step 1: Check if this property name is valid in the constraint
         // We need to check if the literal string prop_name is in the constraint
         let constraint = mapped.constraint;
@@ -205,6 +222,108 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             type_id: final_type,
             from_index_signature: false,
         })
+    }
+
+    /// Handle array method access on mapped types applied to array-like sources.
+    ///
+    /// When a mapped type like `{ [P in keyof T]: F<T[P]> }` is applied to an array type,
+    /// TypeScript preserves array methods (pop, push, concat, etc.) from the resulting
+    /// array type rather than mapping them through the template.
+    ///
+    /// Returns `Some(result)` if this is an array method on a mapped array type,
+    /// `None` otherwise.
+    fn resolve_array_mapped_type_method(
+        &self,
+        mapped: &MappedType,
+        _mapped_id: MappedTypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> Option<PropertyAccessResult> {
+        use crate::solver::types::TypeKey;
+
+        // Only handle non-numeric property names (array methods)
+        // Numeric properties should go through normal template mapping
+        if prop_name.parse::<usize>().is_ok() {
+            return None;
+        }
+
+        // Check if constraint is `keyof T` where T might be array-like
+        let source_type = self.get_homomorphic_source(mapped)?;
+
+        // Check if source type is array-like (array, tuple, or type param with array constraint)
+        if !self.is_array_like_type(source_type) {
+            return None;
+        }
+
+        // For array methods, we need to:
+        // 1. Compute the mapped element type: F<T[number]>
+        // 2. Create Array<mapped_element>
+        // 3. Resolve the property on that array type
+
+        // Get the element type mapping: instantiate template with `number` as the key
+        let number_type = TypeId::NUMBER;
+        let mut subst = TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, number_type);
+        let mapped_element = instantiate_type(self.interner, mapped.template, &subst);
+        let mapped_element = evaluate_type(self.interner, mapped_element);
+
+        // Create the resulting array type
+        let array_type = self.interner.intern(TypeKey::Array(mapped_element));
+
+        // Resolve the property on the array type
+        let result = self.resolve_array_property(array_type, prop_name, prop_atom);
+
+        // If property not found on array, return None to fall through to normal handling
+        if matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
+            return None;
+        }
+
+        Some(result)
+    }
+
+    /// Get the homomorphic source type for a mapped type.
+    ///
+    /// For a mapped type like `{ [P in keyof T]: ... }`, returns `T`.
+    /// Returns `None` if the mapped type is not homomorphic.
+    fn get_homomorphic_source(&self, mapped: &MappedType) -> Option<TypeId> {
+        use crate::solver::types::TypeKey;
+
+        // Check if constraint is `keyof T`
+        if let Some(TypeKey::KeyOf(source)) = self.interner.lookup(mapped.constraint) {
+            return Some(source);
+        }
+
+        None
+    }
+
+    /// Check if a type is array-like (array, tuple, or type parameter constrained to array).
+    fn is_array_like_type(&self, type_id: TypeId) -> bool {
+        use crate::solver::types::TypeKey;
+
+        match self.interner.lookup(type_id) {
+            Some(TypeKey::Array(_)) => true,
+            Some(TypeKey::Tuple(_)) => true,
+            Some(TypeKey::TypeParameter(info)) => {
+                // Check if the type parameter has an array-like constraint
+                if let Some(constraint) = info.constraint {
+                    self.is_array_like_type(constraint)
+                } else {
+                    false
+                }
+            }
+            Some(TypeKey::ReadonlyType(inner)) => self.is_array_like_type(inner),
+            // Also check for union types where all members are array-like
+            Some(TypeKey::Union(members)) => {
+                let members = self.interner.type_list(members);
+                !members.is_empty() && members.iter().all(|&m| self.is_array_like_type(m))
+            }
+            Some(TypeKey::Intersection(members)) => {
+                // For intersection, at least one member should be array-like
+                let members = self.interner.type_list(members);
+                members.iter().any(|&m| self.is_array_like_type(m))
+            }
+            _ => false,
+        }
     }
 
     /// Check if a property name is valid in a mapped type's constraint.

@@ -7388,3 +7388,109 @@ fn test_property_access_array_push_with_env_resolver() {
         "Without env resolver, array.push should not be found (no lib fallback)"
     );
 }
+
+/// Test that array mapped type method resolution works correctly.
+/// When { [P in keyof T]: T[P] } where T extends any[] is accessed with .pop(),
+/// it should resolve to the array method, not map through the template.
+#[test]
+fn test_array_mapped_type_method_resolution() {
+    use crate::solver::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+
+    // Create T extends any[]
+    let any_array = interner.array(TypeId::ANY);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(any_array),
+        default: None,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param));
+
+    // Create the mapped type: { [P in keyof T]: T[P] }
+    let p_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+    };
+    let p_type = interner.intern(TypeKey::TypeParameter(p_param.clone()));
+    let index_access = interner.intern(TypeKey::IndexAccess(t_type, p_type));
+
+    // Create keyof T as the constraint
+    let keyof_t = interner.intern(TypeKey::KeyOf(t_type));
+
+    // Create the mapped type
+    let mapped = MappedType {
+        type_param: p_param,
+        constraint: keyof_t,
+        name_type: None,
+        template: index_access,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+    let mapped_type = interner.mapped(mapped);
+
+    // Set up TypeEnvironment with Array<T> registered
+    let mut env = TypeEnvironment::new();
+
+    // Create a mock Array<T> interface with pop method
+    let array_t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+    };
+    let array_t = interner.intern(TypeKey::TypeParameter(array_t_param.clone()));
+    let pop_return_type = interner.union2(array_t, TypeId::UNDEFINED);
+    let pop_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        return_type: pop_return_type,
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let array_props = vec![
+        PropertyInfo {
+            name: interner.intern_string("pop"),
+            type_id: pop_fn,
+            write_type: pop_fn,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("length"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ];
+    let array_interface = interner.object(array_props);
+    env.set_array_base_type(array_interface, vec![array_t_param]);
+
+    // Create evaluator with the environment
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
+
+    // Test property access on the mapped type
+    let result = evaluator.resolve_property_access(mapped_type, "pop");
+
+    // Should succeed with a function type (not PropertyNotFound)
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => {
+            // Check that we got a function type back
+            let key = interner.lookup(type_id);
+            assert!(
+                matches!(key, Some(TypeKey::Function(_))),
+                "pop should resolve to a function, got {:?}",
+                key
+            );
+        }
+        other => {
+            panic!("Expected Success for .pop(), got {:?}", other);
+        }
+    }
+}
