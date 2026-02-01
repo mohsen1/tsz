@@ -981,7 +981,11 @@ impl<'a> CheckerState<'a> {
         // Return a Ref type AND register DefId mapping for gradual migration.
         // The Ref type is needed because resolve_qualified_name and other code
         // extracts SymbolRef from the type to look up the symbol's exports map.
-        if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
+        // Skip this when the symbol is also a FUNCTION — the FUNCTION branch below
+        // handles merging namespace exports into the function's callable type.
+        if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
+            && flags & symbol_flags::FUNCTION == 0
+        {
             use crate::solver::{SymbolRef, TypeKey};
             // Also create DefId mapping for future migration
             let _ = self.ctx.get_or_create_def_id(sym_id);

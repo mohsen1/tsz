@@ -179,6 +179,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // The application's base should already be a callable type after type evaluation
                 self.resolve_call(app.base, arg_types)
             }
+            TypeKey::TypeParameter(param_info) => {
+                // For type parameters with callable constraints (e.g., T extends { (): string }),
+                // resolve the call using the constraint type
+                if let Some(constraint) = param_info.constraint {
+                    self.resolve_call(constraint, arg_types)
+                } else {
+                    CallResult::NotCallable { type_id: func_type }
+                }
+            }
             TypeKey::Ref(_sym_ref) => {
                 // For Ref types, we need to look up the symbol's type
                 // However, in the CallEvaluator we don't have access to symbol resolution

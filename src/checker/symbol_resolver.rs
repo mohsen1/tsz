@@ -1909,10 +1909,21 @@ impl<'a> CheckerState<'a> {
             Some(sym) => sym,
             None => return false,
         };
-        let left_symbol = match self.ctx.binder.get_symbol(left_sym) {
+        let lib_binders = self.get_lib_binders();
+        let left_symbol = match self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) {
             Some(symbol) => symbol,
             None => return false,
         };
+
+        // Only report TS2694 for namespace/module/enum/class symbols.
+        // For regular variables (e.g., `typeof x.p` where x is a local variable),
+        // the qualified name refers to a property access, not a namespace member.
+        let is_namespace_like = left_symbol.flags
+            & (symbol_flags::MODULE | CLASS | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM | symbol_flags::INTERFACE)
+            != 0;
+        if !is_namespace_like {
+            return false;
+        }
 
         let right_name = match self
             .ctx

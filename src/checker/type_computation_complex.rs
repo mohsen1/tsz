@@ -152,6 +152,12 @@ impl<'a> CheckerState<'a> {
                     // This handles cases like `function Foo() {}` where `Foo.prototype` exists
                     if self.type_has_prototype_property(constructor_type) {
                         Some(constructor_type)
+                    } else if !shape.call_signatures.is_empty() {
+                        // TSC behavior: callable types with call signatures but no construct
+                        // signatures are still "constructable" — `new` returns `any`.
+                        // TS2351 is only for types with NO signatures at all (e.g., string).
+                        // In strict mode, TSC emits TS7009 instead.
+                        Some(TypeId::ANY)
                     } else {
                         None
                     }
@@ -1215,6 +1221,9 @@ impl<'a> CheckerState<'a> {
         // stored as Application(Ref(symbol_id), [string]) and needs to be resolved
         // to the actual Callable with call signatures
         let callee_type_for_call = self.evaluate_application_type(callee_type_for_resolution);
+        // Resolve bare Ref types to their underlying callable types.
+        // This handles interfaces with call signatures, merged declarations, etc.
+        let callee_type_for_call = self.resolve_ref_type(callee_type_for_call);
 
         let result = {
             let env = self.ctx.type_env.borrow();
