@@ -726,13 +726,6 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
     Ok(Vec::new())
 }
 
-/// Resolve lib files using core libs only (without DOM).
-/// This is useful for conformance testing where DOM types are not needed.
-pub(crate) fn resolve_core_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
-    let core_lib = core_lib_name_for_target(target);
-    resolve_lib_files(&[core_lib.to_string()])
-}
-
 /// Get the default lib name for a target.
 ///
 /// This matches tsc's default behavior exactly:

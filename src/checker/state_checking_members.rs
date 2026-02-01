@@ -1911,6 +1911,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         };
 
+        // Check for missing Promise global type when function is async (TS2318)
+        // TSC emits this at the start of the file when Promise is not available
+        // Only check for non-generator async functions (async generators use AsyncGenerator, not Promise)
+        if func.is_async && !func.asterisk_token {
+            self.check_global_promise_available();
+        }
+
         let (_type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
 
         // Check for parameter properties (error 2369)
