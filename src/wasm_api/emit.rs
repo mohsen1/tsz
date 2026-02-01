@@ -196,6 +196,7 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
         _ => ModuleKind::None,
     };
 
+    let module_kind = opts.module;
     let mut ctx = EmitContext::with_options(opts.clone());
     ctx.auto_detect_module = true;
     ctx.target_es5 = matches!(opts.target, ScriptTarget::ES3 | ScriptTarget::ES5);
@@ -210,7 +211,18 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
     printer.set_source_text(source);
     printer.emit(root_idx);
 
-    printer.get_output().to_string()
+    let output = printer.get_output().to_string();
+
+    // For ES module files: if the source had import/export statements but the output
+    // is empty (all imports were type-only), emit "export {};" to preserve module nature
+    if output.trim().is_empty() && !matches!(module_kind, ModuleKind::CommonJS) {
+        let has_module_syntax = source.contains("import ") || source.contains("export ");
+        if has_module_syntax {
+            return "export {};\n".to_string();
+        }
+    }
+
+    output
 }
 
 /// Emit a single file from an arena

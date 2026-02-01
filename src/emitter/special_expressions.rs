@@ -15,33 +15,32 @@ impl<'a> Printer<'a> {
 
     /// Emit a yield expression: yield or yield* or yield value
     pub(super) fn emit_yield_expression(&mut self, node: &Node) {
-        // YieldExpression is stored with UnaryExprData (operand = expression, operator = asterisk flag)
-        let Some(unary) = self.arena.get_unary_expr(node) else {
+        // YieldExpression is stored with UnaryExprDataEx (expression + asterisk_token)
+        let Some(unary) = self.arena.get_unary_expr_ex(node) else {
             self.write("yield");
             return;
         };
 
         self.write("yield");
-        // Check if this is yield* (operator stores asterisk flag as SyntaxKind)
-        if unary.operator == SyntaxKind::AsteriskToken as u16 {
+        if unary.asterisk_token {
             self.write("*");
         }
-        if !unary.operand.is_none() {
+        if !unary.expression.is_none() {
             self.write(" ");
-            self.emit_expression(unary.operand);
+            self.emit_expression(unary.expression);
         }
     }
 
     /// Emit an await expression: await value
     pub(super) fn emit_await_expression(&mut self, node: &Node) {
-        // AwaitExpression is stored with UnaryExprData
-        let Some(unary) = self.arena.get_unary_expr(node) else {
+        // AwaitExpression is stored with UnaryExprDataEx
+        let Some(unary) = self.arena.get_unary_expr_ex(node) else {
             self.write("await");
             return;
         };
 
         self.write("await ");
-        self.emit_expression(unary.operand);
+        self.emit_expression(unary.expression);
     }
 
     // =========================================================================

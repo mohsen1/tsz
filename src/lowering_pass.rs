@@ -566,7 +566,8 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.target_es5 && !for_in_of.await_modifier {
             self.transforms
                 .insert(idx, TransformDirective::ES5ForOf { for_of_node: idx });
-            self.transforms.helpers_mut().values = true;
+            // Note: simple array-indexing pattern doesn't need __values helper
+            // __values is only needed with --downlevelIteration
         }
 
         self.visit(for_in_of.initializer);
