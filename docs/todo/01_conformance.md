@@ -30,7 +30,7 @@ After deep analysis with ask-gemini and code inspection, I've identified **5 fun
 | Error | Missing | Extra | Root Cause |
 |-------|---------|-------|------------|
 | **TS2304** | 1,412 | 829 | Symbol resolution returns ANY instead of erroring (Any Poisoning) |
-| **TS2318** | 1,185 | - | Global types not resolved from lib contexts |
+| **TS2318** | ~~1,185~~ 485 | - | Global types not resolved from lib contexts (PARTIALLY FIXED) |
 | **TS2322** | 670 | 1,358 | Both directions: ANY suppresses real errors + false assignability |
 | **TS2339** | - | 1,288 | Property lookup falls back to incomplete hardcoded lists |
 | **TS18050** | 679 | - | Null checks don't trigger because type is ANY |
@@ -388,3 +388,27 @@ with T1 != T2, breaking property lookup.
 
 **Result:** Prevents TS2339 regression (1966 → 1288) when lib types are merged.
 Pass rate maintained at 48.4% baseline.
+
+---
+
+#### Fix Implemented (2026-02-01) - TS2318 Global Type Check
+
+**Emit TS2318 for Missing Global Types with --noLib**
+
+TypeScript always emits TS2318 "Cannot find global type X" errors for core types
+(Array, String, Boolean, etc.) when they are not available, regardless of --noLib.
+
+**Previous Behavior:**
+- Only emitted TS2318 when libs should be loaded but weren't
+- With `--noLib`, no global type errors were emitted
+
+**Fix Applied:**
+- Changed `check_missing_global_types` to emit TS2318 whenever libs are not loaded
+- Matches tsc's behavior: user is responsible for providing core types with --noLib
+
+**Result:** Reduced missing TS2318 from 1185 to 485 (~700 errors fixed).
+Pass rate maintained at 48.4% baseline.
+
+**Remaining TS2318 (485):**
+- ES2015+ types (Iterator, Promise, etc.) that require feature detection
+- Types that are used conditionally based on code features
