@@ -977,8 +977,225 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // TODO: Implement multiline comment toggle
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let result = (|| -> Option<serde_json::Value> {
+            let file = request.arguments.get("file")?.as_str()?;
+            let start_line = request.arguments.get("startLine")?.as_u64()? as usize;
+            let start_offset = request.arguments.get("startOffset")?.as_u64()? as usize;
+            let end_line = request.arguments.get("endLine")?.as_u64()? as usize;
+            let end_offset = request.arguments.get("endOffset")?.as_u64()? as usize;
+            let source_text = self.open_files.get(file)?.clone();
+
+            // Compute byte offsets from 1-based line/offset
+            let sel_start = Self::line_offset_to_byte(&source_text, start_line as u32, start_offset as u32);
+            let sel_end = Self::line_offset_to_byte(&source_text, end_line as u32, end_offset as u32);
+            let lines: Vec<&str> = source_text.lines().collect();
+
+            // Find all /* */ comment ranges in the source
+            let comment_ranges = Self::find_multiline_comments(&source_text);
+
+            // Check if selection is fully inside an existing comment
+            let enclosing = comment_ranges.iter().find(|(cs, ce)| *cs <= sel_start && sel_end <= *ce);
+
+            // Find comments that overlap with the selection
+            let overlapping: Vec<(usize, usize)> = comment_ranges
+                .iter()
+                .filter(|(cs, ce)| *cs < sel_end && *ce > sel_start)
+                .map(|&(cs, ce)| (cs, ce))
+                .collect();
+
+            // Check if selection contains only comments and whitespace
+            let only_comments_and_ws = if !overlapping.is_empty() && sel_start != sel_end {
+                let sel_bytes = source_text[sel_start..sel_end].as_bytes();
+                let mut all_covered = true;
+                let mut pos = sel_start;
+                for &(cs, ce) in &overlapping {
+                    // Check non-comment text before this comment
+                    let gap_start = pos.max(sel_start);
+                    let gap_end = cs.max(sel_start).min(sel_end);
+                    if gap_start < gap_end {
+                        let gap = &source_text[gap_start..gap_end];
+                        if gap.chars().any(|c| !c.is_whitespace()) {
+                            all_covered = false;
+                            break;
+                        }
+                    }
+                    pos = ce;
+                }
+                if all_covered && pos < sel_end {
+                    let gap = &source_text[pos..sel_end];
+                    if gap.chars().any(|c| !c.is_whitespace()) {
+                        all_covered = false;
+                    }
+                }
+                all_covered
+            } else {
+                false
+            };
+
+            let mut edits = Vec::new();
+
+            if let Some(&(comment_start, comment_end)) = enclosing {
+                // Selection is inside an existing comment → remove the comment
+                // Remove /* at comment_start
+                let (sl, so) = Self::byte_to_line_offset(&lines, comment_start)?;
+                edits.push(serde_json::json!({
+                    "start": {"line": sl, "offset": so},
+                    "end": {"line": sl, "offset": so + 2},
+                    "newText": ""
+                }));
+                // Remove */ at comment_end - 2
+                let close_pos = comment_end - 2;
+                let (el, eo) = Self::byte_to_line_offset(&lines, close_pos)?;
+                edits.push(serde_json::json!({
+                    "start": {"line": el, "offset": eo},
+                    "end": {"line": el, "offset": eo + 2},
+                    "newText": ""
+                }));
+            } else if only_comments_and_ws {
+                // Selection only contains comments and whitespace → remove all comments
+                // Process in reverse order to preserve positions
+                for &(cs, ce) in overlapping.iter().rev() {
+                    let close_pos = ce - 2;
+                    let (el, eo) = Self::byte_to_line_offset(&lines, close_pos)?;
+                    edits.push(serde_json::json!({
+                        "start": {"line": el, "offset": eo},
+                        "end": {"line": el, "offset": eo + 2},
+                        "newText": ""
+                    }));
+                    let (sl, so) = Self::byte_to_line_offset(&lines, cs)?;
+                    edits.push(serde_json::json!({
+                        "start": {"line": sl, "offset": so},
+                        "end": {"line": sl, "offset": so + 2},
+                        "newText": ""
+                    }));
+                }
+            } else if sel_start == sel_end {
+                // Empty selection, not inside a comment → insert /**/
+                let (sl, so) = Self::byte_to_line_offset(&lines, sel_start)?;
+                edits.push(serde_json::json!({
+                    "start": {"line": sl, "offset": so},
+                    "end": {"line": sl, "offset": so},
+                    "newText": "/**/"
+                }));
+            } else {
+                // Selection not inside a comment → wrap with /* */
+                // Handle any existing /* or */ inside the selection by
+                // closing and reopening comments around them
+                if overlapping.is_empty() {
+                    // Simple case: no existing comments in selection
+                    let (sl, so) = Self::byte_to_line_offset(&lines, sel_start)?;
+                    let (el, eo) = Self::byte_to_line_offset(&lines, sel_end)?;
+                    edits.push(serde_json::json!({
+                        "start": {"line": sl, "offset": so},
+                        "end": {"line": sl, "offset": so},
+                        "newText": "/*"
+                    }));
+                    edits.push(serde_json::json!({
+                        "start": {"line": el, "offset": eo},
+                        "end": {"line": el, "offset": eo},
+                        "newText": "*/"
+                    }));
+                } else {
+                    // Complex case: close and reopen around existing comment boundaries
+                    let (sl, so) = Self::byte_to_line_offset(&lines, sel_start)?;
+                    edits.push(serde_json::json!({
+                        "start": {"line": sl, "offset": so},
+                        "end": {"line": sl, "offset": so},
+                        "newText": "/*"
+                    }));
+
+                    for &(cs, ce) in &overlapping {
+                        if cs > sel_start && cs < sel_end {
+                            // Close our comment before the existing /*
+                            let (cl, co) = Self::byte_to_line_offset(&lines, cs)?;
+                            edits.push(serde_json::json!({
+                                "start": {"line": cl, "offset": co},
+                                "end": {"line": cl, "offset": co},
+                                "newText": "*/"
+                            }));
+                        }
+                        if ce > sel_start && ce < sel_end {
+                            // Reopen our comment after the existing */
+                            let (cl, co) = Self::byte_to_line_offset(&lines, ce)?;
+                            edits.push(serde_json::json!({
+                                "start": {"line": cl, "offset": co},
+                                "end": {"line": cl, "offset": co},
+                                "newText": "/*"
+                            }));
+                        }
+                    }
+
+                    let (el, eo) = Self::byte_to_line_offset(&lines, sel_end)?;
+                    edits.push(serde_json::json!({
+                        "start": {"line": el, "offset": eo},
+                        "end": {"line": el, "offset": eo},
+                        "newText": "*/"
+                    }));
+                }
+            }
+
+            Some(serde_json::json!(edits))
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    /// Convert byte position to 1-based line/offset for multiline comment handler
+    fn byte_to_line_offset(lines: &[&str], byte_pos: usize) -> Option<(usize, usize)> {
+        let mut pos = 0usize;
+        for (i, l) in lines.iter().enumerate() {
+            let line_end = pos + l.len();
+            if byte_pos <= line_end {
+                return Some((i + 1, byte_pos - pos + 1)); // 1-based
+            }
+            pos = line_end + 1; // +1 for \n
+        }
+        None
+    }
+
+    /// Find all /* */ comment ranges as (start, end) byte positions
+    fn find_multiline_comments(text: &str) -> Vec<(usize, usize)> {
+        let bytes = text.as_bytes();
+        let mut ranges = Vec::new();
+        let mut i = 0;
+        while i < bytes.len().saturating_sub(1) {
+            if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                let start = i;
+                i += 2;
+                // Find matching */
+                while i < bytes.len().saturating_sub(1) {
+                    if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        i += 2;
+                        ranges.push((start, i));
+                        break;
+                    }
+                    i += 1;
+                }
+            } else if bytes[i] == b'/' && bytes[i + 1] == b'/' {
+                // Skip single-line comments to avoid matching /* inside them
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            } else if bytes[i] == b'"' || bytes[i] == b'\'' || bytes[i] == b'`' {
+                // Skip string literals to avoid matching /* inside strings
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2; // skip escaped char
+                        continue;
+                    }
+                    if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        ranges
     }
 
     pub(crate) fn handle_comment_selection(
