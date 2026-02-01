@@ -1643,7 +1643,8 @@ impl<'a> CheckerState<'a> {
     /// ```
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use crate::parser::node::NodeAccess;
-        use crate::solver::{TypeLowering, types::is_compiler_managed_type};
+        use crate::solver::types::TypeKey;
+        use crate::solver::{TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type};
 
         let mut lib_type_id: Option<TypeId> = None;
 
@@ -1655,6 +1656,9 @@ impl<'a> CheckerState<'a> {
         // defined in lib.es5.d.ts and augmented in lib.es2015.core.d.ts with
         // methods like find(), findIndex(), etc.
         let mut lib_types: Vec<TypeId> = Vec::new();
+        // Track canonical TypeIds for the first definition's type parameters.
+        let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
+        let mut first_params_set = false;
 
         for lib_ctx in &lib_contexts {
             // Look up the symbol in this lib file's file_locals
@@ -1698,7 +1702,36 @@ impl<'a> CheckerState<'a> {
                     );
                     // For interfaces, use all declarations (handles declaration merging)
                     if !symbol.declarations.is_empty() {
-                        lib_types.push(lowering.lower_interface_declarations(&symbol.declarations));
+                        let (ty, params) =
+                            lowering.lower_interface_declarations_with_params(&symbol.declarations);
+
+                        // For the first definition, record canonical type parameter TypeIds
+                        if !first_params_set && !params.is_empty() {
+                            first_params_set = true;
+                            canonical_param_type_ids = params
+                                .iter()
+                                .map(|p| self.ctx.types.intern(TypeKey::TypeParameter(p.clone())))
+                                .collect();
+                            lib_types.push(ty);
+                        } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
+                            // For subsequent definitions, substitute type params with canonical ones
+                            let mut subst = TypeSubstitution::new();
+                            for (i, p) in params.iter().enumerate() {
+                                if i < canonical_param_type_ids.len() {
+                                    subst.insert(p.name, canonical_param_type_ids[i]);
+                                }
+                            }
+                            if !subst.is_empty() {
+                                let mut instantiator =
+                                    TypeInstantiator::new(self.ctx.types, &subst);
+                                let substituted_ty = instantiator.instantiate(ty);
+                                lib_types.push(substituted_ty);
+                            } else {
+                                lib_types.push(ty);
+                            }
+                        } else {
+                            lib_types.push(ty);
+                        }
                         continue;
                     }
                     // For type aliases and other single-declaration types
@@ -1778,12 +1811,16 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use crate::parser::node::NodeAccess;
-        use crate::solver::{TypeLowering, types::is_compiler_managed_type};
+        use crate::solver::types::TypeKey;
+        use crate::solver::{TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type};
 
         let lib_contexts = self.ctx.lib_contexts.clone();
 
         let mut lib_types: Vec<TypeId> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;
+        // Track canonical TypeIds for the first definition's type parameters.
+        // Subsequent definitions will have their type params substituted with these.
+        let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
 
         for lib_ctx in &lib_contexts {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
@@ -1821,10 +1858,36 @@ impl<'a> CheckerState<'a> {
                     if !symbol.declarations.is_empty() {
                         let (ty, params) =
                             lowering.lower_interface_declarations_with_params(&symbol.declarations);
-                        lib_types.push(ty);
-                        // Take type params from the first definition (primary interface)
+
+                        // For the first definition, record canonical type parameter TypeIds
                         if first_params.is_none() && !params.is_empty() {
-                            first_params = Some(params);
+                            first_params = Some(params.clone());
+                            // Compute TypeIds for these canonical params
+                            canonical_param_type_ids = params
+                                .iter()
+                                .map(|p| self.ctx.types.intern(TypeKey::TypeParameter(p.clone())))
+                                .collect();
+                            lib_types.push(ty);
+                        } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
+                            // For subsequent definitions with type params, substitute them
+                            // with the canonical TypeIds to ensure consistency.
+                            // This fixes the Array<T1> & Array<T2> problem where T1 != T2.
+                            let mut subst = TypeSubstitution::new();
+                            for (i, p) in params.iter().enumerate() {
+                                if i < canonical_param_type_ids.len() {
+                                    subst.insert(p.name, canonical_param_type_ids[i]);
+                                }
+                            }
+                            if !subst.is_empty() {
+                                let mut instantiator =
+                                    TypeInstantiator::new(self.ctx.types, &subst);
+                                let substituted_ty = instantiator.instantiate(ty);
+                                lib_types.push(substituted_ty);
+                            } else {
+                                lib_types.push(ty);
+                            }
+                        } else {
+                            lib_types.push(ty);
                         }
                         continue;
                     }
