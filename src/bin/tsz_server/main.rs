@@ -2030,101 +2030,68 @@ impl Server {
     fn handle_rename(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
-            let new_name = request
-                .arguments
-                .get("findInStrings")
-                .and_then(|v| v.as_str())
-                .or_else(|| {
-                    // The actual tsserver rename command expects the new name from
-                    // a separate "rename" request, not from the initial "rename" command.
-                    // The initial command returns info + locations, not the edits.
-                    None
-                });
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 RenameProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
 
-            // First check if rename is possible (prepare)
-            let rename_range = provider.prepare_rename(position);
-            if rename_range.is_none() {
+            // Use the rich prepare_rename_info to get display name, kind, etc.
+            let info = provider.prepare_rename_info(root, position);
+            if !info.can_rename {
                 return Some(serde_json::json!({
                     "info": {
                         "canRename": false,
-                        "localizedErrorMessage": "You cannot rename this element."
+                        "localizedErrorMessage": info.localized_error_message.unwrap_or_else(|| "You cannot rename this element.".to_string())
                     },
                     "locs": []
                 }));
             }
 
-            // If new_name is provided, perform the rename; otherwise just return locations
-            if let Some(new_name) = new_name {
-                match provider.provide_rename_edits(root, position, new_name.to_string()) {
-                    Ok(edit) => {
-                        let locs: Vec<serde_json::Value> = edit
-                            .changes
-                            .iter()
-                            .map(|(file_path, edits)| {
-                                let file_locs: Vec<serde_json::Value> = edits
-                                    .iter()
-                                    .map(|e| {
-                                        serde_json::json!({
-                                            "start": Self::lsp_to_tsserver_position(&e.range.start),
-                                            "end": Self::lsp_to_tsserver_position(&e.range.end),
-                                        })
-                                    })
-                                    .collect();
-                                serde_json::json!({
-                                    "file": file_path,
-                                    "locs": file_locs,
-                                })
-                            })
-                            .collect();
-                        Some(serde_json::json!({
-                            "info": { "canRename": true, "displayName": new_name, "fullDisplayName": new_name, "kind": "unknown", "kindModifiers": "", "triggerSpan": { "start": Self::lsp_to_tsserver_position(&rename_range.as_ref().unwrap().start), "length": 0 }},
-                            "locs": locs,
-                        }))
-                    }
-                    Err(msg) => Some(serde_json::json!({
-                        "info": { "canRename": false, "localizedErrorMessage": msg },
-                        "locs": []
-                    })),
-                }
-            } else {
-                // No new name - just return rename info with locations from references
-                let find_refs =
-                    FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
-                let locations = find_refs.find_references(root, position);
-                let file_locs: Vec<serde_json::Value> = locations
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|loc| {
-                        serde_json::json!({
-                            "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                            "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                        })
+            // Compute trigger span length from the range
+            let start_offset = line_map.position_to_offset(
+                info.trigger_span.start,
+                &source_text,
+            )
+            .unwrap_or(0) as usize;
+            let end_offset = line_map.position_to_offset(
+                info.trigger_span.end,
+                &source_text,
+            )
+            .unwrap_or(0) as usize;
+            let trigger_length = end_offset.saturating_sub(start_offset);
+
+            // Get rename locations from references
+            let find_refs =
+                FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let locations = find_refs.find_references(root, position);
+            let file_locs: Vec<serde_json::Value> = locations
+                .unwrap_or_default()
+                .iter()
+                .map(|loc| {
+                    serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
                     })
-                    .collect();
-                let span = rename_range.as_ref().unwrap();
-                Some(serde_json::json!({
-                    "info": {
-                        "canRename": true,
-                        "displayName": "",
-                        "fullDisplayName": "",
-                        "kind": "unknown",
-                        "kindModifiers": "",
-                        "triggerSpan": {
-                            "start": Self::lsp_to_tsserver_position(&span.start),
-                            "length": 0
-                        }
-                    },
-                    "locs": [{
-                        "file": file,
-                        "locs": file_locs,
-                    }]
-                }))
-            }
+                })
+                .collect();
+            Some(serde_json::json!({
+                "info": {
+                    "canRename": true,
+                    "displayName": info.display_name,
+                    "fullDisplayName": info.full_display_name,
+                    "kind": info.kind,
+                    "kindModifiers": info.kind_modifiers,
+                    "triggerSpan": {
+                        "start": Self::lsp_to_tsserver_position(&info.trigger_span.start),
+                        "length": trigger_length
+                    }
+                },
+                "locs": [{
+                    "file": file,
+                    "locs": file_locs,
+                }]
+            }))
         })();
         self.stub_response(
             seq,
