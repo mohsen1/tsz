@@ -898,16 +898,18 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         // FIX: Also include lib symbols for proper property resolution
-        // This ensures Error, Math, JSON, etc. can be resolved when accessed
+        // This ensures Error, Math, JSON, Promise, Array, etc. can be resolved when accessed.
+        // IMPORTANT: Use file_locals which contains merged lib symbols with remapped IDs,
+        // NOT lib.binder.symbols which contains original (unremapped) IDs.
+        // After merge_lib_contexts_into_binder(), lib symbols are stored in file_locals
+        // with new IDs unique to the main binder's arena.
         if !self.ctx.lib_contexts.is_empty() {
             let existing: rustc_hash::FxHashSet<SymbolId> = symbols.iter().copied().collect();
 
-            for lib in &self.ctx.lib_contexts {
-                for i in 0..lib.binder.symbols.len() {
-                    let sym_id = SymbolId(i as u32);
-                    if !existing.contains(&sym_id) {
-                        symbols.push(sym_id);
-                    }
+            // Get lib symbols from file_locals (where they were merged with remapped IDs)
+            for (_name, &sym_id) in self.ctx.binder.file_locals.iter() {
+                if !existing.contains(&sym_id) {
+                    symbols.push(sym_id);
                 }
             }
         }
