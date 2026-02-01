@@ -456,10 +456,14 @@ Multiple interconnected issues causing 1288 extra TS2339 errors:
    - When evaluate_type tries to resolve them, returns ERROR
    - Error messages show "Property '#y' does not exist on type 'Lazy(1)'"
 
-2. **TS2300 "Duplicate identifier" for lib types**
-   - Tests with ES2015+ targets show errors like "Duplicate identifier 'Array'"
-   - Lib symbol IDs can collide with user file symbol IDs
-   - `symbol_is_from_lib()` check doesn't work correctly when IDs collide
+2. **TS2300 "Duplicate identifier" for lib types** (Deep Investigation)
+   - Tests with ES2015+ targets show errors like "Duplicate identifier 'Array'" at wrong positions
+   - Example: Line 5 column 10 shows "Duplicate identifier 'String'" but the code is `function fail`
+   - **Root Cause**: Lib symbol IDs are getting into the user binder's symbol table
+   - When we look up these IDs, we get lib symbol NAMES but user arena POSITIONS
+   - `symbol_is_from_lib()` returns false because `binder.symbol_arenas` isn't populated for lib symbols in tsz-server (only CLI uses parallel merging)
+   - Attempted fixes to filter by declaration kind or name match didn't help
+   - **Deeper fix needed**: Track which arena each symbol declaration belongs to, or prevent lib symbol IDs from entering user binder
 
 3. **TypeScript libMap not implemented**
    - TypeScript maps `@lib: es6` → `lib.es2015.d.ts` via libMap in commandLineParser.ts
