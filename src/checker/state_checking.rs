@@ -1346,12 +1346,16 @@ impl<'a> CheckerState<'a> {
 
                         let symbol_type = self.get_type_of_symbol(sym_to_check);
 
-                        // Check if this is ONLY an interface (not also a class from
-                        // declaration merging) - emit TS2689 instead of TS2507
+                        // Check if this is ONLY an interface (not also a class or variable
+                        // from declaration merging) - emit TS2689 instead of TS2507
                         // BUT only for class declarations, not interface declarations
                         // (interfaces can validly extend other interfaces)
                         // When a name is both an interface and a class (merged declaration),
                         // the class part can be validly extended, so don't emit TS2689.
+                        // Also skip when the symbol has VARIABLE flag — built-in types
+                        // like Array, Object, Promise have both interface and variable
+                        // declarations (`interface Array` + `declare var Array: ArrayConstructor`),
+                        // and the variable provides the constructor for extends.
                         let is_interface_only = self
                             .ctx
                             .binder
@@ -1359,6 +1363,7 @@ impl<'a> CheckerState<'a> {
                             .map(|s| {
                                 (s.flags & symbol_flags::INTERFACE) != 0
                                     && (s.flags & symbol_flags::CLASS) == 0
+                                    && (s.flags & symbol_flags::VARIABLE) == 0
                             })
                             .unwrap_or(false);
 
@@ -1382,6 +1387,19 @@ impl<'a> CheckerState<'a> {
                             && is_class_declaration
                             && !self.is_constructor_type(symbol_type)
                             && !self.is_class_symbol(sym_to_check)
+                            // Skip TS2507 for symbols with both INTERFACE and VARIABLE flags
+                            // (built-in types like Array, Object, Promise) — the variable
+                            // side provides the constructor even though the interface type
+                            // doesn't have construct signatures.
+                            && self
+                                .ctx
+                                .binder
+                                .get_symbol(sym_to_check)
+                                .map(|s| {
+                                    !((s.flags & symbol_flags::INTERFACE) != 0
+                                        && (s.flags & symbol_flags::VARIABLE) != 0)
+                                })
+                                .unwrap_or(true)
                         {
                             // For classes extending non-interfaces: emit TS2507 if not a constructor type
                             // For interfaces: don't check constructor types (interfaces can extend any interface)

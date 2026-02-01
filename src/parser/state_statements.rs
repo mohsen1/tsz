@@ -255,10 +255,16 @@ impl ParserState {
                         SyntaxKind::EnumKeyword => {
                             self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
                         }
-                        SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
+                        SyntaxKind::InterfaceKeyword => {
+                            self.parse_interface_declaration_with_modifiers(
+                                start_pos, modifiers,
+                            )
+                        }
                         SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
                             if self.look_ahead_is_module_declaration() {
-                                self.parse_module_declaration()
+                                self.parse_module_declaration_with_modifiers(
+                                    start_pos, modifiers,
+                                )
                             } else {
                                 self.parse_expression_statement()
                             }
@@ -2553,18 +2559,21 @@ impl ParserState {
             let current = self.current_token;
             self.next_token(); // skip const/let/var
             let next_token = self.token();
+            let has_line_break = self.scanner.has_preceding_line_break();
             self.scanner.restore_state(snapshot);
             self.current_token = current;
 
             // If followed by `(`, it's a method name (e.g., `const() {}`), which is valid
             // If followed by `;`, `}`, `=`, `!`, `?`, or newline (ASI), treat as property name
-            // If followed by identifier, it's being used as a modifier (invalid: `const x = 1`)
-            if matches!(
-                next_token,
-                SyntaxKind::Identifier
-                    | SyntaxKind::PrivateIdentifier
-                    | SyntaxKind::OpenBracketToken
-            ) {
+            // If followed by identifier ON THE SAME LINE, it's being used as a modifier (invalid: `const x = 1`)
+            // If there's a line break before the next token, ASI applies and the keyword is a property name
+            if !has_line_break
+                && matches!(
+                    next_token,
+                    SyntaxKind::Identifier
+                        | SyntaxKind::PrivateIdentifier
+                        | SyntaxKind::OpenBracketToken
+                ) {
                 // This is likely being used as a modifier, emit error and recover
                 self.parse_error_at_current_token(
                     "A class member cannot have the 'const', 'let', or 'var' keyword.",
