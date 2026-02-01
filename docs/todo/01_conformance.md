@@ -441,3 +441,41 @@ Pass rate increased from 48.4% (5,995) to 48.5% (6,000), +5 tests.
 **Remaining TS2318 (336):**
 - Tests with `@lib: es6` where lib.es6.d.ts doesn't exist (expected behavior)
 - Tests expecting lib loading to fail for specific configurations
+
+---
+
+#### Investigation (2026-02-01) - Extra TS2339 Root Causes
+
+**Multi-File Test Issues Discovered:**
+
+Multiple interconnected issues causing 1288 extra TS2339 errors:
+
+1. **`TypeKey::Lazy(DefId)` not resolved for property access**
+   - Anonymous classes (e.g., `new class { #x = 1 }`) create `Lazy(DefId)` types
+   - These DefIds aren't registered in TypeEnvironment
+   - When evaluate_type tries to resolve them, returns ERROR
+   - Error messages show "Property '#y' does not exist on type 'Lazy(1)'"
+
+2. **TS2300 "Duplicate identifier" for lib types**
+   - Tests with ES2015+ targets show errors like "Duplicate identifier 'Array'"
+   - Lib symbol IDs can collide with user file symbol IDs
+   - `symbol_is_from_lib()` check doesn't work correctly when IDs collide
+
+3. **TypeScript libMap not implemented**
+   - TypeScript maps `@lib: es6` → `lib.es2015.d.ts` via libMap in commandLineParser.ts
+   - Our tsc-runner.ts and tsz-server both lack this mapping
+   - Causes lib loading to fail for tests using short names (es6, es7, etc.)
+
+**Code Paths Involved:**
+- `src/solver/format.rs:219` - Formats Lazy types as "Lazy(N)" instead of resolving
+- `src/solver/evaluate.rs:359` - Returns ERROR when Lazy type can't be resolved
+- `src/checker/state_type_analysis.rs:1549,1606` - Emits TS2339 with unresolved type
+
+**Attempted Fixes:**
+- Adding Lazy handling to `operations_property.rs` - No effect (error emitted elsewhere)
+- Suppressing Lazy types in `error_property_not_exist_at` - Didn't reach all code paths
+
+**Proper Fix Required:**
+1. Register anonymous class types in TypeEnvironment during lowering
+2. Or resolve Lazy types before emitting errors throughout the checker
+3. Implement libMap for lib name aliasing in both tsc-runner and tsz-server
