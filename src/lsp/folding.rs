@@ -15,6 +15,10 @@ pub struct FoldingRange {
     pub start_line: u32,
     /// The end line of the folding range (0-based)
     pub end_line: u32,
+    /// Byte offset of the span start (for precise textSpan in getOutliningSpans)
+    pub start_offset: u32,
+    /// Byte offset of the span end (for precise textSpan in getOutliningSpans)
+    pub end_offset: u32,
     /// The kind of folding range (region, comment, imports, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
@@ -22,10 +26,12 @@ pub struct FoldingRange {
 
 impl FoldingRange {
     /// Create a new folding range.
-    pub fn new(start_line: u32, end_line: u32) -> Self {
+    pub fn new(start_line: u32, end_line: u32, start_offset: u32, end_offset: u32) -> Self {
         Self {
             start_line,
             end_line,
+            start_offset,
+            end_offset,
             kind: None,
         }
     }
@@ -67,8 +73,8 @@ impl<'a> FoldingRangeProvider<'a> {
         self.collect_from_node(root, &mut ranges);
         self.collect_comment_ranges(&mut ranges);
         self.collect_region_ranges(&mut ranges);
-        ranges.sort_by_key(|r| (r.start_line, r.end_line));
-        ranges.dedup_by(|a, b| a.start_line == b.start_line && a.end_line == b.end_line);
+        ranges.sort_by_key(|r| (r.start_offset, r.end_offset));
+        ranges.dedup_by(|a, b| a.start_offset == b.start_offset && a.end_offset == b.end_offset);
         ranges
     }
 
@@ -80,6 +86,8 @@ impl<'a> FoldingRangeProvider<'a> {
 
         match node.kind {
             k if k == syntax_kind_ext::SOURCE_FILE => {
+                // TypeScript starts walk from sourceFile's children at full depth
+                // (sourceFile itself isn't "walked")
                 if let Some(sf) = self.arena.get_source_file(node) {
                     self.collect_import_groups(&sf.statements.nodes, ranges);
                     for &stmt in &sf.statements.nodes {
@@ -91,18 +99,18 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(func) = self.arena.get_function(node) {
                     let body_range = self.get_line_range(func.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     self.collect_from_node(func.body, ranges);
                 }
             }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+            k if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
                 if let Some(class) = self.arena.get_class(node) {
-                    let class_range = self.get_line_range(node_idx);
-                    if class_range.0 < class_range.1 {
-                        ranges.push(
-                            FoldingRange::new(class_range.0, class_range.1).with_kind("region"),
-                        );
+                    // Find the opening brace in the source text for the body span
+                    if let Some(body_range) = self.find_brace_range(node) {
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     for &member in &class.members.nodes {
                         self.collect_from_node(member, ranges);
@@ -112,7 +120,7 @@ impl<'a> FoldingRangeProvider<'a> {
             k if k == syntax_kind_ext::BLOCK => {
                 let block_range = self.get_line_range(node_idx);
                 if block_range.0 < block_range.1 {
-                    ranges.push(FoldingRange::new(block_range.0, block_range.1));
+                    ranges.push(FoldingRange::new(block_range.0, block_range.1, block_range.2, block_range.3));
                 }
                 if let Some(block) = self.arena.get_block(node) {
                     for &stmt in &block.statements.nodes {
@@ -128,11 +136,8 @@ impl<'a> FoldingRangeProvider<'a> {
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                 if let Some(iface) = self.arena.get_interface(node) {
-                    let iface_range = self.get_line_range(node_idx);
-                    if iface_range.0 < iface_range.1 {
-                        ranges.push(
-                            FoldingRange::new(iface_range.0, iface_range.1).with_kind("region"),
-                        );
+                    if let Some(body_range) = self.find_brace_range(node) {
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     for &member in &iface.members.nodes {
                         self.collect_from_node(member, ranges);
@@ -144,18 +149,15 @@ impl<'a> FoldingRangeProvider<'a> {
                     let alias_range = self.get_line_range(node_idx);
                     if alias_range.0 < alias_range.1 {
                         ranges.push(
-                            FoldingRange::new(alias_range.0, alias_range.1).with_kind("region"),
+                            FoldingRange::new(alias_range.0, alias_range.1, alias_range.2, alias_range.3),
                         );
                     }
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = self.arena.get_enum(node) {
-                    let enum_range = self.get_line_range(node_idx);
-                    if enum_range.0 < enum_range.1 {
-                        ranges.push(
-                            FoldingRange::new(enum_range.0, enum_range.1).with_kind("region"),
-                        );
+                    if let Some(body_range) = self.find_brace_range(node) {
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     for &member in &enum_decl.members.nodes {
                         self.collect_from_node(member, ranges);
@@ -164,11 +166,8 @@ impl<'a> FoldingRangeProvider<'a> {
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
-                    let module_range = self.get_line_range(node_idx);
-                    if module_range.0 < module_range.1 {
-                        ranges.push(
-                            FoldingRange::new(module_range.0, module_range.1).with_kind("region"),
-                        );
+                    if let Some(body_range) = self.find_brace_range(node) {
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     self.collect_from_node(module.body, ranges);
                 }
@@ -177,7 +176,7 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(method) = self.arena.get_method_decl(node) {
                     let body_range = self.get_line_range(method.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     self.collect_from_node(method.body, ranges);
                 }
@@ -191,7 +190,7 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(ctor) = self.arena.get_constructor(node) {
                     let body_range = self.get_line_range(ctor.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     self.collect_from_node(ctor.body, ranges);
                 }
@@ -200,7 +199,7 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(accessor) = self.arena.get_accessor(node) {
                     let body_range = self.get_line_range(accessor.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     self.collect_from_node(accessor.body, ranges);
                 }
@@ -209,7 +208,7 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(accessor) = self.arena.get_accessor(node) {
                     let body_range = self.get_line_range(accessor.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     self.collect_from_node(accessor.body, ranges);
                 }
@@ -223,7 +222,7 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(func) = self.arena.get_function(node) {
                     let body_range = self.get_line_range(func.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     self.collect_from_node(func.body, ranges);
                 }
@@ -232,7 +231,7 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(func) = self.arena.get_function(node) {
                     let body_range = self.get_line_range(func.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
                     }
                     self.collect_from_node(func.body, ranges);
                 }
@@ -242,7 +241,7 @@ impl<'a> FoldingRangeProvider<'a> {
                     // Fold the case block
                     let case_block_range = self.get_line_range(switch.case_block);
                     if case_block_range.0 < case_block_range.1 {
-                        ranges.push(FoldingRange::new(case_block_range.0, case_block_range.1));
+                        ranges.push(FoldingRange::new(case_block_range.0, case_block_range.1, case_block_range.2, case_block_range.3));
                     }
                     self.collect_from_node(switch.case_block, ranges);
                 }
@@ -260,7 +259,7 @@ impl<'a> FoldingRangeProvider<'a> {
                     // Fold the clause body
                     let clause_range = self.get_line_range(node_idx);
                     if clause_range.0 < clause_range.1 {
-                        ranges.push(FoldingRange::new(clause_range.0, clause_range.1));
+                        ranges.push(FoldingRange::new(clause_range.0, clause_range.1, clause_range.2, clause_range.3));
                     }
                     // Walk children for nested blocks
                     for &stmt in &clause.statements.nodes {
@@ -271,7 +270,7 @@ impl<'a> FoldingRangeProvider<'a> {
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 let paren_range = self.get_line_range(node_idx);
                 if paren_range.0 < paren_range.1 {
-                    ranges.push(FoldingRange::new(paren_range.0, paren_range.1));
+                    ranges.push(FoldingRange::new(paren_range.0, paren_range.1, paren_range.2, paren_range.3));
                 }
                 for child in self.arena.get_children(node_idx) {
                     self.collect_from_node(child, ranges);
@@ -279,24 +278,18 @@ impl<'a> FoldingRangeProvider<'a> {
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = self.arena.get_call_expr(node) {
-                    // Fold multi-line argument lists
+                    // Fold multi-line argument lists (span from open to close paren)
                     if let Some(ref args) = call.arguments {
                         if !args.nodes.is_empty() {
-                            if let (Some(first), Some(last)) = (
-                                args.nodes.first().and_then(|&n| self.arena.get(n)),
-                                args.nodes.last().and_then(|&n| self.arena.get(n)),
-                            ) {
-                                let first_line = self
-                                    .line_map
-                                    .offset_to_position(first.pos, self.source_text)
-                                    .line;
-                                let last_line = self
-                                    .line_map
-                                    .offset_to_position(last.end, self.source_text)
-                                    .line;
-                                if first_line < last_line {
-                                    ranges.push(FoldingRange::new(first_line, last_line));
-                                }
+                            // Use the node's own span which includes ( ... )
+                            let call_range = self.get_line_range(node_idx);
+                            if call_range.0 < call_range.1 {
+                                ranges.push(FoldingRange::new(
+                                    call_range.0,
+                                    call_range.1,
+                                    call_range.2,
+                                    call_range.3,
+                                ));
                             }
                         }
                         for &arg in &args.nodes {
@@ -309,7 +302,68 @@ impl<'a> FoldingRangeProvider<'a> {
             k if k == syntax_kind_ext::NAMED_IMPORTS || k == syntax_kind_ext::NAMED_EXPORTS => {
                 let range = self.get_line_range(node_idx);
                 if range.0 < range.1 {
-                    ranges.push(FoldingRange::new(range.0, range.1));
+                    ranges.push(FoldingRange::new(range.0, range.1, range.2, range.3));
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                // Array literals: always report span (TypeScript reports even single-line ones)
+                if let Some(data) = self.arena.get_literal_expr(node) {
+                    let range = self.get_line_range(node_idx);
+                    // Only skip truly empty ranges
+                    if range.3 > range.2 {
+                        ranges.push(FoldingRange::new(range.0, range.1, range.2, range.3));
+                    }
+                    for &elem in &data.elements.nodes {
+                        self.collect_from_node(elem, ranges);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                // Object literals: always report span
+                if let Some(data) = self.arena.get_literal_expr(node) {
+                    let range = self.get_line_range(node_idx);
+                    if range.3 > range.2 {
+                        ranges.push(FoldingRange::new(range.0, range.1, range.2, range.3));
+                    }
+                    for &elem in &data.elements.nodes {
+                        self.collect_from_node(elem, ranges);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                // Template expressions with substitutions (e.g. `hello ${name}`)
+                let range = self.get_line_range(node_idx);
+                if range.3 > range.2 {
+                    ranges.push(FoldingRange::new(range.0, range.1, range.2, range.3));
+                }
+                // Don't recurse into template spans
+            }
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
+                // Tagged template expressions: span covers the template part
+                if let Some(data) = self.arena.get_tagged_template(node) {
+                    // The template child is the actual template literal
+                    let template_range = self.get_line_range(data.template);
+                    if template_range.3 > template_range.2 {
+                        ranges.push(FoldingRange::new(
+                            template_range.0,
+                            template_range.1,
+                            template_range.2,
+                            template_range.3,
+                        ));
+                    }
+                }
+            }
+            // NoSubstitutionTemplateLiteral (SyntaxKind = 15, token node)
+            k if k == 15 => {
+                // Simple template literals without substitutions (e.g. `hello`)
+                // Skip empty templates (just ``)
+                if node.end.saturating_sub(node.pos) > 2 {
+                    ranges.push(FoldingRange::new(
+                        self.line_map.offset_to_position(node.pos, self.source_text).line,
+                        self.line_map.offset_to_position(node.end.saturating_sub(1), self.source_text).line,
+                        node.pos,
+                        node.end,
+                    ));
                 }
             }
             _ => {
@@ -338,7 +392,15 @@ impl<'a> FoldingRangeProvider<'a> {
                 let start_range = self.get_line_range(statements[first_import]);
                 let end_range = self.get_line_range(statements[last_import]);
                 if end_range.1 > start_range.0 {
-                    ranges.push(FoldingRange::new(start_range.0, end_range.1).with_kind("imports"));
+                    ranges.push(
+                        FoldingRange::new(
+                            start_range.0,
+                            end_range.1,
+                            start_range.2,
+                            end_range.3,
+                        )
+                        .with_kind("imports"),
+                    );
                 }
             }
         }
@@ -371,7 +433,11 @@ impl<'a> FoldingRangeProvider<'a> {
                     }
                 }
                 if end_line > start_line {
-                    ranges.push(FoldingRange::new(start_line, end_line).with_kind("comment"));
+                    let so = self.line_start_offset(start_line);
+                    let eo = self.line_end_offset(end_line);
+                    ranges.push(
+                        FoldingRange::new(start_line, end_line, so, eo).with_kind("comment"),
+                    );
                 }
                 i = end_line as usize + 1;
                 continue;
@@ -398,7 +464,11 @@ impl<'a> FoldingRangeProvider<'a> {
                     }
                 }
                 if end_line > start_line {
-                    ranges.push(FoldingRange::new(start_line, end_line).with_kind("comment"));
+                    let so = self.line_start_offset(start_line);
+                    let eo = self.line_end_offset(end_line);
+                    ranges.push(
+                        FoldingRange::new(start_line, end_line, so, eo).with_kind("comment"),
+                    );
                 }
                 i = j;
                 continue;
@@ -411,7 +481,7 @@ impl<'a> FoldingRangeProvider<'a> {
     /// Collect region folding ranges from #region/#endregion markers.
     fn collect_region_ranges(&self, ranges: &mut Vec<FoldingRange>) {
         let lines: Vec<&str> = self.source_text.lines().collect();
-        let mut region_stack: Vec<(u32, String)> = Vec::new();
+        let mut region_stack: Vec<(u32, u32)> = Vec::new(); // (line, byte offset of //)
         let mut in_block_comment = false;
 
         for (i, line) in lines.iter().enumerate() {
@@ -430,22 +500,32 @@ impl<'a> FoldingRangeProvider<'a> {
             }
 
             if let Some(delimiter) = parse_region_delimiter(trimmed) {
+                let line_start = self.line_start_offset(i as u32);
+                // Find the position of "//" within the line
+                let comment_offset = line.find("//").unwrap_or(0) as u32;
+                let abs_offset = line_start + comment_offset;
+
                 if delimiter.is_start {
-                    region_stack.push((i as u32, delimiter.label));
-                } else if let Some((start_line, _label)) = region_stack.pop() {
+                    region_stack.push((i as u32, abs_offset));
+                } else if let Some((start_line, start_off)) = region_stack.pop() {
                     let end_line = i as u32;
+                    let end_off = self.line_end_offset(end_line);
                     if end_line > start_line {
-                        ranges.push(FoldingRange::new(start_line, end_line).with_kind("region"));
+                        ranges.push(
+                            FoldingRange::new(start_line, end_line, start_off, end_off)
+                                .with_kind("region"),
+                        );
                     }
                 }
             }
         }
     }
 
-    /// Get the line range (start, end) for a node.
-    fn get_line_range(&self, node_idx: NodeIndex) -> (u32, u32) {
+    /// Get the line range and byte offsets for a node.
+    /// Returns (start_line, end_line, start_offset, end_offset).
+    fn get_line_range(&self, node_idx: NodeIndex) -> (u32, u32, u32, u32) {
         let Some(node) = self.arena.get(node_idx) else {
-            return (0, 0);
+            return (0, 0, 0, 0);
         };
         let lo = node.pos;
         let hi = node.end;
@@ -453,7 +533,55 @@ impl<'a> FoldingRangeProvider<'a> {
         let end_pos = self
             .line_map
             .offset_to_position(hi.saturating_sub(1), self.source_text);
-        (start_pos.line, end_pos.line)
+        (start_pos.line, end_pos.line, lo, hi)
+    }
+
+    /// Find the brace range for a declaration node (class, interface, enum, module).
+    /// Scans the source text within the node's range to find `{` and uses that position
+    /// (including leading whitespace, matching TypeScript's trivia handling) as the start.
+    /// Returns (start_line, end_line, start_offset, end_offset).
+    fn find_brace_range(&self, node: &crate::parser::node::Node) -> Option<(u32, u32, u32, u32)> {
+        let bytes = self.source_text.as_bytes();
+        let start = node.pos as usize;
+        let end = node.end as usize;
+        if end > bytes.len() {
+            return None;
+        }
+
+        // Find the first '{' in the node's text
+        let brace_pos = bytes[start..end].iter().position(|&b| b == b'{')?;
+        let brace_offset = (start + brace_pos) as u32;
+
+        // Include leading whitespace before '{' (matching TypeScript's pos with trivia)
+        let mut span_start = brace_offset;
+        if span_start > 0 && bytes[span_start as usize - 1] == b' ' {
+            span_start -= 1;
+        }
+
+        let span_end = node.end;
+        let start_pos = self.line_map.offset_to_position(span_start, self.source_text);
+        let end_pos = self
+            .line_map
+            .offset_to_position(span_end.saturating_sub(1), self.source_text);
+        Some((start_pos.line, end_pos.line, span_start, span_end))
+    }
+
+    /// Get a byte offset corresponding to the start of a given line.
+    fn line_start_offset(&self, line: u32) -> u32 {
+        self.line_map
+            .position_to_offset(
+                crate::lsp::position::Position::new(line, 0),
+                self.source_text,
+            )
+            .unwrap_or(0) as u32
+    }
+
+    /// Get a byte offset corresponding to the end of a given line (after newline).
+    fn line_end_offset(&self, line: u32) -> u32 {
+        let lines: Vec<&str> = self.source_text.lines().collect();
+        let line_text = lines.get(line as usize).unwrap_or(&"");
+        let start = self.line_start_offset(line);
+        start + line_text.len() as u32
     }
 }
 
@@ -529,7 +657,7 @@ mod folding_tests {
         let source = "\nclass MyClass {\n    method1() {\n        return 1;\n    }\n\n    method2() {\n        return 2;\n    }\n}\n";
         let ranges = get_ranges(source);
         assert!(!ranges.is_empty(), "Should find folding ranges for class");
-        let class_range = ranges.iter().find(|r| r.kind.as_deref() == Some("region"));
+        let class_range = ranges.iter().find(|r| r.kind.is_none() && r.start_line == 1);
         assert!(
             class_range.is_some(),
             "Should find class body folding range"

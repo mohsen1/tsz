@@ -3014,37 +3014,33 @@ impl Server {
             let provider = FoldingRangeProvider::new(&arena, &line_map, &source_text);
             let ranges = provider.get_folding_ranges(root);
 
-            // Pre-compute line lengths for offset calculation
-            let lines: Vec<&str> = source_text.lines().collect();
-
             let body: Vec<serde_json::Value> = ranges
                 .iter()
                 .map(|fr| {
-                    // Compute end offset: length of the end line + 1 (1-based)
-                    let end_line_len = lines
-                        .get(fr.end_line as usize)
-                        .map(|l| l.len() as u32)
-                        .unwrap_or(0);
-                    let start_line_len = lines
-                        .get(fr.start_line as usize)
-                        .map(|l| l.len() as u32)
-                        .unwrap_or(0);
+                    // Convert byte offsets to precise line/offset positions
+                    let start_pos = line_map.offset_to_position(fr.start_offset, &source_text);
+                    let end_pos = line_map.offset_to_position(fr.end_offset, &source_text);
+                    let hint_end_pos =
+                        line_map.offset_to_position(fr.end_offset.min(fr.start_offset + 200), &source_text);
 
                     let mut span = serde_json::json!({
                         "textSpan": {
-                            "start": { "line": fr.start_line + 1, "offset": 1 },
-                            "end": { "line": fr.end_line + 1, "offset": end_line_len + 1 },
+                            "start": Self::lsp_to_tsserver_position(&start_pos),
+                            "end": Self::lsp_to_tsserver_position(&end_pos),
                         },
                         "hintSpan": {
-                            "start": { "line": fr.start_line + 1, "offset": 1 },
-                            "end": { "line": fr.start_line + 1, "offset": start_line_len + 1 },
+                            "start": Self::lsp_to_tsserver_position(&start_pos),
+                            "end": Self::lsp_to_tsserver_position(
+                                if hint_end_pos.line == start_pos.line { &hint_end_pos } else { &end_pos }
+                            ),
                         },
                         "bannerText": "...",
                         "autoCollapse": false,
                     });
-                    if let Some(ref kind) = fr.kind {
-                        span["kind"] = serde_json::json!(kind);
-                    }
+                    span["kind"] = serde_json::json!(match fr.kind.as_deref() {
+                        Some(k) => k,
+                        None => "code",
+                    });
                     span
                 })
                 .collect();
