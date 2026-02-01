@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Compilers
-TSZ="$PROJECT_ROOT/.target/release/tsz"
+TSZ="$PROJECT_ROOT/.target/dist/tsz"
 TSGO="${TSGO:-$(which tsgo 2>/dev/null || echo "")}"
 
 # Parse arguments
@@ -100,7 +100,7 @@ check_prerequisites() {
     # Check/build tsz
     if [ ! -x "$TSZ" ]; then
         echo -e "${YELLOW}Building tsz...${NC}"
-        (cd "$PROJECT_ROOT" && cargo build --release --features cli)
+        (cd "$PROJECT_ROOT" && cargo build --profile dist --features cli)
     fi
     echo -e "${GREEN}✓${NC} tsz: $($TSZ --version 2>&1 | head -1)"
     
