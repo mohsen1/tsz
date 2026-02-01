@@ -339,12 +339,6 @@ run_server_mode() {
 
     local exit_code=0
     run_node $args || exit_code=$?
-
-    if [[ "$CFG_PRINT_TEST" != "true" ]]; then
-        echo ""
-        echo -e "${DIM}Tip: Use --filter=PATTERN --print-test to see detailed info for specific test failures${RESET}"
-    fi
-
     return $exit_code
 }
 

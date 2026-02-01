@@ -235,6 +235,113 @@ function cleanupTempDir(tempDir: string | null): void {
   }
 }
 
+/**
+ * Error code groupings by root cause.
+ * Maps error codes to their likely root cause and estimated impact multiplier.
+ * 
+ * Note: TS2304 (Cannot find name) is intentionally omitted as it has many
+ * different root causes and appears in both missing and extra errors.
+ */
+const ERROR_ROOT_CAUSES: Record<string, { codes: number[]; description: string; hint: string; multiplier: number }> = {
+  libTypes: {
+    codes: [2318, 2583, 2584],
+    description: 'Global/lib type resolution (Partial, Pick, Record, etc.)',
+    hint: 'Fix utility type resolution in lib.d.ts',
+    multiplier: 1.2,
+  },
+  nullChecks: {
+    codes: [18050, 18047, 18048, 18049],
+    description: "Null/undefined value checks (TS18050: 'X' is possibly null)",
+    hint: 'Add strictNullChecks enforcement',
+    multiplier: 1.3,
+  },
+  moduleResolution: {
+    codes: [2307, 2792, 2834, 2835],
+    description: 'Module/import resolution',
+    hint: 'Fix module resolver for node/bundler modes',
+    multiplier: 1.0,
+  },
+  operatorTypes: {
+    codes: [2365, 2362, 2363, 2469],
+    description: 'Operator type constraints (+, -, <, > on non-numbers)',
+    hint: 'Implement binary operator type checking',
+    multiplier: 1.0,
+  },
+  duplicateIdentifiers: {
+    codes: [2300, 2451, 2392, 2393],
+    description: 'Duplicate identifier detection',
+    hint: 'Already implemented - check edge cases in merging',
+    multiplier: 0.8,
+  },
+  strictMode: {
+    codes: [1210, 1212, 1213, 1214],
+    description: "Strict mode (eval/arguments in class body)",
+    hint: 'Implement class body strict mode checking',
+    multiplier: 1.5,
+  },
+  typeAssignability: {
+    codes: [2322, 2345, 2741],
+    description: 'Type assignability (broad category)',
+    hint: 'Review specific failing tests for patterns',
+    multiplier: 0.5, // Very broad, many root causes
+  },
+  propertyAccess: {
+    codes: [2339, 2551],
+    description: 'Property does not exist on type',
+    hint: 'Often a symptom - check lib resolution first',
+    multiplier: 0.5, // Often symptom of other issues
+  },
+  parserScanner: {
+    codes: [1127, 1005, 1128, 1109, 1003],
+    description: 'Parser/scanner errors (invalid char, expected token)',
+    hint: 'Check Unicode and ASI edge cases',
+    multiplier: 0.7,
+  },
+};
+
+interface ActionableItem {
+  description: string;
+  errorCodes: number[];
+  estimatedTests: number;
+  hint: string;
+}
+
+/**
+ * Analyze test stats and return actionable items sorted by estimated impact.
+ */
+function analyzeForActionableItems(stats: TestStats): ActionableItem[] {
+  const items: ActionableItem[] = [];
+
+  for (const [, group] of Object.entries(ERROR_ROOT_CAUSES)) {
+    let totalCount = 0;
+    const presentCodes: number[] = [];
+
+    for (const code of group.codes) {
+      const missingCount = stats.missingCodes.get(code) || 0;
+      if (missingCount > 0) {
+        totalCount += missingCount;
+        presentCodes.push(code);
+      }
+    }
+
+    if (totalCount > 0) {
+      // Estimate test impact (rough heuristic: each error ~= 0.7 tests, adjusted by multiplier)
+      const estimatedTests = Math.round(totalCount * 0.7 * group.multiplier);
+      items.push({
+        description: group.description,
+        errorCodes: presentCodes,
+        estimatedTests,
+        hint: group.hint,
+      });
+    }
+  }
+
+  // Sort by estimated impact descending
+  items.sort((a, b) => b.estimatedTests - a.estimatedTests);
+
+  return items;
+}
+
 export interface CheckResult {
   codes: number[];
   elapsed_ms: number;
@@ -1418,7 +1525,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     stats.workerStats.crashed = poolStats.oomKills;
     stats.workerStats.respawned = poolStats.totalRestarts;
 
-    // Print summary (reversed order: details first, pass rate last)
+    // Print summary
     log('\n' + '═'.repeat(60), colors.dim);
     log('CONFORMANCE TEST RESULTS', colors.bold);
     log('═'.repeat(60), colors.dim);
@@ -1428,79 +1535,97 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     const effectiveTotal = stats.total - stats.skipped;
     const passRate = effectiveTotal > 0 ? ((stats.passed / effectiveTotal) * 100).toFixed(1) : '0.0';
 
-    // By Category first
-    log('\nBy Category:', colors.bold);
-    for (const [cat, s] of Object.entries(stats.byCategory)) {
-      const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
-      log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
+    // Pass rate and summary first (most important)
+    log(`\nPass Rate: ${colors.bold}${passRate}%${colors.reset} (${formatNumber(stats.passed)}/${formatNumber(effectiveTotal)})`, stats.passed === effectiveTotal ? colors.green : colors.yellow);
+    log(`Time: ${elapsed.toFixed(1)}s (${(effectiveTotal / elapsed).toFixed(0)} tests/sec)`, colors.dim);
+
+    // Actionable insights - grouped by root cause
+    const actionableItems = analyzeForActionableItems(stats);
+    if (actionableItems.length > 0) {
+      log('\nHighest Impact Fixes:', colors.bold);
+      for (const item of actionableItems.slice(0, 6)) {
+        const impact = item.estimatedTests >= 100 ? colors.green : item.estimatedTests >= 50 ? colors.yellow : colors.dim;
+        log(`  ${impact}~${item.estimatedTests} tests${colors.reset}: ${item.description}`);
+        log(`    ${colors.dim}${item.errorCodes.map(c => `TS${c}`).join(', ')} → ${item.hint}${colors.reset}`);
+      }
     }
 
-    // Top errors
-    log('\nTop Extra Errors:', colors.bold);
-    for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
-      log(`  TS${c}: ${n}x`, colors.yellow);
+    // Compact error summary (only if not verbose)
+    if (!verbose) {
+      const topMissing = [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+      const topExtra = [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+      if (topMissing.length > 0 || topExtra.length > 0) {
+        log('\nError Summary:', colors.bold);
+        if (topMissing.length > 0) {
+          log(`  Missing: ${topMissing.map(([c, n]) => `TS${c}(${n})`).join(' ')}`, colors.yellow);
+        }
+        if (topExtra.length > 0) {
+          log(`  Extra:   ${topExtra.map(([c, n]) => `TS${c}(${n})`).join(' ')}`, colors.red);
+        }
+      }
     }
 
-    log('\nTop Missing Errors:', colors.bold);
-    for (const [c, n] of [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
-      log(`  TS${c}: ${n}x`, colors.yellow);
+    // Verbose mode: show all categories
+    if (verbose) {
+      log('\nBy Category:', colors.bold);
+      // Sort by failure count descending
+      const sortedCategories = Object.entries(stats.byCategory)
+        .sort((a, b) => (b[1].total - b[1].passed) - (a[1].total - a[1].passed));
+      for (const [cat, s] of sortedCategories) {
+        const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
+        log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
+      }
+
+      log('\nTop Extra Errors:', colors.bold);
+      for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+        log(`  TS${c}: ${n}x`, colors.yellow);
+      }
+
+      log('\nTop Missing Errors:', colors.bold);
+      for (const [c, n] of [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+        log(`  TS${c}: ${n}x`, colors.yellow);
+      }
     }
 
-    // Problematic tests
+    // Problematic tests (always show, but limit count)
     if (stats.timedOutTests.length > 0) {
       log('\nTimed Out Tests:', colors.yellow);
-      for (const t of stats.timedOutTests.slice(0, 5)) {
+      for (const t of stats.timedOutTests.slice(0, 3)) {
         log(`  ${t}`, colors.dim);
       }
-      if (stats.timedOutTests.length > 5) {
-        log(`  ... and ${stats.timedOutTests.length - 5} more`, colors.dim);
-      }
-    }
-
-    if (stats.oomTests.length > 0) {
-      log('\nOOM Tests:', colors.magenta);
-      for (const t of stats.oomTests.slice(0, 5)) {
-        log(`  ${t}`, colors.dim);
-      }
-      if (stats.oomTests.length > 5) {
-        log(`  ... and ${stats.oomTests.length - 5} more`, colors.dim);
+      if (stats.timedOutTests.length > 3) {
+        log(`  ... and ${stats.timedOutTests.length - 3} more`, colors.dim);
       }
     }
 
     if (stats.crashedTests.length > 0) {
       log('\nCrashed Tests:', colors.red);
-      for (const t of stats.crashedTests.slice(0, 5)) {
+      for (const t of stats.crashedTests.slice(0, 3)) {
         log(`  ${t.path}`, colors.dim);
         log(`    ${t.error.slice(0, 80)}`, colors.dim);
       }
-      if (stats.crashedTests.length > 5) {
-        log(`  ... and ${stats.crashedTests.length - 5} more`, colors.dim);
+      if (stats.crashedTests.length > 3) {
+        log(`  ... and ${stats.crashedTests.length - 3} more`, colors.dim);
       }
     }
 
-    // Worker stats
-    log('\nWorker Health:', colors.bold);
-    log(`  Spawned:   ${workerCount}`, colors.dim);
-    log(`  Crashed:   ${poolStats.oomKills}`, poolStats.oomKills > 0 ? colors.red : colors.dim);
-    log(`  Respawned: ${poolStats.totalRestarts}`, poolStats.totalRestarts > 0 ? colors.yellow : colors.dim);
+    // Worker stats (compact)
+    if (poolStats.oomKills > 0 || poolStats.totalRestarts > 0) {
+      log('\nWorker Health:', colors.bold);
+      log(`  Spawned: ${workerCount} | Crashed: ${poolStats.oomKills} | Respawned: ${poolStats.totalRestarts}`, 
+        poolStats.oomKills > 0 ? colors.red : colors.dim);
+    }
 
-    // Summary
+    // Summary counts
     log('\nSummary:', colors.bold);
-    log(`  Passed:   ${formatNumber(stats.passed)}`, colors.green);
-    log(`  Failed:   ${formatNumber(actualFailed)}`, actualFailed > 0 ? colors.red : colors.dim);
-    log(`  Skipped:  ${formatNumber(stats.skipped)}`, stats.skipped > 0 ? colors.dim : colors.dim);
-    log(`  Crashed:  ${formatNumber(stats.crashed)}`, stats.crashed > 0 ? colors.red : colors.dim);
-    log(`  OOM:      ${formatNumber(stats.oom)}`, stats.oom > 0 ? colors.magenta : colors.dim);
-    log(`  Timeout:  ${formatNumber(stats.timedOut)}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
-
-    // Time and Pass Rate last
-    log(`\nTime: ${elapsed.toFixed(1)}s (${(effectiveTotal / elapsed).toFixed(0)} tests/sec)`, colors.dim);
-    log(`\nPass Rate: ${passRate}% (${formatNumber(stats.passed)}/${formatNumber(effectiveTotal)})`, stats.passed === effectiveTotal ? colors.green : colors.yellow);
-    if (stats.skipped > 0) {
-      log(`  (${formatNumber(stats.skipped)} tests skipped due to harness directives)`, colors.dim);
+    log(`  Passed:  ${formatNumber(stats.passed)}  Failed: ${formatNumber(actualFailed)}  Skipped: ${formatNumber(stats.skipped)}`, 
+      actualFailed > 0 ? colors.yellow : colors.green);
+    if (stats.crashed > 0 || stats.oom > 0 || stats.timedOut > 0) {
+      log(`  Crashed: ${stats.crashed}  OOM: ${stats.oom}  Timeout: ${stats.timedOut}`, colors.red);
     }
 
     log('\n' + '═'.repeat(60), colors.dim);
+    log(`Tip: Use --verbose for full category breakdown, --filter=PATTERN --print-test for details`, colors.dim);
 
     // Dump per-test results if requested
     if (dumpResults) {
