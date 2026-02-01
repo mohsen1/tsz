@@ -3228,7 +3228,24 @@ impl<'a> CheckerState<'a> {
                     && !self.is_parameter_declaration(decl_idx);
 
                 if is_checkable_local || is_var {
-                    let msg = format!("'{}' is declared but its value is never read.", name);
+                    // TS6196 for classes, interfaces, type aliases, enums ("never used")
+                    // TS6133 for variables, functions, imports ("value never read")
+                    let is_type_only = (flags & symbol_flags::CLASS) != 0
+                        || (flags & symbol_flags::INTERFACE) != 0
+                        || (flags & symbol_flags::TYPE_ALIAS) != 0
+                        || (flags & symbol_flags::REGULAR_ENUM) != 0
+                        || (flags & symbol_flags::CONST_ENUM) != 0;
+                    let (msg, code) = if is_type_only {
+                        (
+                            format!("'{}' is declared but never used.", name),
+                            6196,
+                        )
+                    } else {
+                        (
+                            format!("'{}' is declared but its value is never read.", name),
+                            6133,
+                        )
+                    };
                     let start = decl_node.pos;
                     let length = decl_node.end.saturating_sub(decl_node.pos);
                     self.ctx.push_diagnostic(Diagnostic {
@@ -3237,7 +3254,7 @@ impl<'a> CheckerState<'a> {
                         length,
                         message_text: msg,
                         category: crate::checker::types::diagnostics::DiagnosticCategory::Error,
-                        code: 6133,
+                        code,
                         related_information: Vec::new(),
                     });
                 }
