@@ -1454,10 +1454,13 @@ impl<'a> Printer<'a> {
                 self.emit_case_block(node);
             }
             k if k == syntax_kind_ext::BREAK_STATEMENT => {
-                self.emit_break_statement();
+                self.emit_break_statement(node);
             }
             k if k == syntax_kind_ext::CONTINUE_STATEMENT => {
-                self.emit_continue_statement();
+                self.emit_continue_statement(node);
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                self.emit_labeled_statement(node);
             }
             k if k == syntax_kind_ext::DO_STATEMENT => {
                 self.emit_do_statement(node);

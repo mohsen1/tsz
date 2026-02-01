@@ -274,10 +274,16 @@ impl<'a> Printer<'a> {
 
         self.write("for (");
         self.emit(loop_stmt.initializer);
-        self.write("; ");
-        self.emit(loop_stmt.condition);
-        self.write("; ");
-        self.emit(loop_stmt.incrementor);
+        self.write(";");
+        if !loop_stmt.condition.is_none() {
+            self.write(" ");
+            self.emit(loop_stmt.condition);
+        }
+        self.write(";");
+        if !loop_stmt.incrementor.is_none() {
+            self.write(" ");
+            self.emit(loop_stmt.incrementor);
+        }
         self.write(") ");
         self.emit(loop_stmt.statement);
     }
@@ -449,14 +455,36 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
     }
 
-    pub(super) fn emit_break_statement(&mut self) {
+    pub(super) fn emit_break_statement(&mut self, node: &Node) {
         self.write("break");
+        if let Some(jump) = self.arena.get_jump_data(node) {
+            if !jump.label.is_none() {
+                self.write(" ");
+                self.emit(jump.label);
+            }
+        }
         self.write_semicolon();
     }
 
-    pub(super) fn emit_continue_statement(&mut self) {
+    pub(super) fn emit_continue_statement(&mut self, node: &Node) {
         self.write("continue");
+        if let Some(jump) = self.arena.get_jump_data(node) {
+            if !jump.label.is_none() {
+                self.write(" ");
+                self.emit(jump.label);
+            }
+        }
         self.write_semicolon();
+    }
+
+    pub(super) fn emit_labeled_statement(&mut self, node: &Node) {
+        let Some(labeled) = self.arena.get_labeled_statement(node) else {
+            return;
+        };
+
+        self.emit(labeled.label);
+        self.write(": ");
+        self.emit(labeled.statement);
     }
 
     pub(super) fn emit_do_statement(&mut self, node: &Node) {
