@@ -4,6 +4,153 @@ import { execSync } from 'child_process';
 import { parseArgs } from 'util';
 import 'dotenv/config';
 
+/**
+ * Extract code skeletons using ast-grep for better Gemini context.
+ * Returns function/struct/enum/trait/impl signatures grouped by file.
+ */
+function extractSkeletons(targetDir = 'src/') {
+  const patterns = [
+    { type: 'fn', pattern: 'fn $NAME' },
+    { type: 'struct', pattern: 'struct $NAME' },
+    { type: 'enum', pattern: 'enum $NAME' },
+    { type: 'trait', pattern: 'trait $NAME' },
+    { type: 'impl', pattern: 'impl $TYPE' },
+    { type: 'type', pattern: 'type $NAME' },
+  ];
+
+  const skeletonsByFile = new Map();
+
+  for (const { type, pattern } of patterns) {
+    try {
+      const result = execSync(
+        `ast-grep -p '${pattern}' ${targetDir} --json 2>/dev/null`,
+        { maxBuffer: 50 * 1024 * 1024, encoding: 'utf-8' }
+      );
+
+      if (!result.trim()) continue;
+
+      const matches = JSON.parse(result);
+      for (const match of matches) {
+        const file = match.file;
+        const text = match.text || '';
+        const line = match.range?.start?.line || 0;
+
+        // Skip test files and test functions
+        if (file.includes('/tests/') || file.includes('_test.rs') || file.includes('/benches/')) {
+          continue;
+        }
+
+        // Skip test functions (fn test_*)
+        const fnName = match.metaVariables?.single?.NAME?.text || match.metaVariables?.single?.N?.text || '';
+        if (fnName.startsWith('test_') || fnName.startsWith('bench_')) {
+          continue;
+        }
+
+        // Extract just the signature (up to and including the opening brace or semicolon)
+        let signature = extractSignature(text, type);
+        if (!signature) continue;
+
+        if (!skeletonsByFile.has(file)) {
+          skeletonsByFile.set(file, []);
+        }
+        skeletonsByFile.get(file).push({ line, type, signature });
+      }
+    } catch {
+      // ast-grep failed for this pattern, skip silently
+    }
+  }
+
+  // Sort entries by line number within each file
+  for (const [file, entries] of skeletonsByFile) {
+    entries.sort((a, b) => a.line - b.line);
+  }
+
+  // Build the skeleton output
+  let output = 'CODE SKELETONS (API Surface):\n';
+  output += '=============================\n\n';
+
+  const sortedFiles = [...skeletonsByFile.keys()].sort();
+  for (const file of sortedFiles) {
+    output += `// ${file}\n`;
+    for (const { signature } of skeletonsByFile.get(file)) {
+      output += `${signature}\n`;
+    }
+    output += '\n';
+  }
+
+  return { output, fileCount: sortedFiles.length, entryCount: [...skeletonsByFile.values()].flat().length };
+}
+
+/**
+ * Extract just the signature from a full code block.
+ * For functions: "fn name(...) -> Type"
+ * For structs/enums: "struct Name<...>" or first line
+ * For impl: "impl Type for Trait" or "impl Type"
+ */
+function extractSignature(text, type) {
+  if (!text) return null;
+
+  // Get the first line and clean it up
+  const lines = text.split('\n');
+  let firstLine = lines[0].trim();
+
+  // For functions, extract up to the opening brace
+  if (type === 'fn') {
+    // Find the signature - everything before the body
+    const braceIndex = text.indexOf('{');
+    if (braceIndex > 0) {
+      let sig = text.substring(0, braceIndex).trim();
+      // Collapse multiline (where clauses) and normalize whitespace
+      sig = sig.replace(/\n\s*/g, ' ').replace(/\s+/g, ' ');
+      return sig + ' { ... }';
+    }
+    // Function signature without body (trait method)
+    return firstLine.endsWith(';') ? firstLine : firstLine + ';';
+  }
+
+  // For structs/enums/traits, extract the declaration line
+  if (type === 'struct' || type === 'enum' || type === 'trait') {
+    const braceIndex = text.indexOf('{');
+    if (braceIndex > 0) {
+      let sig = text.substring(0, braceIndex).trim();
+      sig = sig.replace(/\n\s*/g, ' ').replace(/\s+/g, ' ');
+      return sig + ' { ... }';
+    }
+    // Tuple struct or unit struct
+    const parenIndex = text.indexOf('(');
+    const semiIndex = text.indexOf(';');
+    if (parenIndex > 0 && (semiIndex < 0 || parenIndex < semiIndex)) {
+      const endParen = text.indexOf(')', parenIndex);
+      if (endParen > 0) {
+        return text.substring(0, endParen + 1).replace(/\n\s*/g, ' ').replace(/\s+/g, ' ') + ';';
+      }
+    }
+    return firstLine.endsWith(';') ? firstLine : firstLine + ' { ... }';
+  }
+
+  // For impl blocks, extract the impl line
+  if (type === 'impl') {
+    const braceIndex = text.indexOf('{');
+    if (braceIndex > 0) {
+      let sig = text.substring(0, braceIndex).trim();
+      sig = sig.replace(/\n\s*/g, ' ').replace(/\s+/g, ' ');
+      return sig + ' { ... }';
+    }
+    return firstLine + ' { ... }';
+  }
+
+  // For type aliases
+  if (type === 'type') {
+    const semiIndex = text.indexOf(';');
+    if (semiIndex > 0) {
+      return text.substring(0, semiIndex + 1).replace(/\n\s*/g, ' ');
+    }
+    return firstLine;
+  }
+
+  return firstLine;
+}
+
 // A CLI tool that uses yek (https://github.com/mohsen1/yek) to give Gemini full context of
 // this repo to ask questions. Use focused presets (--solver, --checker, etc.) to pack
 // the most relevant context for your question.
@@ -94,10 +241,14 @@ const { values, positionals } = parseArgs({
     modules: { type: 'boolean', default: false },
     // Show what files would be included without sending to API
     dry: { type: 'boolean', default: false },
+    // Print the full query payload without sending to API
+    'print-query-only': { type: 'boolean', default: false },
     // List available presets
     list: { type: 'boolean', default: false },
     // Use Vertex AI (default) or direct Gemini API (--no-use-vertex)
     'use-vertex': { type: 'boolean', default: true },
+    // Include code skeletons (function/struct/enum/trait signatures) - on by default
+    skeleton: { type: 'boolean', default: true },
   },
   allowPositionals: true,
   allowNegative: true,
@@ -132,6 +283,10 @@ General Options:
   -t, --tokens=SIZE   Max context size (default: ${DEFAULT_CONTEXT_LENGTH}, or preset default)
   -m, --model=NAME    Gemini model (default: ${DEFAULT_MODEL})
   --dry               Show files that would be included without calling API
+  --print-query-only  Print the full query payload (system prompt + context + prompt)
+                      without sending to API. Useful for inspecting what would be sent.
+  --no-skeleton       Disable code skeleton extraction (signatures for all Rust files).
+                      Skeletons are included by default to show the full API surface.
   --list              List all available presets with descriptions
   --no-use-vertex     Use direct Gemini API instead of Vertex AI (fallback for
                       rate limits or when Vertex credentials aren't available)
@@ -187,19 +342,19 @@ const useVertex = values['use-vertex'];
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GCP_VERTEX_EXPRESS_API_KEY = process.env.GCP_VERTEX_EXPRESS_API_KEY;
 
-if (!values.dry) {
+if (!values.dry && !values['print-query-only']) {
   if (useVertex) {
     if (!GCP_VERTEX_EXPRESS_API_KEY) {
       console.error('Error: GCP_VERTEX_EXPRESS_API_KEY environment variable is not set.');
       console.error('Get an API key from Vertex AI Express Mode, or use --no-use-vertex for direct Gemini API.');
-      console.error('(Use --dry to see files without calling API)');
+      console.error('(Use --dry or --print-query-only to see files/query without calling API)');
       process.exit(1);
     }
   } else {
     if (!GEMINI_API_KEY) {
       console.error('Error: GEMINI_API_KEY environment variable is not set.');
       console.error('Get an API key at: https://aistudio.google.com/apikey');
-      console.error('(Use --dry to see files without calling API)');
+      console.error('(Use --dry or --print-query-only to see files/query without calling API)');
       process.exit(1);
     }
   }
@@ -221,29 +376,21 @@ try {
   console.log(`Using model: ${values.model}`);
   console.log(`Using API: ${useVertex ? 'Vertex AI Express' : 'Direct Gemini API'}`);
   console.log(`Token limit: ${tokenLimit}`);
-  console.log('Gathering context with yek...');
+  console.log('Gathering context...');
 
-  // First, get the full file tree so Gemini knows what files exist
-  console.log('  - Building file tree...');
-  let fileTree = execSync('yek --config-file yek.yaml --tree-only src/ docs/ 2>/dev/null | cat', {
-    maxBuffer: 10 * 1024 * 1024,
-    encoding: 'utf-8',
-  });
-
-  // Also get root-level important files
-  let rootFiles = execSync('ls -1 *.rs *.toml *.md *.yaml 2>/dev/null || true', {
-    encoding: 'utf-8',
-  }).trim();
-
-  const fullTree = `Repository File Structure:
-=========================
-
-Root files:
-${rootFiles.split('\n').map(f => `  ${f}`).join('\n')}
-
-Source code (src/):
-${fileTree}
-`;
+  // Extract code skeletons for API surface overview
+  let skeletonOutput = '';
+  if (values.skeleton) {
+    console.log('  - Extracting code skeletons with ast-grep...');
+    try {
+      const skeletonDir = includePaths ? includePaths.split(' ')[0] : 'src/';
+      const { output, fileCount, entryCount } = extractSkeletons(skeletonDir);
+      skeletonOutput = output;
+      console.log(`  - Extracted ${entryCount} signatures from ${fileCount} files`);
+    } catch (err) {
+      console.log(`  - Skeleton extraction failed: ${err.message}`);
+    }
+  }
 
   // Now get the actual file contents
   console.log('  - Gathering file contents...');
@@ -309,8 +456,13 @@ ${fileTree}
   }
   context = filteredSections.join('');
 
-  // Prepend the file tree to context
-  context = `${fullTree}\n${'='.repeat(50)}\nFILE CONTENTS:\n${'='.repeat(50)}\n\n${context}`;
+  // Prepend skeletons to context
+  let contextParts = [];
+  if (skeletonOutput) {
+    contextParts.push(skeletonOutput);
+  }
+  contextParts.push(`${'='.repeat(50)}\nFILE CONTENTS:\n${'='.repeat(50)}\n\n${context}`);
+  context = contextParts.join('\n');
 
   // Extract file paths from yek markers (>>>> FILE_PATH)
   const fileMarkerRegex = /^>>>> (.+)$/gm;
@@ -410,15 +562,8 @@ ${fileTree}
   systemPrompt += `
 
 IMPORTANT: The context includes:
-1. A FULL FILE TREE showing all files in the repository (even those not included in detail)
+1. CODE SKELETONS showing function/struct/enum/trait/impl signatures across the codebase (API surface overview)
 2. DETAILED CONTENTS of the most relevant files for your question
-
-If you need additional files to answer the question accurately, list them at the end of your response like this:
----
-NEED MORE FILES:
-- src/path/to/file1.rs (reason: needed to understand X)
-- src/path/to/file2.rs (reason: needed to see Y)
----
 
 Answer questions accurately based on the provided context. Reference specific files and line numbers when relevant.`;
 
@@ -439,6 +584,18 @@ Answer questions accurately based on the provided context. Reference specific fi
       maxOutputTokens: 8192,
     }
   };
+
+  // Print query only mode - show full payload without sending
+  if (values['print-query-only']) {
+    console.log('\n=== SYSTEM INSTRUCTION ===\n');
+    console.log(systemPrompt);
+    console.log('\n=== USER MESSAGE ===\n');
+    console.log(`Codebase context:\n${context}\n\nQuestion: ${prompt}`);
+    console.log('\n=== GENERATION CONFIG ===\n');
+    console.log(JSON.stringify(payload.generationConfig, null, 2));
+    console.log('\n--- Print query only mode. No API call made. ---');
+    process.exit(0);
+  }
 
   const response = await fetch(url, {
     method: 'POST',
