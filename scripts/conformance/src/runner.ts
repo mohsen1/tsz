@@ -814,7 +814,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
 // CLI
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
-  const config: Partial<RunnerConfig> & { filter?: string; printTest?: boolean } = {};
+  const config: Partial<RunnerConfig> & { filter?: string; errorCode?: number; printTest?: boolean } = {};
   let useServer = false;
 
   for (const arg of args) {
@@ -828,12 +828,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (arg === '--native') config.useWasm = false;
     else if (arg === '--server') useServer = true;
     else if (arg.startsWith('--filter=')) config.filter = arg.split('=')[1];
+    else if (arg.startsWith('--error-code=')) config.errorCode = parseInt(arg.split('=')[1].replace(/^TS/i, ''), 10);
     else if (arg === '--print-test') config.printTest = true;
     else if (arg.startsWith('--dump-results=')) (config as any).dumpResults = arg.split('=')[1];
   }
 
-  // --print-test implies --server mode
-  if (config.printTest) {
+  // --print-test and --error-code imply --server mode
+  if (config.printTest || config.errorCode) {
     useServer = true;
   }
 
