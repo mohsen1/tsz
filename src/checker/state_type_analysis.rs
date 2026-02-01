@@ -1491,7 +1491,8 @@ impl<'a> CheckerState<'a> {
                 return TypeId::UNDEFINED;
             }
             if let Some(cause) = nullish_cause {
-                self.report_possibly_nullish_object(access.expression, cause);
+                // Type is entirely nullish - emit TS18050 "The value X cannot be used here"
+                self.report_nullish_object(access.expression, cause, true);
             }
             return TypeId::ERROR;
         };
