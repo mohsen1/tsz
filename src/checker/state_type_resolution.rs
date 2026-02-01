@@ -1169,13 +1169,9 @@ impl<'a> CheckerState<'a> {
             }
         }
         let expr_type = self.get_type_of_node(expr_idx);
-        eprintln!("[DEBUG] base_ctor_from_expr: expr_idx={:?}, expr_type={:?}, key={:?}", 
-            expr_idx, expr_type, self.ctx.types.lookup(expr_type));
 
         // Evaluate application types to get the actual intersection type
         let evaluated_type = self.evaluate_application_type(expr_type);
-        eprintln!("[DEBUG] base_ctor_from_expr: evaluated_type={:?}, key={:?}", 
-            evaluated_type, self.ctx.types.lookup(evaluated_type));
 
         let ctor_types = self.constructor_types_from_type(evaluated_type);
         if ctor_types.is_empty() {
