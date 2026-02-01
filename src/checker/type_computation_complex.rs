@@ -871,6 +871,7 @@ impl<'a> CheckerState<'a> {
     /// Creates the type for the global `Symbol` constructor, including:
     /// - Call signature: `Symbol(description?: string | number): symbol`
     /// - Well-known symbol properties (iterator, asyncIterator, etc.)
+    #[allow(dead_code)]
     pub(crate) fn get_symbol_constructor_type(&self) -> TypeId {
         use crate::solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo};
 

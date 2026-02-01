@@ -3037,10 +3037,7 @@ impl Server {
                         "bannerText": "...",
                         "autoCollapse": false,
                     });
-                    span["kind"] = serde_json::json!(match fr.kind.as_deref() {
-                        Some(k) => k,
-                        None => "code",
-                    });
+                    span["kind"] = serde_json::json!(fr.kind.as_deref().unwrap_or("code"));
                     span
                 })
                 .collect();

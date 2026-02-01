@@ -329,11 +329,16 @@ Argument of type '(s: string) => error' is not assignable to parameter of type '
 **Fix Location:** `src/solver/diagnostics.rs`
 
 **Solution:**
-1. Instead of `DiagnosticBuilder` (eager), use `PendingDiagnosticBuilder` (lazy)
-2. Create `PendingDiagnostic` containing raw `TypeId`s
-3. Checker renders diagnostic later using `TypeFormatter::with_symbols`
+1. ~~Instead of `DiagnosticBuilder` (eager), use `PendingDiagnosticBuilder` (lazy)~~
+2. ~~Create `PendingDiagnostic` containing raw `TypeId`s~~
+3. ~~Checker renders diagnostic later using `TypeFormatter::with_symbols`~~
 
-**Status:** TODO - COMPLEX, needs architecture review
+**Actual Fix:**
+- Added `DiagnosticBuilder::with_symbols()` and `SpannedDiagnosticBuilder::with_symbols()` constructors
+- Updated all usages in `src/checker/error_reporter.rs` to use `with_symbols` variants
+- This ensures symbol arena is available during type formatting, resolving Ref(N) to actual names
+
+**Status:** DONE (Feb 2, 2026) - All diagnostic builders in checker now use symbol arena for proper type name resolution
 
 ---
 

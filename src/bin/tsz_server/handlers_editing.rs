@@ -551,7 +551,7 @@ impl Server {
                         && param
                             .chars()
                             .next()
-                            .map_or(false, |c| c.is_alphabetic() || c == '_' || c == '$')
+                            .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
                     {
                         return vec![param];
                     }
@@ -835,7 +835,7 @@ impl Server {
                 // Only strip if the paren wraps the entire expression
                 if let Some(cp) = close_pos {
                     let after_close: String = chars[cp + 1..].iter().collect();
-                    let after_trimmed = after_close.trim();
+                    let _after_trimmed = after_close.trim();
                     // Check if paren wraps the expression:
                     // what follows should be end-of-statement or another closing paren
                     let after_on_line = after_close
@@ -1391,7 +1391,7 @@ impl Server {
 
             // Check if selection contains only comments and whitespace
             let only_comments_and_ws = if !overlapping.is_empty() && sel_start != sel_end {
-                let sel_bytes = source_text[sel_start..sel_end].as_bytes();
+                let _sel_bytes = source_text.get(sel_start..sel_end).map(str::as_bytes);
                 let mut all_covered = true;
                 let mut pos = sel_start;
                 for &(cs, ce) in &overlapping {
