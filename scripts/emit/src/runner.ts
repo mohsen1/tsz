@@ -3,7 +3,7 @@
  * TSZ Emit Test Runner
  *
  * Compares tsz JavaScript/Declaration emit output against TypeScript's baselines.
- * Uses TestCaseParser to parse test directives and matches with baseline variations.
+ * Uses worker threads with timeout protection to prevent hangs.
  *
  * Usage:
  *   ./run.sh [options]
@@ -12,7 +12,6 @@
  *   --max=N           Maximum number of tests to run
  *   --filter=PATTERN  Only run tests matching pattern
  *   --verbose         Show detailed output
- *   --workers=N       Number of parallel workers (default: CPU count)
  *   --js-only         Only test JavaScript emit
  *   --dts-only        Only test declaration emit
  */
@@ -21,15 +20,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { fileURLToPath } from 'url';
-import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
+import { Worker } from 'worker_threads';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '../../..');
 const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
 const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
-const TESTS_DIR = path.join(TS_DIR, 'tests/cases');
 const CACHE_DIR = path.join(__dirname, '../.cache');
+
+// Configuration
+const TEST_TIMEOUT_MS = 400;   // 400ms timeout per test
+const WORKER_RECYCLE_AFTER = 50; // Recycle worker after N tests to prevent memory buildup
 
 // ANSI colors
 const colors = {
@@ -49,7 +51,6 @@ interface Config {
   verbose: boolean;
   jsOnly: boolean;
   dtsOnly: boolean;
-  workers: number;
 }
 
 interface TestCase {
@@ -69,6 +70,8 @@ interface TestResult {
   jsError?: string;
   dtsError?: string;
   elapsed?: number;
+  skipped?: boolean;
+  timeout?: boolean;
 }
 
 interface CacheEntry {
@@ -162,7 +165,6 @@ function parseModule(moduleStr: string): number {
 }
 
 function extractVariantFromFilename(filename: string): { base: string; target?: string; module?: string } {
-  // Match patterns like: testName(target=es2015).js or testName(target=es2015,module=commonjs).js
   const match = filename.match(/^(.+?)\(([^)]+)\)\.js$/);
   if (!match) {
     return { base: filename.replace('.js', '') };
@@ -222,19 +224,106 @@ function findTestCases(filter: string, maxTests: number): TestCase[] {
 }
 
 // ============================================================================
+// Worker Management
+// ============================================================================
+
+class TranspileWorker {
+  private worker: Worker | null = null;
+  private jobId = 0;
+  private pendingJobs = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void; timer: NodeJS.Timeout }>();
+  private testsRun = 0;
+  private wasmPath: string;
+
+  constructor(wasmPath: string) {
+    this.wasmPath = wasmPath;
+  }
+
+  private async ensureWorker(): Promise<void> {
+    if (this.worker && this.testsRun < WORKER_RECYCLE_AFTER) {
+      return;
+    }
+
+    // Recycle worker
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+      this.testsRun = 0;
+    }
+
+    const workerPath = path.join(__dirname, 'emit-worker.js');
+    this.worker = new Worker(workerPath, {
+      workerData: { wasmPath: this.wasmPath },
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const onMessage = (msg: any) => {
+        if (msg.type === 'ready') {
+          this.worker!.off('message', onMessage);
+          resolve();
+        } else if (msg.type === 'error') {
+          reject(new Error(msg.error));
+        }
+      };
+      this.worker!.on('message', onMessage);
+      this.worker!.on('error', reject);
+    });
+
+    this.worker.on('message', (msg: any) => {
+      if (msg.id !== undefined) {
+        const pending = this.pendingJobs.get(msg.id);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pendingJobs.delete(msg.id);
+          if (msg.error) {
+            pending.reject(new Error(msg.error));
+          } else {
+            pending.resolve(msg.output);
+          }
+        }
+      }
+    });
+  }
+
+  async transpile(source: string, target: number, module: number): Promise<string> {
+    await this.ensureWorker();
+    this.testsRun++;
+
+    const id = this.jobId++;
+    
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingJobs.delete(id);
+        // Kill and recreate worker on timeout
+        if (this.worker) {
+          this.worker.terminate();
+          this.worker = null;
+          this.testsRun = 0;
+        }
+        reject(new Error('TIMEOUT'));
+      }, TEST_TIMEOUT_MS);
+
+      this.pendingJobs.set(id, { resolve, reject, timer });
+      this.worker!.postMessage({ id, source, target, module });
+    });
+  }
+
+  terminate(): void {
+    if (this.worker) {
+      for (const { timer } of this.pendingJobs.values()) {
+        clearTimeout(timer);
+      }
+      this.pendingJobs.clear();
+      this.worker.terminate();
+      this.worker = null;
+    }
+  }
+}
+
+// ============================================================================
 // Test Execution
 // ============================================================================
 
-async function loadTsz(): Promise<any> {
-  const wasmPath = path.join(ROOT_DIR, 'pkg/wasm.js');
-  if (!fs.existsSync(wasmPath)) {
-    console.error('WASM module not found. Run: wasm-pack build --target nodejs --out-dir pkg');
-    process.exit(1);
-  }
-  return import(wasmPath);
-}
-
-function runTest(wasm: any, testCase: TestCase, config: Config): TestResult {
+async function runTest(worker: TranspileWorker, testCase: TestCase, config: Config): Promise<TestResult> {
   const start = Date.now();
   const testName = testCase.baselineFile.replace('.js', '');
 
@@ -256,8 +345,8 @@ function runTest(wasm: any, testCase: TestCase, config: Config): TestResult {
     if (cached && cached.hash === sourceHash) {
       tszJs = cached.jsOutput;
     } else {
-      // Run tsz transpile
-      tszJs = wasm.transpile(testCase.source, testCase.target, testCase.module);
+      // Run tsz transpile via worker
+      tszJs = await worker.transpile(testCase.source, testCase.target, testCase.module);
       cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: null });
     }
 
@@ -278,14 +367,15 @@ function runTest(wasm: any, testCase: TestCase, config: Config): TestResult {
 
     // DTS comparison (when implemented)
     if (!config.jsOnly && testCase.expectedDts) {
-      // TODO: Implement declaration emit comparison
       result.dtsMatch = null;
     }
 
     result.elapsed = Date.now() - start;
 
   } catch (e) {
-    result.jsError = e instanceof Error ? e.message : String(e);
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    result.timeout = errorMsg === 'TIMEOUT';
+    result.jsError = result.timeout ? 'TIMEOUT' : errorMsg;
     result.elapsed = Date.now() - start;
   }
 
@@ -311,12 +401,11 @@ function progressBar(current: number, total: number, width: number = 30): string
 function parseArgs(): Config {
   const args = process.argv.slice(2);
   const config: Config = {
-    maxTests: 500,
+    maxTests: Infinity,
     filter: '',
     verbose: false,
     jsOnly: false,
     dtsOnly: false,
-    workers: Math.min(os.cpus().length, 8),
   };
 
   for (const arg of args) {
@@ -330,8 +419,6 @@ function parseArgs(): Config {
       config.jsOnly = true;
     } else if (arg === '--dts-only') {
       config.dtsOnly = true;
-    } else if (arg.startsWith('--workers=')) {
-      config.workers = parseInt(arg.slice(10), 10);
     } else if (arg === '--help' || arg === '-h') {
       console.log(`
 TSZ Emit Test Runner
@@ -339,10 +426,9 @@ TSZ Emit Test Runner
 Usage: ./run.sh [options]
 
 Options:
-  --max=N           Maximum tests (default: 500)
+  --max=N           Maximum tests (default: all)
   --filter=PATTERN  Filter tests by name
   --verbose, -v     Detailed output with diffs
-  --workers=N       Parallel workers (default: CPU count, max 8)
   --js-only         Test JavaScript emit only
   --dts-only        Test declaration emit only
   --help, -h        Show this help
@@ -361,8 +447,8 @@ async function main() {
   console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
   console.log(`${colors.bold}  TSZ Emit Test Runner${colors.reset}`);
   console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(`${colors.dim}  Max tests: ${config.maxTests}${colors.reset}`);
-  console.log(`${colors.dim}  Workers: ${config.workers}${colors.reset}`);
+  console.log(`${colors.dim}  Max tests: ${config.maxTests === Infinity ? 'all' : config.maxTests}${colors.reset}`);
+  console.log(`${colors.dim}  Timeout: ${TEST_TIMEOUT_MS}ms per test${colors.reset}`);
   if (config.filter) {
     console.log(`${colors.dim}  Filter: ${config.filter}${colors.reset}`);
   }
@@ -370,9 +456,12 @@ async function main() {
   console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
   console.log('');
 
-  // Load WASM
-  console.log(`${colors.dim}Loading tsz WASM module...${colors.reset}`);
-  const wasm = await loadTsz();
+  // Check WASM module exists
+  const wasmPath = path.join(ROOT_DIR, 'pkg/wasm.js');
+  if (!fs.existsSync(wasmPath)) {
+    console.error('WASM module not found. Run: wasm-pack build --target nodejs --out-dir pkg');
+    process.exit(1);
+  }
 
   // Find test cases
   console.log(`${colors.dim}Discovering test cases...${colors.reset}`);
@@ -380,8 +469,11 @@ async function main() {
   console.log(`${colors.dim}Found ${testCases.length} test cases${colors.reset}`);
   console.log('');
 
+  // Create worker
+  const worker = new TranspileWorker(wasmPath);
+
   // Run tests
-  let jsPass = 0, jsFail = 0, jsSkip = 0;
+  let jsPass = 0, jsFail = 0, jsSkip = 0, jsTimeout = 0;
   let dtsPass = 0, dtsFail = 0, dtsSkip = 0;
   const failures: TestResult[] = [];
   const startTime = Date.now();
@@ -390,7 +482,8 @@ async function main() {
   let lastProgressLen = 0;
   function printProgress(current: number) {
     const bar = progressBar(current, testCases.length);
-    const rate = current > 0 ? Math.round(current / ((Date.now() - startTime) / 1000)) : 0;
+    const elapsed = (Date.now() - startTime) / 1000;
+    const rate = current > 0 ? Math.round(current / elapsed) : 0;
     const msg = `  ${bar} | ${rate}/s`;
     process.stdout.write('\r' + msg + ' '.repeat(Math.max(0, lastProgressLen - msg.length)));
     lastProgressLen = msg.length;
@@ -398,12 +491,23 @@ async function main() {
 
   for (let i = 0; i < testCases.length; i++) {
     const testCase = testCases[i];
-    const result = runTest(wasm, testCase, config);
+    const result = await runTest(worker, testCase, config);
 
     // Count results
-    if (result.jsMatch === true) jsPass++;
-    else if (result.jsMatch === false) { jsFail++; failures.push(result); }
-    else jsSkip++;
+    if (result.skipped) {
+      jsSkip++;
+    } else if (result.timeout) {
+      jsTimeout++;
+      jsFail++;
+      failures.push(result);
+    } else if (result.jsMatch === true) {
+      jsPass++;
+    } else if (result.jsMatch === false) {
+      jsFail++;
+      failures.push(result);
+    } else {
+      jsSkip++;
+    }
 
     if (result.dtsMatch === true) dtsPass++;
     else if (result.dtsMatch === false) dtsFail++;
@@ -413,7 +517,9 @@ async function main() {
     if (!config.verbose) {
       printProgress(i + 1);
     } else {
-      const jsStatus = result.jsMatch === true ? `${colors.green}✓${colors.reset}` :
+      const jsStatus = result.timeout ? `${colors.yellow}T${colors.reset}` :
+                       result.skipped ? `${colors.dim}S${colors.reset}` :
+                       result.jsMatch === true ? `${colors.green}✓${colors.reset}` :
                        result.jsMatch === false ? `${colors.red}✗${colors.reset}` : `${colors.dim}-${colors.reset}`;
       console.log(`  [${jsStatus}] ${result.name} (${result.elapsed}ms)`);
       if (result.jsError && result.jsMatch === false) {
@@ -422,7 +528,8 @@ async function main() {
     }
   }
 
-  // Save cache
+  // Cleanup
+  worker.terminate();
   saveCache();
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -438,7 +545,7 @@ async function main() {
     const jsPct = jsTotal > 0 ? (jsPass / jsTotal * 100).toFixed(1) : '0.0';
     console.log(`${colors.bold}JavaScript Emit:${colors.reset}`);
     console.log(`  ${colors.green}Passed: ${jsPass}${colors.reset}`);
-    console.log(`  ${colors.red}Failed: ${jsFail}${colors.reset}`);
+    console.log(`  ${colors.red}Failed: ${jsFail}${colors.reset}${jsTimeout > 0 ? ` (${jsTimeout} timeouts)` : ''}`);
     console.log(`  ${colors.dim}Skipped: ${jsSkip}${colors.reset}`);
     console.log(`  ${colors.yellow}Pass Rate: ${jsPct}% (${jsPass}/${jsTotal})${colors.reset}`);
   }
@@ -458,15 +565,28 @@ async function main() {
   console.log(`${colors.dim}\nTime: ${elapsed}s (${rate} tests/sec)${colors.reset}`);
   console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
 
-  // Show first failures
-  if (failures.length > 0 && !config.verbose) {
+  // Show first failures (excluding timeouts)
+  const realFailures = failures.filter(f => !f.timeout);
+  if (realFailures.length > 0 && !config.verbose) {
     console.log(`\n${colors.bold}First failures:${colors.reset}`);
-    for (const f of failures.slice(0, 10)) {
+    for (const f of realFailures.slice(0, 10)) {
       const diffInfo = f.jsError ? ` ${colors.dim}(${f.jsError})${colors.reset}` : '';
       console.log(`  ${colors.red}✗${colors.reset} ${f.name}${diffInfo}`);
     }
-    if (failures.length > 10) {
-      console.log(`  ${colors.dim}... and ${failures.length - 10} more${colors.reset}`);
+    if (realFailures.length > 10) {
+      console.log(`  ${colors.dim}... and ${realFailures.length - 10} more${colors.reset}`);
+    }
+  }
+
+  // Show timeouts
+  const timeouts = failures.filter(f => f.timeout);
+  if (timeouts.length > 0 && !config.verbose) {
+    console.log(`\n${colors.bold}Timeouts (${timeouts.length}):${colors.reset}`);
+    for (const f of timeouts.slice(0, 5)) {
+      console.log(`  ${colors.yellow}T${colors.reset} ${f.name}`);
+    }
+    if (timeouts.length > 5) {
+      console.log(`  ${colors.dim}... and ${timeouts.length - 5} more${colors.reset}`);
     }
   }
 
