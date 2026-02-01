@@ -153,7 +153,34 @@ impl<'a> Printer<'a> {
         self.increase_indent();
         self.emit_param_prologue(transforms);
 
-        for &stmt_idx in &block.statements.nodes {
+        // Distribute comments using shared self.comment_emit_idx.
+        let block_end = block_node.end;
+
+        let stmts = block.statements.nodes.clone();
+        for &stmt_idx in stmts.iter() {
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                if let Some(text) = self.source_text {
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                        if c_pos >= block_end {
+                            break;
+                        }
+                        if c_end <= stmt_node.pos {
+                            let comment_text = crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                            self.write(comment_text);
+                            if c_trailing {
+                                self.write_line();
+                            }
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
             let before_len = self.writer.len();
             self.emit(stmt_idx);
             if self.writer.len() > before_len {

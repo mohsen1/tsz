@@ -224,6 +224,14 @@ pub struct Printer<'a> {
 
     /// Recursion depth counter to prevent infinite loops
     emit_recursion_depth: u32,
+
+    /// All comments in the source file, collected once during emit_source_file.
+    /// Used for distributing comments to blocks and other nested constructs.
+    pub(super) all_comments: Vec<crate::comments::CommentRange>,
+
+    /// Shared index into all_comments, monotonically advancing as comments are emitted.
+    /// Used across emit_source_file and emit_block to prevent double-emission.
+    pub(super) comment_emit_idx: usize,
 }
 
 impl<'a> Printer<'a> {
@@ -266,6 +274,8 @@ impl<'a> Printer<'a> {
             last_processed_pos: 0,
             pending_source_pos: None,
             emit_recursion_depth: 0,
+            all_comments: Vec::new(),
+            comment_emit_idx: 0,
         }
     }
 
@@ -1621,7 +1631,8 @@ impl<'a> Printer<'a> {
         }
 
         // Extract and filter comments (strip compiler directives)
-        let all_comments = if !self.ctx.options.remove_comments {
+        // Store on self so nested blocks can also distribute comments.
+        self.all_comments = if !self.ctx.options.remove_comments {
             if let Some(text) = self.source_text {
                 crate::comments::get_comment_ranges(text)
                     .into_iter()
@@ -1639,7 +1650,7 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
-        let mut comment_idx = 0;
+        self.comment_emit_idx = 0;
 
         // CommonJS: Emit "use strict" FIRST (before comments and helpers)
         if self.ctx.is_commonjs() {
@@ -1657,15 +1668,17 @@ impl<'a> Printer<'a> {
             .unwrap_or(node.end);
 
         if let Some(text) = self.source_text {
-            while comment_idx < all_comments.len() {
-                let comment = &all_comments[comment_idx];
-                if comment.end <= first_stmt_pos {
-                    let comment_text = comment.get_text(text);
+            while self.comment_emit_idx < self.all_comments.len() {
+                let c_end = self.all_comments[self.comment_emit_idx].end;
+                if c_end <= first_stmt_pos {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    let comment_text = crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     self.write(comment_text);
-                    if comment.has_trailing_new_line {
+                    if c_trailing {
                         self.write_line();
                     }
-                    comment_idx += 1;
+                    self.comment_emit_idx += 1;
                 } else {
                     break;
                 }
@@ -1775,33 +1788,29 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Emit statements with their comments
+        // Emit statements with their comments using shared comment_emit_idx.
+        // Inner blocks (via emit_block) also advance comment_emit_idx,
+        // so no explicit skip logic is needed here.
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 // Emit any comments that appear before this statement
                 if let Some(text) = self.source_text {
-                    while comment_idx < all_comments.len() {
-                        let comment = &all_comments[comment_idx];
-                        if comment.end <= stmt_node.pos {
-                            // This comment is before the statement, emit it
-                            let comment_text = comment.get_text(text);
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        if c_end <= stmt_node.pos {
+                            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                            let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                            let comment_text = crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                             self.write(comment_text);
-                            // Only add newline if the comment has a trailing newline
-                            if comment.has_trailing_new_line {
+                            if c_trailing {
                                 self.write_line();
                             }
-                            // Track last processed position for gap detection
-                            self.last_processed_pos = comment.end;
-                            comment_idx += 1;
+                            self.comment_emit_idx += 1;
                         } else {
-                            // This comment is after the statement start, stop
                             break;
                         }
                     }
                 }
-
-                // Track that we've processed up to this statement's position
-                self.last_processed_pos = stmt_node.pos;
             }
 
             let before_len = self.writer.len();
@@ -1810,31 +1819,20 @@ impl<'a> Printer<'a> {
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 self.write_line();
             }
-
-            // Update last processed position and skip comments inside this statement
-            if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                // Advance comment_idx past all comments within this statement's range.
-                // This prevents comments inside class bodies, function bodies, etc.
-                // from being emitted as orphaned trailing comments at EOF.
-                while comment_idx < all_comments.len()
-                    && all_comments[comment_idx].pos < stmt_node.end
-                {
-                    comment_idx += 1;
-                }
-                self.last_processed_pos = stmt_node.end;
-            }
         }
 
         // Emit remaining trailing comments at the end of file
         if let Some(text) = self.source_text {
-            while comment_idx < all_comments.len() {
-                let comment = &all_comments[comment_idx];
-                let comment_text = comment.get_text(text);
+            while self.comment_emit_idx < self.all_comments.len() {
+                let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                let c_end = self.all_comments[self.comment_emit_idx].end;
+                let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                let comment_text = crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                 self.write(comment_text);
-                if comment.has_trailing_new_line {
+                if c_trailing {
                     self.write_line();
                 }
-                comment_idx += 1;
+                self.comment_emit_idx += 1;
             }
         }
     }
