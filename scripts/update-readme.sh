@@ -22,7 +22,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMMIT=false
 MAX_TESTS="--all"
 FOURSLASH_MAX=""
-EMIT_MAX="--max=500"
+EMIT_MAX=""
 WORKERS=8
 RUN_CONFORMANCE=true
 RUN_FOURSLASH=true
