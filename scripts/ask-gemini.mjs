@@ -3,6 +3,7 @@
 import { execSync } from 'child_process';
 import { parseArgs } from 'util';
 import 'dotenv/config';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 /**
  * Extract code skeletons using ast-grep for better Gemini context.
@@ -170,51 +171,165 @@ function extractSignature(text, type) {
 // ./scripts/ask-gemini.mjs --include="src/solver" "Custom path question"
 // ./scripts/ask-gemini.mjs --no-use-vertex "Use direct Gemini API instead of Vertex"
 
-const DEFAULT_CONTEXT_LENGTH = '950k'; // Gemini has 1M context, leave room for response
 const DEFAULT_MODEL = 'gemini-3-pro-preview';
+const TARGET_TOKEN_UTILIZATION = 0.90; // Target 90% of 1M context
+const MAX_GEMINI_TOKENS = 1_000_000;
+const INITIAL_YEK_LIMIT = '4000k'; // Start high, will auto-adjust down
+
+/**
+ * Gather context from yek with given token limit and apply filters.
+ * Returns { context, files, estimatedTokens, stats }
+ */
+function gatherContextWithLimit(yekTokenLimit, includePaths, filterTests) {
+  let yekCommand = `yek --config-file yek.yaml --tokens ${yekTokenLimit}`;
+  if (includePaths) {
+    yekCommand += ` ${includePaths}`;
+  }
+
+  let context = execSync(`${yekCommand} 2>/dev/null | cat`, {
+    maxBuffer: 100 * 1024 * 1024,
+    encoding: 'utf-8',
+  });
+
+  // Apply filters
+  const sections = context.split(/^(?=>>>> )/m);
+  let testFilesFiltered = 0;
+  let mdFilesFiltered = 0;
+  let localeFilesFiltered = 0;
+
+  const filteredSections = sections.filter(section => {
+    const match = section.match(/^>>>> (.+)\n/);
+    if (!match) return true;
+    const filePath = match[1];
+
+    if (filePath.startsWith('TypeScript/')) return false;
+
+    if (filterTests) {
+      const isTestFile = (
+        filePath.includes('/tests/') || filePath.includes('/test/') ||
+        filePath.match(/_tests?\.rs$/) || filePath.match(/_spec\.rs$/) ||
+        filePath.includes('/benches/') || filePath.includes('/bench/') ||
+        filePath.includes('test_harness') || filePath.includes('test_utils')
+      );
+      if (isTestFile) { testFilesFiltered++; return false; }
+    }
+
+    if (filePath.endsWith('.md') && !filePath.endsWith('AGENTS.md')) {
+      mdFilesFiltered++;
+      return false;
+    }
+
+    if ((filePath.includes('/locales/') || filePath.startsWith('locales/')) && filePath.endsWith('.json')) {
+      localeFilesFiltered++;
+      return false;
+    }
+
+    return true;
+  });
+
+  context = filteredSections.join('');
+
+  // Extract file list
+  const fileMarkerRegex = /^>>>> (.+)$/gm;
+  const files = [];
+  let match;
+  while ((match = fileMarkerRegex.exec(context)) !== null) {
+    files.push(match[1]);
+  }
+
+  const contextBytes = Buffer.byteLength(context, 'utf-8');
+  const estimatedTokens = Math.ceil(contextBytes / 4);
+
+  return {
+    context,
+    files,
+    estimatedTokens,
+    contextBytes,
+    stats: { testFilesFiltered, mdFilesFiltered, localeFilesFiltered }
+  };
+}
+
+/**
+ * Find optimal yek token limit to target ~90% Gemini utilization.
+ * Uses binary search for accuracy.
+ */
+function findOptimalTokenLimit(includePaths, filterTests, verbose = true) {
+  const targetTokens = Math.floor(MAX_GEMINI_TOKENS * TARGET_TOKEN_UTILIZATION);
+
+  // First pass with high limit to see max content
+  if (verbose) process.stdout.write('  - Auto-sizing context...');
+  let result = gatherContextWithLimit(INITIAL_YEK_LIMIT, includePaths, filterTests);
+
+  if (result.estimatedTokens <= targetTokens) {
+    // Already under target, use all content
+    if (verbose) console.log(` using all available content (${result.files.length} files)`);
+    return { ...result, yekLimit: INITIAL_YEK_LIMIT };
+  }
+
+  // Binary search for optimal limit
+  let low = 500;  // 500k minimum
+  let high = parseInt(INITIAL_YEK_LIMIT);
+  let bestResult = result;
+  let iterations = 0;
+
+  while (high - low > 100 && iterations < 8) {  // Within 100k precision, max 8 iterations
+    iterations++;
+    const mid = Math.floor((low + high) / 2);
+    const midStr = `${mid}k`;
+
+    result = gatherContextWithLimit(midStr, includePaths, filterTests);
+
+    if (result.estimatedTokens <= targetTokens) {
+      // Under target, try higher
+      low = mid;
+      bestResult = result;
+      bestResult.yekLimit = midStr;
+    } else {
+      // Over target, try lower
+      high = mid;
+    }
+  }
+
+  // Final adjustment - use the best result we found
+  if (verbose) console.log(` optimal: ${bestResult.yekLimit} (${bestResult.files.length} files)`);
+  return bestResult;
+}
 
 // Focused presets for different areas of the codebase
 // Each preset uses directory wildcards to include all related files automatically
+// Focused presets - paths to include for each area (auto-sized to fit context)
 const PRESETS = {
   solver: {
     description: 'Type solver, inference, compatibility, and type operations',
     paths: ['src/solver/', 'src/checker/state.rs', 'src/checker/context.rs', 'AGENTS.md'],
-    tokens: '600k',
   },
   checker: {
     description: 'Type checker, AST traversal, diagnostics, and error reporting',
     paths: ['src/checker/', 'src/binder.rs', 'AGENTS.md'],
-    tokens: '700k',
   },
   binder: {
     description: 'Symbol binding, scopes, and control flow graph construction',
     paths: ['src/binder/', 'src/binder.rs', 'src/checker/flow_graph_builder.rs', 'AGENTS.md'],
-    tokens: '400k',
   },
   parser: {
     description: 'Parser, scanner, and AST nodes',
     paths: ['src/parser/', 'src/scanner.rs', 'src/scanner_impl.rs', 'src/span.rs'],
-    tokens: '700k',
   },
   emitter: {
     description: 'Code emission, transforms, source maps, and declaration files',
     paths: ['src/emitter/', 'src/transforms/', 'src/declaration_emitter.rs', 'src/source_map.rs', 'src/source_writer.rs', 'src/printer.rs'],
-    tokens: '600k',
   },
   lsp: {
     description: 'Language server protocol implementation',
-    paths: ['src/lsp/', 'src/cli/'],
-    tokens: '600k',
+    paths: ['src/lsp/', 'src/bin/tsz_lsp.rs', 'src/bin/tsz_server/'],
   },
   types: {
     description: 'Type system overview (solver + checker type-related)',
     paths: ['src/solver/', 'src/checker/', 'src/lowering_pass.rs', 'AGENTS.md'],
-    tokens: '800k',
   },
   modules: {
     description: 'Module resolution, imports, exports, and module graph',
     paths: ['src/module_resolver.rs', 'src/module_graph.rs', 'src/imports.rs', 'src/exports.rs', 'src/transforms/module_*.rs', 'src/emitter/module_*.rs'],
-    tokens: '400k',
   },
 };
 
@@ -288,7 +403,7 @@ Focused Presets (pick one for best context):
 
 General Options:
   -i, --include=PATH  Include specific path(s) (overrides preset)
-  -t, --tokens=SIZE   Max context size (default: ${DEFAULT_CONTEXT_LENGTH}, or preset default)
+  -t, --tokens=SIZE   Override yek token limit (default: auto-sized to ~90% of Gemini's 1M context)
   -m, --model=NAME    Gemini model (default: ${DEFAULT_MODEL})
   --dry               Show files that would be included without calling API
   --query             Print the full query payload (system prompt + context + prompt)
@@ -299,8 +414,8 @@ General Options:
                       rate limits or when Vertex credentials aren't available)
   -h, --help          Show this help message
 
-Note: Test files (*_test.rs, tests/, benches/) and markdown files (*.md) are excluded
-      from full content by default (skeletons still include code signatures).
+Note: Test files, markdown docs, and locale JSONs are excluded from full content
+      by default. Skeletons still include all code signatures.
 
 Environment:
   GCP_VERTEX_EXPRESS_API_KEY  Required for Vertex AI Express (default).
@@ -334,8 +449,8 @@ if (activePresets.length > 1) {
 const activePreset = activePresets[0] ? PRESETS[activePresets[0]] : null;
 const presetName = activePresets[0] || null;
 
-// Determine token limit: explicit flag > preset default > global default
-const tokenLimit = values.tokens || (activePreset?.tokens) || DEFAULT_CONTEXT_LENGTH;
+// Token limit: explicit flag overrides auto-sizing
+const explicitTokenLimit = values.tokens || null;
 
 // Determine paths to include
 let includePaths = null;
@@ -384,90 +499,39 @@ try {
   }
   console.log(`Using model: ${values.model}`);
   console.log(`Using API: ${useVertex ? 'Vertex AI Express' : 'Direct Gemini API'}`);
-  console.log(`Token limit: ${tokenLimit}`);
   console.log('Gathering context...');
 
-  // First, gather file contents to know which files are fully included
-  console.log('  - Gathering file contents...');
-  let yekCommand = `yek --config-file yek.yaml --tokens ${tokenLimit}`;
-  if (includePaths) {
-    yekCommand += ` ${includePaths}`;
-  }
-
-  // Running yek and capturing stdout. Pipe to cat to force non-TTY output mode.
-  // Suppress stderr to avoid yek progress messages.
-  let context = execSync(`${yekCommand} 2>/dev/null | cat`, {
-    maxBuffer: 100 * 1024 * 1024,
-    encoding: 'utf-8',
-  });
-
-  // Filter out TypeScript submodule files and test files
-  // Test files are only included if user explicitly specifies them via --include
-  const userExplicitlyIncludedTests = values.include && (
+  // Check if tests should be filtered
+  const filterTests = !(values.include && (
     values.include.includes('test') ||
     values.include.includes('spec') ||
     values.include.includes('bench')
-  );
+  ));
 
-  if (!userExplicitlyIncludedTests) {
+  // Gather context - either with explicit limit or auto-sized
+  let contextResult;
+  if (explicitTokenLimit) {
+    console.log(`  - Using explicit token limit: ${explicitTokenLimit}`);
+    contextResult = gatherContextWithLimit(explicitTokenLimit, includePaths, filterTests);
+    contextResult.yekLimit = explicitTokenLimit;
+  } else {
+    contextResult = findOptimalTokenLimit(includePaths, filterTests);
+  }
+
+  let { context, files, estimatedTokens, contextBytes, stats, yekLimit } = contextResult;
+
+  // Log filter stats
+  if (filterTests) {
     console.log('  - Filtering out test files (use --include with test path to include them)');
   }
-
-  const sections = context.split(/^(?=>>>> )/m);
-  let testFilesFiltered = 0;
-  let mdFilesFiltered = 0;
-  const filteredSections = sections.filter(section => {
-    const match = section.match(/^>>>> (.+)\n/);
-    if (!match) return true;
-    const filePath = match[1];
-
-    // Skip TypeScript submodule files
-    if (filePath.startsWith('TypeScript/')) {
-      return false;
-    }
-
-    // Skip test files unless user explicitly requested them via --include
-    if (!userExplicitlyIncludedTests) {
-      const isTestFile = (
-        // Test directory patterns
-        filePath.includes('/tests/') || filePath.includes('/test/') ||
-        // Test file naming patterns
-        filePath.match(/_tests?\.rs$/) || filePath.match(/_spec\.rs$/) ||
-        // Bench directory patterns
-        filePath.includes('/benches/') || filePath.includes('/bench/') ||
-        // Common test harness files
-        filePath.includes('test_harness') || filePath.includes('test_utils')
-      );
-      if (isTestFile) {
-        testFilesFiltered++;
-        return false;
-      }
-    }
-
-    // Skip markdown files (often long docs that consume token budget)
-    // Keep AGENTS.md as it's essential context
-    if (filePath.endsWith('.md') && !filePath.endsWith('AGENTS.md')) {
-      mdFilesFiltered++;
-      return false;
-    }
-
-    return true;
-  });
-
-  if (testFilesFiltered > 0) {
-    console.log(`  - Filtered out ${testFilesFiltered} test file(s)`);
+  if (stats.testFilesFiltered > 0) {
+    console.log(`  - Filtered out ${stats.testFilesFiltered} test file(s)`);
   }
-  if (mdFilesFiltered > 0) {
-    console.log(`  - Filtered out ${mdFilesFiltered} markdown file(s) (keeping AGENTS.md)`);
+  if (stats.mdFilesFiltered > 0) {
+    console.log(`  - Filtered out ${stats.mdFilesFiltered} markdown file(s) (keeping AGENTS.md)`);
   }
-  context = filteredSections.join('');
-
-  // Extract file paths from yek markers (>>>> FILE_PATH) to know which files are fully included
-  const fileMarkerRegex = /^>>>> (.+)$/gm;
-  const files = [];
-  let match;
-  while ((match = fileMarkerRegex.exec(context)) !== null) {
-    files.push(match[1]);
+  if (stats.localeFilesFiltered > 0) {
+    console.log(`  - Filtered out ${stats.localeFilesFiltered} locale file(s)`);
   }
 
   // Build a set of fully included files for exclusion from skeletons
@@ -501,8 +565,17 @@ try {
   contextParts.push(`${'='.repeat(50)}\nFILE CONTENTS (${files.length} files):\n${'='.repeat(50)}\n\n${context}`);
   context = contextParts.join('\n');
 
-  const contextBytes = Buffer.byteLength(context, 'utf-8');
-  console.log(`Context gathered (${(contextBytes / 1024).toFixed(0)} KB, ${files.length} full files + skeletons).`);
+  // Recalculate bytes after adding skeletons
+  const finalContextBytes = Buffer.byteLength(context, 'utf-8');
+  const finalEstimatedTokens = Math.ceil(finalContextBytes / 4);
+  const utilization = ((finalEstimatedTokens / MAX_GEMINI_TOKENS) * 100).toFixed(1);
+
+  console.log(`Context: ${(finalContextBytes / 1024).toFixed(0)} KB, ${files.length} files + skeletons`);
+  console.log(`Tokens: ~${finalEstimatedTokens.toLocaleString()} / ${MAX_GEMINI_TOKENS.toLocaleString()} (${utilization}% utilization)`);
+
+  if (finalEstimatedTokens > MAX_GEMINI_TOKENS) {
+    console.log(`⚠️  Warning: Estimated tokens exceed Gemini's context window!`);
+  }
 
   // Show files included
   if (files.length > 0) {
