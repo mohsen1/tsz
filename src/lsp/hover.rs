@@ -255,7 +255,10 @@ impl<'a> HoverProvider<'a> {
         let f = symbol.flags;
 
         if f & symbol_flags::FUNCTION != 0 {
-            return format!("function {}{}", symbol.escaped_name, type_string);
+            // Convert arrow notation "(params) => ret" to "(params): ret"
+            // for named function display
+            let sig = Self::arrow_to_colon(type_string);
+            return format!("function {}{}", symbol.escaped_name, sig);
         }
         if f & symbol_flags::CLASS != 0 {
             return format!("class {}", symbol.escaped_name);
@@ -290,11 +293,12 @@ impl<'a> HoverProvider<'a> {
             return format!("(property) {}: {}", symbol.escaped_name, type_string);
         }
         if f & symbol_flags::METHOD != 0 {
+            let sig = Self::arrow_to_colon(type_string);
             let parent_name = self.get_parent_name(decl_node_idx);
             if let Some(parent) = parent_name {
-                return format!("(method) {}.{}{}", parent, symbol.escaped_name, type_string);
+                return format!("(method) {}.{}{}", parent, symbol.escaped_name, sig);
             }
-            return format!("(method) {}{}", symbol.escaped_name, type_string);
+            return format!("(method) {}{}", symbol.escaped_name, sig);
         }
         if f & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE) != 0 {
             return format!("namespace {}", symbol.escaped_name);
@@ -320,6 +324,37 @@ impl<'a> HoverProvider<'a> {
         }
 
         format!("({}) {}: {}", kind, symbol.escaped_name, type_string)
+    }
+
+    /// Convert arrow notation `(params) => ret` to colon notation `(params): ret`.
+    /// Used when displaying named functions/methods where TypeScript uses `:` for
+    /// the return type, not `=>`.
+    fn arrow_to_colon(type_string: &str) -> String {
+        // Find the last `) => ` at paren depth 0 and replace with `): `
+        let bytes = type_string.as_bytes();
+        let mut depth = 0i32;
+        let mut last_close = None;
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        last_close = Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(close_idx) = last_close {
+            let after = &type_string[close_idx + 1..];
+            if let Some(arrow_pos) = after.find(" => ") {
+                let before = &type_string[..close_idx + 1];
+                let ret = &after[arrow_pos + 4..];
+                return format!("{}: {}", before, ret);
+            }
+        }
+        type_string.to_string()
     }
 
     /// Get the tsserver-compatible kind string for the symbol.
