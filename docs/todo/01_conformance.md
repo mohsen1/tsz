@@ -17,7 +17,7 @@
 
 ## Executive Summary
 
-**Current Pass Rate: 48.4% (5,995/12,378)**
+**Current Pass Rate: 48.5% (6,000/12,378)**
 
 After deep analysis with ask-gemini and code inspection, I've identified **5 fundamental architectural issues** that are responsible for the majority of conformance failures. Fixing these in order will yield the biggest improvements.
 
@@ -29,8 +29,8 @@ After deep analysis with ask-gemini and code inspection, I've identified **5 fun
 
 | Error | Missing | Extra | Root Cause |
 |-------|---------|-------|------------|
-| **TS2304** | 1,412 | 829 | Symbol resolution returns ANY instead of erroring (Any Poisoning) |
-| **TS2318** | ~~1,185~~ 485 | - | Global types not resolved from lib contexts (PARTIALLY FIXED) |
+| **TS2304** | 1,405 | 831 | Symbol resolution returns ANY instead of erroring (Any Poisoning) |
+| **TS2318** | ~~1,185~~ ~~485~~ 336 | - | Global types not resolved from lib contexts (PARTIALLY FIXED) |
 | **TS2322** | 670 | 1,358 | Both directions: ANY suppresses real errors + false assignability |
 | **TS2339** | - | 1,288 | Property lookup falls back to incomplete hardcoded lists |
 | **TS18050** | 679 | - | Null checks don't trigger because type is ANY |
@@ -412,3 +412,32 @@ Pass rate maintained at 48.4% baseline.
 **Remaining TS2318 (485):**
 - ES2015+ types (Iterator, Promise, etc.) that require feature detection
 - Types that are used conditionally based on code features
+
+---
+
+#### Fix Implemented (2026-02-01) - Multi-file Test Lib Context Fix
+
+**Separate Actual Lib File Count from User File Contexts**
+
+Multi-file conformance tests were incorrectly passing `has_lib_loaded()` because
+user file contexts were being mixed with lib_contexts in tsz-server.
+
+**The Problem:**
+- In `run_check()`, `all_contexts = lib_contexts + user_file_contexts`
+- This combined vec was passed to `set_lib_contexts()`
+- `has_lib_loaded()` checked `!lib_contexts.is_empty()`
+- User files made this return `true` even when NO actual lib files were loaded
+- This skipped `check_missing_global_types()` and hid TS2318 errors
+
+**The Fix:**
+- Added `actual_lib_file_count` field to `CheckerContext`
+- Changed `has_lib_loaded()` to check `actual_lib_file_count > 0`
+- tsz-server now calls `set_actual_lib_file_count(lib_files.len())`
+- User files no longer affect lib loading detection
+
+**Result:** Reduced missing TS2318 from 485 to 336 (-149 errors).
+Pass rate increased from 48.4% (5,995) to 48.5% (6,000), +5 tests.
+
+**Remaining TS2318 (336):**
+- Tests with `@lib: es6` where lib.es6.d.ts doesn't exist (expected behavior)
+- Tests expecting lib loading to fail for specific configurations
