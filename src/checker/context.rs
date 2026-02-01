@@ -420,6 +420,12 @@ pub struct CheckerContext<'a> {
     /// Used as a fallback when resolving type references not found in the main file.
     pub lib_contexts: Vec<LibContext>,
 
+    /// Number of actual lib files loaded (not including user files).
+    /// Used by has_lib_loaded() to correctly determine if standard library is available.
+    /// This is separate from lib_contexts.len() because lib_contexts may also include
+    /// user file contexts for cross-file type resolution in multi-file tests.
+    pub actual_lib_file_count: usize,
+
     /// Control flow graph for definite assignment analysis and type narrowing.
     /// This is built during the binding phase and used by the checker.
     pub flow_graph: Option<FlowGraph<'a>>,
@@ -531,6 +537,7 @@ impl<'a> CheckerContext<'a> {
             resolved_modules: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
+            actual_lib_file_count: 0,
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
@@ -612,6 +619,7 @@ impl<'a> CheckerContext<'a> {
             resolved_modules: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
+            actual_lib_file_count: 0,
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
@@ -695,6 +703,7 @@ impl<'a> CheckerContext<'a> {
             resolved_modules: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
+            actual_lib_file_count: 0,
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
@@ -777,6 +786,7 @@ impl<'a> CheckerContext<'a> {
             resolved_modules: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
+            actual_lib_file_count: 0,
             flow_graph,
             async_depth: 0,
             inside_closure_depth: 0,
@@ -787,8 +797,16 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set lib contexts for global type resolution.
+    /// Note: lib_contexts may include both actual lib files AND user files for cross-file
+    /// resolution. Use set_actual_lib_file_count() to track how many are actual lib files.
     pub fn set_lib_contexts(&mut self, lib_contexts: Vec<LibContext>) {
         self.lib_contexts = lib_contexts;
+    }
+
+    /// Set the count of actual lib files loaded (not including user files).
+    /// This is used by has_lib_loaded() to correctly determine if standard library is available.
+    pub fn set_actual_lib_file_count(&mut self, count: usize) {
+        self.actual_lib_file_count = count;
     }
 
     /// Set all arenas for cross-file resolution.
@@ -1372,10 +1390,12 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Check if lib files are loaded (lib.d.ts, etc.).
-    /// Returns false when noLib is enabled or when no lib_contexts are available.
+    /// Returns false when noLib is enabled or when no actual lib files are loaded.
+    /// Uses actual_lib_file_count instead of lib_contexts.is_empty() because lib_contexts
+    /// may also contain user file contexts for cross-file resolution in multi-file tests.
     /// Used to determine whether to emit TS2304/TS2318/TS2583 for missing global types.
     pub fn has_lib_loaded(&self) -> bool {
-        !self.compiler_options.no_lib && !self.lib_contexts.is_empty()
+        !self.compiler_options.no_lib && self.actual_lib_file_count > 0
     }
 
     /// Check if esModuleInterop is enabled.
