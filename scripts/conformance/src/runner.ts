@@ -751,6 +751,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   log(`Time: ${elapsed}s (${rate} tests/sec)`, colors.dim);
 
   log('\nSummary:', colors.bold);
+  log(`  Pass Rate: ${passRate}%  Time: ${elapsed}s  (${rate} tests/sec)`, stats.passed === effectiveTotal ? colors.green : colors.yellow);
   log(`  ✓ Passed:   ${stats.passed}`, colors.green);
   log(`  ✗ Failed:   ${stats.failed - stats.crashed - stats.timedOut}`, stats.failed > stats.crashed + stats.timedOut ? colors.red : colors.dim);
   log(`  ⊘ Skipped:  ${stats.skipped}`, stats.skipped > 0 ? colors.dim : colors.dim);

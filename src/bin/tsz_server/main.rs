@@ -3347,7 +3347,7 @@ impl Server {
             });
         }
 
-        // PHASE 2: Bind all files
+        // PHASE 2: Bind all files and merge lib symbols
         struct BoundFile {
             name: String,
             arena: Arc<NodeArena>,
@@ -3356,10 +3356,29 @@ impl Server {
             parse_errors: Vec<i32>,
         }
 
+        // Convert lib_contexts to binder::LibContext once for all files
+        let binder_lib_contexts: Vec<wasm::binder::LibContext> = lib_contexts
+            .iter()
+            .map(|lc| wasm::binder::LibContext {
+                arena: lc.arena.clone(),
+                binder: lc.binder.clone(),
+            })
+            .collect();
+
         let mut bound_files: Vec<BoundFile> = Vec::with_capacity(parsed_files.len());
         for parsed in parsed_files {
             let mut binder = BinderState::new();
+
+            // FIX: Merge lib symbols BEFORE binding to prevent SymbolId collisions.
+            // bind_source_file preserves lib symbols that were merged beforehand.
+            // This ensures lib symbols (Array, Object, console, etc.) are available
+            // during binding and type checking with proper remapped IDs.
+            if !binder_lib_contexts.is_empty() {
+                binder.merge_lib_contexts_into_binder(&binder_lib_contexts);
+            }
+
             binder.bind_source_file(&parsed.arena, parsed.root);
+
             bound_files.push(BoundFile {
                 name: parsed.name,
                 arena: parsed.arena,
@@ -3412,6 +3431,12 @@ impl Server {
             // Set the count of actual lib files (not user files) for has_lib_loaded()
             checker.ctx.set_actual_lib_file_count(lib_files.len());
 
+            // NOTE: Keep report_unresolved_imports = false for now.
+            // While lib aliasing and symbol merging are fixed for common cases,
+            // enabling full error reporting causes extra TS2318 errors from type
+            // references within lib files themselves (incomplete cross-lib type resolution).
+            // This can be enabled once cross-lib type merging is fully implemented.
+
             checker.ctx.set_all_arenas(all_arenas.clone());
             checker.ctx.set_all_binders(all_binders.clone());
             checker
@@ -3441,13 +3466,42 @@ impl Server {
         Ok(result)
     }
 
+    /// Normalize lib name aliases to their canonical form.
+    /// TypeScript's libMap (in commandLineParser.ts) maps short names to actual lib files:
+    /// - es6 -> es2015
+    /// - es7 -> es2016
+    /// - lib -> es5 (the default lib.d.ts)
+    /// - dom -> dom.generated (TypeScript source uses .generated suffix)
+    fn normalize_lib_alias(name: &str) -> String {
+        match name.to_lowercase().trim() {
+            // ES version aliases
+            "es6" => "es2015".to_string(),
+            "es7" => "es2016".to_string(),
+            // lib.d.ts is equivalent to es5
+            "lib" | "lib.d.ts" => "es5".to_string(),
+            // DOM aliases - TypeScript source uses .generated suffix
+            "dom" => "dom.generated".to_string(),
+            "dom.iterable" => "dom.iterable.generated".to_string(),
+            "dom.asynciterable" => "dom.asynciterable.generated".to_string(),
+            // Full lib aliases (e.g., "lib.es6.d.ts" -> "es2015")
+            s if s.starts_with("lib.") && s.ends_with(".d.ts") => {
+                let inner = &s[4..s.len() - 5]; // Extract between "lib." and ".d.ts"
+                Self::normalize_lib_alias(inner)
+            }
+            // Pass through others unchanged
+            other => other.to_string(),
+        }
+    }
+
     fn load_lib_recursive(
         &mut self,
         lib_name: &str,
         result: &mut Vec<Arc<LibFile>>,
         loaded: &mut rustc_hash::FxHashSet<String>,
     ) -> Result<()> {
-        let normalized = lib_name.trim().to_lowercase();
+        // Apply lib aliasing (es6 -> es2015, es7 -> es2016, etc.)
+        let aliased = Self::normalize_lib_alias(lib_name);
+        let normalized = aliased.trim().to_lowercase();
         if loaded.contains(&normalized) {
             return Ok(());
         }
