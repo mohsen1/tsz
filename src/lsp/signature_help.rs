@@ -640,7 +640,11 @@ impl<'a> SignatureHelpProvider<'a> {
                 .name
                 .map(|atom| checker.ctx.types.resolve_atom(atom))
                 .unwrap_or_else(|| "arg".to_string());
-            let type_str = checker.format_type(param.type_id);
+            let type_str = if param.type_id == TypeId::UNKNOWN {
+                "any".to_string()
+            } else {
+                checker.format_type(param.type_id)
+            };
             let optional = if param.optional { "?" } else { "" };
             let rest = if param.rest { "..." } else { "" };
 
@@ -657,12 +661,19 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         // Build prefix and suffix
-        let return_type_str = checker.format_type(shape.return_type);
-        let prefix = if is_constructor {
-            format!("{}{}(", callee_name, type_params_str)
+        // For return type display:
+        // - UNKNOWN → "any" (matches TypeScript's display for untyped returns)
+        // - Constructor with OBJECT/UNKNOWN → class name (TypeScript shows class name)
+        let return_type_str = if is_constructor {
+            // Constructors return the class instance type
+            callee_name.to_string()
+        } else if shape.return_type == TypeId::UNKNOWN {
+            // Functions without return type annotation display as 'any' in TypeScript
+            "any".to_string()
         } else {
-            format!("{}{}(", callee_name, type_params_str)
+            checker.format_type(shape.return_type)
         };
+        let prefix = format!("{}{}(", callee_name, type_params_str);
         let suffix = format!("): {}", return_type_str);
 
         // Build full label: prefix + params joined by ", " + suffix
