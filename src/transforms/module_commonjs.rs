@@ -221,6 +221,43 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
     exports
 }
 
+/// Collect export names, categorized into function declarations (hoisted)
+/// and other declarations (non-hoisted).
+/// Returns (function_exports, other_exports)
+pub fn collect_export_names_categorized(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+) -> (Vec<String>, Vec<String>) {
+    let mut func_exports = Vec::new();
+    let mut other_exports = Vec::new();
+    let all = collect_export_names(arena, statements);
+
+    // Re-scan to categorize
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            if let Some(func) = arena.get_function(node)
+                && has_export_modifier_from_list(arena, &func.modifiers)
+                && !has_declare_modifier_from_list(arena, &func.modifiers)
+                && let Some(name) = get_identifier_text(arena, func.name)
+            {
+                func_exports.push(name);
+            }
+        }
+    }
+
+    for name in all {
+        if !func_exports.contains(&name) {
+            other_exports.push(name);
+        }
+    }
+
+    (func_exports, other_exports)
+}
+
 /// Emit the exports initialization line
 ///
 /// ```javascript

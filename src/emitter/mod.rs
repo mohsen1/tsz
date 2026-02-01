@@ -1739,10 +1739,23 @@ impl<'a> Printer<'a> {
             }
 
             // Collect and emit exports initialization
-            let export_names =
-                module_commonjs::collect_export_names(self.arena, &source.statements.nodes);
-            if !export_names.is_empty() {
-                for (i, name) in export_names.iter().enumerate() {
+            // Function exports get direct assignment (hoisted), others get void 0
+            let (func_exports, other_exports) = module_commonjs::collect_export_names_categorized(
+                self.arena,
+                &source.statements.nodes,
+            );
+            // Emit function exports: exports.compile = compile;
+            for name in &func_exports {
+                self.write("exports.");
+                self.write(name);
+                self.write(" = ");
+                self.write(name);
+                self.write(";");
+                self.write_line();
+            }
+            // Emit other exports: exports.X = void 0;
+            if !other_exports.is_empty() {
+                for (i, name) in other_exports.iter().enumerate() {
                     if i > 0 {
                         self.write(" = ");
                     }

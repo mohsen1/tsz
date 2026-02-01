@@ -62,7 +62,7 @@ export function parseBaseline(content: string): BaselineContent {
 
   // Update end positions
   for (let i = 0; i < segments.length - 1; i++) {
-    segments[i].end = segments[i + 1].start - segments[i + 1].name.length - 6; // 6 = "//// [".length + "]".length
+    segments[i].end = segments[i + 1].start - segments[i + 1].name.length - 7; // 7 = "//// [".length (6) + "]".length (1)
   }
 
   // Extract content for each file
