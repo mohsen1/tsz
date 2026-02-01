@@ -365,6 +365,23 @@ impl<'a> CheckerState<'a> {
                     };
                     current = constraint;
                 }
+                InstanceTypeKind::SymbolRef(sym_ref) => {
+                    // Symbol reference (class name or typeof expression)
+                    // Resolve to the class instance type
+                    use crate::binder::SymbolId;
+                    let sym_id = SymbolId(sym_ref.0);
+                    if let Some(instance_type) = self.class_instance_type_from_symbol(sym_id) {
+                        return Some(self.resolve_type_for_property_access(instance_type));
+                    }
+                    // Not a class symbol - might be a variable holding a constructor
+                    // Try to get its type and recurse
+                    let var_type = self.get_type_of_symbol(sym_id);
+                    if var_type != TypeId::ERROR && var_type != current {
+                        current = var_type;
+                    } else {
+                        return None;
+                    }
+                }
                 InstanceTypeKind::NeedsEvaluation => {
                     let evaluated = self.evaluate_type_with_env(current);
                     if evaluated == current {
