@@ -874,15 +874,22 @@ impl<'a> LoweringPass<'a> {
 
         let final_directive = if is_exported {
             if let Some(export_name) = func_name {
-                let export_directive = TransformDirective::CommonJSExport {
-                    names: Arc::from(vec![export_name]),
-                    is_default,
-                    inner: Box::new(TransformDirective::Identity),
-                };
+                if is_default {
+                    // Default exports need explicit exports.default = name;
+                    let export_directive = TransformDirective::CommonJSExport {
+                        names: Arc::from(vec![export_name]),
+                        is_default,
+                        inner: Box::new(TransformDirective::Identity),
+                    };
 
-                match base_directive {
-                    TransformDirective::Identity => export_directive,
-                    other => TransformDirective::Chain(vec![other, export_directive]),
+                    match base_directive {
+                        TransformDirective::Identity => export_directive,
+                        other => TransformDirective::Chain(vec![other, export_directive]),
+                    }
+                } else {
+                    // Named function exports: the preamble emits exports.f = f;
+                    // (function declarations are hoisted) so no export directive needed
+                    base_directive
                 }
             } else {
                 base_directive

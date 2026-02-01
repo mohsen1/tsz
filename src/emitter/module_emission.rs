@@ -707,18 +707,15 @@ impl<'a> Printer<'a> {
                     self.emit_function_declaration(clause_node, export.export_clause);
                     self.write_line();
 
-                    // Get function name and emit export (unless file has export =)
+                    // For default exports, emit exports.default = name; after the function.
+                    // For named exports, the preamble already emitted exports.f = f;
+                    // (since function declarations are hoisted).
                     if !self.ctx.module_state.has_export_assignment
+                        && export.is_default_export
                         && let Some(func) = self.arena.get_function(clause_node)
                         && let Some(name) = self.get_identifier_text_opt(func.name)
                     {
-                        if export.is_default_export {
-                            self.write("exports.default = ");
-                        } else {
-                            self.write("exports.");
-                            self.write(&name);
-                            self.write(" = ");
-                        }
+                        self.write("exports.default = ");
                         self.write(&name);
                         self.write(";");
                         self.write_line();
@@ -1391,11 +1388,24 @@ impl<'a> Printer<'a> {
         }
 
         // Collect and emit exports initialization
-        // TypeScript emits: exports.C = void 0; (NOT Object.defineProperty)
-        let export_names = module_commonjs::collect_export_names(self.arena, &statements.nodes);
-        if !export_names.is_empty() {
-            // exports.a = exports.b = void 0;
-            for (i, name) in export_names.iter().enumerate() {
+        // TypeScript emits: exports.func = func; for hoisted function declarations
+        // and exports.C = void 0; for non-hoisted declarations
+        let (func_exports, other_exports) =
+            module_commonjs::collect_export_names_categorized(self.arena, &statements.nodes);
+
+        // Emit hoisted function exports: exports.f = f;
+        for name in &func_exports {
+            self.write("exports.");
+            self.write(name);
+            self.write(" = ");
+            self.write(name);
+            self.write(";");
+            self.write_line();
+        }
+
+        // Emit non-hoisted exports: exports.a = exports.b = void 0;
+        if !other_exports.is_empty() {
+            for (i, name) in other_exports.iter().enumerate() {
                 if i > 0 {
                     self.write(" = ");
                 }
