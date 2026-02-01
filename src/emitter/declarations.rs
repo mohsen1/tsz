@@ -377,6 +377,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Skip ambient module declarations (declare namespace/module)
+        if self.has_declare_modifier(&module.modifiers) {
+            return;
+        }
+
         self.write("namespace ");
         self.emit(module.name);
         self.write(" ");
