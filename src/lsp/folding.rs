@@ -4,7 +4,7 @@
 //! #region/#endregion markers, consecutive single-line comments, and import groups.
 
 use crate::lsp::position::LineMap;
-use crate::parser::node::NodeArena;
+use crate::parser::node::{NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// A folding range
@@ -219,7 +219,105 @@ impl<'a> FoldingRangeProvider<'a> {
                     self.collect_from_node(export.export_clause, ranges);
                 }
             }
-            _ => {}
+            k if k == syntax_kind_ext::ARROW_FUNCTION => {
+                if let Some(func) = self.arena.get_function(node) {
+                    let body_range = self.get_line_range(func.body);
+                    if body_range.0 < body_range.1 {
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                    }
+                    self.collect_from_node(func.body, ranges);
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
+                if let Some(func) = self.arena.get_function(node) {
+                    let body_range = self.get_line_range(func.body);
+                    if body_range.0 < body_range.1 {
+                        ranges.push(FoldingRange::new(body_range.0, body_range.1));
+                    }
+                    self.collect_from_node(func.body, ranges);
+                }
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch) = self.arena.get_switch(node) {
+                    // Fold the case block
+                    let case_block_range = self.get_line_range(switch.case_block);
+                    if case_block_range.0 < case_block_range.1 {
+                        ranges.push(FoldingRange::new(case_block_range.0, case_block_range.1));
+                    }
+                    self.collect_from_node(switch.case_block, ranges);
+                }
+            }
+            k if k == syntax_kind_ext::CASE_BLOCK => {
+                // CaseBlock uses the same block data structure
+                if let Some(block) = self.arena.get_block(node) {
+                    for &clause in &block.statements.nodes {
+                        self.collect_from_node(clause, ranges);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(node) {
+                    // Fold the clause body
+                    let clause_range = self.get_line_range(node_idx);
+                    if clause_range.0 < clause_range.1 {
+                        ranges.push(FoldingRange::new(clause_range.0, clause_range.1));
+                    }
+                    // Walk children for nested blocks
+                    for &stmt in &clause.statements.nodes {
+                        self.collect_from_node(stmt, ranges);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren_range = self.get_line_range(node_idx);
+                if paren_range.0 < paren_range.1 {
+                    ranges.push(FoldingRange::new(paren_range.0, paren_range.1));
+                }
+                for child in self.arena.get_children(node_idx) {
+                    self.collect_from_node(child, ranges);
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.arena.get_call_expr(node) {
+                    // Fold multi-line argument lists
+                    if let Some(ref args) = call.arguments {
+                        if !args.nodes.is_empty() {
+                            if let (Some(first), Some(last)) = (
+                                args.nodes.first().and_then(|&n| self.arena.get(n)),
+                                args.nodes.last().and_then(|&n| self.arena.get(n)),
+                            ) {
+                                let first_line = self
+                                    .line_map
+                                    .offset_to_position(first.pos, self.source_text)
+                                    .line;
+                                let last_line = self
+                                    .line_map
+                                    .offset_to_position(last.end, self.source_text)
+                                    .line;
+                                if first_line < last_line {
+                                    ranges.push(FoldingRange::new(first_line, last_line));
+                                }
+                            }
+                        }
+                        for &arg in &args.nodes {
+                            self.collect_from_node(arg, ranges);
+                        }
+                    }
+                    self.collect_from_node(call.expression, ranges);
+                }
+            }
+            k if k == syntax_kind_ext::NAMED_IMPORTS || k == syntax_kind_ext::NAMED_EXPORTS => {
+                let range = self.get_line_range(node_idx);
+                if range.0 < range.1 {
+                    ranges.push(FoldingRange::new(range.0, range.1));
+                }
+            }
+            _ => {
+                // Generic tree walking for any unhandled node types
+                for child in self.arena.get_children(node_idx) {
+                    self.collect_from_node(child, ranges);
+                }
+            }
         }
     }
 
