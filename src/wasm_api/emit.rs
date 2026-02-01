@@ -211,7 +211,7 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
     printer.set_source_text(source);
     printer.emit(root_idx);
 
-    let output = printer.get_output().to_string();
+    let mut output = printer.get_output().to_string();
 
     // For ES module files: if the source had import/export statements but the output
     // is empty (all imports were type-only), emit "export {};" to preserve module nature
@@ -220,6 +220,11 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
         if has_module_syntax {
             return "export {};\n".to_string();
         }
+    }
+
+    // Ensure output ends with a newline (matches TypeScript behavior)
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
     }
 
     output

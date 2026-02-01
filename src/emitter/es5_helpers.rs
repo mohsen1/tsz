@@ -413,14 +413,14 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        // Name (if any) - add space before open paren whether or not there's a name
+        // Name (if any)
         if !func.name.is_none() {
             self.write_space();
             self.emit(func.name);
+        } else {
+            // Space before ( only for anonymous functions: function (x) vs function name(x)
+            self.write(" ");
         }
-
-        // Space before ( for TypeScript compatibility: function (x) vs function(x)
-        self.write(" ");
 
         // Parameters (without types for JavaScript)
         self.write("(");

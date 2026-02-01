@@ -106,11 +106,12 @@ impl<'a> Printer<'a> {
 
         self.write("new ");
         self.emit(call.expression);
-        self.write("(");
+        // Only emit parentheses if they were present in source (arguments is Some)
         if let Some(ref args) = call.arguments {
+            self.write("(");
             self.emit_comma_separated(&args.nodes);
+            self.write(")");
         }
-        self.write(")");
     }
 
     pub(super) fn emit_property_access(&mut self, node: &Node) {
