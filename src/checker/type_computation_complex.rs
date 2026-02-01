@@ -1388,6 +1388,8 @@ impl<'a> CheckerState<'a> {
 
         // Resolve via binder persistent scopes for stateless lookup.
         if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
+            // Reference tracking is handled by resolve_identifier_symbol wrapper
+
             if self.alias_resolves_to_type_only(sym_id) {
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;

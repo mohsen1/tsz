@@ -2889,9 +2889,245 @@ impl<'a> CheckerState<'a> {
     /// Check for unused declarations (TS6133).
     /// Reports variables, functions, classes, and other declarations that are never referenced.
     pub(crate) fn check_unused_declarations(&mut self) {
-        // Temporarily disable unused declaration checking to focus on core functionality
-        // The reference tracking system needs more work to avoid false positives
-        // TODO: Re-enable and fix reference tracking system properly
+        use crate::binder::symbol_flags;
+        use crate::binder::ContainerKind;
+        use crate::checker::types::diagnostics::Diagnostic;
+
+        let check_locals = self.ctx.no_unused_locals();
+        let check_params = self.ctx.no_unused_parameters();
+        let is_module = self.ctx.binder.is_external_module();
+
+        // Skip .d.ts files entirely (ambient declarations)
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return;
+        }
+
+        // Collect symbols from scopes.
+        // For script files (non-module), skip the root SourceFile scope since
+        // top-level declarations are globals and not checked by noUnusedLocals.
+        // For module files, check all scopes including root.
+        let mut symbols_to_check: Vec<(crate::binder::SymbolId, String)> = Vec::new();
+
+        for scope in &self.ctx.binder.scopes {
+            // Skip root scope in script files
+            if !is_module && scope.kind == ContainerKind::SourceFile {
+                continue;
+            }
+            for (name, &sym_id) in scope.table.iter() {
+                symbols_to_check.push((sym_id, name.clone()));
+            }
+        }
+
+        // For module files, also check file_locals (imports live here)
+        if is_module {
+            for (name, &sym_id) in self.ctx.binder.file_locals.iter() {
+                symbols_to_check.push((sym_id, name.clone()));
+            }
+        }
+
+        let file_name = self.ctx.file_name.clone();
+
+        for (sym_id, name) in symbols_to_check {
+            // Skip if already referenced
+            if self.ctx.referenced_symbols.borrow().contains(&sym_id) {
+                continue;
+            }
+
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+
+            let flags = symbol.flags;
+
+            // Skip exported symbols — they may be used externally
+            if symbol.is_exported || (flags & symbol_flags::EXPORT_VALUE) != 0 {
+                continue;
+            }
+
+            // Skip names starting with _ (convention for intentionally unused)
+            if name.starts_with('_') {
+                continue;
+            }
+
+            // Skip special/internal names
+            if name == "default"
+                || name == "__export"
+                || name == "arguments"
+                || name == "React"  // JSX factory — always considered used when JSX is enabled
+            {
+                continue;
+            }
+
+            // Skip type parameters — they are NOT checked by noUnusedLocals
+            if (flags & symbol_flags::TYPE_PARAMETER) != 0 {
+                continue;
+            }
+
+            // Skip members (properties, methods, accessors, constructors, signatures)
+            if (flags
+                & (symbol_flags::PROPERTY
+                    | symbol_flags::METHOD
+                    | symbol_flags::CONSTRUCTOR
+                    | symbol_flags::GET_ACCESSOR
+                    | symbol_flags::SET_ACCESSOR
+                    | symbol_flags::SIGNATURE
+                    | symbol_flags::ENUM_MEMBER
+                    | symbol_flags::PROTOTYPE))
+                != 0
+            {
+                continue;
+            }
+
+            // Skip namespace/module symbols — they may contain exported members
+            if (flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)) != 0 {
+                continue;
+            }
+
+            // Get the declaration node for position info
+            let decl_idx = if !symbol.value_declaration.is_none() {
+                symbol.value_declaration
+            } else if let Some(&first) = symbol.declarations.first() {
+                first
+            } else {
+                continue;
+            };
+
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            // Skip catch clause variables — TSC exempts them from unused checking
+            if self.is_catch_clause_variable(decl_idx) {
+                continue;
+            }
+
+            // Determine what kind of symbol this is and whether we should check it
+            if check_locals {
+                // Check local variables, functions, classes, interfaces, type aliases, imports
+                let is_checkable_local = (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                    || (flags & symbol_flags::FUNCTION) != 0
+                    || (flags & symbol_flags::CLASS) != 0
+                    || (flags & symbol_flags::INTERFACE) != 0
+                    || (flags & symbol_flags::TYPE_ALIAS) != 0
+                    || (flags & symbol_flags::ALIAS) != 0  // imports
+                    || (flags & symbol_flags::REGULAR_ENUM) != 0
+                    || (flags & symbol_flags::CONST_ENUM) != 0;
+
+                // var declarations that aren't parameters
+                let is_var = (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                    && !self.is_parameter_declaration(decl_idx);
+
+                if is_checkable_local || is_var {
+                    let msg = format!("'{}' is declared but its value is never read.", name);
+                    let start = decl_node.pos;
+                    let length = decl_node.end.saturating_sub(decl_node.pos);
+                    self.ctx.push_diagnostic(Diagnostic {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: msg,
+                        category: crate::checker::types::diagnostics::DiagnosticCategory::Error,
+                        code: 6133,
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+
+            if check_params {
+                // Check function parameters (but not catch clause or overload signature params)
+                let is_param = (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                    && self.is_parameter_declaration(decl_idx)
+                    && !self.is_overload_signature_parameter(decl_idx);
+
+                if is_param {
+                    let msg = format!("'{}' is declared but its value is never read.", name);
+                    let start = decl_node.pos;
+                    let length = decl_node.end.saturating_sub(decl_node.pos);
+                    self.ctx.push_diagnostic(Diagnostic {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: msg,
+                        category: crate::checker::types::diagnostics::DiagnosticCategory::Error,
+                        code: 6133,
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Check if a declaration node is a parameter declaration.
+    fn is_parameter_declaration(&self, idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        node.kind == syntax_kind_ext::PARAMETER
+    }
+
+    /// Check if a declaration is a catch clause variable.
+    fn is_catch_clause_variable(&self, idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
+        let parent_idx = self.ctx.arena.get_extended(idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        if parent_idx.is_none() {
+            return false;
+        }
+        if let Some(parent) = self.ctx.arena.get(parent_idx) {
+            if parent.kind == syntax_kind_ext::CATCH_CLAUSE {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a parameter is in an overload signature (function/method without body).
+    /// TSC does not flag parameters in overload signatures as unused.
+    fn is_overload_signature_parameter(&self, idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
+        // Walk up from parameter to find containing function/method/constructor
+        // Structure: Parameter → SyntaxList/ParameterList → FunctionDecl/MethodDecl/Constructor
+        let mut current = idx;
+        for _ in 0..5 {
+            let parent_idx = self.ctx.arena.get_extended(current)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+            if parent_idx.is_none() {
+                return false;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
+                match parent_node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION => {
+                        if let Some(func) = self.ctx.arena.get_function(parent_node) {
+                            return func.body.is_none();
+                        }
+                        return false;
+                    }
+                    syntax_kind_ext::METHOD_DECLARATION => {
+                        if let Some(method) = self.ctx.arena.get_method_decl(parent_node) {
+                            return method.body.is_none();
+                        }
+                        return false;
+                    }
+                    syntax_kind_ext::CONSTRUCTOR => {
+                        if let Some(ctor) = self.ctx.arena.get_constructor(parent_node) {
+                            return ctor.body.is_none();
+                        }
+                        return false;
+                    }
+                    _ => {
+                        current = parent_idx;
+                    }
+                }
+            } else {
+                return false;
+            }
+        }
+        false
     }
 
     // 23. Import and Private Brand Utilities (moved to symbol_resolver.rs)
