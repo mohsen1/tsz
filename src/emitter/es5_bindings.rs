@@ -60,6 +60,7 @@ impl<'a> Printer<'a> {
         self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
     }
 
+    #[allow(dead_code)]
     fn emit_es5_destructuring_from_value(
         &mut self,
         pattern_idx: NodeIndex,
@@ -757,107 +758,63 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_for_of_statement_es5(&mut self, for_in_of: &ForInOfData) {
-        let error_name = self.get_temp_var_name();
-        let return_name = self.get_temp_var_name();
-        let iterator_name = self.get_temp_var_name();
-        let result_name = self.get_temp_var_name();
-
-        self.write("var ");
-        self.write(&error_name);
-        self.write(", ");
-        self.write(&return_name);
-        self.write_semicolon();
-        self.write_line();
-
-        self.write("try {");
-        self.write_line();
-        self.increase_indent();
+        // Simple array indexing pattern (default, no --downlevelIteration):
+        // for (var _i = 0, _a = expr; _i < _a.length; _i++) {
+        //     var v = _a[_i];
+        //     <body>
+        // }
+        // TypeScript uses _i for the first index, then _b, _d for nested loops
+        // and _a, _c, _e for arrays
+        let counter = self.ctx.destructuring_state.for_of_counter;
+        let index_name = if counter == 0 {
+            "_i".to_string()
+        } else {
+            format!("_{}", (b'a' + (counter * 2 - 1) as u8) as char)
+        };
+        let array_name = format!("_{}", (b'a' + (counter * 2) as u8) as char);
+        self.ctx.destructuring_state.for_of_counter += 1;
 
         self.write("for (var ");
-        self.write(&iterator_name);
-        self.write(" = __values(");
+        self.write(&index_name);
+        self.write(" = 0, ");
+        self.write(&array_name);
+        self.write(" = ");
         self.emit_expression(for_in_of.expression);
-        self.write("), ");
-        self.write(&result_name);
-        self.write(" = ");
-        self.write(&iterator_name);
-        self.write(".next(); !");
-        self.write(&result_name);
-        self.write(".done; ");
-        self.write(&result_name);
-        self.write(" = ");
-        self.write(&iterator_name);
-        self.write(".next()) ");
+        self.write("; ");
+        self.write(&index_name);
+        self.write(" < ");
+        self.write(&array_name);
+        self.write(".length; ");
+        self.write(&index_name);
+        self.write("++) ");
 
         self.write("{");
         self.write_line();
         self.increase_indent();
-        self.emit_for_of_value_binding_es5(for_in_of.initializer, &result_name);
-        self.write_line();
-        self.emit(for_in_of.statement);
-        self.write_line();
-        self.decrease_indent();
-        self.write("}");
+        self.emit_for_of_value_binding_array_es5(for_in_of.initializer, &array_name, &index_name);
         self.write_line();
 
-        self.decrease_indent();
-        self.write("}");
-        self.write_line();
-
-        self.write("catch (");
-        self.write(&error_name);
-        self.write("_1) { ");
-        self.write(&error_name);
-        self.write(" = { error: ");
-        self.write(&error_name);
-        self.write("_1 }; }");
-        self.write_line();
-
-        self.write("finally {");
-        self.write_line();
-        self.increase_indent();
-
-        self.write("try {");
-        self.write_line();
-        self.increase_indent();
-
-        self.write("if (");
-        self.write(&result_name);
-        self.write(" && !");
-        self.write(&result_name);
-        self.write(".done && (");
-        self.write(&return_name);
-        self.write(" = ");
-        self.write(&iterator_name);
-        self.write(".return)) ");
-        self.write(&return_name);
-        self.write(".call(");
-        self.write(&iterator_name);
-        self.write(")");
-        self.write_semicolon();
-        self.write_line();
-
-        self.decrease_indent();
-        self.write("} finally {");
-        self.write_line();
-        self.increase_indent();
-
-        self.write("if (");
-        self.write(&error_name);
-        self.write(") throw ");
-        self.write(&error_name);
-        self.write(".error");
-        self.write_semicolon();
-        self.write_line();
-
-        self.decrease_indent();
-        self.write("}");
-        self.write_line();
+        // Emit the loop body
+        if let Some(stmt_node) = self.arena.get(for_in_of.statement) {
+            if stmt_node.kind == crate::parser::syntax_kind_ext::BLOCK {
+                // If body is a block, emit its statements directly (unwrap the block)
+                if let Some(block) = self.arena.get_block(stmt_node) {
+                    for &stmt_idx in &block.statements.nodes {
+                        self.emit(stmt_idx);
+                        self.write_line();
+                    }
+                }
+            } else {
+                self.emit(for_in_of.statement);
+                self.write_line();
+            }
+        }
 
         self.decrease_indent();
         self.write("}");
     }
 
+    #[allow(dead_code)]
     fn emit_for_of_value_binding_es5(&mut self, initializer: NodeIndex, result_name: &str) {
         if initializer.is_none() {
             return;
@@ -890,6 +847,7 @@ impl<'a> Printer<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn emit_for_of_declaration_value_es5(
         &mut self,
         decl_idx: NodeIndex,
@@ -916,5 +874,50 @@ impl<'a> Printer<'a> {
         self.write(" = ");
         self.write(result_name);
         self.write(".value");
+    }
+
+    /// Emit variable binding for array-indexed for-of pattern:
+    /// `var v = _a[_i];`
+    fn emit_for_of_value_binding_array_es5(
+        &mut self,
+        initializer: NodeIndex,
+        array_name: &str,
+        index_name: &str,
+    ) {
+        if initializer.is_none() {
+            return;
+        }
+
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+
+        let element_expr = format!("{}[{}]", array_name, index_name);
+
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            self.write("var ");
+            if let Some(decl_list) = self.arena.get_variable(init_node) {
+                let mut first = true;
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.emit(decl.name);
+                        self.write(" = ");
+                        self.write(&element_expr);
+                    }
+                }
+            }
+            self.write_semicolon();
+        } else {
+            self.emit_expression(initializer);
+            self.write(" = ");
+            self.write(&element_expr);
+            self.write_semicolon();
+        }
     }
 }

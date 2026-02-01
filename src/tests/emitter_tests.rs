@@ -320,18 +320,13 @@ fn test_emit_for_of_es5() {
 
     let output = printer.get_output();
     assert!(
-        output.contains("__values(arr)"),
-        "Expected __values helper usage in ES5 output: {}",
+        output.contains("_i < _a.length"),
+        "Expected array indexing pattern in ES5 output: {}",
         output
     );
     assert!(
-        output.contains("var v ="),
+        output.contains("var v = _a[_i]"),
         "Expected loop binding in ES5 output: {}",
-        output
-    );
-    assert!(
-        output.contains(".return"),
-        "Expected iterator closing in ES5 output: {}",
         output
     );
     assert!(
@@ -2344,7 +2339,7 @@ fn test_commonjs_import_namespace() {
         output
     );
     assert!(
-        output.contains("var ns = __importStar(module_1);"),
+        output.contains("var ns = __importStar(require(\"./module\"));"),
         "Expected namespace binding in output: {}",
         output
     );

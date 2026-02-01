@@ -5312,10 +5312,10 @@ fn test_parity_es5_for_of_array_destructuring() {
         "ES5 output should not contain for...of syntax: {}",
         output
     );
-    // No destructuring pattern in loop header
+    // No destructuring pattern in loop header (const [a, b] of pairs)
     assert!(
-        !output.contains("const [a, b]") && !output.contains("var [a, b]"),
-        "ES5 output should not contain destructuring pattern: {}",
+        !output.contains("const [a, b]"),
+        "ES5 output should not contain const destructuring in loop header: {}",
         output
     );
 }

@@ -196,9 +196,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Without strictNullChecks, null and undefined are assignable to and from any type.
         // This check is at the top-level only (not in subtype member iteration) to avoid
         // incorrectly accepting types within union member comparisons.
-        if !self.strict_null_checks
-            && (target == TypeId::NULL || target == TypeId::UNDEFINED)
-        {
+        if !self.strict_null_checks && (target == TypeId::NULL || target == TypeId::UNDEFINED) {
             return true;
         }
 

@@ -276,19 +276,92 @@ impl<'a> Printer<'a> {
         // Generate module var name: "./foo" -> "foo_1"
         let module_var = format!("{}_1", module_commonjs::sanitize_module_name(&module_spec));
 
-        // Emit: var module_1 = require("module");
-        self.write("var ");
-        self.write(&module_var);
-        self.write(" = require(\"");
-        self.write(&module_spec);
-        self.write("\");");
-        self.write_line();
-
-        // Emit bindings
+        // Check if this is a namespace-only import (import * as ns from "mod")
+        // to inline: var ns = __importStar(require("mod"));
         let bindings = module_commonjs::get_import_bindings(self.arena, node, &module_var);
-        for binding in bindings {
-            self.write(&binding);
+
+        let is_namespace_only = bindings.len() == 1
+            && bindings[0].contains("__importStar(")
+            && !bindings[0].contains(".default");
+        let is_default_only = bindings.len() == 1 && bindings[0].contains(".default");
+
+        if is_namespace_only {
+            // Inline: var ns = __importStar(require("mod"));
+            let binding = &bindings[0];
+            // Extract the var name from "var ns = __importStar(module_var);"
+            if let Some(eq_pos) = binding.find(" = __importStar(") {
+                let var_name = &binding[4..eq_pos]; // Skip "var "
+                self.write("var ");
+                self.write(var_name);
+                self.write(" = __importStar(require(\"");
+                self.write(&module_spec);
+                self.write("\"));");
+                self.write_line();
+            } else {
+                // Fallback
+                self.write("var ");
+                self.write(&module_var);
+                self.write(" = require(\"");
+                self.write(&module_spec);
+                self.write("\");");
+                self.write_line();
+                for binding in bindings {
+                    self.write(&binding);
+                    self.write_line();
+                }
+            }
+        } else if is_default_only {
+            // Inline: var name = __importDefault(require("mod"));
+            let binding = &bindings[0];
+            if let Some(eq_pos) = binding.find(" = ") {
+                let var_name = &binding[4..eq_pos]; // Skip "var "
+                let rest = &binding[eq_pos + 3..]; // After " = "
+                // Check if it's using __importDefault
+                if rest.contains("__importDefault") {
+                    self.write("var ");
+                    self.write(var_name);
+                    self.write(" = __importDefault(require(\"");
+                    self.write(&module_spec);
+                    self.write("\"));");
+                    self.write_line();
+                } else {
+                    self.write("var ");
+                    self.write(&module_var);
+                    self.write(" = require(\"");
+                    self.write(&module_spec);
+                    self.write("\");");
+                    self.write_line();
+                    for binding in bindings {
+                        self.write(&binding);
+                        self.write_line();
+                    }
+                }
+            } else {
+                self.write("var ");
+                self.write(&module_var);
+                self.write(" = require(\"");
+                self.write(&module_spec);
+                self.write("\");");
+                self.write_line();
+                for binding in bindings {
+                    self.write(&binding);
+                    self.write_line();
+                }
+            }
+        } else {
+            // Emit: var module_1 = require("module");
+            self.write("var ");
+            self.write(&module_var);
+            self.write(" = require(\"");
+            self.write(&module_spec);
+            self.write("\");");
             self.write_line();
+
+            // Emit bindings
+            for binding in bindings {
+                self.write(&binding);
+                self.write_line();
+            }
         }
     }
 

@@ -108,6 +108,8 @@ impl ArrowTransformState {
 pub struct DestructuringState {
     /// Counter for temporary variables (_a, _b, _c, etc.)
     pub temp_var_counter: u32,
+    /// Counter for for-of loop temp variables (_i/_a, _b/_c, _d/_e, etc.)
+    pub for_of_counter: u32,
 }
 
 impl DestructuringState {
@@ -121,6 +123,7 @@ impl DestructuringState {
     /// Reset the counter (for a new file)
     pub fn reset(&mut self) {
         self.temp_var_counter = 0;
+        self.for_of_counter = 0;
     }
 }
 
