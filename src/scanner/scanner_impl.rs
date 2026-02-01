@@ -2605,9 +2605,12 @@ impl ScannerState {
         }
 
         // 2. Processed value (strings with escapes, template literals, etc.)
-        // For template literals, we must return token_value even if empty
-        // to avoid returning the raw source slice with backticks
-        if !self.token_value.is_empty() || super::token_is_template_literal(self.token) {
+        // For template literals and string literals, we must return token_value even if empty
+        // to avoid returning the raw source slice with backticks/quotes
+        if !self.token_value.is_empty()
+            || super::token_is_template_literal(self.token)
+            || self.token == SyntaxKind::StringLiteral
+        {
             return &self.token_value;
         }
 
