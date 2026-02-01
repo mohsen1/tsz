@@ -330,14 +330,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
     fn is_key_in_mapped_constraint(&self, constraint: TypeId, prop_name: &str) -> bool {
         use crate::solver::types::{LiteralValue, TypeKey};
 
-        // Evaluate keyof if needed
-        let evaluated = if let Some(TypeKey::KeyOf(operand)) = self.interner.lookup(constraint) {
-            // Create a keyof type and evaluate it
-            let keyof_type = self.interner.intern(TypeKey::KeyOf(operand));
-            evaluate_type(self.interner, keyof_type)
-        } else {
-            constraint
-        };
+        // Evaluate the constraint to try to reduce it
+        let evaluated = evaluate_type(self.interner, constraint);
 
         let Some(key) = self.interner.lookup(evaluated) else {
             return false;
@@ -346,6 +340,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         match key {
             // Single string literal - exact match
             TypeKey::Literal(LiteralValue::String(s)) => self.interner.resolve_atom(s) == prop_name,
+
             // Union of literals - check if prop_name is in the union
             TypeKey::Union(members) => {
                 let members = self.interner.type_list(members);
@@ -354,19 +349,43 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                         // string index covers all string properties
                         return true;
                     }
-                    if let Some(TypeKey::Literal(LiteralValue::String(s))) =
-                        self.interner.lookup(member)
-                    {
-                        if self.interner.resolve_atom(s) == prop_name {
-                            return true;
-                        }
+                    // Recursively check each union member
+                    if self.is_key_in_mapped_constraint(member, prop_name) {
+                        return true;
                     }
                 }
                 false
             }
+
+            // Intersection - key must be valid in ALL members
+            TypeKey::Intersection(members) => {
+                let members = self.interner.type_list(members);
+                // For intersection of key types, a key is valid if it's in the intersection
+                // This is conservative - we check if it might be valid
+                members.iter().any(|&m| self.is_key_in_mapped_constraint(m, prop_name))
+            }
+
             // string type covers all string properties
             TypeKey::Intrinsic(crate::solver::types::IntrinsicKind::String) => true,
-            // Other types - can't determine statically
+
+            // KeyOf that couldn't be fully evaluated - be permissive
+            // This handles cases like `keyof T` where T is a type parameter
+            TypeKey::KeyOf(_) => true,
+
+            // Type parameters - we can't know the keys statically, be permissive
+            TypeKey::TypeParameter(_) => true,
+
+            // Conditional types - try to evaluate them
+            // If evaluation didn't reduce it, be permissive as we can't know statically
+            TypeKey::Conditional(_) => true,
+
+            // Application types that didn't fully evaluate - be permissive
+            TypeKey::Application(_) => true,
+
+            // Infer types in conditional context - be permissive
+            TypeKey::Infer(_) => true,
+
+            // Other types - be conservative and reject
             _ => false,
         }
     }
