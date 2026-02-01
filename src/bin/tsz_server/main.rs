@@ -2171,7 +2171,6 @@ impl Server {
                                 "fileName": file,
                                 "textChanges": []
                             }],
-                            "commands": [],
                             "fixId": fix_id,
                             "fixAllDescription": fix_all_desc
                         }));
