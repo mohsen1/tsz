@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -422,7 +422,7 @@ fn compile_inner(
             .collect::<HashSet<_>>()
     });
     let SourceReadResult {
-        sources,
+        sources: all_sources,
         dependencies,
     } = {
         let cache_ref = cache.as_deref();
@@ -436,6 +436,24 @@ fn compile_inner(
     };
     if let Some(cache) = cache.as_deref_mut() {
         cache.update_dependencies(dependencies);
+    }
+
+    // Separate binary files from regular sources - binary files get TS1490
+    let mut binary_file_diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut sources: Vec<SourceEntry> = Vec::with_capacity(all_sources.len());
+    for source in all_sources {
+        if source.is_binary {
+            // Emit TS1490 "File appears to be binary." for binary files
+            binary_file_diagnostics.push(Diagnostic::error(
+                source.path.to_string_lossy().into_owned(),
+                0,
+                0,
+                "File appears to be binary.".to_string(),
+                diagnostic_codes::FILE_APPEARS_TO_BE_BINARY,
+            ));
+        } else {
+            sources.push(source);
+        }
     }
 
     // Collect all files that were read (including dependencies) before sources is moved
@@ -483,6 +501,8 @@ fn compile_inner(
         load_lib_files_for_contexts(&lib_paths, resolved.printer.target)
     };
     let mut diagnostics = collect_diagnostics(&program, &resolved, &base_dir, cache, &lib_contexts);
+    // Add TS1490 diagnostics for binary files
+    diagnostics.extend(binary_file_diagnostics);
     diagnostics.sort_by(|left, right| {
         left.file
             .cmp(&right.file)
@@ -818,10 +838,91 @@ fn hash_text(text: &str) -> u64 {
     hasher.finish()
 }
 
+/// Result of reading a source file - either valid text or binary/unreadable
+#[derive(Debug, Clone)]
+pub enum FileReadResult {
+    /// File was successfully read as UTF-8 text
+    Text(String),
+    /// File appears to be binary (emit TS1490)
+    Binary,
+    /// File could not be read (I/O error)
+    Error(String),
+}
+
+/// Read a source file, detecting binary files that should emit TS1490.
+/// 
+/// TypeScript detects binary files by checking for:
+/// - UTF-16 BOM (FE FF for BE, FF FE for LE)  
+/// - Non-valid UTF-8 sequences
+/// - Files with many null bytes
+pub fn read_source_file(path: &Path) -> FileReadResult {
+    // Read as bytes first
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => return FileReadResult::Error(e.to_string()),
+    };
+
+    // Check for binary indicators
+    if is_binary_file(&bytes) {
+        return FileReadResult::Binary;
+    }
+
+    // Try to decode as UTF-8
+    match String::from_utf8(bytes) {
+        Ok(text) => FileReadResult::Text(text),
+        Err(_) => FileReadResult::Binary, // Invalid UTF-8 = treat as binary
+    }
+}
+
+/// Check if file content appears to be binary (not valid source code).
+/// 
+/// Matches TypeScript's binary detection:
+/// - UTF-16 BOM at start
+/// - Many consecutive null bytes (embedded binaries, corrupted files)
+fn is_binary_file(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+
+    // Check for UTF-16 BOM
+    // UTF-16 BE: FE FF
+    // UTF-16 LE: FF FE
+    if bytes.len() >= 2 {
+        if (bytes[0] == 0xFE && bytes[1] == 0xFF) || (bytes[0] == 0xFF && bytes[1] == 0xFE) {
+            return true;
+        }
+    }
+
+    // Check for many null bytes (binary file indicator)
+    // TypeScript considers files with many nulls as binary
+    let null_count = bytes.iter().take(1024).filter(|&&b| b == 0).count();
+    if null_count > 10 {
+        return true;
+    }
+
+    // Check for consecutive null bytes (UTF-16 or binary)
+    // UTF-16 text will have null bytes between ASCII characters
+    let mut consecutive_nulls = 0;
+    for &byte in bytes.iter().take(512) {
+        if byte == 0 {
+            consecutive_nulls += 1;
+            if consecutive_nulls >= 4 {
+                return true;
+            }
+        } else {
+            consecutive_nulls = 0;
+        }
+    }
+
+    false
+}
+
 #[derive(Debug, Clone)]
 struct SourceEntry {
     path: PathBuf,
     text: Option<String>,
+    /// If true, this file appears to be binary (emit TS1490)
+    is_binary: bool,
 }
 
 fn sources_have_no_default_lib(sources: &[SourceEntry]) -> bool {
@@ -1001,7 +1102,7 @@ fn read_source_files(
     cache: Option<&CompilationCache>,
     changed_paths: Option<&HashSet<PathBuf>>,
 ) -> Result<SourceReadResult> {
-    let mut sources: HashMap<PathBuf, Option<String>> = HashMap::new();
+    let mut sources: HashMap<PathBuf, (Option<String>, bool)> = HashMap::new(); // (text, is_binary)
     let mut dependencies: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
     let mut seen = HashSet::new();
     let mut pending = VecDeque::new();
@@ -1023,7 +1124,7 @@ fn read_source_files(
                 (cache.bind_cache.get(&path), cache.dependencies.get(&path))
         {
             dependencies.insert(path.clone(), cached_deps.clone());
-            sources.insert(path.clone(), None);
+            sources.insert(path.clone(), (None, false)); // Cached files are not binary
             for dep in cached_deps {
                 if seen.insert(dep.clone()) {
                     pending.push_back(dep.clone());
@@ -1032,10 +1133,20 @@ fn read_source_files(
             continue;
         }
 
-        let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let specifiers = collect_module_specifiers_from_text(&path, &text);
-        sources.insert(path.clone(), Some(text));
+        // Read file with binary detection
+        let (text, is_binary) = match read_source_file(&path) {
+            FileReadResult::Text(t) => (t, false),
+            FileReadResult::Binary => (String::new(), true), // Binary files get empty content + TS1490
+            FileReadResult::Error(e) => {
+                return Err(anyhow::anyhow!("failed to read {}: {}", path.display(), e));
+            }
+        };
+        let specifiers = if is_binary {
+            vec![] // Don't try to parse module specifiers from binary files
+        } else {
+            collect_module_specifiers_from_text(&path, &text)
+        };
+        sources.insert(path.clone(), (Some(text), is_binary));
         let entry = dependencies.entry(path.clone()).or_default();
 
         for specifier in specifiers {
@@ -1058,7 +1169,7 @@ fn read_source_files(
 
     let mut list: Vec<SourceEntry> = sources
         .into_iter()
-        .map(|(path, text)| SourceEntry { path, text })
+        .map(|(path, (text, is_binary))| SourceEntry { path, text, is_binary })
         .collect();
     list.sort_by(|left, right| {
         left.path
