@@ -256,6 +256,9 @@ impl Server {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
+            // Detect JS files for JSDoc type annotation format
+            let is_js_file = file.ends_with(".js") || file.ends_with(".jsx");
+
             let line_map = LineMap::build(source_text);
             let position = Self::tsserver_to_lsp_position(line as u32, _offset as u32);
             let offset = line_map.position_to_offset(position, source_text)? as usize;
@@ -271,13 +274,21 @@ impl Server {
             let decl_text: String;
             let decl_offset: usize;
             let decl_indent: String;
+            let _decl_on_same_line: bool;
 
             // Check if after-cursor text starts with a definite keyword
             let after_starts_with_keyword = ["function ", "class ", "interface ", "enum ", "type "]
                 .iter()
                 .any(|kw| after_cursor_on_line.starts_with(kw));
 
+            // Check if after-cursor text is only comment-closing syntax (e.g. `*/` or `  */`)
+            let after_is_comment_close = {
+                let t = after_cursor_on_line.trim();
+                t == "*/" || t == "*" || t.is_empty()
+            };
+
             if !after_cursor_on_line.is_empty()
+                && !after_is_comment_close
                 && (before_cursor.chars().all(|c| c == ' ' || c == '\t')
                     || after_starts_with_keyword)
             {
@@ -298,6 +309,7 @@ impl Server {
                         .take_while(|c| *c == ' ' || *c == '\t')
                         .collect()
                 };
+                _decl_on_same_line = true;
             } else {
                 // Look at the next non-empty line(s) after cursor
                 let rest_after_line = if line_end < source_text.len() {
@@ -329,6 +341,7 @@ impl Server {
                 decl_text = found_text;
                 decl_offset = found_offset;
                 decl_indent = found_indent;
+                _decl_on_same_line = false;
             }
 
             // Check if it's a documentable declaration
@@ -398,18 +411,24 @@ impl Server {
                 return None;
             }
 
-            // Check if there's already a JSDoc comment before the cursor
-            let before_pos = source_text[..offset].trim_end();
-            if before_pos.ends_with("*/") {
+            // Check if there's already a complete JSDoc comment before the cursor's line
+            let before_line = source_text[..line_start].trim_end();
+            if before_line.ends_with("*/") {
                 return None;
             }
 
-            // Determine cursor indentation for the doc comment prefix
-            let indent = if before_cursor.chars().all(|c| c == ' ' || c == '\t') {
-                before_cursor
-            } else {
-                ""
-            };
+            // Check if cursor is inside an existing JSDoc that already has content
+            // (e.g. `/** Doc */` → don't expand; `/**  */` or `/** */` → expand)
+            if let Some(jsdoc_pos) = before_cursor.find("/**") {
+                let after_jsdoc = before_cursor[jsdoc_pos + 3..].trim();
+                if !after_jsdoc.is_empty()
+                    && after_jsdoc != "*"
+                    && !after_jsdoc.starts_with("*/")
+                {
+                    // JSDoc has meaningful content - don't regenerate
+                    return None;
+                }
+            }
 
             // Extract parameters from the declaration
             let params = Self::extract_function_params(&decl_text, source_text, decl_offset);
@@ -422,6 +441,12 @@ impl Server {
             };
 
             // Build the doc comment template
+            // Use leading whitespace from the cursor's line for indentation
+            let template_indent: String = before_cursor
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+
             if params.is_empty() && !has_return {
                 // Simple template
                 Some(serde_json::json!({
@@ -432,26 +457,42 @@ impl Server {
                 // Multi-line template with @param and/or @returns tags
                 let mut lines = Vec::new();
                 lines.push("/**".to_string());
-                lines.push(format!("{} * ", indent));
+                lines.push(format!("{} * ", template_indent));
 
                 for param in &params {
-                    lines.push(format!("{} * @param {}", indent, param));
+                    if is_js_file {
+                        if let Some(name) = param.strip_prefix("...") {
+                            lines.push(format!(
+                                "{} * @param {{...any}} {}",
+                                template_indent, name
+                            ));
+                        } else {
+                            lines.push(format!(
+                                "{} * @param {{any}} {}",
+                                template_indent, param
+                            ));
+                        }
+                    } else {
+                        // For TS, strip the ... prefix
+                        let name = param.strip_prefix("...").unwrap_or(param);
+                        lines.push(format!("{} * @param {}", template_indent, name));
+                    }
                 }
 
                 if has_return {
-                    lines.push(format!("{} * @returns", indent));
+                    lines.push(format!("{} * @returns", template_indent));
                 }
 
+                lines.push(format!("{} */", template_indent));
                 // Add trailing indent when cursor and declaration are on the same line
-                let cursor_on_same_line = !after_cursor_on_line.is_empty();
-                lines.push(format!("{} */", indent));
-                if cursor_on_same_line {
-                    lines.push(format!("{}", decl_indent));
+                // and cursor is at the very start of the line (only whitespace before it)
+                if _decl_on_same_line && before_cursor.chars().all(|c| c == ' ' || c == '\t') {
+                    lines.push(decl_indent.clone());
                 }
 
                 let new_text = lines.join("\n");
                 // Caret offset: "/**\n<indent> * " -> caret is after " * " on second line
-                let caret_offset = 3 + 1 + indent.len() + 3; // "/**" + "\n" + indent + " * "
+                let caret_offset = 3 + 1 + template_indent.len() + 3; // "/**" + "\n" + indent + " * "
 
                 Some(serde_json::json!({
                     "newText": new_text,
@@ -530,13 +571,19 @@ impl Server {
             }
             let s = s.trim();
 
-            // Handle rest parameter
-            let s = if s.starts_with("...") { &s[3..] } else { s };
+            // Handle rest parameter - preserve prefix for JS @param format
+            let is_rest = s.starts_with("...");
+            let s = if is_rest { &s[3..] } else { s };
 
             // Handle destructured params
             if s.starts_with('{') || s.starts_with('[') {
                 unnamed_counter += 1;
-                params.push(format!("param{}", unnamed_counter));
+                let name = format!("param{}", unnamed_counter);
+                params.push(if is_rest {
+                    format!("...{}", name)
+                } else {
+                    name
+                });
                 continue;
             }
 
@@ -547,7 +594,11 @@ impl Server {
                 .collect();
 
             if !name.is_empty() {
-                params.push(name);
+                params.push(if is_rest {
+                    format!("...{}", name)
+                } else {
+                    name
+                });
             }
         }
 
