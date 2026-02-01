@@ -103,19 +103,29 @@ if [ "$RUN_CONFORMANCE" = true ]; then
     echo "$OUTPUT"
 
     if echo "$OUTPUT" | grep -q "Pass Rate:"; then
-        CONF_PASS_RATE=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
-        CONF_PASSED=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\1/' | tr -d ',')
-        CONF_TOTAL=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\2/' | tr -d ',')
+        # Strip ANSI color codes before parsing
+        PASS_LINE=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed 's/\x1b\[[0-9;]*m//g')
+        CONF_PASS_RATE=$(echo "$PASS_LINE" | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
+        CONF_PASSED=$(echo "$PASS_LINE" | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\1/' | tr -d ',')
+        CONF_TOTAL=$(echo "$PASS_LINE" | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\2/' | tr -d ',')
 
-        echo ""
-        echo "Conformance: $CONF_PASSED/$CONF_TOTAL tests passed ($CONF_PASS_RATE%)"
+        # Validate parsed values are numbers
+        if ! [[ "$CONF_PASS_RATE" =~ ^[0-9]+\.?[0-9]*$ ]] || ! [[ "$CONF_PASSED" =~ ^[0-9]+$ ]] || ! [[ "$CONF_TOTAL" =~ ^[0-9]+$ ]]; then
+            echo "Failed to parse conformance test output (invalid values: rate=$CONF_PASS_RATE, passed=$CONF_PASSED, total=$CONF_TOTAL)"
+            if [ "$RUN_FOURSLASH" = false ]; then
+                exit 1
+            fi
+        else
+            echo ""
+            echo "Conformance: $CONF_PASSED/$CONF_TOTAL tests passed ($CONF_PASS_RATE%)"
 
-        cd scripts/conformance
-        node dist/update-readme.js \
-            --passed="$CONF_PASSED" \
-            --total="$CONF_TOTAL" \
-            --pass-rate="$CONF_PASS_RATE"
-        cd "$ROOT_DIR"
+            cd scripts/conformance
+            node dist/update-readme.js \
+                --passed="$CONF_PASSED" \
+                --total="$CONF_TOTAL" \
+                --pass-rate="$CONF_PASS_RATE"
+            cd "$ROOT_DIR"
+        fi
     else
         echo "Failed to parse conformance test output"
         if [ "$RUN_FOURSLASH" = false ]; then
