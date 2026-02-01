@@ -31,6 +31,15 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Single-line blocks: if source was single-line and block has one statement, keep it single-line
+        if self.is_single_line(node) && block.statements.nodes.len() == 1 {
+            self.write("{ ");
+            self.emit(block.statements.nodes[0]);
+            self.write(" }");
+            self.emit_trailing_comments(node.end);
+            return;
+        }
+
         self.write("{");
         self.write_line();
         self.increase_indent();
