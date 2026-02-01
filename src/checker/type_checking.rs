@@ -2133,7 +2133,30 @@ impl<'a> CheckerState<'a> {
         let Some(class) = self.ctx.arena.get_class(node) else {
             return false;
         };
-        self.has_declare_modifier(&class.modifiers)
+        // Check for explicit `declare` modifier
+        if self.has_declare_modifier(&class.modifiers) {
+            return true;
+        }
+        // Check if the class is inside a `declare namespace`/`declare module`
+        // by walking up the parent chain to find an ambient module declaration
+        let mut current = decl_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    if let Some(module) = self.ctx.arena.get_module(parent_node) {
+                        if self.has_declare_modifier(&module.modifiers) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            current = parent;
+        }
+        false
     }
 
     /// Check if a method declaration has a body (is an implementation, not just a signature).
@@ -2191,6 +2214,71 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Verify that a declaration node actually has a name matching the expected symbol name.
+    /// This is used to filter out false matches when lib declarations' NodeIndex values
+    /// overlap with user arena indices and point to unrelated user nodes.
+    fn declaration_name_matches(&self, decl_idx: NodeIndex, expected_name: &str) -> bool {
+        let Some(name_node_idx) = self.get_declaration_name_node(decl_idx) else {
+            // For declarations without extractable names (methods, properties, constructors, etc.),
+            // fall back to checking the node's identifier directly
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            match node.kind {
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                        if let Some(name_node) = self.ctx.arena.get(method.name) {
+                            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                syntax_kind_ext::PROPERTY_DECLARATION => {
+                    if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+                        if let Some(name_node) = self.ctx.arena.get(prop.name) {
+                            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                        if let Some(name_node) = self.ctx.arena.get(accessor.name) {
+                            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                syntax_kind_ext::MODULE_DECLARATION => {
+                    if let Some(module) = self.ctx.arena.get_module(node) {
+                        if let Some(name_node) = self.ctx.arena.get(module.name) {
+                            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+                            }
+                        }
+                    }
+                    return false;
+                }
+                _ => return false,
+            }
+        };
+        // Check the name node is an identifier with the expected name
+        if let Some(name_node) = self.ctx.arena.get(name_node_idx) {
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+            }
+            // For binding patterns (destructuring), the name might not be a simple identifier
+            // Consider these as not matching for safety
+        }
+        false
     }
 
     /// Check if a node is an assignment target in a for-in or for-of loop.
@@ -2639,18 +2727,19 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes, diagnostic_messages, format_message,
         };
 
-        // Skip duplicate checking entirely if lib contexts are loaded.
-        // Lib symbols (Array, String, etc.) have multiple declarations from merged
-        // lib files. symbol_is_from_lib uses arena pointer equality which doesn't
-        // detect symbols that were merged into user arenas during binding, causing
-        // false TS2451 errors for built-in types.
-        if self.ctx.has_lib_loaded() {
-            return;
-        }
+        // When lib contexts are loaded, skip symbols that come from lib files.
+        // Lib types (Array, String, etc.) have multiple declarations from merged
+        // lib files which are not actual duplicates.
+        let has_libs = self.ctx.has_lib_loaded();
 
         let mut symbol_ids = FxHashSet::default();
         if !self.ctx.binder.scopes.is_empty() {
             for scope in &self.ctx.binder.scopes {
+                // Skip class scopes - class member duplicates need specialized handling
+                // (static vs instance separation, method overloads, get/set pairs, etc.)
+                if scope.kind == crate::binder::ContainerKind::Class {
+                    continue;
+                }
                 for (_, &id) in scope.table.iter() {
                     symbol_ids.insert(id);
                 }
@@ -2662,6 +2751,13 @@ impl<'a> CheckerState<'a> {
         }
 
         for sym_id in symbol_ids {
+            // Skip symbols that come from lib files - they have multiple declarations
+            // from different lib files (e.g. lib.es5.d.ts, lib.es2015.core.d.ts) that
+            // are not actual duplicates.
+            if has_libs && self.ctx.symbol_is_from_lib(sym_id) {
+                continue;
+            }
+
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
@@ -2705,6 +2801,12 @@ impl<'a> CheckerState<'a> {
             let mut declarations = Vec::new();
             for &decl_idx in &symbol.declarations {
                 if let Some(flags) = self.declaration_symbol_flags(decl_idx) {
+                    // When libs are loaded, verify the declaration name matches the symbol.
+                    // Lib declarations may have NodeIndex values that overlap with user arena
+                    // indices, pointing to unrelated user nodes. Filter these out.
+                    if has_libs && !self.declaration_name_matches(decl_idx, &symbol.escaped_name) {
+                        continue;
+                    }
                     declarations.push((decl_idx, flags));
                 }
             }
@@ -2827,6 +2929,48 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    // In merged namespaces, classes with the same name in different
+                    // namespace blocks don't conflict (one exported, one local).
+                    if decl_is_class && other_is_class {
+                        let decl_ns = self.get_enclosing_namespace(decl_idx);
+                        let other_ns = self.get_enclosing_namespace(other_idx);
+                        // Both inside namespaces, but different namespace declaration blocks
+                        if decl_ns != NodeIndex::NONE
+                            && other_ns != NodeIndex::NONE
+                            && decl_ns != other_ns
+                        {
+                            continue;
+                        }
+                    }
+
+                    // Skip conflict between declarations in different block scopes.
+                    // The binder may merge declarations into the same symbol even when they're
+                    // in different scopes (e.g., var+let in switch blocks, let in separate blocks).
+                    // Check if declarations share the same enclosing block scope.
+                    let decl_is_var = (decl_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
+                    let other_is_var = (other_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
+                    let decl_is_block = (decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
+                    let other_is_block = (other_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
+
+                    // var + let/const: check if they're in different scopes
+                    if (decl_is_var && other_is_block) || (decl_is_block && other_is_var) {
+                        let block_idx = if decl_is_block { decl_idx } else { other_idx };
+                        let block_scope = self.get_enclosing_block_scope(block_idx);
+                        // If the block-scoped variable is inside any block scope,
+                        // it's in a nested scope relative to the var
+                        if block_scope != NodeIndex::NONE {
+                            continue;
+                        }
+                    }
+                    // let/const + let/const: check if they share the same block scope
+                    if decl_is_block && other_is_block {
+                        let decl_scope = self.get_enclosing_block_scope(decl_idx);
+                        let other_scope = self.get_enclosing_block_scope(other_idx);
+                        if decl_scope != other_scope {
+                            continue;
+                        }
+                    }
+
                     if Self::declarations_conflict(decl_flags, other_flags) {
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);
@@ -2884,6 +3028,72 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         !func.body.is_none()
+    }
+
+    /// Get the NodeIndex of the nearest enclosing MODULE_DECLARATION (namespace) for a declaration.
+    /// Returns NodeIndex::NONE if the declaration is not inside a namespace.
+    fn get_enclosing_namespace(&self, decl_idx: NodeIndex) -> NodeIndex {
+        use crate::parser::syntax_kind_ext;
+        let mut current = decl_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return NodeIndex::NONE;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return NodeIndex::NONE;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return NodeIndex::NONE;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                return parent;
+            }
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return NodeIndex::NONE;
+            }
+            current = parent;
+        }
+    }
+
+    /// Get the NodeIndex of the nearest enclosing block scope for a declaration.
+    /// Returns the first Block, CaseBlock, ForStatement, etc. ancestor.
+    /// Returns NodeIndex::NONE if the declaration is directly in a function/module scope.
+    fn get_enclosing_block_scope(&self, decl_idx: NodeIndex) -> NodeIndex {
+        use crate::parser::syntax_kind_ext;
+        let mut current = decl_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return NodeIndex::NONE;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return NodeIndex::NONE;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return NodeIndex::NONE;
+            };
+            match parent_node.kind {
+                // Block-creating scopes - return this as the enclosing scope
+                syntax_kind_ext::BLOCK
+                | syntax_kind_ext::CASE_BLOCK
+                | syntax_kind_ext::FOR_STATEMENT
+                | syntax_kind_ext::FOR_IN_STATEMENT
+                | syntax_kind_ext::FOR_OF_STATEMENT => {
+                    return parent;
+                }
+                // Function/module boundaries - no enclosing block scope
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::SOURCE_FILE => {
+                    return NodeIndex::NONE;
+                }
+                _ => {}
+            }
+            current = parent;
+        }
     }
 
     /// Check for unused declarations (TS6133).
