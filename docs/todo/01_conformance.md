@@ -17,7 +17,7 @@
 
 ## Executive Summary
 
-**Current Pass Rate: 48.5% (6,000/12,378)**
+**Current Pass Rate: 48.6% (6,009/12,378)** — Updated Feb 1, 2026
 
 After deep analysis with ask-gemini and code inspection, I've identified **5 fundamental architectural issues** that are responsible for the majority of conformance failures. Fixing these in order will yield the biggest improvements.
 
@@ -483,3 +483,107 @@ Multiple interconnected issues causing 1288 extra TS2339 errors:
 1. Register anonymous class types in TypeEnvironment during lowering
 2. Or resolve Lazy types before emitting errors throughout the checker
 3. Implement libMap for lib name aliasing in both tsc-runner and tsz-server
+
+---
+
+## Latest Conformance Run (Feb 1, 2026)
+
+```
+Pass Rate: 48.5% (5,999/12,378)
+Time: 2.7s (4641 tests/sec)
+```
+
+### Highest Impact Fixes (from conformance output)
+
+| Priority | Tests Fixed | Category | Error Codes | Action |
+|----------|-------------|----------|-------------|--------|
+| **1** | ~719 | Null/undefined checks | TS18050, TS18047, TS18048, TS18049 | Implement strictNullChecks enforcement |
+| **2** | ~556 | Global/lib type resolution | TS2318, TS2583, TS2584 | Fix utility type resolution in lib.d.ts |
+| **3** | ~517 | Module/import resolution | TS2307, TS2792, TS2834, TS2835 | Fix module resolver for node/bundler modes |
+| **4** | ~456 | Operator type constraints | TS2365, TS2362, TS2363, TS2469 | Implement binary operator type checking |
+| **5** | ~343 | Type assignability | TS2322, TS2345, TS2741 | Review specific failing patterns |
+| **6** | ~321 | Duplicate identifier | TS2300, TS2451, TS2392, TS2393 | Check edge cases in merging |
+
+### Error Summary
+
+| Direction | Top Errors |
+|-----------|------------|
+| **Missing** | TS2304(1405), TS18050(679), TS2322(670), TS2307(604), TS2339(591) |
+| **Extra** | TS2322(1358), TS2339(1288), TS1005(1131), TS2345(993), TS2304(831) |
+
+### Problem Tests
+
+- **Crashed:** `compiler/augmentExportEquals2.ts`
+- **Timed Out:** `compiler/thislessFunctionsNotContextSensitive3.ts`
+
+---
+
+## RECOMMENDED NEXT ACTION
+
+**Implement strictNullChecks enforcement (~719 tests)**
+
+This is the highest-impact fix that doesn't have the same dependency issues as Phase 1/2.
+
+### Why strictNullChecks?
+
+1. **Highest ROI:** 719 tests is more than any other single category
+2. **Independent:** Doesn't require fixing symbol resolution first
+3. **Missing errors only:** TS18050 shows 679 MISSING - we're not emitting errors we should
+4. **Well-defined:** TypeScript's behavior is clear - check for null/undefined before member access
+
+### What needs to be done:
+
+1. **TS18050** "The value 'X' is possibly null"
+   - Emitted when accessing property/method on nullable type without null check
+   - Check `state_type_analysis.rs` for where member access is checked
+   
+2. **TS18047** "X is possibly null"
+   - For direct uses of nullable values in non-null contexts
+   
+3. **TS18048** "X is possibly undefined"
+   - Same as 18047 but for undefined
+   
+4. **TS18049** "X is possibly null or undefined"
+   - Combined case
+
+### Files to investigate:
+
+- `src/checker/state_type_analysis.rs` - Where property access is checked
+- `src/checker/state_checking_members.rs` - Member resolution
+- `src/solver/narrowing.rs` - Control flow narrowing (might need updates)
+
+### Alternative: Fix the crash first (quick win)
+
+The crashed test `augmentExportEquals2.ts` indicates a bug. Fixing crashes is always good for stability.
+
+```bash
+# To investigate the crash:
+./scripts/conformance/run.sh --filter=augmentExportEquals2 --print-test
+```
+
+---
+
+## Fix Implemented (Feb 1, 2026) - TS18050 for Binary Operators
+
+**Emit TS18050 "The value X cannot be used here" for null/undefined operands in arithmetic**
+
+When null or undefined literals are used in binary arithmetic operations (`*`, `/`, `%`, `-`, etc.),
+TypeScript emits TS18050 instead of TS2362/TS2363.
+
+**Previous Behavior:**
+- `null * 5` emitted TS2362 "The left-hand side of an arithmetic operation must be of type..."
+- TSC emits TS18050 "The value 'null' cannot be used here"
+
+**Fix Applied:**
+- Modified `emit_binary_operator_error` in `src/checker/error_reporter.rs`
+- Check for null/undefined operands first and emit TS18050
+- Still emit TS2362/TS2363 for the OTHER operand if it's also invalid (matching TSC behavior)
+
+**Result:** +10 tests passing (5,999 → 6,009)
+
+**Test Coverage:**
+- `arithmeticOperatorWithOnlyNullValueOrUndefinedValue.ts` - PASS
+- `arithmeticOperatorWithNullValueAndValidOperands.ts` - PASS  
+- `arithmeticOperatorWithUndefinedValueAndValidOperands.ts` - PASS
+- `arithmeticOperatorWithNullValueAndInvalidOperands.ts` - PASS
+- `arithmeticOperatorWithUndefinedValueAndInvalidOperands.ts` - PASS
