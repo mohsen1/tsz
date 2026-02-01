@@ -117,12 +117,7 @@ impl Server {
                             i += 1;
                         }
                         // Check for descriptor at current position
-                        Self::match_descriptor_at(
-                            source_text,
-                            i,
-                            &descriptor_texts,
-                            &mut results,
-                        );
+                        Self::match_descriptor_at(source_text, i, &descriptor_texts, &mut results);
                         // Skip to end of line
                         while i < len && bytes[i] != b'\n' && bytes[i] != b'\r' {
                             i += 1;
@@ -165,9 +160,7 @@ impl Server {
                                 i += 1;
                                 // Skip leading whitespace and asterisks (^[\s*]*)
                                 while i < len
-                                    && (bytes[i] == b' '
-                                        || bytes[i] == b'\t'
-                                        || bytes[i] == b'*')
+                                    && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'*')
                                 {
                                     if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
                                         break;
@@ -257,7 +250,9 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as usize;
             let _offset = request.arguments.get("offset")?.as_u64().unwrap_or(1);
             let source_text = self.open_files.get(file)?;
-            let generate_return = request.arguments.get("generateReturnInDocTemplate")
+            let generate_return = request
+                .arguments
+                .get("generateReturnInDocTemplate")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
@@ -267,7 +262,9 @@ impl Server {
 
             let line_start = source_text[..offset].rfind('\n').map_or(0, |i| i + 1);
             let before_cursor = &source_text[line_start..offset];
-            let line_end = source_text[offset..].find('\n').map_or(source_text.len(), |i| offset + i);
+            let line_end = source_text[offset..]
+                .find('\n')
+                .map_or(source_text.len(), |i| offset + i);
             let after_cursor_on_line = source_text[offset..line_end].trim();
 
             // Determine declaration text: could be on the same line as cursor, or on the next line(s)
@@ -281,18 +278,25 @@ impl Server {
                 .any(|kw| after_cursor_on_line.starts_with(kw));
 
             if !after_cursor_on_line.is_empty()
-                && (before_cursor.chars().all(|c| c == ' ' || c == '\t') || after_starts_with_keyword)
+                && (before_cursor.chars().all(|c| c == ' ' || c == '\t')
+                    || after_starts_with_keyword)
             {
                 // Text follows the cursor on the same line - this IS the declaration
                 // Allow if before_cursor is all whitespace, or after starts with a keyword
                 // (covers `const x = /*marker*/ function f(p) {}` cases)
                 decl_text = after_cursor_on_line.to_string();
-                decl_offset = offset + source_text[offset..line_end].find(after_cursor_on_line).unwrap_or(0);
+                decl_offset = offset
+                    + source_text[offset..line_end]
+                        .find(after_cursor_on_line)
+                        .unwrap_or(0);
                 decl_indent = if before_cursor.chars().all(|c| c == ' ' || c == '\t') {
                     before_cursor.to_string()
                 } else {
                     // Extract whitespace prefix from before_cursor
-                    before_cursor.chars().take_while(|c| *c == ' ' || *c == '\t').collect()
+                    before_cursor
+                        .chars()
+                        .take_while(|c| *c == ' ' || *c == '\t')
+                        .collect()
                 };
             } else {
                 // Look at the next non-empty line(s) after cursor
@@ -311,7 +315,8 @@ impl Server {
                         found_text = trimmed.to_string();
                         let indent_len = text_line.len() - text_line.trim_start().len();
                         found_indent = text_line[..indent_len].to_string();
-                        found_offset = (line_end + 1) + (text_line.as_ptr() as usize - rest_after_line.as_ptr() as usize)
+                        found_offset = (line_end + 1)
+                            + (text_line.as_ptr() as usize - rest_after_line.as_ptr() as usize)
                             + indent_len;
                         break;
                     }
@@ -328,11 +333,28 @@ impl Server {
 
             // Check if it's a documentable declaration
             let declaration_keywords = [
-                "function ", "class ", "interface ", "type ", "enum ",
-                "namespace ", "module ", "export ", "const ", "let ",
-                "var ", "abstract ", "async ", "public ", "private ",
-                "protected ", "static ", "readonly ", "get ", "set ",
-                "constructor", "constructor(",
+                "function ",
+                "class ",
+                "interface ",
+                "type ",
+                "enum ",
+                "namespace ",
+                "module ",
+                "export ",
+                "const ",
+                "let ",
+                "var ",
+                "abstract ",
+                "async ",
+                "public ",
+                "private ",
+                "protected ",
+                "static ",
+                "readonly ",
+                "get ",
+                "set ",
+                "constructor",
+                "constructor(",
             ];
 
             // Method-like: identifier followed by ( or <
@@ -346,7 +368,9 @@ impl Server {
             let is_property_like = {
                 let first_ch = decl_text.chars().next().unwrap_or(' ');
                 (first_ch.is_alphabetic() || first_ch == '_')
-                    && (decl_text.contains(':') || decl_text.contains(';') || decl_text.ends_with(','))
+                    && (decl_text.contains(':')
+                        || decl_text.contains(';')
+                        || decl_text.ends_with(','))
             };
 
             // Enum member: identifier optionally followed by = value, then , or end of line
@@ -354,12 +378,18 @@ impl Server {
                 let first_ch = decl_text.chars().next().unwrap_or(' ');
                 let trimmed_decl = decl_text.trim_end_matches(',').trim();
                 (first_ch.is_alphabetic() || first_ch == '_')
-                    && !decl_text.contains('(') && !decl_text.contains('{')
+                    && !decl_text.contains('(')
+                    && !decl_text.contains('{')
                     && !decl_text.contains('.')
-                    && (trimmed_decl.ends_with(',') || trimmed_decl.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '=' || c == ' '))
+                    && (trimmed_decl.ends_with(',')
+                        || trimmed_decl
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || c == '_' || c == '=' || c == ' '))
             };
 
-            let is_documentable = declaration_keywords.iter().any(|kw| decl_text.starts_with(kw))
+            let is_documentable = declaration_keywords
+                .iter()
+                .any(|kw| decl_text.starts_with(kw))
                 || is_method_like
                 || is_property_like
                 || is_enum_member;
@@ -511,7 +541,8 @@ impl Server {
             }
 
             // Extract identifier (before : or ? or = or ,)
-            let name: String = s.chars()
+            let name: String = s
+                .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
                 .collect();
 
@@ -719,7 +750,7 @@ impl Server {
             // by scanning all lines before it, then adjust for the current line.
             let mut depth: i32 = 0;
             let mut in_block_comment = false;
-            let mut in_single_line_string = false;
+            let _in_single_line_string = false;
 
             for line_idx in 0..target_line_idx {
                 let line_text = lines[line_idx];
@@ -862,13 +893,19 @@ impl Server {
             let all_lines: Vec<&str> = source_text.lines().collect();
             // Convert 1-based to 0-based
             let first = start_line.saturating_sub(1);
-            let last = end_line.saturating_sub(1).min(all_lines.len().saturating_sub(1));
+            let last = end_line
+                .saturating_sub(1)
+                .min(all_lines.len().saturating_sub(1));
 
             // Collect the lines in range, skipping empty lines for analysis
             let non_empty_lines: Vec<(usize, &str)> = (first..=last)
                 .filter_map(|i| {
                     let line = all_lines.get(i)?;
-                    if line.trim().is_empty() { None } else { Some((i, *line)) }
+                    if line.trim().is_empty() {
+                        None
+                    } else {
+                        Some((i, *line))
+                    }
                 })
                 .collect();
 
@@ -877,9 +914,9 @@ impl Server {
             }
 
             // Check if ALL non-empty lines are commented (start with //)
-            let all_commented = non_empty_lines.iter().all(|(_, line)| {
-                line.trim_start().starts_with("//")
-            });
+            let all_commented = non_empty_lines
+                .iter()
+                .all(|(_, line)| line.trim_start().starts_with("//"));
 
             let mut edits = Vec::new();
 
@@ -902,7 +939,8 @@ impl Server {
                 }
             } else {
                 // Comment: insert // replacing one space at min_indent position
-                let min_indent = non_empty_lines.iter()
+                let min_indent = non_empty_lines
+                    .iter()
                     .map(|(_, line)| line.len() - line.trim_start().len())
                     .min()
                     .unwrap_or(0);
@@ -956,7 +994,9 @@ impl Server {
 
             let all_lines: Vec<&str> = source_text.lines().collect();
             let first = start_line.saturating_sub(1);
-            let last = end_line.saturating_sub(1).min(all_lines.len().saturating_sub(1));
+            let last = end_line
+                .saturating_sub(1)
+                .min(all_lines.len().saturating_sub(1));
 
             let mut edits = Vec::new();
 
@@ -984,7 +1024,11 @@ impl Server {
                 let non_empty_lines: Vec<(usize, &str)> = (first..=last)
                     .filter_map(|i| {
                         let line = all_lines.get(i)?;
-                        if line.trim().is_empty() { None } else { Some((i, *line)) }
+                        if line.trim().is_empty() {
+                            None
+                        } else {
+                            Some((i, *line))
+                        }
                     })
                     .collect();
 
@@ -992,7 +1036,8 @@ impl Server {
                     return Some(serde_json::json!([]));
                 }
 
-                let min_indent = non_empty_lines.iter()
+                let min_indent = non_empty_lines
+                    .iter()
                     .map(|(_, line)| line.len() - line.trim_start().len())
                     .min()
                     .unwrap_or(0);
@@ -1034,7 +1079,9 @@ impl Server {
 
             let all_lines: Vec<&str> = source_text.lines().collect();
             let first = start_line.saturating_sub(1);
-            let last = end_line.saturating_sub(1).min(all_lines.len().saturating_sub(1));
+            let last = end_line
+                .saturating_sub(1)
+                .min(all_lines.len().saturating_sub(1));
 
             let mut edits = Vec::new();
 

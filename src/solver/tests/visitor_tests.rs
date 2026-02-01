@@ -7,7 +7,6 @@ use super::*;
 // =============================================================================
 
 #[test]
-#[ignore = "Intersection of incompatible primitives simplifies to never - visitor test expectations incorrect"]
 fn test_type_kind_classification() {
     let interner = TypeInterner::new();
 
@@ -59,8 +58,19 @@ fn test_type_kind_classification() {
         TypeKind::Union
     );
 
-    // Intersection types
-    let inter = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
+    // Intersection types - use type parameters since the interner simplifies
+    // primitive intersections to never and object intersections to merged objects
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+    }));
+    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+    }));
+    let inter = interner.intersection(vec![t_param, u_param]);
     assert_eq!(
         TypeKindVisitor::get_kind_of(&interner, inter),
         TypeKind::Intersection
@@ -206,11 +216,22 @@ fn test_is_union_type() {
 }
 
 #[test]
-#[ignore = "Intersection of incompatible primitives simplifies to never - visitor test expectations incorrect"]
 fn test_is_intersection_type() {
     let interner = TypeInterner::new();
 
-    let inter = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
+    // Use type parameters since the interner simplifies primitive intersections
+    // to never and object intersections to merged objects
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+    }));
+    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+    }));
+    let inter = interner.intersection(vec![t_param, u_param]);
     assert!(is_intersection_type(&interner, inter));
     assert!(!is_intersection_type(&interner, TypeId::STRING));
 }
@@ -374,13 +395,13 @@ fn test_contains_error_type() {
 }
 
 #[test]
-#[ignore = "Union normalization may collapse literal into base type - visitor test expectations need review"]
 fn test_contains_type_matching() {
     let interner = TypeInterner::new();
 
-    // Check for any literal type
+    // Check for any literal type - use number | "hello" since string | "hello"
+    // normalizes to just string (literal subsumed by base type)
     let lit = interner.literal_string("hello");
-    let union = interner.union(vec![TypeId::STRING, lit]);
+    let union = interner.union(vec![TypeId::NUMBER, lit]);
 
     let has_literal =
         contains_type_matching(&interner, union, |key| matches!(key, TypeKey::Literal(_)));

@@ -1959,9 +1959,7 @@ impl Server {
                 .iter()
                 .map(|hl| {
                     let kind_str = match hl.kind {
-                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Read) => {
-                            "reference"
-                        }
+                        Some(wasm::lsp::highlighting::DocumentHighlightKind::Read) => "reference",
                         Some(wasm::lsp::highlighting::DocumentHighlightKind::Write) => {
                             "writtenReference"
                         }
@@ -2165,11 +2163,7 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(
-            seq,
-            request,
-            Some(serde_json::json!({"changes": []})),
-        )
+        self.stub_response(seq, request, Some(serde_json::json!({"changes": []})))
     }
 
     fn handle_references_full(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
@@ -2247,7 +2241,13 @@ impl Server {
                     let line_map = LineMap::build(&source_text);
                     let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
                     let symbols = provider.get_document_symbols(root);
-                    Self::collect_navto_items(&symbols, search_value, &search_lower, file_path, &mut nav_items);
+                    Self::collect_navto_items(
+                        &symbols,
+                        search_value,
+                        &search_lower,
+                        file_path,
+                        &mut nav_items,
+                    );
                 }
             }
             Some(serde_json::json!(nav_items))

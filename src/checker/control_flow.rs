@@ -129,7 +129,11 @@ pub(crate) struct PredicateSignature {
 
 impl<'a> FlowAnalyzer<'a> {
     /// Create a new FlowAnalyzer.
-    pub fn new(arena: &'a NodeArena, binder: &'a BinderState, interner: &'a dyn TypeDatabase) -> Self {
+    pub fn new(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        interner: &'a dyn TypeDatabase,
+    ) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
         Self {
             arena,

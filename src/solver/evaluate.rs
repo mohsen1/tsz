@@ -165,6 +165,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Get the query database, if available.
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
         self.query_db
     }

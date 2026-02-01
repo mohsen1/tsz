@@ -72,6 +72,29 @@ Installed automatically on first `cargo build`. Run:
 3. `cargo clippy --fix`
 4. Unit tests
 
+## Testing Requirements
+
+### Every Change Must Have Tests
+- **New features**: Add unit tests covering the new behavior before considering work done
+- **Bug fixes**: Add a regression test that would have caught the bug
+- **Refactors**: Ensure existing tests still pass; add tests if coverage gaps are found
+
+### No New `#[ignore]` Tests
+- Do NOT add `#[ignore]` to new tests. If a test can't pass, fix the underlying issue or don't merge
+- Do NOT ignore a failing test as a workaround — fix the root cause
+- When working near ignored tests, attempt to unignore them and fix failures
+
+### Reducing Ignored Test Count
+- The project has a large backlog of `#[ignore]` tests (~1000+). Actively reduce this count
+- When you touch a file with ignored tests, try to unignore and fix at least a few
+- Run ignored tests with `cargo test -- --ignored` to find ones that already pass and can be unignored immediately
+
+### Test Quality Standards
+- Tests must be deterministic — no flaky tests
+- Test names must clearly describe the scenario: `test_{feature}_{scenario}_{expected_outcome}`
+- Each test should test one specific behavior
+- Use descriptive assertion messages
+
 ## When Is Work Done?
 
 - All unit tests pass
@@ -79,6 +102,8 @@ Installed automatically on first `cargo build`. Run:
 - Conformance doesn't drop significantly
 - Type logic is in Solver, not Checker
 - Visitor pattern used (no manual `TypeKey` matches)
+- **New code has corresponding tests**
+- **No new `#[ignore]` annotations added**
 
 ## AI Tools
 

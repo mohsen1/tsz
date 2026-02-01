@@ -1287,7 +1287,7 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes, diagnostic_messages, format_message,
         };
         use crate::interner::Atom;
-        use crate::solver::{PropertyInfo};
+        use crate::solver::PropertyInfo;
         use rustc_hash::FxHashMap;
 
         let Some(node) = self.ctx.arena.get(idx) else {

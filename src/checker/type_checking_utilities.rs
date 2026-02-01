@@ -534,7 +534,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         keys: &[crate::interner::Atom],
     ) -> Option<TypeId> {
-        use crate::solver::{PropertyAccessResult};
+        use crate::solver::PropertyAccessResult;
 
         if keys.is_empty() {
             return None;
@@ -2178,7 +2178,6 @@ impl<'a> CheckerState<'a> {
     /// - Union types (readonly if ANY member has readonly property)
     /// - Intersection types (readonly ONLY if ALL members have readonly property)
     pub(crate) fn is_property_readonly(&self, type_id: TypeId, prop_name: &str) -> bool {
-
         self.ctx.types.is_property_readonly(type_id, prop_name)
     }
 

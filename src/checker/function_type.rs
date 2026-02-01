@@ -640,7 +640,7 @@ impl<'a> CheckerState<'a> {
 
     /// Inner implementation of property access type resolution.
     fn get_type_of_property_access_inner(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::solver::{PropertyAccessResult};
+        use crate::solver::PropertyAccessResult;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error

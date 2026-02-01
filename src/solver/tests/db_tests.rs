@@ -1,10 +1,10 @@
 #[cfg(feature = "experimental_salsa")]
 use crate::solver::SalsaDatabase;
-#[cfg(feature = "experimental_salsa")]
-use std::sync::Arc;
 use crate::solver::{
     LiteralValue, QueryCache, QueryDatabase, TypeDatabase, TypeId, TypeInterner, TypeKey,
 };
+#[cfg(feature = "experimental_salsa")]
+use std::sync::Arc;
 
 #[test]
 fn type_database_interns_and_looks_up() {

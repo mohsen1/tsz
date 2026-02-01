@@ -1218,7 +1218,6 @@ impl<'a> CheckerState<'a> {
         wants_string: bool,
         wants_number: bool,
     ) -> bool {
-
         self.ctx
             .types
             .is_readonly_index_signature(type_id, wants_string, wants_number)
