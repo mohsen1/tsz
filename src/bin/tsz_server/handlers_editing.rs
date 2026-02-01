@@ -430,11 +430,19 @@ impl Server {
                 }
             }
 
+            // Check for multi-declarator variable statements (e.g. `let a = 1, b = 2;`)
+            // These should not extract params from initializer functions
+            let is_multi_declarator = Self::is_multi_declarator_var(&decl_text, source_text, decl_offset);
+
             // Extract parameters from the declaration
-            let params = Self::extract_function_params(&decl_text, source_text, decl_offset);
+            let params = if is_multi_declarator {
+                Vec::new()
+            } else {
+                Self::extract_function_params(&decl_text, source_text, decl_offset)
+            };
 
             // Check for return statement in function body if generate_return is enabled
-            let has_return = if generate_return {
+            let has_return = if generate_return && !is_multi_declarator {
                 Self::function_has_return(&decl_text, source_text, decl_offset)
             } else {
                 false
@@ -517,11 +525,39 @@ impl Server {
     /// Extract function parameter names from a declaration line.
     /// Handles destructured params ({x, y}) as param1, param2, etc.
     /// Strips access modifiers (public, private, protected), rest (...), and optional (?).
-    fn extract_function_params(decl: &str, _source: &str, _decl_offset: usize) -> Vec<String> {
+    fn extract_function_params(decl: &str, source: &str, decl_offset: usize) -> Vec<String> {
+        // For variable declarations, extract the initializer and analyze it
+        let effective_decl = Self::get_effective_decl(decl, source, decl_offset);
+        let decl = effective_decl.as_deref().unwrap_or(decl);
+
         // Find the opening paren - handle methods, functions, constructors, arrow functions
         let paren_start = match Self::find_param_list_start(decl) {
             Some(pos) => pos,
-            None => return Vec::new(),
+            None => {
+                // No parens found - check for arrow function without parens
+                // Pattern: identifier => ...
+                if let Some(arrow_pos) = decl.find("=>") {
+                    let before_arrow = decl[..arrow_pos].trim_end();
+                    // Extract the last identifier token before =>
+                    let param: String = before_arrow
+                        .chars()
+                        .rev()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    if !param.is_empty()
+                        && param
+                            .chars()
+                            .next()
+                            .map_or(false, |c| c.is_alphabetic() || c == '_' || c == '$')
+                    {
+                        return vec![param];
+                    }
+                }
+                return Vec::new();
+            }
         };
 
         // Extract content between parens, handling nesting
@@ -554,7 +590,7 @@ impl Server {
         // Split by commas at depth 0
         let parts = Self::split_params(&inner);
         let mut params = Vec::new();
-        let mut unnamed_counter = 0;
+        let mut param_index = 0;
 
         for part in &parts {
             let trimmed = part.trim();
@@ -575,15 +611,15 @@ impl Server {
             let is_rest = s.starts_with("...");
             let s = if is_rest { &s[3..] } else { s };
 
-            // Handle destructured params
+            // Handle destructured params - use parameter index for naming
             if s.starts_with('{') || s.starts_with('[') {
-                unnamed_counter += 1;
-                let name = format!("param{}", unnamed_counter);
+                let name = format!("param{}", param_index);
                 params.push(if is_rest {
                     format!("...{}", name)
                 } else {
                     name
                 });
+                param_index += 1;
                 continue;
             }
 
@@ -600,9 +636,202 @@ impl Server {
                     name
                 });
             }
+            param_index += 1;
         }
 
         params
+    }
+
+    /// Check if a declaration is a multi-declarator variable statement.
+    /// E.g. `let a = 1, b = 2;` has multiple `=` at depth 0.
+    fn is_multi_declarator_var(decl: &str, source: &str, decl_offset: usize) -> bool {
+        // Only applies to variable declarations
+        let is_var_decl = decl.starts_with("var ")
+            || decl.starts_with("let ")
+            || decl.starts_with("const ")
+            || decl.starts_with("export var ")
+            || decl.starts_with("export let ")
+            || decl.starts_with("export const ");
+        if !is_var_decl {
+            return false;
+        }
+
+        let full_stmt = &source[decl_offset..];
+        let mut depth = 0i32;
+        let mut eq_count = 0;
+        let chars: Vec<char> = full_stmt.chars().collect();
+        for i in 0..chars.len() {
+            match chars[i] {
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => depth = (depth - 1).max(0),
+                ';' if depth == 0 => break,
+                // Stop at newline when at depth 0 (end of statement without semicolon)
+                '\n' if depth == 0 => break,
+                '=' if depth == 0 => {
+                    let prev = if i > 0 { chars[i - 1] } else { ' ' };
+                    let next = chars.get(i + 1).copied().unwrap_or(' ');
+                    // Exclude ==, !=, >=, <=, =>
+                    if prev != '!' && prev != '<' && prev != '>' && prev != '='
+                        && next != '=' && next != '>'
+                    {
+                        eq_count += 1;
+                        if eq_count > 1 {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// For variable declarations (`var/let/const name = initializer`), extract
+    /// the effective declaration from the initializer. Strips outer grouping
+    /// parens and handles function expressions, arrow functions, and class
+    /// expressions with constructors.
+    fn get_effective_decl(decl: &str, source: &str, decl_offset: usize) -> Option<String> {
+        // Only apply to variable declarations
+        let rest = if let Some(r) = decl.strip_prefix("var ") {
+            r
+        } else if let Some(r) = decl.strip_prefix("let ") {
+            r
+        } else if let Some(r) = decl.strip_prefix("const ") {
+            r
+        } else if let Some(r) = decl.strip_prefix("export var ") {
+            r
+        } else if let Some(r) = decl.strip_prefix("export let ") {
+            r
+        } else if let Some(r) = decl.strip_prefix("export const ") {
+            r
+        } else {
+            return None;
+        };
+
+        // Find the `=` in the declaration (skip the variable name)
+        let eq_pos = rest.find('=')?;
+        // Make sure it's `=` not `==` or `=>`
+        let after_eq = rest.get(eq_pos + 1..)?;
+        if after_eq.starts_with('=') || after_eq.starts_with('>') {
+            return None;
+        }
+        // Find the RHS start position in source for multi-line scanning
+        let eq_byte_offset = {
+            let eq_search = &source[decl_offset..];
+            match eq_search.find('=') {
+                Some(pos) => decl_offset + pos + 1,
+                None => return None,
+            }
+        };
+        // Skip whitespace after = to find RHS start
+        let mut rhs_source_start = eq_byte_offset;
+        while rhs_source_start < source.len() {
+            let ch = source.as_bytes()[rhs_source_start];
+            if ch == b' ' || ch == b'\t' || ch == b'\r' || ch == b'\n' {
+                rhs_source_start += 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut rhs = after_eq.trim().to_string();
+
+        // Strip outer grouping parens using source text for multi-line support
+        loop {
+            if rhs_source_start >= source.len() {
+                break;
+            }
+            if source.as_bytes()[rhs_source_start] == b'(' {
+                let scan_text = &source[rhs_source_start..];
+                let chars: Vec<char> = scan_text.chars().collect();
+                let mut depth = 0;
+                let mut close_pos = None;
+                for (i, &c) in chars.iter().enumerate() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close_pos = Some(i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                // Only strip if the paren wraps the entire expression
+                if let Some(cp) = close_pos {
+                    let after_close: String = chars[cp + 1..].iter().collect();
+                    let after_trimmed = after_close.trim();
+                    // Check if paren wraps the expression:
+                    // what follows should be end-of-statement or another closing paren
+                    let after_on_line = after_close
+                        .split('\n')
+                        .next()
+                        .unwrap_or("")
+                        .trim();
+                    if after_on_line.is_empty()
+                        || after_on_line.starts_with(';')
+                        || after_on_line.starts_with(',')
+                        || after_on_line.starts_with(')')
+                    {
+                        let inner: String = chars[1..cp].iter().collect();
+                        let trimmed_inner = inner.trim();
+                        // Don't strip if inner looks like arrow params: (x, y) => ...
+                        if !trimmed_inner.contains("=>") || trimmed_inner.starts_with('(') {
+                            rhs = trimmed_inner.to_string();
+                            // Advance source offset past opening paren + whitespace
+                            rhs_source_start += 1; // skip '('
+                            while rhs_source_start < source.len() {
+                                let ch = source.as_bytes()[rhs_source_start];
+                                if ch == b' ' || ch == b'\t' || ch == b'\r' || ch == b'\n' {
+                                    rhs_source_start += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+
+        // For class expressions, look for constructor in the class body only
+        if rhs.starts_with("class ") || rhs.starts_with("class{") {
+            let full = &source[rhs_source_start..];
+            // Find the opening brace of the class body
+            if let Some(brace_start) = full.find('{') {
+                // Find the matching closing brace
+                let mut depth = 0;
+                let mut brace_end = full.len();
+                for (i, c) in full[brace_start..].char_indices() {
+                    match c {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                brace_end = brace_start + i;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let class_body = &full[brace_start..brace_end];
+                // Search for constructor only within the class body
+                if let Some(ctor_pos) = class_body.find("constructor(")
+                    .or_else(|| class_body.find("constructor ("))
+                {
+                    let ctor_decl = &full[brace_start + ctor_pos..];
+                    return Some(ctor_decl.to_string());
+                }
+            }
+            return Some(rhs.to_string());
+        }
+
+        Some(rhs.to_string())
     }
 
     /// Find the start of the parameter list (opening paren) in a declaration.
@@ -693,16 +922,19 @@ impl Server {
         let full_decl = &source[decl_offset..];
 
         // Find opening brace at depth 0 (skip param parens)
-        let mut paren_depth = 0;
+        // Stop at `;` or `\n` at paren_depth=0 to avoid crossing statement boundaries
+        let mut paren_depth: i32 = 0;
         let mut brace_start = None;
         for (i, c) in full_decl.char_indices() {
             match c {
                 '(' => paren_depth += 1,
-                ')' => paren_depth -= 1,
+                ')' => paren_depth = (paren_depth - 1).max(0),
                 '{' if paren_depth == 0 => {
                     brace_start = Some(i);
                     break;
                 }
+                // Stop at statement boundaries to avoid scanning into next statement
+                ';' | '\n' if paren_depth == 0 => break,
                 _ => {}
             }
         }
