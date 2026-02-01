@@ -4,6 +4,9 @@
  * This module provides common functionality used by both server-mode
  * and WASM-mode conformance runners to ensure consistent behavior.
  *
+ * Now uses TypeScript's own TestCaseParser from the built harness
+ * to ensure exact compatibility with tsc test parsing.
+ *
  * Handles TSC test directives including:
  * - Compiler options (@target, @strict, @lib, etc.)
  * - Test harness-specific directives (@filename, @noCheck, @typeScriptVersion, etc.)
@@ -16,6 +19,16 @@ import * as fs from 'fs';
 import * as semver from 'semver';
 import { fileURLToPath } from 'url';
 import { normalizeLibName } from './lib-manifest.js';
+import {
+  isHarnessBuilt,
+  loadHarness,
+  type CompilerSettings,
+  type TestUnitData,
+  type TestCaseContent,
+  isHarnessDirective,
+  separateSettings as separateHarnessSettings,
+  shouldSkipTest as harnessSkipTest,
+} from './ts-harness-loader.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -238,6 +251,9 @@ function parseSymlinkDirective(value: string): { target: string; link: string } 
 
 /**
  * Parse test directives from TypeScript conformance test file.
+ * Uses TypeScript's own TestCaseParser when the harness is built,
+ * falling back to the legacy parser when it's not.
+ *
  * Extracts @target, @lib, @strict, etc. from comment headers.
  * Also handles @filename directives for multi-file tests.
  *
@@ -246,6 +262,93 @@ function parseSymlinkDirective(value: string): { target: string; link: string } 
  * - Compiler options are passed to tsz (e.g., @strict, @target, @lib)
  */
 export function parseTestCase(code: string, filePath: string): ParsedTestCase {
+  // Try to use TypeScript's own TestCaseParser
+  if (isHarnessBuilt()) {
+    return parseTestCaseWithHarness(code, filePath);
+  }
+  // Fall back to legacy parser
+  return parseTestCaseLegacy(code, filePath);
+}
+
+/**
+ * Parse test case using TypeScript's TestCaseParser from the built harness.
+ * This ensures exact compatibility with how tsc parses test files.
+ */
+function parseTestCaseWithHarness(code: string, filePath: string): ParsedTestCase {
+  const { Harness } = loadHarness();
+
+  // Use TypeScript's parser
+  const parsed = Harness.TestCaseParser.makeUnitsFromTest(code, filePath);
+
+  // Convert to our format
+  const files: TestFile[] = parsed.testUnitData.map((unit: TestUnitData) => ({
+    name: unit.name,
+    content: unit.content,
+  }));
+
+  // Separate harness directives from compiler options
+  const { harness: harnessSettings, compiler: compilerSettings } = separateHarnessSettings(parsed.settings);
+
+  // Convert settings to our ParsedDirectives format
+  const directives: ParsedDirectives = {};
+  for (const [key, value] of Object.entries(compilerSettings)) {
+    const lowKey = key.toLowerCase();
+    // Parse value types
+    if (value.toLowerCase() === 'true') directives[lowKey] = true;
+    else if (value.toLowerCase() === 'false') directives[lowKey] = false;
+    else if (!isNaN(Number(value)) && lowKey !== 'typescriptversion') directives[lowKey] = Number(value);
+    else directives[lowKey] = value;
+  }
+
+  // Convert harness settings to HarnessOptions
+  const harness: HarnessOptions = {};
+  for (const [key, value] of Object.entries(harnessSettings)) {
+    const lowKey = key.toLowerCase();
+    const parsedValue = value.toLowerCase() === 'true' ? true :
+                        value.toLowerCase() === 'false' ? false : value;
+
+    switch (lowKey) {
+      case 'nocheck': harness.noCheck = parsedValue as boolean; break;
+      case 'typescriptversion': harness.typeScriptVersion = parsedValue as string; break;
+      case 'currentdirectory': harness.currentDirectory = parsedValue as string; break;
+      case 'allownontextensions':
+      case 'allownonttsextensions': harness.allowNonTsExtensions = parsedValue as boolean; break;
+      case 'usecasesensitivefilenames': harness.useCaseSensitiveFileNames = parsedValue as boolean; break;
+      case 'noimplicitreferences': harness.noImplicitReferences = parsedValue as boolean; break;
+      case 'baselinefile': harness.baselineFile = parsedValue as string; break;
+      case 'noerrortruncation': harness.noErrorTruncation = parsedValue as boolean; break;
+      case 'suppressoutputpathcheck': harness.suppressOutputPathCheck = parsedValue as boolean; break;
+      case 'notypesandsymbols': harness.noTypesAndSymbols = parsedValue as boolean; break;
+      case 'fullemitpaths': harness.fullEmitPaths = parsedValue as boolean; break;
+      case 'reportdiagnostics': harness.reportDiagnostics = parsedValue as boolean; break;
+      case 'capturesuggestions': harness.captureSuggestions = parsedValue as boolean; break;
+    }
+  }
+
+  // Handle symlinks from parsed content
+  if (parsed.symlinks && parsed.symlinks.length > 0) {
+    harness.symlinks = parsed.symlinks.map((s: { target: string; link: string }) => ({
+      target: s.target,
+      link: s.link,
+    }));
+  }
+
+  const isMultiFile = files.length > 1 || parsed.testUnitData.some((u: TestUnitData) =>
+    u.fileOptions && Object.keys(u.fileOptions).some(k => k.toLowerCase() === 'filename')
+  );
+
+  // Extract category from path
+  const relativePath = filePath.replace(/.*tests\/cases\//, '');
+  const category = relativePath.split(path.sep)[0] || 'unknown';
+
+  return { directives, harness, isMultiFile, files, category };
+}
+
+/**
+ * Legacy parser - used when TypeScript harness is not built.
+ * This is the original implementation kept for backwards compatibility.
+ */
+function parseTestCaseLegacy(code: string, filePath: string): ParsedTestCase {
   const lines = code.split('\n');
   const directives: ParsedDirectives = {};
   const harness: HarnessOptions = {};
@@ -381,8 +484,65 @@ export function parseTestCase(code: string, filePath: string): ParsedTestCase {
 /**
  * Parse just the directives (simpler version for server mode).
  * Returns both compiler directives and harness options.
+ * Uses TypeScript's extractCompilerSettings when harness is built.
  */
 export function parseDirectivesOnly(content: string): { directives: ParsedDirectives; harness: HarnessOptions } {
+  // Try to use TypeScript's harness
+  if (isHarnessBuilt()) {
+    return parseDirectivesWithHarness(content);
+  }
+  // Fall back to legacy parser
+  return parseDirectivesOnlyLegacy(content);
+}
+
+/**
+ * Parse directives using TypeScript's harness.
+ */
+function parseDirectivesWithHarness(content: string): { directives: ParsedDirectives; harness: HarnessOptions } {
+  const { Harness } = loadHarness();
+
+  // Use TypeScript's parser
+  const settings = Harness.TestCaseParser.extractCompilerSettings(content);
+
+  // Separate harness directives from compiler options
+  const { harness: harnessSettings, compiler: compilerSettings } = separateHarnessSettings(settings);
+
+  // Convert settings to our ParsedDirectives format
+  const directives: ParsedDirectives = {};
+  for (const [key, value] of Object.entries(compilerSettings)) {
+    const lowKey = key.toLowerCase();
+    if (value.toLowerCase() === 'true') directives[lowKey] = true;
+    else if (value.toLowerCase() === 'false') directives[lowKey] = false;
+    else if (!isNaN(Number(value)) && lowKey !== 'typescriptversion') directives[lowKey] = Number(value);
+    else directives[lowKey] = value;
+  }
+
+  // Convert harness settings to HarnessOptions
+  const harness: HarnessOptions = {};
+  for (const [key, value] of Object.entries(harnessSettings)) {
+    const lowKey = key.toLowerCase();
+    const parsedValue = value.toLowerCase() === 'true' ? true :
+                        value.toLowerCase() === 'false' ? false : value;
+
+    switch (lowKey) {
+      case 'nocheck': harness.noCheck = parsedValue as boolean; break;
+      case 'typescriptversion': harness.typeScriptVersion = parsedValue as string; break;
+      case 'currentdirectory': harness.currentDirectory = parsedValue as string; break;
+      case 'allownontextensions':
+      case 'allownonttsextensions': harness.allowNonTsExtensions = parsedValue as boolean; break;
+      case 'usecasesensitivefilenames': harness.useCaseSensitiveFileNames = parsedValue as boolean; break;
+      case 'noimplicitreferences': harness.noImplicitReferences = parsedValue as boolean; break;
+      default: (harness as any)[lowKey] = parsedValue;
+    }
+  }
+
+  return { directives, harness };
+}
+
+/**
+ * Legacy directive parser.
+ */
+function parseDirectivesOnlyLegacy(content: string): { directives: ParsedDirectives; harness: HarnessOptions } {
   const directives: ParsedDirectives = {};
   const harness: HarnessOptions = {};
   const lines = content.split('\n');
