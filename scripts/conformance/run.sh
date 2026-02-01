@@ -128,6 +128,27 @@ build_server() {
     log_success "tsz-server built"
 }
 
+build_ts_harness() {
+    local ts_dir="$ROOT_DIR/TypeScript"
+    local harness_file="$ts_dir/built/local/harness/_namespaces/Harness.js"
+
+    if [[ -f "$harness_file" ]]; then
+        return 0  # Already built
+    fi
+
+    log_step "Building TypeScript harness (first time only)..."
+    (
+        cd "$ts_dir"
+        if [[ ! -d "node_modules" ]]; then
+            log_info "Installing TypeScript dependencies..."
+            npm ci --silent 2>/dev/null || npm ci
+        fi
+        log_info "Building TypeScript test harness..."
+        npx hereby tests --no-bundle
+    )
+    log_success "TypeScript harness built"
+}
+
 build_runner() {
     log_step "Building conformance runner..."
     (
@@ -302,6 +323,7 @@ run_server_mode() {
     [[ "$CFG_PRINT_TEST" != "true" ]] && print_banner "Server (persistent)"
 
     build_server
+    build_ts_harness
     build_runner
 
     [[ "$CFG_PRINT_TEST" != "true" ]] && { log_step "Starting tsz-server pool..."; echo ""; }
@@ -338,6 +360,7 @@ run_wasm_native_mode() {
     else
         build_native
     fi
+    build_ts_harness
     build_runner
 
     log_step "Running tests..."

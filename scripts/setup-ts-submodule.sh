@@ -1,7 +1,11 @@
 #!/bin/bash
 
 # Setup TypeScript submodule with sparse checkout
-# Includes: tests/ for conformance, src/lib/ for embedded lib.d.ts files
+# Includes:
+#   - tests/ for conformance tests
+#   - src/lib/ for embedded lib.d.ts files
+#   - src/compiler, src/services, src/harness, etc. for test harness
+#   - scripts/ for build tooling
 # Run this after cloning the repo: ./scripts/setup-ts-submodule.sh
 
 set -e
@@ -9,7 +13,7 @@ set -e
 TS_REPO="https://github.com/microsoft/TypeScript.git"
 TS_DIR="TypeScript"
 
-echo "→ Setting up TypeScript submodule (sparse: tests/ + src/lib/ + lib/)..."
+echo "→ Setting up TypeScript submodule (sparse checkout)..."
 
 # Cleanup: Remove any stale lock files
 rm -f .git/modules/"$TS_DIR"/shallow.lock 2>/dev/null || true
@@ -51,8 +55,28 @@ echo "Enabling sparse checkout..."
 git sparse-checkout init --cone
 
 # Step 4: Set the specific directories we want
-echo "Checking out tests/, src/lib/, and lib/ directories..."
-git sparse-checkout set tests src/lib lib
+# - tests/: conformance test cases
+# - src/lib/: lib.d.ts source files
+# - lib/: packaged lib files
+# - src/compiler, src/services, src/harness: test harness dependencies
+# - scripts/: build tooling for harness
+echo "Checking out required directories..."
+git sparse-checkout set \
+    tests \
+    src/lib \
+    lib \
+    src/compiler \
+    src/services \
+    src/harness \
+    src/jsTyping \
+    src/deprecatedCompat \
+    src/server \
+    src/executeCommandLine \
+    src/typingsInstallerCore \
+    src/cancellationToken \
+    src/watchGuard \
+    src/testRunner \
+    scripts
 
 # Go back to root
 cd ..
@@ -61,8 +85,12 @@ cd ..
 SHA=$(cd "$TS_DIR" && git rev-parse --short HEAD)
 echo ""
 echo "✓ Done! TypeScript@$SHA"
-echo "  Tests location: $TS_DIR/tests/"
-echo "  Lib files: $TS_DIR/src/lib/ (sources), $TS_DIR/lib/ (packaged if present)"
+echo "  Tests: $TS_DIR/tests/"
+echo "  Lib files: $TS_DIR/src/lib/"
+echo "  Harness: $TS_DIR/src/harness/"
 echo ""
-echo "To update later:"
+echo "To build the test harness (required for conformance tests):"
+echo "  cd $TS_DIR && npm ci && npx hereby tests --no-bundle"
+echo ""
+echo "To update TypeScript version:"
 echo "  git submodule update --remote --merge $TS_DIR"
