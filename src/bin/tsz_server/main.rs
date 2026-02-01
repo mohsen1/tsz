@@ -3051,6 +3051,8 @@ impl Server {
         if !all_contexts.is_empty() {
             checker.ctx.set_lib_contexts(all_contexts);
         }
+        // Set the count of actual lib files (not user files) for has_lib_loaded()
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
 
         checker.ctx.set_all_arenas(all_arenas);
         checker.ctx.set_all_binders(all_binders);
@@ -3206,6 +3208,8 @@ impl Server {
             if !all_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(all_contexts.clone());
             }
+            // Set the count of actual lib files (not user files) for has_lib_loaded()
+            checker.ctx.set_actual_lib_file_count(lib_files.len());
 
             checker.ctx.set_all_arenas(all_arenas.clone());
             checker.ctx.set_all_binders(all_binders.clone());
