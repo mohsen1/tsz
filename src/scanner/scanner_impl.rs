@@ -2360,9 +2360,10 @@ impl ScannerState {
 
         // Check for identifier
         if is_identifier_start(ch) {
-            self.pos += 1;
+            // Properly handle multi-byte UTF-8 characters
+            self.pos += self.char_len_at(self.pos);
             while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos)) {
-                self.pos += 1;
+                self.pos += self.char_len_at(self.pos);
             }
             self.token_value = self.substring(self.token_start, self.pos);
             self.token = crate::scanner::text_to_keyword(&self.token_value)
@@ -2679,15 +2680,42 @@ fn is_hex_digit(ch: u32) -> bool {
 }
 
 fn is_identifier_start(ch: u32) -> bool {
-    (CharacterCodes::UPPER_A..=CharacterCodes::UPPER_Z).contains(&ch)
-        || (CharacterCodes::LOWER_A..=CharacterCodes::LOWER_Z).contains(&ch)
-        || ch == CharacterCodes::UNDERSCORE
-        || ch == CharacterCodes::DOLLAR
-        || ch > 127 // Unicode letter (simplified check)
+    // Fast path for ASCII (0-127)
+    if ch < 128 {
+        return (CharacterCodes::UPPER_A..=CharacterCodes::UPPER_Z).contains(&ch)
+            || (CharacterCodes::LOWER_A..=CharacterCodes::LOWER_Z).contains(&ch)
+            || ch == CharacterCodes::UNDERSCORE
+            || ch == CharacterCodes::DOLLAR;
+    }
+
+    // Unicode path: Use Rust's char::is_alphabetic() which covers:
+    // Lu (Uppercase Letter), Ll (Lowercase Letter), Lt (Titlecase Letter),
+    // Lm (Modifier Letter), Lo (Other Letter), Nl (Letter Number)
+    // This correctly rejects U+00A0 (Whitespace), U+2026 (Punctuation), U+2194 (Symbol)
+    if let Some(c) = char::from_u32(ch) {
+        return c.is_alphabetic();
+    }
+
+    false
 }
 
 fn is_identifier_part(ch: u32) -> bool {
-    is_identifier_start(ch) || is_digit(ch)
+    // Fast path for ASCII
+    if ch < 128 {
+        return is_identifier_start(ch) || is_digit(ch);
+    }
+
+    // Unicode path: is_alphanumeric covers alphabetic chars + numeric chars (Nd category)
+    // Also allow Unicode combining marks (Mn, Mc) and connector punctuation (Pc)
+    // For simplicity, use is_alphanumeric which covers most cases correctly
+    if let Some(c) = char::from_u32(ch) {
+        // ECMAScript ID_Continue includes: ID_Start + Mn + Mc + Nd + Pc + ZWNJ + ZWJ
+        // is_alphanumeric covers letters and numbers
+        // We also need to allow U+200C (ZWNJ) and U+200D (ZWJ)
+        return c.is_alphanumeric() || ch == 0x200C || ch == 0x200D;
+    }
+
+    false
 }
 
 fn is_line_break(ch: u32) -> bool {

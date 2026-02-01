@@ -683,6 +683,8 @@ impl ParserState {
             | SyntaxKind::ContinueKeyword
             | SyntaxKind::ThrowKeyword
             | SyntaxKind::AsyncKeyword
+            | SyntaxKind::UsingKeyword  // using declarations (ES2024+)
+            | SyntaxKind::AwaitKeyword  // await using declarations
             | SyntaxKind::InterfaceKeyword
             | SyntaxKind::TypeKeyword
             | SyntaxKind::EnumKeyword
