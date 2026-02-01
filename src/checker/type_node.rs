@@ -163,18 +163,76 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get type from a type reference node (e.g., "number", "string", "MyType").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
-        // For now, delegate to TypeLowering via the interner
-        // This will be expanded as we move more logic here
+        use crate::binder::symbol_flags;
         use crate::solver::TypeLowering;
+        use crate::solver::types::is_compiler_managed_type;
 
-        let type_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
-        let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
-        let lowering = TypeLowering::with_resolvers(
+        // Create a type resolver that looks up symbols in the binder
+        let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            let node = self.ctx.arena.get(node_idx)?;
+            let ident = self.ctx.arena.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+
+            // Skip built-in types that have special handling in TypeLowering
+            if is_compiler_managed_type(name) {
+                return None;
+            }
+
+            // Look up the symbol in file_locals
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                if (symbol.flags & symbol_flags::TYPE) != 0 {
+                    return Some(sym_id.0);
+                }
+            }
+
+            // Also check lib_contexts if available
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    let symbol = lib_ctx.binder.get_symbol(sym_id)?;
+                    if (symbol.flags & symbol_flags::TYPE) != 0 {
+                        return Some(sym_id.0);
+                    }
+                }
+            }
+
+            None
+        };
+
+        let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            let node = self.ctx.arena.get(node_idx)?;
+            let ident = self.ctx.arena.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+
+            // Look up the symbol in file_locals
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
+                    return Some(sym_id.0);
+                }
+            }
+
+            None
+        };
+
+        // Get type parameter bindings from the context
+        let type_param_bindings: Vec<(crate::interner::Atom, TypeId)> = self
+            .ctx
+            .type_parameter_scope
+            .iter()
+            .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
+            .collect();
+
+        let mut lowering = TypeLowering::with_resolvers(
             self.ctx.arena,
             self.ctx.types,
             &type_resolver,
             &value_resolver,
         );
+        if !type_param_bindings.is_empty() {
+            lowering = lowering.with_type_param_bindings(type_param_bindings);
+        }
+
         lowering.lower_type(idx)
     }
 
@@ -383,16 +441,75 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get type from a function type node (e.g., () => number, (x: string) => void).
     fn get_type_from_function_type(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::binder::symbol_flags;
         use crate::solver::TypeLowering;
+        use crate::solver::types::is_compiler_managed_type;
 
-        let type_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
-        let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
-        let lowering = TypeLowering::with_resolvers(
+        // Create a type resolver that looks up symbols in the binder
+        let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            let node = self.ctx.arena.get(node_idx)?;
+            let ident = self.ctx.arena.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+
+            // Skip built-in types that have special handling in TypeLowering
+            if is_compiler_managed_type(name) {
+                return None;
+            }
+
+            // Look up the symbol in file_locals
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                if (symbol.flags & symbol_flags::TYPE) != 0 {
+                    return Some(sym_id.0);
+                }
+            }
+
+            // Also check lib_contexts if available
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    let symbol = lib_ctx.binder.get_symbol(sym_id)?;
+                    if (symbol.flags & symbol_flags::TYPE) != 0 {
+                        return Some(sym_id.0);
+                    }
+                }
+            }
+
+            None
+        };
+
+        let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            let node = self.ctx.arena.get(node_idx)?;
+            let ident = self.ctx.arena.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+
+            // Look up the symbol in file_locals
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
+                    return Some(sym_id.0);
+                }
+            }
+
+            None
+        };
+
+        // Get type parameter bindings from the context
+        let type_param_bindings: Vec<(crate::interner::Atom, TypeId)> = self
+            .ctx
+            .type_parameter_scope
+            .iter()
+            .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
+            .collect();
+
+        let mut lowering = TypeLowering::with_resolvers(
             self.ctx.arena,
             self.ctx.types,
             &type_resolver,
             &value_resolver,
         );
+        if !type_param_bindings.is_empty() {
+            lowering = lowering.with_type_param_bindings(type_param_bindings);
+        }
 
         lowering.lower_type(idx)
     }
