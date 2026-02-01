@@ -61,6 +61,7 @@ interface TestCase {
   expectedDts: string | null;
   target: number;
   module: number;
+  alwaysStrict: boolean;
 }
 
 interface TestResult {
@@ -183,6 +184,27 @@ function extractVariantFromFilename(filename: string): { base: string; target?: 
   return result;
 }
 
+/**
+ * Parse compiler directives from test source code.
+ * Uses the same pattern as the conformance runner (scripts/conformance/src/tsc-runner.ts).
+ * Directives are lines like: // @target: ES5, // @module: commonjs, // @strict: true
+ */
+function parseSourceDirectives(source: string): Record<string, unknown> {
+  const options: Record<string, unknown> = {};
+  for (const line of source.split('\n')) {
+    const trimmed = line.trim();
+    const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
+    if (optionMatch) {
+      const [, key, value] = optionMatch;
+      const lowKey = key.toLowerCase();
+      if (value.toLowerCase() === 'true') options[lowKey] = true;
+      else if (value.toLowerCase() === 'false') options[lowKey] = false;
+      else options[lowKey] = value;
+    }
+  }
+  return options;
+}
+
 function findTestCases(filter: string, maxTests: number): TestCase[] {
   const testCases: TestCase[] = [];
   
@@ -204,10 +226,30 @@ function findTestCases(filter: string, maxTests: number): TestCase[] {
 
     if (!baseline.source || !baseline.js) continue;
 
-    // Extract variant from filename
+    // Extract variant from filename (e.g., test(target=ES5,module=commonjs).js)
     const variant = extractVariantFromFilename(baselineFile);
-    const target = variant.target ? parseTarget(variant.target) : 1;
-    const module = variant.module ? parseModule(variant.module) : 0;
+
+    // Parse source directives from the original test file
+    // Directives like // @target: ES5, // @strict: true are in the .ts file, not the baseline
+    let directives: Record<string, unknown> = {};
+    if (baseline.testPath) {
+      const testFilePath = path.join(TS_DIR, baseline.testPath);
+      if (fs.existsSync(testFilePath)) {
+        const testFileContent = fs.readFileSync(testFilePath, 'utf-8');
+        directives = parseSourceDirectives(testFileContent);
+      }
+    }
+
+    // Filename variants override source directives, which override defaults
+    const target = variant.target ? parseTarget(variant.target)
+      : directives.target ? parseTarget(String(directives.target))
+      : 1; // Default ES5
+    const module = variant.module ? parseModule(variant.module)
+      : directives.module ? parseModule(String(directives.module))
+      : 0; // Default None
+
+    // Detect strict mode: @strict or @alwaysStrict directives
+    const alwaysStrict = directives.strict === true || directives.alwaysstrict === true;
 
     testCases.push({
       baselineFile,
@@ -217,6 +259,7 @@ function findTestCases(filter: string, maxTests: number): TestCase[] {
       expectedDts: baseline.dts,
       target,
       module,
+      alwaysStrict,
     });
   }
 
@@ -350,10 +393,15 @@ async function runTest(worker: TranspileWorker, testCase: TestCase, config: Conf
       cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: null });
     }
 
+    // Prepend "use strict" prologue when source has @strict or @alwaysStrict directive
+    if (testCase.alwaysStrict && !tszJs.trimStart().startsWith('"use strict"')) {
+      tszJs = '"use strict";\n' + tszJs;
+    }
+
     // Compare JS
     if (!config.dtsOnly && testCase.expectedJs) {
-      const expected = testCase.expectedJs.trim();
-      const actual = tszJs.trim();
+      const expected = testCase.expectedJs.replace(/\r\n/g, '\n').trim();
+      const actual = tszJs.replace(/\r\n/g, '\n').trim();
       result.jsMatch = expected === actual;
       
       if (!result.jsMatch) {

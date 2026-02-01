@@ -27,15 +27,31 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_string_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
-            let quote = if self.ctx.options.single_quote {
-                '\''
-            } else {
-                '"'
-            };
+            // Preserve original quote style from source text
+            let quote = self.detect_original_quote(node).unwrap_or_else(|| {
+                if self.ctx.options.single_quote {
+                    '\''
+                } else {
+                    '"'
+                }
+            });
             self.write_char(quote);
             self.emit_escaped_string(&lit.text, quote);
             self.write_char(quote);
         }
+    }
+
+    /// Detect the original quote character used in source text
+    fn detect_original_quote(&self, node: &Node) -> Option<char> {
+        let text = self.source_text?;
+        let pos = node.pos as usize;
+        if pos < text.len() {
+            let ch = text.as_bytes()[pos];
+            if ch == b'\'' || ch == b'"' {
+                return Some(ch as char);
+            }
+        }
+        None
     }
 
     pub(super) fn emit_string_literal_text(&mut self, text: &str) {
