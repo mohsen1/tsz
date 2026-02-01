@@ -58,9 +58,25 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &crate::parser::node::ClassData,
     ) -> TypeId {
+        // Check cache first — but only use cache when not in the middle of resolving
+        // another class (class_instance_resolution_set tracks active resolutions).
+        // During active resolution, cached types may be incomplete due to circular refs.
+        let can_use_cache = self.ctx.class_instance_resolution_set.is_empty();
+        if can_use_cache {
+            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+                return cached;
+            }
+        }
+
         let mut visited = FxHashSet::default();
         let mut visited_nodes = FxHashSet::default();
-        self.get_class_instance_type_inner(class_idx, class, &mut visited, &mut visited_nodes)
+        let result = self.get_class_instance_type_inner(class_idx, class, &mut visited, &mut visited_nodes);
+
+        // Cache the result only when not in active resolution and type is valid
+        if can_use_cache && result != TypeId::ERROR {
+            self.ctx.class_instance_type_cache.insert(class_idx, result);
+        }
+        result
     }
 
     /// Inner implementation of class instance type resolution with cycle detection.
