@@ -1602,8 +1602,13 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Auto-detect module: if enabled and file has imports/exports, switch to CommonJS
-        if self.ctx.auto_detect_module && self.file_is_module(&source.statements) {
+        // Auto-detect module: if enabled and module is None (not explicitly set),
+        // switch to CommonJS when file has imports/exports.
+        // Do NOT override explicit module targets like ES2015/ESNext.
+        if self.ctx.auto_detect_module
+            && matches!(self.ctx.options.module, ModuleKind::None)
+            && self.file_is_module(&source.statements)
+        {
             self.ctx.options.module = ModuleKind::CommonJS;
         }
 
