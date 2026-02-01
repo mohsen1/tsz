@@ -47,6 +47,7 @@ impl FoldingRange {
 #[derive(Debug)]
 struct RegionDelimiter {
     is_start: bool,
+    #[allow(dead_code)]
     label: String,
 }
 
@@ -354,7 +355,7 @@ impl<'a> FoldingRangeProvider<'a> {
                 }
             }
             // NoSubstitutionTemplateLiteral (SyntaxKind = 15, token node)
-            k if k == 15 => {
+            15 => {
                 // Simple template literals without substitutions (e.g. `hello`)
                 // Skip empty templates (just ``)
                 if node.end.saturating_sub(node.pos) > 2 {

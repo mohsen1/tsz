@@ -197,8 +197,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.type_not_assignable(source, target, loc.start, loc.length());
@@ -635,8 +636,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.property_missing(prop_name, source, target, loc.start, loc.length());
@@ -660,8 +662,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.property_not_exist(prop_name, type_id, loc.start, loc.length());
@@ -679,8 +682,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.excess_property(prop_name, target, loc.start, loc.length());
@@ -693,8 +697,9 @@ impl<'a> CheckerState<'a> {
     /// Report a "Cannot assign to readonly property" error using solver diagnostics with source tracking.
     pub fn error_readonly_property_at(&mut self, prop_name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.readonly_property(prop_name, loc.start, loc.length());
@@ -793,8 +798,9 @@ impl<'a> CheckerState<'a> {
 
         // Fall back to standard error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.cannot_find_name(name, loc.start, loc.length());
@@ -1151,8 +1157,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag =
@@ -1172,8 +1179,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.argument_count_mismatch(expected, got, loc.start, loc.length());
@@ -1262,8 +1270,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
+            let mut builder = crate::solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
+                &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
             );
             let diag = builder.not_callable(type_id, loc.start, loc.length());
@@ -1494,7 +1503,7 @@ impl<'a> CheckerState<'a> {
         let right_is_symbol = evaluator.is_symbol_like(right_type);
 
         if left_is_symbol || right_is_symbol {
-            let mut formatter = TypeFormatter::new(self.ctx.types);
+            let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
             
             // Emit TS2469 for symbol operands
             if left_is_symbol {
@@ -1544,7 +1553,7 @@ impl<'a> CheckerState<'a> {
             // (but we've already emitted TS2469 for the symbol)
         }
 
-        let mut formatter = TypeFormatter::new(self.ctx.types);
+        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 

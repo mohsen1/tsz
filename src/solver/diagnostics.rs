@@ -628,6 +628,20 @@ impl<'a> DiagnosticBuilder<'a> {
         }
     }
 
+    /// Create a diagnostic builder with access to symbol names.
+    ///
+    /// This prevents "Ref(N)" fallback strings in diagnostic messages by
+    /// resolving symbol references to their actual names.
+    pub fn with_symbols(
+        interner: &'a dyn TypeDatabase,
+        symbol_arena: &'a crate::binder::SymbolArena,
+    ) -> Self {
+        DiagnosticBuilder {
+            interner,
+            formatter: TypeFormatter::with_symbols(interner, symbol_arena),
+        }
+    }
+
     /// Create a "Type X is not assignable to type Y" diagnostic.
     pub fn type_not_assignable(&mut self, source: TypeId, target: TypeId) -> TypeDiagnostic {
         let source_str = self.formatter.format(source);
@@ -1181,6 +1195,21 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
     pub fn new(interner: &'a dyn TypeDatabase, file: impl Into<Arc<str>>) -> Self {
         SpannedDiagnosticBuilder {
             builder: DiagnosticBuilder::new(interner),
+            file: file.into(),
+        }
+    }
+
+    /// Create a spanned diagnostic builder with access to symbol names.
+    ///
+    /// This prevents "Ref(N)" fallback strings in diagnostic messages by
+    /// resolving symbol references to their actual names.
+    pub fn with_symbols(
+        interner: &'a dyn TypeDatabase,
+        symbol_arena: &'a crate::binder::SymbolArena,
+        file: impl Into<Arc<str>>,
+    ) -> Self {
+        SpannedDiagnosticBuilder {
+            builder: DiagnosticBuilder::with_symbols(interner, symbol_arena),
             file: file.into(),
         }
     }
