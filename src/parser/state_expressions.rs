@@ -1294,6 +1294,19 @@ impl ParserState {
             | SyntaxKind::ModuleKeyword
             | SyntaxKind::AwaitKeyword
             | SyntaxKind::YieldKeyword => self.parse_keyword_as_identifier(),
+            SyntaxKind::Unknown => {
+                // TS1127: Invalid character - emit specific error for invalid characters
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Invalid character.",
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+                let start_pos = self.token_pos();
+                let end_pos = self.token_end();
+                self.next_token();
+                self.arena
+                    .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
+            }
             _ => {
                 // Don't consume clause boundaries or expression terminators here.
                 // Let callers decide how to recover so constructs like `switch` can resynchronize

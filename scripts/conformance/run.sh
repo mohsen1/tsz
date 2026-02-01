@@ -137,6 +137,14 @@ build_ts_harness() {
         return 0  # Already built
     fi
 
+    # Check if build scripts exist (required for building harness)
+    if [[ ! -f "$ts_dir/scripts/build/localization.mjs" ]]; then
+        log_warning "TypeScript build scripts missing. Skipping harness build."
+        log_warning "Harness may already be built, or TypeScript submodule needs initialization."
+        log_warning "To fix: cd TypeScript && git checkout scripts/build/ && npm ci && npx hereby tests --no-bundle"
+        return 0  # Continue anyway - runner may work without harness
+    fi
+
     log_step "Building TypeScript harness (first time only)..."
     (
         cd "$ts_dir"
