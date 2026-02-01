@@ -74,6 +74,11 @@ cd scripts/conformance
 npm run build --silent 2>/dev/null || npm run build
 cd "$ROOT_DIR"
 
+# Update TypeScript version once (shown at top of Progress section)
+echo "Updating TypeScript version in README..."
+node scripts/conformance/dist/update-readme.js --ts-version="$TS_VERSION"
+echo ""
+
 # Track what was updated for commit message
 CONF_PASSED=""
 CONF_TOTAL=""
@@ -109,8 +114,7 @@ if [ "$RUN_CONFORMANCE" = true ]; then
         node dist/update-readme.js \
             --passed="$CONF_PASSED" \
             --total="$CONF_TOTAL" \
-            --pass-rate="$CONF_PASS_RATE" \
-            --ts-version="$TS_VERSION"
+            --pass-rate="$CONF_PASS_RATE"
         cd "$ROOT_DIR"
     else
         echo "Failed to parse conformance test output"
@@ -152,8 +156,7 @@ if [ "$RUN_FOURSLASH" = true ]; then
             --fourslash \
             --passed="$FS_PASSED" \
             --total="$FS_TOTAL" \
-            --pass-rate="$FS_PASS_RATE" \
-            --ts-version="$TS_VERSION"
+            --pass-rate="$FS_PASS_RATE"
         cd "$ROOT_DIR"
     else
         echo "Failed to parse fourslash test output"

@@ -3,19 +3,17 @@
  * Updates README.md with conformance, fourslash, or emit test results.
  *
  * Usage:
+ *   # Update TypeScript version (shown once at top of Progress):
+ *   node dist/update-readme.js --ts-version="6.0.0-dev.20260116"
+ *
  *   # Update conformance progress:
- *   node dist/update-readme.js --passed=426 --total=500 --ts-version="6.0.0-dev.20260116"
+ *   node dist/update-readme.js --passed=426 --total=500
  *
  *   # Update fourslash/LSP progress:
- *   node dist/update-readme.js --fourslash --passed=3 --total=50 --ts-version="6.0.0-dev.20260116"
+ *   node dist/update-readme.js --fourslash --passed=3 --total=50
  *
  *   # Update emit progress (JS and/or DTS):
  *   node dist/update-readme.js --emit --js-passed=37 --js-total=448 --dts-passed=0 --dts-total=0
- *
- *   # Update all (separate invocations):
- *   node dist/update-readme.js --passed=10184 --total=12379
- *   node dist/update-readme.js --fourslash --passed=3 --total=50
- *   node dist/update-readme.js --emit --js-passed=37 --js-total=448
  */
 
 import * as fs from 'fs';
@@ -71,6 +69,18 @@ function updateSection(readme: string, startMarker: string, endMarker: string, n
   return readme.slice(0, startIdx) + newContent + readme.slice(endIdx + endMarker.length);
 }
 
+function updateTsVersion(tsVersion: string): void {
+  let readme = fs.readFileSync(README_PATH, 'utf-8');
+
+  const newContent = `<!-- TS_VERSION_START -->
+Currently targeting \`TypeScript\`@\`${tsVersion}\`
+<!-- TS_VERSION_END -->`;
+
+  readme = updateSection(readme, '<!-- TS_VERSION_START -->', '<!-- TS_VERSION_END -->', newContent);
+  fs.writeFileSync(README_PATH, readme);
+  console.log(`Updated README.md with TypeScript version: ${tsVersion}`);
+}
+
 function updateReadme(stats: ProgressStats, section: 'conformance' | 'fourslash'): void {
   let readme = fs.readFileSync(README_PATH, 'utf-8');
 
@@ -78,8 +88,6 @@ function updateReadme(stats: ProgressStats, section: 'conformance' | 'fourslash'
 
   if (section === 'conformance') {
     const newContent = `<!-- CONFORMANCE_START -->
-Currently targeting \`TypeScript\`@\`${stats.tsVersion}\`
-
 \`\`\`
 ${progressBar}
 \`\`\`
@@ -89,8 +97,6 @@ ${progressBar}
     console.log(`Updated README.md with conformance stats:`);
   } else {
     const newContent = `<!-- FOURSLASH_START -->
-Currently targeting \`TypeScript\`@\`${stats.tsVersion}\`
-
 \`\`\`
 ${progressBar}
 \`\`\`
@@ -102,7 +108,6 @@ ${progressBar}
 
   fs.writeFileSync(README_PATH, readme);
   console.log(`  Pass Rate: ${stats.passRate.toFixed(1)}% (${stats.passed}/${stats.total})`);
-  console.log(`  TypeScript: ${stats.tsVersion}`);
 }
 
 function updateEmitReadme(stats: EmitStats): void {
@@ -133,7 +138,8 @@ function main(): void {
   const args = process.argv.slice(2);
   const stats: Partial<ProgressStats> = {};
   const emitStats: Partial<EmitStats> = {};
-  let section: 'conformance' | 'fourslash' | 'emit' = 'conformance';
+  let section: 'conformance' | 'fourslash' | 'emit' | 'version' = 'conformance';
+  let tsVersion: string | undefined;
 
   for (const arg of args) {
     if (arg.startsWith('--passed=')) {
@@ -141,7 +147,7 @@ function main(): void {
     } else if (arg.startsWith('--total=')) {
       stats.total = parseInt(arg.split('=')[1], 10);
     } else if (arg.startsWith('--ts-version=')) {
-      stats.tsVersion = arg.split('=')[1];
+      tsVersion = arg.split('=')[1];
     } else if (arg.startsWith('--pass-rate=')) {
       stats.passRate = parseFloat(arg.split('=')[1]);
     } else if (arg === '--fourslash' || arg === '--lsp') {
@@ -157,6 +163,12 @@ function main(): void {
     } else if (arg.startsWith('--dts-total=')) {
       emitStats.dtsTotal = parseInt(arg.split('=')[1], 10);
     }
+  }
+
+  // If only --ts-version is provided, update version and exit
+  if (tsVersion && stats.passed === undefined && emitStats.jsPassed === undefined) {
+    updateTsVersion(tsVersion);
+    return;
   }
 
   // Handle emit section
@@ -181,13 +193,15 @@ function main(): void {
   }
 
   if (stats.passed === undefined || stats.total === undefined || stats.passRate === undefined) {
-    console.error('Usage: node dist/update-readme.js [--fourslash|--emit] --passed=N --total=N [--ts-version=VERSION]');
+    console.error('Usage: node dist/update-readme.js [--fourslash|--emit] --passed=N --total=N');
+    console.error('       node dist/update-readme.js --ts-version=VERSION');
     console.error('');
     console.error('Sections:');
     console.error('  (default)     Update conformance progress');
     console.error('  --fourslash   Update fourslash/LSP progress');
     console.error('  --lsp         Alias for --fourslash');
     console.error('  --emit        Update emit progress (use --js-passed/--js-total/--dts-passed/--dts-total)');
+    console.error('  --ts-version  Update TypeScript version only');
     process.exit(1);
   }
 
