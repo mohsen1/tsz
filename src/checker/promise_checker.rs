@@ -117,6 +117,24 @@ impl<'a> CheckerState<'a> {
         self.ctx.has_name_in_lib("Promise")
     }
 
+    /// Check if the global Promise type is available, emit TS2318 if not.
+    ///
+    /// Called when processing async functions to ensure Promise is available.
+    /// Matches TSC behavior which emits TS2318 "Cannot find global type 'Promise'"
+    /// when the Promise type is not in scope.
+    pub fn check_global_promise_available(&mut self) {
+        if !self.ctx.has_name_in_lib("Promise") && !self.ctx.no_lib() {
+            use crate::lib_loader;
+            self.ctx
+                .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                    "Promise",
+                    self.ctx.file_name.clone(),
+                    0,
+                    0,
+                ));
+        }
+    }
+
     // =========================================================================
     // Type Argument Extraction
     // =========================================================================

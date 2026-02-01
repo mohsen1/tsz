@@ -662,18 +662,31 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
         let path = match lib_map.get(&lib_name) {
             Some(path) => path.clone(),
             None => {
+                // Handle tsc compatibility aliases:
+                // - "lib" refers to lib.d.ts which is equivalent to es5.full.d.ts
+                // - "es6" refers to lib.es6.d.ts which is equivalent to es2015.full.d.ts
+                // - "es7" refers to lib.es2016.d.ts which is equivalent to es2016.d.ts
                 let alias = match lib_name.as_str() {
-                    "lib" => Some("es5"),
-                    "es6" => Some("es2015"),
+                    "lib" => Some("es5.full"),
+                    "es6" => Some("es2015.full"),
+                    "es7" => Some("es2016"),
                     _ => None,
                 };
                 let Some(alias) = alias else {
-                    return Err(anyhow!("unsupported compilerOptions.lib '{}'", lib_name));
+                    return Err(anyhow!(
+                        "unsupported compilerOptions.lib '{}' (not found in {})",
+                        lib_name,
+                        lib_dir.display()
+                    ));
                 };
-                lib_map
-                    .get(alias)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("unsupported compilerOptions.lib '{}'", lib_name))?
+                lib_map.get(alias).cloned().ok_or_else(|| {
+                    anyhow!(
+                        "unsupported compilerOptions.lib '{}' (alias '{}' not found in {})",
+                        lib_name,
+                        alias,
+                        lib_dir.display()
+                    )
+                })?
             }
         };
         resolved.push(path.clone());
@@ -691,26 +704,20 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
 pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<PathBuf>> {
     let default_lib = default_lib_name_for_target(target);
 
-    // Try to resolve from disk first
+    // Try to resolve the full lib (includes DOM) first
     match resolve_lib_files(&[default_lib.to_string()]) {
-        Ok(files) => return Ok(files),
-        Err(_) => {} // Fall through to fallbacks
+        Ok(files) if !files.is_empty() => return Ok(files),
+        _ => {} // Fall through to fallbacks
     };
 
-    let mut fallbacks = Vec::new();
-    if default_lib == "lib" {
-        fallbacks.push("es5");
-    }
-    if default_lib == "es6" {
-        fallbacks.push("es2015");
-    }
-    if default_lib != "lib" {
-        fallbacks.push("lib");
-    }
-
-    for fallback in &fallbacks {
-        if let Ok(files) = resolve_lib_files(&[fallback.to_string()]) {
-            return Ok(files);
+    // Fallback to core lib (without DOM) if full lib not available
+    // This maintains compatibility when only core libs are present
+    let core_lib = core_lib_name_for_target(target);
+    if core_lib != default_lib {
+        if let Ok(files) = resolve_lib_files(&[core_lib.to_string()]) {
+            if !files.is_empty() {
+                return Ok(files);
+            }
         }
     }
 
@@ -721,18 +728,45 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
 
 /// Get the default lib name for a target.
 ///
-/// This matches tsc's default behavior:
+/// This matches tsc's default behavior exactly:
 /// - Each target loads the corresponding `.full` lib which includes:
 ///   - The ES version libs (e.g., es5, es2015.promise, etc.)
-///   - DOM types
+///   - DOM types (document, window, console, fetch, etc.)
 ///   - ScriptHost types
 ///
-/// Returns the core lib name (without DOM) - matches tsc conformance test behavior.
-/// Use core libs by default since:
-/// 1. Our conformance cache was generated with core libs (es5.d.ts, not es5.full.d.ts)
-/// 2. Core libs are smaller (~220KB vs ~2MB for .full)
-/// 3. Tests that need DOM should specify @lib: dom explicitly
+/// The mapping matches TypeScript's `getDefaultLibFileName()` in utilitiesPublic.ts:
+/// - ES3/ES5 → lib.d.ts (equivalent to es5.full.d.ts in source tree)
+/// - ES2015  → lib.es6.d.ts (equivalent to es2015.full.d.ts in source tree)
+/// - ES2016+ → lib.es20XX.full.d.ts
+/// - ESNext  → lib.esnext.full.d.ts
+///
+/// Note: The source tree uses `es5.full.d.ts` naming, while built TypeScript uses `lib.d.ts`.
+/// We use the source tree naming since that's what exists in TypeScript/src/lib.
 pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
+    match target {
+        // tsc maps ES3/ES5 to lib.d.ts, which equals es5.full.d.ts (ES5 + DOM + ScriptHost)
+        ScriptTarget::ES3 | ScriptTarget::ES5 => "es5.full",
+        // tsc maps ES2015 to lib.es6.d.ts, which equals es2015.full.d.ts (ES2015 + DOM + ScriptHost)
+        ScriptTarget::ES2015 => "es2015.full",
+        // ES2016+ map to lib.es20XX.full.d.ts
+        ScriptTarget::ES2016 => "es2016.full",
+        ScriptTarget::ES2017 => "es2017.full",
+        ScriptTarget::ES2018 => "es2018.full",
+        ScriptTarget::ES2019 => "es2019.full",
+        ScriptTarget::ES2020 => "es2020.full",
+        ScriptTarget::ES2021 => "es2021.full",
+        ScriptTarget::ES2022 => "es2022.full",
+        ScriptTarget::ESNext => "esnext.full",
+    }
+}
+
+/// Get the core lib name for a target (without DOM/ScriptHost).
+///
+/// This is useful for conformance testing where:
+/// 1. Tests don't need DOM types
+/// 2. Core libs are smaller and faster to load
+/// 3. Tests that need DOM should specify @lib: dom explicitly
+pub fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
     match target {
         ScriptTarget::ES3 | ScriptTarget::ES5 => "es5",
         ScriptTarget::ES2015 => "es2015",

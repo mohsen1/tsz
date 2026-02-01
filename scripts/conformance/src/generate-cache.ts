@@ -168,7 +168,7 @@ async function generateCache(workerCount: number): Promise<void> {
       workerData: { libSource, libDir, testsBasePath: TESTS_BASE_PATH },
     });
 
-    worker.on('message', (msg: { id: number; codes: number[]; error?: string; type?: string }) => {
+    worker.on('message', (msg: { id: number; codes: number[]; error?: string; type?: string; skipped?: boolean; reason?: string }) => {
       if (msg.type === 'ready') return;
 
       const p = pending.get(msg.id);
@@ -176,6 +176,9 @@ async function generateCache(workerCount: number): Promise<void> {
         pending.delete(msg.id);
         if (msg.error) {
           errors++;
+          processResult(p.filePath, []);
+        } else if (msg.skipped) {
+          // Skipped tests get empty codes - they won't be compared during conformance testing
           processResult(p.filePath, []);
         } else {
           processResult(p.filePath, msg.codes);

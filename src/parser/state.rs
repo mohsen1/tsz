@@ -284,6 +284,20 @@ impl ParserState {
             }
         }
 
+        // Check if current token is 'yield' (either as keyword or identifier)
+        // TS1359: 'yield' is a reserved word in generator functions
+        let is_yield = self.is_token(SyntaxKind::YieldKeyword)
+            || (self.is_token(SyntaxKind::Identifier)
+                && self.scanner.get_token_value_ref() == "yield");
+
+        if is_yield && self.in_generator_context() {
+            self.parse_error_at_current_token(
+                "Identifier expected. 'yield' is a reserved word that cannot be used here.",
+                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL, // Same code as await (TS1359)
+            );
+            return true;
+        }
+
         false
     }
 

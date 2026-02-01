@@ -261,7 +261,29 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     pub fn get_generator_return_type(&mut self, func_idx: NodeIndex) -> TypeId {
         let info = self.infer_generator_type(func_idx);
 
-        // Create Generator<Y, R, N> type reference
+        // Try to find the global Generator type from lib contexts
+        // TSC emits TS2318 when Generator is not available
+        if let Some(gen_base) = self.lookup_global_type("Generator") {
+            return self.ctx.types.application(
+                gen_base,
+                vec![info.yield_type, info.return_type, info.next_type],
+            );
+        }
+
+        // Generator global not found - emit TS2318 if lib files should be loaded
+        // but aren't providing the type (matching TSC behavior)
+        if self.ctx.has_lib_loaded() || !self.ctx.no_lib() {
+            use crate::lib_loader;
+            self.ctx
+                .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                    "Generator",
+                    self.ctx.file_name.clone(),
+                    0,
+                    0,
+                ));
+        }
+
+        // Fall back to structural Generator type
         self.create_generator_type(info.yield_type, info.return_type, info.next_type)
     }
 
@@ -269,7 +291,31 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     pub fn get_async_generator_return_type(&mut self, func_idx: NodeIndex) -> TypeId {
         let info = self.infer_generator_type(func_idx);
 
-        // Create AsyncGenerator<Y, R, N> type reference
+        // Try to find the global AsyncGenerator type from lib contexts
+        // TSC emits TS2318 when AsyncGenerator is not available
+        if let Some(async_gen_base) = self.lookup_global_type("AsyncGenerator") {
+            return self.ctx.types.application(
+                async_gen_base,
+                vec![info.yield_type, info.return_type, info.next_type],
+            );
+        }
+
+        // AsyncGenerator global not found - emit TS2318 if lib files should be loaded
+        // but aren't providing the type (matching TSC behavior)
+        if self.ctx.has_lib_loaded() || !self.ctx.no_lib() {
+            // Use lib_loader to emit the error at position 0 (file-level diagnostic)
+            // This matches TSC which emits global type errors at the start of the file
+            use crate::lib_loader;
+            self.ctx
+                .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                    "AsyncGenerator",
+                    self.ctx.file_name.clone(),
+                    0,
+                    0,
+                ));
+        }
+
+        // Fall back to structural AsyncGenerator type
         self.create_async_generator_type(info.yield_type, info.return_type, info.next_type)
     }
 
