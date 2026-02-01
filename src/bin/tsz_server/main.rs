@@ -871,7 +871,7 @@ impl Server {
             "fileReferences" => self.handle_file_references(seq, &request),
             "implementation" | "implementation-full" => self.handle_implementation(seq, &request),
             "getOutliningSpans" => self.handle_outlining_spans(seq, &request),
-            "brace" => self.stub_response(seq, &request, Some(serde_json::json!([]))),
+            "brace" => self.handle_brace(seq, &request),
             "emitOutput" | "emit-output" => self.stub_response(
                 seq,
                 &request,
@@ -1569,24 +1569,19 @@ impl Server {
                 .iter()
                 .map(|item| {
                     let kind = Self::completion_kind_to_str(item.kind);
-                    // Map internal sort_text to tsserver's SortText format
-                    let tsserver_sort_text = match item.sort_text.as_deref() {
-                        Some("0") => "11", // LOCAL_DECLARATION -> LocationPriority
-                        Some("1") => "11", // MEMBER -> LocationPriority
-                        Some("2") => "11", // TYPE_DECLARATION -> LocationPriority
-                        Some("3") => "16", // AUTO_IMPORT -> AutoImportSuggestions
-                        Some("5") => "15", // KEYWORD -> GlobalsOrKeywords
-                        _ => "11",         // Default to LocationPriority
-                    };
+                    // sort_text values already use tsserver's SortText format directly
+                    let sort_text = item.effective_sort_text();
                     let mut entry = serde_json::json!({
                         "name": item.label,
                         "kind": kind,
-                        "sortText": tsserver_sort_text,
+                        "sortText": sort_text,
                     });
                     if let Some(ref modifiers) = item.kind_modifiers {
                         entry["kindModifiers"] = serde_json::json!(modifiers);
                     } else if let Some(ref detail) = item.detail {
                         entry["kindModifiers"] = serde_json::json!(detail);
+                    } else {
+                        entry["kindModifiers"] = serde_json::json!("");
                     }
                     entry
                 })
@@ -1707,10 +1702,10 @@ impl Server {
                         .parameters
                         .iter()
                         .map(|p| {
+                            let display_parts = Self::tokenize_param_label(&p.label);
                             let mut param = serde_json::json!({
                                 "name": p.name,
-                                "display": [{"text": &p.label, "kind": "text"}],
-                                "displayParts": [{"text": &p.label, "kind": "text"}],
+                                "displayParts": display_parts,
                                 "isOptional": p.is_optional,
                                 "isRest": p.is_rest,
                             });
@@ -1723,31 +1718,52 @@ impl Server {
                             param
                         })
                         .collect();
+                    let name_kind = if sig.is_constructor { "className" } else { "functionName" };
+                    let prefix_parts = Self::tokenize_sig_prefix(&sig.prefix, name_kind);
+                    let suffix_parts = Self::tokenize_sig_suffix(&sig.suffix, name_kind);
                     let mut item = serde_json::json!({
                         "isVariadic": sig.is_variadic,
-                        "prefixDisplayParts": [{"text": &sig.prefix, "kind": "text"}],
-                        "suffixDisplayParts": [{"text": &sig.suffix, "kind": "text"}],
-                        "separatorDisplayParts": [{"text": ", ", "kind": "punctuation"}],
+                        "prefixDisplayParts": prefix_parts,
+                        "suffixDisplayParts": suffix_parts,
+                        "separatorDisplayParts": [
+                            {"text": ",", "kind": "punctuation"},
+                            {"text": " ", "kind": "space"}
+                        ],
                         "parameters": params,
-                        "tags": [],
                     });
                     if let Some(ref doc) = sig.documentation {
                         item["documentation"] = serde_json::json!([{"text": doc, "kind": "text"}]);
                     } else {
                         item["documentation"] = serde_json::json!([]);
                     }
+                    // Build tags from parameter documentation
+                    let tags: Vec<serde_json::Value> = sig.parameters.iter()
+                        .filter_map(|p| {
+                            let doc = p.documentation.as_ref()?;
+                            if doc.is_empty() { return None; }
+                            Some(serde_json::json!({
+                                "name": "param",
+                                "text": [
+                                    {"text": &p.name, "kind": "parameterName"},
+                                    {"text": " ", "kind": "space"},
+                                    {"text": doc, "kind": "text"}
+                                ]
+                            }))
+                        })
+                        .collect();
+                    item["tags"] = serde_json::json!(tags);
                     item
                 })
                 .collect();
             Some(serde_json::json!({
                 "items": items,
                 "applicableSpan": {
-                    "start": Self::lsp_to_tsserver_position(&position),
-                    "end": Self::lsp_to_tsserver_position(&position),
+                    "start": sig_help.applicable_span_start,
+                    "length": sig_help.applicable_span_length,
                 },
                 "selectedItemIndex": sig_help.active_signature,
                 "argumentIndex": sig_help.active_parameter,
-                "argumentCount": sig_help.active_parameter + 1,
+                "argumentCount": sig_help.argument_count,
             }))
         })();
         // Always return a body - processResponse asserts !!response.body.
@@ -1756,13 +1772,169 @@ impl Server {
         let body = result.unwrap_or_else(|| {
             serde_json::json!({
                 "items": [],
-                "applicableSpan": { "start": { "line": 1, "offset": 1 }, "end": { "line": 1, "offset": 1 } },
+                "applicableSpan": { "start": 0, "length": 0 },
                 "selectedItemIndex": 0,
                 "argumentIndex": 0,
                 "argumentCount": 0,
             })
         });
         self.stub_response(seq, request, Some(body))
+    }
+
+    /// Determine the display part kind for a type string.
+    fn type_display_kind(type_str: &str) -> &'static str {
+        match type_str {
+            "void" | "number" | "string" | "boolean" | "any" | "never" | "undefined" | "null"
+            | "unknown" | "object" | "symbol" | "bigint" | "true" | "false" => "keyword",
+            _ => "text",
+        }
+    }
+
+    /// Tokenize a signature prefix like "foo(" or "foo<T>(" into display parts.
+    fn tokenize_sig_prefix(prefix: &str, name_kind: &str) -> Vec<serde_json::Value> {
+        let mut parts = Vec::new();
+        // The prefix ends with '('
+        if let Some(stripped) = prefix.strip_suffix('(') {
+            // Check for type params like "foo<T>"
+            if let Some(angle_pos) = stripped.find('<') {
+                let name = &stripped[..angle_pos];
+                if !name.is_empty() {
+                    parts.push(serde_json::json!({"text": name, "kind": name_kind}));
+                }
+                parts.push(serde_json::json!({"text": "<", "kind": "punctuation"}));
+                let type_params_inner = &stripped[angle_pos + 1..];
+                let type_params_inner = type_params_inner.strip_suffix('>').unwrap_or(type_params_inner);
+                // Tokenize type parameters
+                Self::tokenize_type_params(type_params_inner, &mut parts);
+                parts.push(serde_json::json!({"text": ">", "kind": "punctuation"}));
+            } else if !stripped.is_empty() {
+                parts.push(serde_json::json!({"text": stripped, "kind": name_kind}));
+            }
+            parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+        } else {
+            // Fallback
+            parts.push(serde_json::json!({"text": prefix, "kind": "text"}));
+        }
+        parts
+    }
+
+    /// Tokenize type parameters like "T, U extends string" into display parts.
+    fn tokenize_type_params(input: &str, parts: &mut Vec<serde_json::Value>) {
+        let params: Vec<&str> = input.split(',').collect();
+        for (i, param) in params.iter().enumerate() {
+            if i > 0 {
+                parts.push(serde_json::json!({"text": ",", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            }
+            let trimmed = param.trim();
+            if let Some(ext_pos) = trimmed.find(" extends ") {
+                let name = &trimmed[..ext_pos];
+                parts.push(serde_json::json!({"text": name, "kind": "typeParameterName"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": "extends", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                let constraint = &trimmed[ext_pos + 9..];
+                let kind = Self::type_display_kind(constraint);
+                parts.push(serde_json::json!({"text": constraint, "kind": kind}));
+            } else {
+                parts.push(serde_json::json!({"text": trimmed, "kind": "typeParameterName"}));
+            }
+        }
+    }
+
+    /// Tokenize a signature suffix like "): void" into display parts.
+    fn tokenize_sig_suffix(suffix: &str, name_kind: &str) -> Vec<serde_json::Value> {
+        let mut parts = Vec::new();
+        // Suffix is typically "): returnType"
+        if let Some(rest) = suffix.strip_prefix(')') {
+            parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+            if let Some(rest) = rest.strip_prefix(':') {
+                parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                if let Some(rest) = rest.strip_prefix(' ') {
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    // For constructors, use className kind for return type
+                    if name_kind == "className" {
+                        parts.push(serde_json::json!({"text": rest, "kind": "className"}));
+                    } else {
+                        Self::tokenize_type_expr(rest, &mut parts);
+                    }
+                } else if !rest.is_empty() {
+                    if name_kind == "className" {
+                        parts.push(serde_json::json!({"text": rest, "kind": "className"}));
+                    } else {
+                        Self::tokenize_type_expr(rest, &mut parts);
+                    }
+                }
+            } else if !rest.is_empty() {
+                parts.push(serde_json::json!({"text": rest, "kind": "text"}));
+            }
+        } else {
+            parts.push(serde_json::json!({"text": suffix, "kind": "text"}));
+        }
+        parts
+    }
+
+    /// Tokenize a type expression into display parts.
+    fn tokenize_type_expr(type_str: &str, parts: &mut Vec<serde_json::Value>) {
+        // Handle type predicates: "x is Type"
+        if let Some(is_pos) = type_str.find(" is ") {
+            let before = &type_str[..is_pos];
+            // Check for "asserts x is Type"
+            if let Some(param_name) = before.strip_prefix("asserts ") {
+                parts.push(serde_json::json!({"text": "asserts", "kind": "keyword"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": param_name, "kind": "parameterName"}));
+            } else {
+                parts.push(serde_json::json!({"text": before, "kind": "parameterName"}));
+            }
+            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            parts.push(serde_json::json!({"text": "is", "kind": "keyword"}));
+            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            let after = &type_str[is_pos + 4..];
+            let kind = Self::type_display_kind(after);
+            parts.push(serde_json::json!({"text": after, "kind": kind}));
+            return;
+        }
+        let kind = Self::type_display_kind(type_str);
+        parts.push(serde_json::json!({"text": type_str, "kind": kind}));
+    }
+
+    /// Tokenize a parameter label like "x: number" or "...args: string[]" into display parts.
+    fn tokenize_param_label(label: &str) -> Vec<serde_json::Value> {
+        let mut parts = Vec::new();
+        let remaining = label;
+
+        // Handle rest parameter prefix
+        let remaining = if let Some(rest) = remaining.strip_prefix("...") {
+            parts.push(serde_json::json!({"text": "...", "kind": "punctuation"}));
+            rest
+        } else {
+            remaining
+        };
+
+        // Split at ": " for name and type
+        if let Some(colon_pos) = remaining.find(": ") {
+            let name_part = &remaining[..colon_pos];
+            // Handle optional marker
+            let (name, has_question) = if let Some(n) = name_part.strip_suffix('?') {
+                (n, true)
+            } else {
+                (name_part, false)
+            };
+            parts.push(serde_json::json!({"text": name, "kind": "parameterName"}));
+            if has_question {
+                parts.push(serde_json::json!({"text": "?", "kind": "punctuation"}));
+            }
+            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+            let type_str = &remaining[colon_pos + 2..];
+            Self::tokenize_type_expr(type_str, &mut parts);
+        } else {
+            // No colon - just a parameter name
+            parts.push(serde_json::json!({"text": remaining, "kind": "parameterName"}));
+        }
+
+        parts
     }
 
     fn handle_suggestion_diagnostics_sync(
@@ -2030,101 +2202,68 @@ impl Server {
     fn handle_rename(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
         let result = (|| -> Option<serde_json::Value> {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
-            let new_name = request
-                .arguments
-                .get("findInStrings")
-                .and_then(|v| v.as_str())
-                .or_else(|| {
-                    // The actual tsserver rename command expects the new name from
-                    // a separate "rename" request, not from the initial "rename" command.
-                    // The initial command returns info + locations, not the edits.
-                    None
-                });
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 RenameProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
 
-            // First check if rename is possible (prepare)
-            let rename_range = provider.prepare_rename(position);
-            if rename_range.is_none() {
+            // Use the rich prepare_rename_info to get display name, kind, etc.
+            let info = provider.prepare_rename_info(root, position);
+            if !info.can_rename {
                 return Some(serde_json::json!({
                     "info": {
                         "canRename": false,
-                        "localizedErrorMessage": "You cannot rename this element."
+                        "localizedErrorMessage": info.localized_error_message.unwrap_or_else(|| "You cannot rename this element.".to_string())
                     },
                     "locs": []
                 }));
             }
 
-            // If new_name is provided, perform the rename; otherwise just return locations
-            if let Some(new_name) = new_name {
-                match provider.provide_rename_edits(root, position, new_name.to_string()) {
-                    Ok(edit) => {
-                        let locs: Vec<serde_json::Value> = edit
-                            .changes
-                            .iter()
-                            .map(|(file_path, edits)| {
-                                let file_locs: Vec<serde_json::Value> = edits
-                                    .iter()
-                                    .map(|e| {
-                                        serde_json::json!({
-                                            "start": Self::lsp_to_tsserver_position(&e.range.start),
-                                            "end": Self::lsp_to_tsserver_position(&e.range.end),
-                                        })
-                                    })
-                                    .collect();
-                                serde_json::json!({
-                                    "file": file_path,
-                                    "locs": file_locs,
-                                })
-                            })
-                            .collect();
-                        Some(serde_json::json!({
-                            "info": { "canRename": true, "displayName": new_name, "fullDisplayName": new_name, "kind": "unknown", "kindModifiers": "", "triggerSpan": { "start": Self::lsp_to_tsserver_position(&rename_range.as_ref().unwrap().start), "length": 0 }},
-                            "locs": locs,
-                        }))
-                    }
-                    Err(msg) => Some(serde_json::json!({
-                        "info": { "canRename": false, "localizedErrorMessage": msg },
-                        "locs": []
-                    })),
-                }
-            } else {
-                // No new name - just return rename info with locations from references
-                let find_refs =
-                    FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
-                let locations = find_refs.find_references(root, position);
-                let file_locs: Vec<serde_json::Value> = locations
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|loc| {
-                        serde_json::json!({
-                            "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                            "end": Self::lsp_to_tsserver_position(&loc.range.end),
-                        })
+            // Compute trigger span length from the range
+            let start_offset = line_map.position_to_offset(
+                info.trigger_span.start,
+                &source_text,
+            )
+            .unwrap_or(0) as usize;
+            let end_offset = line_map.position_to_offset(
+                info.trigger_span.end,
+                &source_text,
+            )
+            .unwrap_or(0) as usize;
+            let trigger_length = end_offset.saturating_sub(start_offset);
+
+            // Get rename locations from references
+            let find_refs =
+                FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let locations = find_refs.find_references(root, position);
+            let file_locs: Vec<serde_json::Value> = locations
+                .unwrap_or_default()
+                .iter()
+                .map(|loc| {
+                    serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
                     })
-                    .collect();
-                let span = rename_range.as_ref().unwrap();
-                Some(serde_json::json!({
-                    "info": {
-                        "canRename": true,
-                        "displayName": "",
-                        "fullDisplayName": "",
-                        "kind": "unknown",
-                        "kindModifiers": "",
-                        "triggerSpan": {
-                            "start": Self::lsp_to_tsserver_position(&span.start),
-                            "length": 0
-                        }
-                    },
-                    "locs": [{
-                        "file": file,
-                        "locs": file_locs,
-                    }]
-                }))
-            }
+                })
+                .collect();
+            Some(serde_json::json!({
+                "info": {
+                    "canRename": true,
+                    "displayName": info.display_name,
+                    "fullDisplayName": info.full_display_name,
+                    "kind": info.kind,
+                    "kindModifiers": info.kind_modifiers,
+                    "triggerSpan": {
+                        "start": Self::lsp_to_tsserver_position(&info.trigger_span.start),
+                        "length": trigger_length
+                    }
+                },
+                "locs": [{
+                    "file": file,
+                    "locs": file_locs,
+                }]
+            }))
         })();
         self.stub_response(
             seq,
@@ -2171,7 +2310,6 @@ impl Server {
                                 "fileName": file,
                                 "textChanges": []
                             }],
-                            "commands": [],
                             "fixId": fix_id,
                             "fixAllDescription": fix_all_desc
                         }));
@@ -2876,37 +3014,33 @@ impl Server {
             let provider = FoldingRangeProvider::new(&arena, &line_map, &source_text);
             let ranges = provider.get_folding_ranges(root);
 
-            // Pre-compute line lengths for offset calculation
-            let lines: Vec<&str> = source_text.lines().collect();
-
             let body: Vec<serde_json::Value> = ranges
                 .iter()
                 .map(|fr| {
-                    // Compute end offset: length of the end line + 1 (1-based)
-                    let end_line_len = lines
-                        .get(fr.end_line as usize)
-                        .map(|l| l.len() as u32)
-                        .unwrap_or(0);
-                    let start_line_len = lines
-                        .get(fr.start_line as usize)
-                        .map(|l| l.len() as u32)
-                        .unwrap_or(0);
+                    // Convert byte offsets to precise line/offset positions
+                    let start_pos = line_map.offset_to_position(fr.start_offset, &source_text);
+                    let end_pos = line_map.offset_to_position(fr.end_offset, &source_text);
+                    let hint_end_pos =
+                        line_map.offset_to_position(fr.end_offset.min(fr.start_offset + 200), &source_text);
 
                     let mut span = serde_json::json!({
                         "textSpan": {
-                            "start": { "line": fr.start_line + 1, "offset": 1 },
-                            "end": { "line": fr.end_line + 1, "offset": end_line_len + 1 },
+                            "start": Self::lsp_to_tsserver_position(&start_pos),
+                            "end": Self::lsp_to_tsserver_position(&end_pos),
                         },
                         "hintSpan": {
-                            "start": { "line": fr.start_line + 1, "offset": 1 },
-                            "end": { "line": fr.start_line + 1, "offset": start_line_len + 1 },
+                            "start": Self::lsp_to_tsserver_position(&start_pos),
+                            "end": Self::lsp_to_tsserver_position(
+                                if hint_end_pos.line == start_pos.line { &hint_end_pos } else { &end_pos }
+                            ),
                         },
                         "bannerText": "...",
                         "autoCollapse": false,
                     });
-                    if let Some(ref kind) = fr.kind {
-                        span["kind"] = serde_json::json!(kind);
-                    }
+                    span["kind"] = serde_json::json!(match fr.kind.as_deref() {
+                        Some(k) => k,
+                        None => "code",
+                    });
                     span
                 })
                 .collect();
@@ -2916,6 +3050,73 @@ impl Server {
     }
 
     // Editing handlers extracted to handlers_editing.rs
+
+    fn handle_brace(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let result = (|| -> Option<serde_json::Value> {
+            let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
+            let (arena, _binder, _root, source_text) = self.parse_and_bind_file(&file)?;
+            let line_map = LineMap::build(&source_text);
+            let position = Self::tsserver_to_lsp_position(line, offset);
+            let byte_offset = line_map.position_to_offset(position, &source_text)? as usize;
+
+            let bytes = source_text.as_bytes();
+            if byte_offset >= bytes.len() {
+                return Some(serde_json::json!([]));
+            }
+
+            let ch = bytes[byte_offset];
+
+            // Build a map of which positions are "in code" (not inside strings/comments)
+            let code_map = build_code_map(bytes);
+
+            if !code_map[byte_offset] {
+                return Some(serde_json::json!([]));
+            }
+
+            let match_pos = match ch {
+                b'{' => scan_forward(bytes, &code_map, byte_offset, b'{', b'}'),
+                b'(' => scan_forward(bytes, &code_map, byte_offset, b'(', b')'),
+                b'[' => scan_forward(bytes, &code_map, byte_offset, b'[', b']'),
+                b'}' => scan_backward(bytes, &code_map, byte_offset, b'}', b'{'),
+                b')' => scan_backward(bytes, &code_map, byte_offset, b')', b'('),
+                b']' => scan_backward(bytes, &code_map, byte_offset, b']', b'['),
+                b'<' | b'>' => {
+                    // For angle brackets, use AST-based matching (not text scanning)
+                    // because < and > are also comparison operators
+                    find_angle_bracket_match(&arena, &source_text, byte_offset)
+                }
+                _ => None,
+            };
+
+            if let Some(match_offset) = match_pos {
+                let pos1 = line_map.offset_to_position(byte_offset as u32, &source_text);
+                let pos1_end =
+                    line_map.offset_to_position((byte_offset + 1) as u32, &source_text);
+                let pos2 = line_map.offset_to_position(match_offset as u32, &source_text);
+                let pos2_end =
+                    line_map.offset_to_position((match_offset + 1) as u32, &source_text);
+
+                let span1 = serde_json::json!({
+                    "start": {"line": pos1.line + 1, "offset": pos1.character + 1},
+                    "end": {"line": pos1_end.line + 1, "offset": pos1_end.character + 1}
+                });
+                let span2 = serde_json::json!({
+                    "start": {"line": pos2.line + 1, "offset": pos2.character + 1},
+                    "end": {"line": pos2_end.line + 1, "offset": pos2_end.character + 1}
+                });
+
+                // Return sorted by position
+                if byte_offset < match_offset {
+                    Some(serde_json::json!([span1, span2]))
+                } else {
+                    Some(serde_json::json!([span2, span1]))
+                }
+            } else {
+                Some(serde_json::json!([]))
+            }
+        })();
+        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
 
     // =========================================================================
     // Legacy Protocol Handling
@@ -3414,6 +3615,285 @@ impl Server {
             no_unused_parameters: options.no_unused_parameters,
         }
     }
+}
+
+// =============================================================================
+// Brace Matching Helpers
+// =============================================================================
+
+/// Build a boolean map indicating which byte positions are "in code"
+/// (i.e., not inside a string literal or comment).
+fn build_code_map(bytes: &[u8]) -> Vec<bool> {
+    let len = bytes.len();
+    let mut map = vec![true; len];
+    let mut i = 0;
+    while i < len {
+        match bytes[i] {
+            b'/' if i + 1 < len => {
+                if bytes[i + 1] == b'/' {
+                    // Single-line comment
+                    map[i] = false;
+                    map[i + 1] = false;
+                    i += 2;
+                    while i < len && bytes[i] != b'\n' {
+                        map[i] = false;
+                        i += 1;
+                    }
+                } else if bytes[i + 1] == b'*' {
+                    // Multi-line comment
+                    map[i] = false;
+                    map[i + 1] = false;
+                    i += 2;
+                    while i < len {
+                        if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
+                            map[i] = false;
+                            map[i + 1] = false;
+                            i += 2;
+                            break;
+                        }
+                        map[i] = false;
+                        i += 1;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            b'"' | b'\'' => {
+                let quote = bytes[i];
+                map[i] = false;
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        map[i] = false;
+                        i += 1;
+                        if i < len {
+                            map[i] = false;
+                            i += 1;
+                        }
+                    } else if bytes[i] == quote {
+                        map[i] = false;
+                        i += 1;
+                        break;
+                    } else if bytes[i] == b'\n' {
+                        // Unterminated string at newline
+                        break;
+                    } else {
+                        map[i] = false;
+                        i += 1;
+                    }
+                }
+            }
+            b'`' => {
+                // Template literal - mark everything inside as non-code
+                // except for ${...} substitutions
+                map[i] = false;
+                i += 1;
+                let mut depth = 0u32;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        map[i] = false;
+                        i += 1;
+                        if i < len {
+                            map[i] = false;
+                            i += 1;
+                        }
+                    } else if bytes[i] == b'$' && i + 1 < len && bytes[i + 1] == b'{' {
+                        // Template substitution - these are code
+                        depth += 1;
+                        i += 2;
+                    } else if bytes[i] == b'{' && depth > 0 {
+                        depth += 1;
+                        i += 1;
+                    } else if bytes[i] == b'}' && depth > 0 {
+                        depth -= 1;
+                        i += 1;
+                    } else if bytes[i] == b'`' && depth == 0 {
+                        map[i] = false;
+                        i += 1;
+                        break;
+                    } else {
+                        if depth == 0 {
+                            map[i] = false;
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    map
+}
+
+/// Scan forward from `start` (exclusive) to find the matching closing brace.
+/// Returns the byte offset of the matching close brace, or None.
+fn scan_forward(bytes: &[u8], code_map: &[bool], start: usize, open: u8, close: u8) -> Option<usize> {
+    let mut depth = 1i32;
+    let mut i = start + 1;
+    while i < bytes.len() {
+        if code_map[i] {
+            if bytes[i] == open {
+                depth += 1;
+            } else if bytes[i] == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Scan backward from `start` (exclusive) to find the matching opening brace.
+/// Returns the byte offset of the matching open brace, or None.
+fn scan_backward(bytes: &[u8], code_map: &[bool], start: usize, close: u8, open: u8) -> Option<usize> {
+    let mut depth = 1i32;
+    let mut i = start;
+    while i > 0 {
+        i -= 1;
+        if code_map[i] {
+            if bytes[i] == close {
+                depth += 1;
+            } else if bytes[i] == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Find matching angle bracket using AST-based analysis.
+/// Returns the byte offset of the matching bracket, or None.
+fn find_angle_bracket_match(arena: &NodeArena, source: &str, pos: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+    // Derive angle bracket positions from NodeList children.
+    // The NodeList pos/end may be 0/0 (unset), but we can find the `<` and `>`
+    // by looking at the first/last child nodes:
+    //   `<` is at first_child.pos - 1
+    //   `>` is at last_child.end - 1 (if parser includes `>` in range)
+    //        or last_child.end (if parser excludes `>` from range)
+    let check_list_nodes = |list: &Option<wasm::parser::base::NodeList>| -> Option<(usize, usize)> {
+        let list = list.as_ref()?;
+        if list.nodes.is_empty() {
+            return None;
+        }
+        let first = arena.nodes.get(list.nodes.first()?.0 as usize)?;
+        let last = arena.nodes.get(list.nodes.last()?.0 as usize)?;
+
+        let open_pos = (first.pos as usize).checked_sub(1)?;
+        if bytes.get(open_pos) != Some(&b'<') {
+            return None;
+        }
+
+        // Try last_child.end - 1 first (parser includes `>` in range)
+        let close_candidate1 = last.end as usize;
+        if close_candidate1 > 0 && bytes.get(close_candidate1 - 1) == Some(&b'>') {
+            return Some((open_pos, close_candidate1 - 1));
+        }
+        // Try last_child.end (parser excludes `>` from range)
+        if bytes.get(close_candidate1) == Some(&b'>') {
+            return Some((open_pos, close_candidate1));
+        }
+        None
+    };
+
+    // Collect from all data pools that have type_parameters or type_arguments
+    for f in &arena.functions {
+        if let Some(pair) = check_list_nodes(&f.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for c in &arena.classes {
+        if let Some(pair) = check_list_nodes(&c.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for iface in &arena.interfaces {
+        if let Some(pair) = check_list_nodes(&iface.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for t in &arena.type_aliases {
+        if let Some(pair) = check_list_nodes(&t.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for c in &arena.call_exprs {
+        if let Some(pair) = check_list_nodes(&c.type_arguments) {
+            pairs.push(pair);
+        }
+    }
+    for t in &arena.type_refs {
+        if let Some(pair) = check_list_nodes(&t.type_arguments) {
+            pairs.push(pair);
+        }
+    }
+    for s in &arena.signatures {
+        if let Some(pair) = check_list_nodes(&s.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for m in &arena.method_decls {
+        if let Some(pair) = check_list_nodes(&m.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for c in &arena.constructors {
+        if let Some(pair) = check_list_nodes(&c.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for ft in &arena.function_types {
+        if let Some(pair) = check_list_nodes(&ft.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for e in &arena.expr_with_type_args {
+        if let Some(pair) = check_list_nodes(&e.type_arguments) {
+            pairs.push(pair);
+        }
+    }
+
+    // Type assertions: <type>expr
+    for node in arena.nodes.iter() {
+        if node.kind == wasm::parser::syntax_kind_ext::TYPE_ASSERTION {
+            if let Some(ta) = arena.type_assertions.get(node.data_index as usize) {
+                let open_pos = node.pos as usize;
+                if bytes.get(open_pos) != Some(&b'<') {
+                    continue;
+                }
+                if let Some(type_node) = arena.nodes.get(ta.type_node.0 as usize) {
+                    // `>` might be at type_node.end - 1 or type_node.end
+                    let end = type_node.end as usize;
+                    if end > 0 && bytes.get(end - 1) == Some(&b'>') {
+                        pairs.push((open_pos, end - 1));
+                    } else if bytes.get(end) == Some(&b'>') {
+                        pairs.push((open_pos, end));
+                    }
+                }
+            }
+        }
+    }
+
+    // Search for the position in collected pairs
+    for (open, close) in pairs {
+        if pos == open {
+            return Some(close);
+        } else if pos == close {
+            return Some(open);
+        }
+    }
+
+    None
 }
 
 // =============================================================================
