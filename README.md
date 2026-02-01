@@ -22,7 +22,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [] NaN% (5,995 / 12,378 tests)
+Progress: [██████████░░░░░░░░░░] 48.4% (5,995 / 12,378 tests)
 ```
 <!-- CONFORMANCE_END -->
 
