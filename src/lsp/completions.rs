@@ -637,16 +637,43 @@ impl<'a> Completions<'a> {
             .unwrap_or(0);
         let last_word = &trimmed[last_word_start..];
 
-        // Only these specific keywords return true per TypeScript's implementation:
-        // module |, namespace |, import |
-        if matches!(last_word, "module" | "namespace" | "import") {
+        // Keywords that always return true per TypeScript's implementation
+        if matches!(
+            last_word,
+            "module" | "namespace" | "import" | "function" | "yield"
+        ) {
             return true;
         }
 
-        // TODO: isNewIdentifierLocation requires AST-based context checks matching
-        // TypeScript's getCompletionData logic. Text-based heuristics for operators
-        // like =, (, [, , cause regressions because the same operators return
-        // different values depending on AST parent context.
+        // Check the last non-whitespace character for common expression-start operators.
+        // These match TypeScript's isNewIdentifierDefinitionLocation logic for tokens
+        // that indicate the user may type a new expression (variable initializer,
+        // function argument, array element, etc.).
+        let last_char = trimmed.as_bytes().last().copied();
+        match last_char {
+            // After `=` in variable declarations and property assignments,
+            // but NOT after `==`, `===`, `!=`, `>=`, `<=`
+            Some(b'=') => {
+                let before = &trimmed[..trimmed.len() - 1];
+                let prev = before.as_bytes().last().copied();
+                if prev != Some(b'=') && prev != Some(b'!') && prev != Some(b'>') && prev != Some(b'<') {
+                    return true;
+                }
+            }
+            // After `(` in function calls, constructor calls, parenthesized expressions
+            Some(b'(') => return true,
+            // After `,` in function arguments, array elements, object properties
+            Some(b',') => return true,
+            // After `[` in array literals, index signatures, computed properties
+            Some(b'[') => return true,
+            _ => {}
+        }
+
+        // After `${` in template literal expressions
+        if trimmed.ends_with("${") {
+            return true;
+        }
+
         false
     }
 
