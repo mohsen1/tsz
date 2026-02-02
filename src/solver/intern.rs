@@ -653,7 +653,17 @@ impl TypeInterner {
     #[inline]
     fn make_id(&self, local_index: u32, shard_idx: u32) -> TypeId {
         let raw_val = (local_index << SHARD_BITS) | (shard_idx & SHARD_MASK);
-        TypeId(TypeId::FIRST_USER + raw_val)
+        let id = TypeId(TypeId::FIRST_USER + raw_val);
+
+        // SAFETY: Assert that we're not overflowing into the local ID space (MSB=1).
+        // Global TypeIds must have MSB=0 (0x7FFFFFFF-) to allow ScopedTypeInterner
+        // to use the upper half (0x80000000+) for ephemeral types.
+        debug_assert!(
+            id.is_global(),
+            "Global TypeId overflow: {id:?} - would conflict with local ID space"
+        );
+
+        id
     }
 
     fn get_intrinsic_id(&self, key: &TypeKey) -> Option<TypeId> {
