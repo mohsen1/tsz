@@ -856,8 +856,13 @@ impl<'a> SignatureHelpProvider<'a> {
         // - UNKNOWN → "any" (matches TypeScript's display for untyped returns)
         // - Constructor with OBJECT/UNKNOWN → class name (TypeScript shows class name)
         let return_type_str = if is_constructor {
-            // Constructors return the class instance type
-            callee_name.to_string()
+            // For construct signatures with an explicit return type, use it.
+            // Otherwise fall back to callee name (class constructors).
+            if shape.return_type != TypeId::UNKNOWN {
+                checker.format_type(shape.return_type)
+            } else {
+                callee_name.to_string()
+            }
         } else if let Some(ref predicate) = shape.type_predicate {
             // Format type predicate: "x is Type" or "asserts x is Type"
             let target_name = match &predicate.target {
@@ -885,7 +890,12 @@ impl<'a> SignatureHelpProvider<'a> {
         } else {
             checker.format_type(shape.return_type)
         };
-        let prefix = format!("{}{}(", callee_name, type_params_str);
+        let prefix = if is_constructor {
+            // Construct signatures use "new " prefix (matches interface `new(...)` syntax)
+            format!("new {}(", type_params_str)
+        } else {
+            format!("{}{}(", callee_name, type_params_str)
+        };
         let suffix = format!("): {}", return_type_str);
 
         // Build full label: prefix + params joined by ", " + suffix

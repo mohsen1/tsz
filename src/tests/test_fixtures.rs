@@ -36,7 +36,57 @@ pub static DEFAULT_CHECKER_OPTIONS: Lazy<CheckerOptions> = Lazy::new(CheckerOpti
 /// Tests that need lib symbols should load them explicitly from disk.
 pub static SHARED_LIB_FILES: Lazy<Vec<Arc<crate::lib_loader::LibFile>>> = Lazy::new(Vec::new);
 
-/// Shared lib contexts for checker - derived from SHARED_LIB_FILES
+/// Shared lib contexts for checker - parsed from embedded libs once on first access.
+/// Provides global types (Array, Object, Function, Promise, etc.) to tests.
+#[cfg(feature = "embedded_libs")]
+pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> = Lazy::new(|| {
+    use crate::binder::BinderState;
+    use crate::checker::context::LibContext;
+    use crate::parser::ParserState;
+
+    let embedded =
+        crate::embedded_libs::get_default_libs_for_target(crate::common::ScriptTarget::ES5);
+
+    let lib_contexts: Vec<LibContext> = embedded
+        .into_iter()
+        .filter_map(|lib| {
+            let mut parser = ParserState::new(lib.file_name.to_string(), lib.content.to_string());
+            let root = parser.parse_source_file();
+            if !parser.get_diagnostics().is_empty() {
+                return None;
+            }
+            let mut binder = BinderState::new();
+            binder.bind_source_file(parser.get_arena(), root);
+            Some(LibContext {
+                arena: Arc::new(parser.into_arena()),
+                binder: Arc::new(binder),
+            })
+        })
+        .collect();
+
+    // Merge all lib contexts into a single one (same approach as CLI driver)
+    if !lib_contexts.is_empty() {
+        let mut merged_binder = BinderState::new();
+        let binder_contexts: Vec<crate::binder::state::LibContext> = lib_contexts
+            .iter()
+            .map(|ctx| crate::binder::state::LibContext {
+                arena: Arc::clone(&ctx.arena),
+                binder: Arc::clone(&ctx.binder),
+            })
+            .collect();
+        merged_binder.merge_lib_contexts_into_binder(&binder_contexts);
+
+        let merged_arena = Arc::clone(&lib_contexts[0].arena);
+        vec![LibContext {
+            arena: merged_arena,
+            binder: Arc::new(merged_binder),
+        }]
+    } else {
+        Vec::new()
+    }
+});
+
+#[cfg(not(feature = "embedded_libs"))]
 pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> =
     Lazy::new(Vec::new);
 
@@ -211,20 +261,33 @@ macro_rules! test_checker {
 
 /// Set up shared lib contexts on a checker.
 ///
-/// NOTE: Embedded libs have been removed. This is now a no-op.
-/// Tests that need global types should load lib files explicitly.
+/// Loads embedded lib types (Array, Object, Function, etc.) into the checker
+/// so that global type resolution works correctly during type checking.
 #[inline]
-pub fn setup_lib_contexts(_checker: &mut CheckerState<'_>) {
-    // No-op: embedded libs removed
+pub fn setup_lib_contexts(checker: &mut CheckerState<'_>) {
+    let lib_contexts = SHARED_LIB_CONTEXTS.clone();
+    let count = lib_contexts.len();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(count);
 }
 
 /// Merge shared lib symbols into a binder.
 ///
-/// NOTE: Embedded libs have been removed. This is now a no-op.
-/// Tests that need global types should load lib files explicitly.
+/// Merges embedded lib symbols (Array, Object, Function, etc.) into the binder
+/// so that bindings can reference global types during the binding phase.
 #[inline]
-pub fn merge_shared_lib_symbols(_binder: &mut BinderState) {
-    // No-op: embedded libs removed
+pub fn merge_shared_lib_symbols(binder: &mut BinderState) {
+    let lib_contexts = &*SHARED_LIB_CONTEXTS;
+    if !lib_contexts.is_empty() {
+        let binder_contexts: Vec<crate::binder::state::LibContext> = lib_contexts
+            .iter()
+            .map(|ctx| crate::binder::state::LibContext {
+                arena: std::sync::Arc::clone(&ctx.arena),
+                binder: std::sync::Arc::clone(&ctx.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&binder_contexts);
+    }
 }
 
 /// Helper function to load lib.d.ts from disk for tests that need global types.

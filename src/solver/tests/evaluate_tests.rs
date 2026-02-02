@@ -28996,11 +28996,17 @@ fn test_depth_limited_recursion_level_1() {
     let result = evaluator.evaluate(node_ref);
 
     // Should expand one level, keeping inner Node as reference
+    let value_atom = interner.intern_string("value");
     match interner.lookup(result).unwrap() {
         TypeKey::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
-            assert_eq!(shape.properties[0].type_id, TypeId::NUMBER);
+            let value_prop = shape
+                .properties
+                .iter()
+                .find(|p| p.name == value_atom)
+                .expect("Should have 'value' property");
+            assert_eq!(value_prop.type_id, TypeId::NUMBER);
         }
         _ => panic!("Expected Object type"),
     }

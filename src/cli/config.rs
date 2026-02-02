@@ -721,8 +721,17 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
         }
     }
 
-    // Return empty vec if no lib files found - lib files are loaded from disk only
-    // (matching tsgo behavior). Users need TypeScript installed or TSZ_LIB_DIR set.
+    // Fallback to embedded libs if available: materialize to cache directory
+    #[cfg(feature = "embedded_libs")]
+    {
+        if let Ok(files) = materialize_embedded_libs(target) {
+            if !files.is_empty() {
+                return Ok(files);
+            }
+        }
+    }
+
+    // Return empty vec if no lib files found
     Ok(Vec::new())
 }
 
@@ -961,6 +970,76 @@ pub fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptTarget 
             CheckerScriptTarget::ESNext
         }
     }
+}
+
+/// When embedded libs are compiled in and disk lib files are not found,
+/// materialize embedded libs to a cache directory so they can be resolved
+/// by the standard file-based lib resolution pipeline.
+#[cfg(feature = "embedded_libs")]
+fn materialize_embedded_libs(target: ScriptTarget) -> Result<Vec<PathBuf>> {
+    use std::sync::OnceLock;
+
+    // Cache the materialized lib directory path across calls
+    static CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+    let cache_dir = CACHE_DIR.get_or_init(|| {
+        let dir = env::temp_dir().join("tsz-embedded-libs");
+        std::fs::create_dir_all(&dir).ok()?;
+
+        // Write all embedded libs to the cache directory
+        for lib in crate::embedded_libs::get_all_libs() {
+            let path = dir.join(lib.file_name);
+            // Only write if the file doesn't exist (avoid redundant writes)
+            if !path.exists() {
+                if std::fs::write(&path, lib.content).is_err() {
+                    return None;
+                }
+            }
+        }
+        Some(dir)
+    });
+
+    let Some(cache_dir) = cache_dir else {
+        return Ok(Vec::new());
+    };
+
+    // Use the standard lib resolution with the cache directory
+    let lib_map = build_lib_map(cache_dir)?;
+    let default_lib = default_lib_name_for_target(target);
+
+    let mut resolved = Vec::new();
+    let mut pending: VecDeque<String> = VecDeque::new();
+    pending.push_back(normalize_lib_name(&default_lib));
+    let mut visited = HashSet::new();
+
+    while let Some(lib_name) = pending.pop_front() {
+        if lib_name.is_empty() || !visited.insert(lib_name.clone()) {
+            continue;
+        }
+        let path = match lib_map.get(&lib_name) {
+            Some(path) => path.clone(),
+            None => {
+                let alias = match lib_name.as_str() {
+                    "lib" => Some("es5.full"),
+                    "es6" => Some("es2015.full"),
+                    "es7" => Some("es2016"),
+                    _ => None,
+                };
+                match alias.and_then(|a| lib_map.get(a)) {
+                    Some(path) => path.clone(),
+                    None => continue,
+                }
+            }
+        };
+        resolved.push(path.clone());
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            for reference in extract_lib_references(&contents) {
+                pending.push_back(reference);
+            }
+        }
+    }
+
+    Ok(resolved)
 }
 
 fn canonicalize_or_owned(path: &Path) -> PathBuf {

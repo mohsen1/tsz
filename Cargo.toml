@@ -26,10 +26,10 @@ path = "src/bin/tsz_server/main.rs"
 required-features = ["cli"]
 
 [features]
-default = ["cli"]
+default = ["cli", "embedded_libs"]
 cli = []
 experimental_salsa = []
-embedded_libs = []    # Embed lib.d.ts files in binary (not needed - libs load from disk)
+embedded_libs = []    # Embed lib.d.ts files in binary (fallback when disk libs unavailable)
 preparsed_libs = ["embedded_libs"]  # Pre-parsed lib loading (requires embedded_libs)
 
 [dependencies]
@@ -56,7 +56,8 @@ ena = "0.14"  # Union-Find for type unification
 indexmap = "2.6"  # Deterministic iteration for structural keys (preserves insertion order)
 bitflags = "2.6"  # Efficient TypeFlags for fast rejection
 tracing = "0.1"  # Structured tracing for diagnostics
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }  # Trining subscriber with RUST_LOG support
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }  # Tracing subscriber with RUST_LOG support
+tracing-tree = "0.4"  # Human-readable hierarchical trace output for debugging
 bincode = "1.3"  # Fast binary serialization for pre-parsed lib cache
 once_cell = "1.19"  # Lazy static initialization for lib cache
 

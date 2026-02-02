@@ -100,18 +100,19 @@ fn test_missing_set_emits_ts2583_without_lib() {
 }
 
 #[test]
-#[ignore = "TODO: lib loading and global type errors need work"]
-fn test_missing_symbol_emits_ts2585_without_lib() {
+fn test_missing_symbol_emits_ts2583_without_lib() {
     let diagnostics = check_without_lib(r#"const s = Symbol("foo");"#);
 
-    // Should emit TS2585 for Symbol when lib.d.ts is not loaded
-    // TypeScript emits: "'Symbol' only refers to a type, but is being used as a value here.
-    // Do you need to change your target library?"
-    let ts2585_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2585).collect();
+    // Without lib.d.ts loaded, Symbol is completely unknown, so the checker
+    // emits TS2583 ("Cannot find name ... Do you need to change your target
+    // library?") rather than TS2585 ("only refers to a type").
+    // TS2585 requires Symbol to exist as a type but not as a value, which
+    // needs lib.es5.d.ts (type) without lib.es2015.d.ts (value).
+    let ts2583_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2583).collect();
 
     assert!(
-        !ts2585_errors.is_empty(),
-        "Expected TS2585 error for Symbol without lib.d.ts, got: {:?}",
+        !ts2583_errors.is_empty(),
+        "Expected TS2583 error for Symbol without lib.d.ts, got: {:?}",
         diagnostics
     );
 }
@@ -230,7 +231,6 @@ fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_console_no_error_with_lib() {
     let diagnostics = check_with_lib(r#"console.log("hello");"#);
 
@@ -310,9 +310,12 @@ class C {
 }
 
 #[test]
-#[ignore = "TODO: lib loading and global type errors need work"]
-fn test_no_ts2318_without_experimental_decorators() {
-    // Without experimentalDecorators, decorators should not trigger TS2318
+fn test_no_decorator_ts2318_without_experimental_decorators() {
+    // Without experimentalDecorators, decorators should not trigger the
+    // decorator-specific TS2318 for TypedPropertyDescriptor. However,
+    // the checker still emits TS2318 for basic global types (Array, Boolean,
+    // etc.) when no lib is loaded, which is correct and independent of
+    // the decorator flag.
     let options = CheckerOptions {
         experimental_decorators: false,
         ..Default::default()
@@ -330,13 +333,16 @@ class C {
         options,
     );
 
-    // Should NOT emit TS2318 when experimentalDecorators is disabled
-    let ts2318_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2318).collect();
+    // Should NOT emit decorator-specific TS2318 for TypedPropertyDescriptor
+    let decorator_ts2318: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2318 && d.message_text.contains("TypedPropertyDescriptor"))
+        .collect();
 
     assert!(
-        ts2318_errors.is_empty(),
-        "Should NOT emit TS2318 without experimentalDecorators, got: {:?}",
-        ts2318_errors
+        decorator_ts2318.is_empty(),
+        "Should NOT emit TypedPropertyDescriptor TS2318 without experimentalDecorators, got: {:?}",
+        decorator_ts2318
     );
 }
 

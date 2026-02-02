@@ -168,7 +168,6 @@ fn tsc_available() -> bool {
 // ===========================================================================
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_cannot_find_name_plain() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -192,7 +191,6 @@ fn tsc_compat_cannot_find_name_plain() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_cannot_find_name_pretty() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -216,7 +214,6 @@ fn tsc_compat_cannot_find_name_pretty() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_multiple_cannot_find_name_plain() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -243,7 +240,6 @@ fn tsc_compat_multiple_cannot_find_name_plain() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_multiple_cannot_find_name_pretty() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -362,7 +358,6 @@ fn compare_output_structure(tsc_output: &str, tsz_output: &str) -> Option<String
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_structure_type_error_plain() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -391,7 +386,6 @@ fn tsc_compat_structure_type_error_plain() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_structure_type_error_pretty() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -418,7 +412,6 @@ fn tsc_compat_structure_type_error_pretty() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_no_errors_plain() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -450,7 +443,6 @@ fn tsc_compat_no_errors_plain() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_exit_code_no_errors() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -484,7 +476,6 @@ fn tsc_compat_exit_code_no_errors() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_exit_code_with_errors() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -522,7 +513,6 @@ fn tsc_compat_exit_code_with_errors() {
 // ===========================================================================
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_line_endings_normalized() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -574,7 +564,6 @@ fn tsc_compat_line_endings_normalized() {
 // ===========================================================================
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_plain_format_structure() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -617,7 +606,6 @@ fn tsc_compat_plain_format_structure() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_pretty_format_structure() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");
@@ -688,7 +676,6 @@ fn tsc_compat_pretty_format_structure() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn tsc_compat_double_digit_line_number_pretty() {
     if !tsc_available() {
         eprintln!("SKIP: tsc not found in PATH");

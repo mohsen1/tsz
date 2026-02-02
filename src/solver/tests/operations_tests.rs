@@ -924,11 +924,294 @@ fn test_property_access_optional_property() {
     }
 }
 
+/// Creates a TypeEnvironment with a mock Array<T> interface for testing.
+/// The interface includes: length, map, at, entries, and reduce.
+fn make_array_test_env(
+    interner: &TypeInterner,
+) -> (
+    crate::solver::subtype::TypeEnvironment,
+    crate::solver::types::TypeParamInfo,
+) {
+    use crate::solver::subtype::TypeEnvironment;
+    use crate::solver::types::TypeParamInfo;
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+
+    // length: number
+    let length_prop = PropertyInfo {
+        name: interner.intern_string("length"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: true,
+        is_method: false,
+    };
+
+    // map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]
+    let u_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+    };
+    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let map_callback = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("value")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("index")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("array")),
+                type_id: interner.array(t_type),
+                optional: false,
+                rest: false,
+            },
+        ],
+        return_type: u_type,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let map_func = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("callbackfn")),
+                type_id: map_callback,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("thisArg")),
+                type_id: TypeId::ANY,
+                optional: true,
+                rest: false,
+            },
+        ],
+        return_type: interner.array(u_type),
+        type_params: vec![u_param.clone()],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // at(index: number): T | undefined
+    let at_func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("index")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        return_type: interner.union(vec![t_type, TypeId::UNDEFINED]),
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // entries(): Array<[number, T]>
+    let entry_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: t_type,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let entries_func = interner.function(FunctionShape {
+        params: vec![],
+        return_type: interner.array(entry_tuple),
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // reduce(callbackfn: (prev: T, curr: T, idx: number, arr: T[]) => T): T
+    use crate::solver::types::CallSignature;
+    let reduce_cb_1 = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("previousValue")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("currentValue")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("currentIndex")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("array")),
+                type_id: interner.array(t_type),
+                optional: false,
+                rest: false,
+            },
+        ],
+        return_type: t_type,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let reduce_sig_1 = CallSignature {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("callbackfn")),
+            type_id: reduce_cb_1,
+            optional: false,
+            rest: false,
+        }],
+        return_type: t_type,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_method: true,
+    };
+    // reduce<U>(callbackfn: (prev: U, curr: T, idx: number, arr: T[]) => U, initialValue: U): U
+    let reduce_cb_2 = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("previousValue")),
+                type_id: u_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("currentValue")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("currentIndex")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("array")),
+                type_id: interner.array(t_type),
+                optional: false,
+                rest: false,
+            },
+        ],
+        return_type: u_type,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let reduce_sig_2 = CallSignature {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("callbackfn")),
+                type_id: reduce_cb_2,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("initialValue")),
+                type_id: u_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        return_type: u_type,
+        type_params: vec![u_param],
+        this_type: None,
+        type_predicate: None,
+        is_method: true,
+    };
+    let reduce_callable = interner.callable(CallableShape {
+        call_signatures: vec![reduce_sig_1, reduce_sig_2],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+    });
+
+    let array_interface = interner.object(vec![
+        length_prop,
+        PropertyInfo {
+            name: interner.intern_string("map"),
+            type_id: map_func,
+            write_type: map_func,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("at"),
+            type_id: at_func,
+            write_type: at_func,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("entries"),
+            type_id: entries_func,
+            write_type: entries_func,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("reduce"),
+            type_id: reduce_callable,
+            write_type: reduce_callable,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+    ]);
+
+    let mut env = TypeEnvironment::new();
+    env.set_array_base_type(array_interface, vec![t_param.clone()]);
+
+    (env, t_param)
+}
+
 #[test]
 #[ignore = "TODO: solver needs work"]
 fn test_property_access_readonly_array() {
     let interner = TypeInterner::new();
-    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let (env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
 
     let array = interner.array(TypeId::STRING);
     let readonly_array = interner.intern(TypeKey::ReadonlyType(array));
@@ -944,7 +1227,8 @@ fn test_property_access_readonly_array() {
 #[ignore = "TODO: solver needs work"]
 fn test_property_access_tuple_length() {
     let interner = TypeInterner::new();
-    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let (env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
 
     let tuple = interner.tuple(vec![
         TupleElement {
@@ -972,7 +1256,8 @@ fn test_property_access_tuple_length() {
 #[ignore = "TODO: solver needs work"]
 fn test_property_access_array_map_signature() {
     let interner = TypeInterner::new();
-    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let (env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
 
     let array = interner.array(TypeId::NUMBER);
     let result = evaluator.resolve_property_access(array, "map");
@@ -980,21 +1265,21 @@ fn test_property_access_array_map_signature() {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
             Some(TypeKey::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
-                assert_eq!(func.type_params.len(), 1);
-                assert_eq!(func.params.len(), 2);
+                assert_eq!(func.type_params.len(), 1, "map should have 1 type param U");
+                assert_eq!(func.params.len(), 2, "map should have 2 params");
                 let u_param = &func.type_params[0];
                 let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
                 let expected_return = interner.array(u_type);
-                assert_eq!(func.return_type, expected_return);
+                assert_eq!(func.return_type, expected_return, "map should return U[]");
 
                 let callback_type = func.params[0].type_id;
                 match interner.lookup(callback_type) {
                     Some(TypeKey::Function(cb_id)) => {
                         let callback = interner.function_shape(cb_id);
                         assert_eq!(callback.return_type, u_type);
-                        assert_eq!(callback.params[0].type_id, TypeId::NUMBER);
-                        assert_eq!(callback.params[1].type_id, TypeId::NUMBER);
-                        assert_eq!(callback.params[2].type_id, array);
+                        assert_eq!(callback.params[0].type_id, TypeId::NUMBER); // T=number
+                        assert_eq!(callback.params[1].type_id, TypeId::NUMBER); // index
+                        assert_eq!(callback.params[2].type_id, array); // array: number[]
                     }
                     other => panic!("Expected callback function, got {:?}", other),
                 }
@@ -1009,7 +1294,8 @@ fn test_property_access_array_map_signature() {
 #[ignore = "TODO: solver needs work"]
 fn test_property_access_array_at_returns_optional_element() {
     let interner = TypeInterner::new();
-    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let (env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
 
     let array = interner.array(TypeId::NUMBER);
     let result = evaluator.resolve_property_access(array, "at");
@@ -1030,7 +1316,8 @@ fn test_property_access_array_at_returns_optional_element() {
 #[ignore = "TODO: solver needs work"]
 fn test_property_access_array_entries_returns_tuple_array() {
     let interner = TypeInterner::new();
-    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let (env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
 
     let array = interner.array(TypeId::BOOLEAN);
     let result = evaluator.resolve_property_access(array, "entries");
@@ -1059,7 +1346,8 @@ fn test_property_access_array_entries_returns_tuple_array() {
 #[ignore = "TODO: solver needs work"]
 fn test_property_access_array_reduce_callable() {
     let interner = TypeInterner::new();
-    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let (env, _) = make_array_test_env(&interner);
+    let evaluator = PropertyAccessEvaluator::with_resolver(&interner, &env);
 
     let array = interner.array(TypeId::STRING);
     let result = evaluator.resolve_property_access(array, "reduce");
@@ -4162,7 +4450,6 @@ fn test_infer_generic_number_index_from_numeric_property() {
 }
 
 #[test]
-#[ignore = "Generic number index ignoring noncanonical numeric properties not fully implemented"]
 fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -4213,7 +4500,6 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
 }
 
 #[test]
-#[ignore = "Generic number index ignoring negative zero property not fully implemented"]
 fn test_infer_generic_number_index_ignores_negative_zero_property() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);

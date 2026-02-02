@@ -34,7 +34,6 @@ fn range_for_substring(source: &str, line_map: &LineMap, needle: &str) -> Range 
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_cross_file_references_named_import() {
     let mut project = Project::new();
 
@@ -62,7 +61,6 @@ fn test_project_cross_file_references_named_import() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_cross_file_references_default_import() {
     let mut project = Project::new();
 
@@ -90,7 +88,6 @@ fn test_project_cross_file_references_default_import() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_cross_file_references_namespace_import() {
     let mut project = Project::new();
 
@@ -114,7 +111,6 @@ fn test_project_cross_file_references_namespace_import() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_cross_file_references_tsx_import() {
     let mut project = Project::new();
 
@@ -139,7 +135,6 @@ fn test_project_cross_file_references_tsx_import() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_rename_cross_file() {
     let mut project = Project::new();
 
@@ -166,7 +161,6 @@ fn test_project_rename_cross_file() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_rename_cross_file_alias_import() {
     let mut project = Project::new();
 
@@ -988,7 +982,6 @@ fn test_project_update_file_preserves_multiple_prefix_symbols() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_update_file_refreshes_cross_file_references() {
     let mut project = Project::new();
 
@@ -1019,7 +1012,6 @@ fn test_project_update_file_refreshes_cross_file_references() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_hover_includes_jsdoc() {
     let mut project = Project::new();
     let source = "/** The answer */\nconst x = 42;\nx;";
@@ -1037,7 +1029,6 @@ fn test_project_hover_includes_jsdoc() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_signature_help_includes_jsdoc() {
     let mut project = Project::new();
     let source = "/** Adds two numbers. */\nfunction add(a: number, b: number): number { return a + b; }\nadd(1, 2);";
@@ -1060,7 +1051,6 @@ fn test_project_signature_help_includes_jsdoc() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_completions_auto_import_named() {
     let mut project = Project::new();
 
@@ -1136,7 +1126,6 @@ fn test_project_performance_scope_cache_hits_definition() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_performance_scope_cache_hits_hover() {
     let mut project = Project::new();
 
@@ -1235,7 +1224,6 @@ fn test_project_performance_scope_cache_hits_signature_help() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_performance_scope_cache_hits_references() {
     let mut project = Project::new();
 
@@ -1265,7 +1253,6 @@ fn test_project_performance_scope_cache_hits_references() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_performance_scope_cache_hits_rename() {
     let mut project = Project::new();
 
@@ -1352,7 +1339,6 @@ fn test_project_scope_cache_cleared_after_update() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_definition_after_edit() {
     let mut project = Project::new();
 
@@ -1387,7 +1373,6 @@ fn test_project_scope_cache_reuse_hover_to_definition_after_edit() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_definition_after_edit_across_files() {
     let mut project = Project::new();
 
@@ -1426,7 +1411,6 @@ fn test_project_scope_cache_reuse_hover_to_definition_after_edit_across_files() 
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_references_after_edit_across_files() {
     let mut project = Project::new();
 
@@ -1465,7 +1449,6 @@ fn test_project_scope_cache_reuse_hover_to_references_after_edit_across_files() 
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_rename_after_edit_across_files() {
     let mut project = Project::new();
 
@@ -1506,7 +1489,6 @@ fn test_project_scope_cache_reuse_hover_to_rename_after_edit_across_files() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_signature_help_after_edit_across_files() {
     let mut project = Project::new();
 
@@ -1556,7 +1538,6 @@ fn test_project_scope_cache_reuse_hover_to_signature_help_after_edit_across_file
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_completions_after_edit_across_files() {
     let mut project = Project::new();
 
@@ -1595,7 +1576,6 @@ fn test_project_scope_cache_reuse_hover_to_completions_after_edit_across_files()
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_completions_after_edit() {
     let mut project = Project::new();
 
@@ -1633,7 +1613,6 @@ fn test_project_scope_cache_reuse_hover_to_completions_after_edit() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_signature_help_after_edit() {
     let mut project = Project::new();
 
@@ -1642,7 +1621,8 @@ fn test_project_scope_cache_reuse_hover_to_signature_help_after_edit() {
         "function foo(a: number, b: string) {}\nfoo(1, \"x\");\n".to_string(),
     );
     let hover_position = Position::new(1, 0);
-    let signature_position = Position::new(1, 0);
+    // Position must be inside the call args (after the opening paren)
+    let signature_position = Position::new(1, 4);
 
     let edit = {
         let file = project.file("a.ts").unwrap();
@@ -1676,7 +1656,6 @@ fn test_project_scope_cache_reuse_hover_to_signature_help_after_edit() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_references_after_edit() {
     let mut project = Project::new();
 
@@ -1711,7 +1690,6 @@ fn test_project_scope_cache_reuse_hover_to_references_after_edit() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_rename_after_edit() {
     let mut project = Project::new();
 
@@ -1748,7 +1726,6 @@ fn test_project_scope_cache_reuse_hover_to_rename_after_edit() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_across_requests() {
     let mut project = Project::new();
 
@@ -1774,7 +1751,6 @@ fn test_project_scope_cache_reuse_across_requests() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_completions() {
     let mut project = Project::new();
 
@@ -1803,7 +1779,6 @@ fn test_project_scope_cache_reuse_hover_to_completions() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_signature_help() {
     let mut project = Project::new();
 
@@ -1812,7 +1787,8 @@ fn test_project_scope_cache_reuse_hover_to_signature_help() {
         "function foo(a: number, b: string) {}\nfoo(1, \"x\");\n".to_string(),
     );
     let hover_position = Position::new(1, 0);
-    let signature_position = Position::new(1, 0);
+    // Position must be inside the call args (after the opening paren)
+    let signature_position = Position::new(1, 4);
 
     assert!(project.get_hover("a.ts", hover_position).is_some());
     assert!(
@@ -1837,7 +1813,6 @@ fn test_project_scope_cache_reuse_hover_to_signature_help() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_references() {
     let mut project = Project::new();
 
@@ -1863,7 +1838,6 @@ fn test_project_scope_cache_reuse_hover_to_references() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_rename() {
     let mut project = Project::new();
 
@@ -1891,7 +1865,6 @@ fn test_project_scope_cache_reuse_hover_to_rename() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_cross_file_function_body_edit_preserves_symbol_and_scope_cache() {
     let mut project = Project::new();
 
@@ -1952,7 +1925,6 @@ fn test_project_cross_file_function_body_edit_preserves_symbol_and_scope_cache()
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_after_other_file_edit() {
     let mut project = Project::new();
 
@@ -1995,7 +1967,6 @@ fn test_project_scope_cache_reuse_after_other_file_edit() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_after_nested_edit_suffix_export_across_files() {
     let mut project = Project::new();
 
@@ -2038,7 +2009,6 @@ fn test_project_scope_cache_reuse_after_nested_edit_suffix_export_across_files()
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_nested_function_body_edit_preserves_prefix_symbol_and_scope_cache() {
     let mut project = Project::new();
 
@@ -2111,7 +2081,6 @@ fn test_project_nested_function_body_edit_preserves_prefix_symbol_and_scope_cach
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_nested_function_body_edit_preserves_suffix_definition_scope_cache() {
     let mut project = Project::new();
 
@@ -2204,7 +2173,6 @@ fn test_project_nested_function_body_edit_suffix_definition_without_hover() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_cross_file_references_reexport_named() {
     let mut project = Project::new();
 
@@ -2233,7 +2201,6 @@ fn test_project_cross_file_references_reexport_named() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_cross_file_references_namespace_reexport() {
     let mut project = Project::new();
 
@@ -2261,7 +2228,6 @@ fn test_project_cross_file_references_namespace_reexport() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_code_actions_missing_import_named() {
     let mut project = Project::new();
 
@@ -2304,7 +2270,6 @@ fn test_project_code_actions_missing_import_named() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_code_actions_missing_import_default_export() {
     let mut project = Project::new();
 
@@ -2350,7 +2315,6 @@ fn test_project_code_actions_missing_import_default_export() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_code_actions_missing_import_tsx() {
     let mut project = Project::new();
 
@@ -2393,7 +2357,6 @@ fn test_project_code_actions_missing_import_tsx() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_code_actions_missing_import_default_reexport() {
     let mut project = Project::new();
 
@@ -2443,7 +2406,6 @@ fn test_project_code_actions_missing_import_default_reexport() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_code_actions_missing_import_reexport() {
     let mut project = Project::new();
 

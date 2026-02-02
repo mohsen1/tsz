@@ -362,6 +362,25 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.import_resolution_stack.push(module_name.clone());
 
+        // Check for specific resolution error from driver FIRST (TS2834, TS2835, TS2792, etc.)
+        // This must be checked before resolved_modules to catch extensionless import errors
+        let module_key = module_name.to_string();
+        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+            // Extract error values before mutable borrow
+            let error_code = error.code;
+            let error_message = error.message.clone();
+            // Check if we've already emitted an error for this module (prevents duplicate emissions)
+            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                self.ctx
+                    .modules_with_ts2307_emitted
+                    .insert(module_key.clone());
+                self.error_at_node(import.module_specifier, &error_message, error_code);
+            }
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // Check if module was successfully resolved
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
@@ -397,26 +416,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
-        let module_key = module_name.to_string();
-        if let Some(error) = self.ctx.get_resolution_error(module_name) {
-            // Extract error values before mutable borrow
-            let error_code = error.code;
-            let error_message = error.message.clone();
-            // Check if we've already emitted an error for this module (prevents duplicate emissions)
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx
-                    .modules_with_ts2307_emitted
-                    .insert(module_key.clone());
-                self.error_at_node(import.module_specifier, &error_message, error_code);
-            }
-            self.ctx.import_resolution_stack.pop();
-            return;
-        }
-
         // Fallback: Emit generic TS2307 if no specific error was found
         // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
-        let module_key = module_name.to_string();
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             self.ctx
                 .modules_with_ts2307_emitted

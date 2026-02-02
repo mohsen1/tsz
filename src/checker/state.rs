@@ -648,6 +648,7 @@ impl<'a> CheckerState<'a> {
     pub fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
         // Check cache first
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            tracing::trace!(idx = idx.0, type_id = cached.0, "(cached) get_type_of_node");
             return cached;
         }
 
@@ -705,6 +706,7 @@ impl<'a> CheckerState<'a> {
         // Cache result
         self.ctx.node_types.insert(idx.0, result);
 
+        tracing::trace!(idx = idx.0, type_id = result.0, "get_type_of_node");
         result
     }
 
