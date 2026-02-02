@@ -77,7 +77,9 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
-                return lowering.lower_type(idx);
+                let type_id = lowering.lower_type(idx);
+                // Phase 1: Post-process to convert TypeKey::Ref to TypeKey::Lazy(DefId)
+                return self.ctx.maybe_create_lazy_from_resolved(type_id);
             }
             // No type arguments provided - check if this generic type requires them
             if let TypeSymbolResolution::Type(sym_id) =
@@ -229,7 +231,9 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
-                return lowering.lower_type(idx);
+                let type_id = lowering.lower_type(idx);
+                // Phase 1: Post-process to convert TypeKey::Ref to TypeKey::Lazy(DefId)
+                return self.ctx.maybe_create_lazy_from_resolved(type_id);
             }
 
             if name == "Array" || name == "ReadonlyArray" {
