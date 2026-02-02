@@ -101,7 +101,10 @@ impl<'a> Printer<'a> {
             "var"
         };
         self.write(keyword);
-        self.write(" ");
+        // Only write space if there are declarations to emit
+        if !decl_list.declarations.nodes.is_empty() {
+            self.write(" ");
+        }
 
         let prev = self.emit_missing_initializer_as_void_0;
         if force_void_0 {
