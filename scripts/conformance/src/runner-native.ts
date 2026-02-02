@@ -69,7 +69,8 @@ function runTsc(testCase: ParsedTestCase): number[] {
   try {
     // Write test files to temp directory
     for (const file of testCase.files) {
-      fs.writeFileSync(path.join(tmpDir, file.name), file.content);
+      // Ensure content is always a string (defensive check for undefined from parser edge cases)
+      fs.writeFileSync(path.join(tmpDir, file.name), file.content ?? '');
     }
 
     // Create compiler options
@@ -144,7 +145,8 @@ function runNative(testCase: ParsedTestCase): Promise<{ codes: number[]; crashed
 
       // Write test files
       for (const file of testCase.files) {
-        fs.writeFileSync(path.join(tmpDir, file.name), file.content);
+        // Ensure content is always a string (defensive check for undefined from parser edge cases)
+        fs.writeFileSync(path.join(tmpDir, file.name), file.content ?? '');
         filesToCheck.push(file.name);
       }
 

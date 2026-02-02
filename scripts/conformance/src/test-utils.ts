@@ -283,7 +283,7 @@ function parseTestCaseWithHarness(code: string, filePath: string): ParsedTestCas
   // Convert to our format
   const files: TestFile[] = parsed.testUnitData.map((unit: TestUnitData) => ({
     name: unit.name,
-    content: unit.content,
+    content: unit.content ?? '', // Ensure content is always a string (handle undefined from duplicate @filename)
   }));
 
   // Separate harness directives from compiler options

@@ -299,8 +299,10 @@ export function parseTestDirectives(code: string, filePath: string): ParsedTestC
     for (const file of files) {
       if (path.basename(file.name) === 'tsconfig.json') {
         try {
+          // Ensure content is always a string (defensive check for undefined from parser edge cases)
+          const content = file.content ?? '';
           // Handle JSON with trailing commas by stripping them
-          const cleanJson = file.content.replace(/,\s*([}\]])/g, '$1');
+          const cleanJson = content.replace(/,\s*([}\]])/g, '$1');
           const tsconfig = JSON.parse(cleanJson);
           if (tsconfig?.compilerOptions) {
             for (const [key, value] of Object.entries(tsconfig.compilerOptions)) {
@@ -678,11 +680,13 @@ export function runTsc(
 
     // Resolve file name relative to root directory
     const resolvedFileName = path.resolve(rootDir, file.name);
-    virtualFileContents.set(resolvedFileName, file.content);
+    // Ensure content is always a string (defensive check for undefined from parser edge cases)
+    const content = file.content ?? '';
+    virtualFileContents.set(resolvedFileName, content);
 
     const sf = ts.createSourceFile(
       resolvedFileName,
-      file.content,
+      content,
       compilerOptions.target ?? ts.ScriptTarget.ES2020,
       true,
       scriptKind
@@ -764,7 +768,7 @@ export function runTsc(
       const resolved = path.resolve(rootDir, f.name);
       return resolved === name;
     });
-    if (file) return file.content;
+    if (file) return file.content ?? ''; // Ensure content is always a string
 
     // Check lib files
     if (libFiles.has(name)) return libFiles.get(name);

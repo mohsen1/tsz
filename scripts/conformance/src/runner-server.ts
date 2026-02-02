@@ -283,7 +283,8 @@ function prepareTestFiles(
     const files: Record<string, string> = {};
     for (const file of parsed.files) {
       // Use original test file path for single-file tests
-      files[testFile] = file.content;
+      // Ensure content is always a string (defensive check for undefined from parser edge cases)
+      files[testFile] = file.content ?? '';
     }
     return { tempDir: null, files };
   }
@@ -303,11 +304,14 @@ function prepareTestFiles(
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    // Ensure content is always a string (defensive check for undefined from parser edge cases)
+    const content = file.content ?? '';
+
     // Write the file
-    fs.writeFileSync(filePath, file.content, 'utf-8');
+    fs.writeFileSync(filePath, content, 'utf-8');
 
     // Add to files map with absolute path
-    files[filePath] = file.content;
+    files[filePath] = content;
   }
 
   // Handle symlinks from harness options
