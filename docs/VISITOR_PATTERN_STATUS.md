@@ -2,7 +2,7 @@
 
 **Date**: February 2, 2025
 **Issue**: #11 - Visitor Pattern Enforcement
-**Status**: 🔄 SUBSTANTIAL PROGRESS MADE
+**Status**: ✅ 2 OF 4 FILES COMPLETE
 
 ---
 
@@ -26,11 +26,33 @@ Refactored completely to use visitor pattern:
 
 **Test Results:** All 7819 tests passing
 
+### 2. src/solver/binary_ops.rs ✅
+**Commit**: `8239e483c`
+
+Refactored completely to use visitor pattern:
+
+**Created Visitor Structs:**
+- `NumberLikeVisitor` - Checks if a type is number-like
+- `StringLikeVisitor` - Checks if a type is string-like
+- `BigIntLikeVisitor` - Checks if a type is bigint-like
+- `BooleanLikeVisitor` - Checks if a type is boolean-like
+- `SymbolLikeVisitor` - Checks if a type is symbol-like
+- `PrimitiveClassVisitor` - Extracts primitive class from a type
+- `OverlapChecker` - Checks type overlap for comparison operations
+
+**Impact:**
+- Replaced 105 lines of manual TypeKey matches with visitor pattern
+- All type check methods now use type-safe visitor dispatch
+- Preserved fast path optimizations for common cases
+- Added explicit Union handling in has_overlap before visitor dispatch
+
+**Test Results:** All 7826 tests passing (no regressions)
+
 ---
 
 ## Remaining Work
 
-### 2. src/solver/contextual.rs (55 TypeKey refs) 🔄
+### 3. src/solver/contextual.rs (55 TypeKey refs) 🔄
 **Complexity:** HIGH
 **Reason for deferral:** Large file (1034 lines) with complex recursive patterns
 
@@ -59,7 +81,7 @@ Refactored completely to use visitor pattern:
 3. Handle Union/Application recursion within visitor methods
 4. Test incrementally after each method refactoring
 
-### 3. src/solver/compat.rs (16 TypeKey refs) 📋
+### 2. src/solver/compat.rs (16 TypeKey refs) 📋
 **Complexity:** MEDIUM
 **Status:** NOT STARTED
 
@@ -71,22 +93,34 @@ Refactored completely to use visitor pattern:
 
 **Note:** These are mostly simple pattern checks, could be good candidates for refactoring.
 
-### 4. src/solver/binary_ops.rs (22 TypeKey refs) 📋
-**Complexity:** LOW-MEDIUM
-**Status:** NOT STARTED
+### 3. src/solver/contextual.rs (55 TypeKey refs) 🔄
+**Complexity:** HIGH
+**Reason for deferral:** Largest file with complex recursive patterns
 
-**TypeKey usage:**
-- Line 366: Rest parameter array check
-- Line 370: Rest parameter union check
-- Line 384: Rest parameter tuple check
-- Line 401: Rest parameter array check
-- Line 405: Rest parameter union check
-- Line 419: Rest parameter tuple check
-- Lines 437-440: Symbol type checks
-- Line 452: Boolean literal check
-- Various `matches!` macro usages (simple type predicates)
+**Methods that need refactoring:**
+- `get_parameter_type(index)` - Lines 60-105
+- `get_parameter_type_for_call(index, arg_count)` - Lines 108-151
+- `get_this_type()` - Lines 154-190
+- `get_return_type()` - Lines 193-229
+- `get_array_element_type()` - Lines 237-254
+- `get_tuple_element_type(index)` - Lines 257-275
+- `get_property_type(name)` - Lines 283-317
+- `get_generator_yield_type()` - Lines 551-585
+- `get_generator_return_type()` - Lines 590-624
+- `get_generator_next_type()` - Lines 630-664
+- GeneratorContextualType methods - Lines 785-959
 
-**Note:** Many of these are simple type checks using `matches!` macro, not large dispatch matches.
+**Challenges:**
+- Recursive Union handling (creates new contexts for each member)
+- Recursive Application handling (unwraps to base type)
+- Interconnected helper methods
+- Complex generator type extraction logic
+
+**Recommended Approach:**
+1. Start with simpler methods (get_array_element_type, get_this_type)
+2. Create targeted visitors for each query type
+3. Handle Union/Application recursion within visitor methods
+4. Test incrementally after each method refactoring
 
 ---
 
@@ -177,7 +211,7 @@ fn visit_union(&mut self, list_id: u32) -> Self::Output {
 
 ### Immediate Next Steps
 
-1. **Start with simpler files**: `compat.rs` or `binary_ops.rs` have fewer violations
+1. **Continue with compat.rs**: Next simplest file with 16 TypeKey refs (medium complexity)
 2. **Create incremental PRs**: One file at a time with thorough testing
 3. **Document patterns**: Use this file as reference for future refactorings
 
@@ -213,10 +247,10 @@ fn visit_union(&mut self, list_id: u32) -> Self::Output {
 
 ### Overall Issue Completion
 
-- [x] index_signatures.rs - COMPLETE
-- [ ] contextual.rs - PENDING
-- [ ] compat.rs - PENDING
-- [ ] binary_ops.rs - PENDING (low priority, mostly simple checks)
+- [x] index_signatures.rs - COMPLETE (Commit: 83ca43479)
+- [x] binary_ops.rs - COMPLETE (Commit: 8239e483c)
+- [ ] compat.rs - PENDING (16 TypeKey refs, medium complexity)
+- [ ] contextual.rs - PENDING (55 TypeKey refs, high complexity)
 - [ ] Any other files with TypeKey violations - PENDING
 
 ---
