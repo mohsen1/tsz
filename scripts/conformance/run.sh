@@ -19,19 +19,36 @@ set -euo pipefail
 # Signal Handling
 # =============================================================================
 
-CHILD_PIDS=()
-
-cleanup() {
-    local exit_code=$?
+# Aggressive cleanup for Ctrl+C - kill everything immediately
+interrupt_cleanup() {
+    # Disable further signal handling during cleanup
+    trap - INT TERM EXIT
+    
     echo ""
-    for pid in "${CHILD_PIDS[@]:-}"; do
-        kill -TERM "$pid" 2>/dev/null || true
-    done
-    pkill -P $$ 2>/dev/null || true
-    exit $exit_code
+    echo -e "\033[0;33m⚠\033[0m  Interrupted, killing processes..."
+    
+    # Kill entire process group with SIGKILL for immediate termination
+    # The negative PID sends signal to the entire process group
+    kill -KILL -$$ 2>/dev/null || true
+    
+    # Fallback: kill children by parent PID  
+    pkill -KILL -P $$ 2>/dev/null || true
+    
+    # Kill any tsz-server processes we may have spawned
+    pkill -KILL -f "tsz-server" 2>/dev/null || true
+    
+    exit 130
 }
 
-trap cleanup INT TERM EXIT
+# Gentle cleanup for normal exit
+normal_cleanup() {
+    # Kill any lingering tsz-server processes
+    pkill -TERM -f "tsz-server" 2>/dev/null || true
+    pkill -TERM -P $$ 2>/dev/null || true
+}
+
+trap interrupt_cleanup INT TERM
+trap normal_cleanup EXIT
 
 # =============================================================================
 # Paths & Colors
