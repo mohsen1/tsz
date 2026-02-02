@@ -1929,21 +1929,15 @@ impl BinderState {
 
         if operator == SyntaxKind::AmpersandAmpersandToken as u16 {
             // For &&: right side is only evaluated when left is truthy
-            let true_condition = self.create_flow_condition(
-                flow_flags::TRUE_CONDITION,
-                after_left_flow,
-                left,
-            );
+            let true_condition =
+                self.create_flow_condition(flow_flags::TRUE_CONDITION, after_left_flow, left);
             self.current_flow = true_condition;
             self.bind_expression(arena, right);
             let after_right_flow = self.current_flow;
 
             // Short-circuit path: left is falsy, right is not evaluated
-            let false_condition = self.create_flow_condition(
-                flow_flags::FALSE_CONDITION,
-                after_left_flow,
-                left,
-            );
+            let false_condition =
+                self.create_flow_condition(flow_flags::FALSE_CONDITION, after_left_flow, left);
 
             // Merge both paths
             let merge = self.create_branch_label();
@@ -1952,21 +1946,15 @@ impl BinderState {
             self.current_flow = merge;
         } else {
             // For || and ??: right side is only evaluated when left is falsy/nullish
-            let false_condition = self.create_flow_condition(
-                flow_flags::FALSE_CONDITION,
-                after_left_flow,
-                left,
-            );
+            let false_condition =
+                self.create_flow_condition(flow_flags::FALSE_CONDITION, after_left_flow, left);
             self.current_flow = false_condition;
             self.bind_expression(arena, right);
             let after_right_flow = self.current_flow;
 
             // Short-circuit path: left is truthy, right is not evaluated
-            let true_condition = self.create_flow_condition(
-                flow_flags::TRUE_CONDITION,
-                after_left_flow,
-                left,
-            );
+            let true_condition =
+                self.create_flow_condition(flow_flags::TRUE_CONDITION, after_left_flow, left);
 
             // Merge both paths
             let merge = self.create_branch_label();
@@ -2013,7 +2001,13 @@ impl BinderState {
                                 || bin.operator_token == SyntaxKind::BarBarToken as u16
                                 || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
                             {
-                                self.bind_short_circuit_expression(arena, idx, bin.left, bin.right, bin.operator_token);
+                                self.bind_short_circuit_expression(
+                                    arena,
+                                    idx,
+                                    bin.left,
+                                    bin.right,
+                                    bin.operator_token,
+                                );
                                 continue;
                             }
                             if !bin.right.is_none() {
@@ -2066,7 +2060,13 @@ impl BinderState {
                     || bin.operator_token == SyntaxKind::BarBarToken as u16
                     || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
                 {
-                    self.bind_short_circuit_expression(arena, idx, bin.left, bin.right, bin.operator_token);
+                    self.bind_short_circuit_expression(
+                        arena,
+                        idx,
+                        bin.left,
+                        bin.right,
+                        bin.operator_token,
+                    );
                     return;
                 }
             }

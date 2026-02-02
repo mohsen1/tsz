@@ -9,9 +9,7 @@ use crate::binder::{SymbolId, SymbolTable, symbol_flags};
 use crate::checker::TypeCache;
 use crate::checker::context::LibContext;
 use crate::checker::state::CheckerState;
-use crate::checker::types::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes,
-};
+use crate::checker::types::diagnostics::{Diagnostic, DiagnosticCategory, diagnostic_codes};
 use crate::cli::args::CliArgs;
 use crate::cli::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
@@ -852,7 +850,7 @@ pub enum FileReadResult {
 }
 
 /// Read a source file, detecting binary files that should emit TS1490.
-/// 
+///
 /// TypeScript detects binary files by checking for:
 /// - UTF-16 BOM (FE FF for BE, FF FE for LE)  
 /// - Non-valid UTF-8 sequences
@@ -877,7 +875,7 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
 }
 
 /// Check if file content appears to be binary (not valid source code).
-/// 
+///
 /// Matches TypeScript's binary detection:
 /// - UTF-16 BOM at start
 /// - Many consecutive null bytes (embedded binaries, corrupted files)
@@ -1171,7 +1169,11 @@ fn read_source_files(
 
     let mut list: Vec<SourceEntry> = sources
         .into_iter()
-        .map(|(path, (text, is_binary))| SourceEntry { path, text, is_binary })
+        .map(|(path, (text, is_binary))| SourceEntry {
+            path,
+            text,
+            is_binary,
+        })
         .collect();
     list.sort_by(|left, right| {
         left.path
@@ -1331,12 +1333,15 @@ fn collect_diagnostics(
     // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
     // Also build resolved_module_errors map for specific error codes
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-    let mut resolved_module_errors: FxHashMap<(usize, String), crate::checker::context::ResolutionError> = FxHashMap::default();
-    
+    let mut resolved_module_errors: FxHashMap<
+        (usize, String),
+        crate::checker::context::ResolutionError,
+    > = FxHashMap::default();
+
     for (file_idx, file) in program.files.iter().enumerate() {
         let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
         let file_path = Path::new(&file.file_name);
-        
+
         for (specifier, specifier_node) in &module_specifiers {
             // Get span from the specifier node
             let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
@@ -1344,26 +1349,8 @@ fn collect_diagnostics(
             } else {
                 Span::new(0, 0) // Fallback for invalid nodes
             };
-            
-            // First try the old resolver for virtual test files (known_files check)
-            // This handles test harness virtual files that don't exist on disk
-            if let Some(resolved) = resolve_module_specifier(
-                file_path,
-                specifier,
-                options,
-                base_dir,
-                &mut resolution_cache,
-                &program_paths,
-            ) {
-                let canonical = canonicalize_or_owned(&resolved);
-                if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                    resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
-                }
-                continue; // Successfully resolved, skip ModuleResolver
-            }
-            
-            // Use ModuleResolver to get specific error types for real files
-            // This will catch TS2834/TS2835/TS2792 errors
+
+            // Always try ModuleResolver first to get specific error types (TS2834/TS2835/TS2792)
             match module_resolver.resolve(specifier, file_path, span) {
                 Ok(resolved_module) => {
                     let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
@@ -1372,6 +1359,70 @@ fn collect_diagnostics(
                     }
                 }
                 Err(failure) => {
+                    // Check if this is NotFound and the old resolver would find it (virtual test files)
+                    // In that case, validate Node16 rules before accepting the fallback
+                    if failure.is_not_found() {
+                        if let Some(resolved) = resolve_module_specifier(
+                            file_path,
+                            specifier,
+                            options,
+                            base_dir,
+                            &mut resolution_cache,
+                            &program_paths,
+                        ) {
+                            // Validate Node16/NodeNext extension requirements for virtual files
+                            let resolution_kind = options.effective_module_resolution();
+                            let is_node16_or_next = matches!(
+                                resolution_kind,
+                                crate::cli::config::ModuleResolutionKind::Node16
+                                    | crate::cli::config::ModuleResolutionKind::NodeNext
+                            );
+
+                            if is_node16_or_next {
+                                // Check if importing file is ESM (by extension or path)
+                                let file_path_str = file_path.to_string_lossy();
+                                let importing_ext =
+                                    crate::module_resolver::ModuleExtension::from_path(file_path);
+                                let is_esm = importing_ext.forces_esm()
+                                    || file_path_str.ends_with(".mts")
+                                    || file_path_str.ends_with(".mjs");
+
+                                // Check if specifier has an extension
+                                let specifier_has_extension = Path::new(specifier)
+                                    .extension()
+                                    .is_some();
+
+                                // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
+                                // If the import is extensionless, TypeScript treats it as "cannot find module" (TS2307)
+                                // even though the file exists, because ESM requires explicit extensions
+                                if is_esm && !specifier_has_extension && specifier.starts_with('.')
+                                {
+                                    // Emit TS2307 error - module cannot be found with the exact specifier
+                                    // (even though the file exists, ESM requires explicit extension)
+                                    resolved_module_errors.insert(
+                                        (file_idx, specifier.clone()),
+                                        crate::checker::context::ResolutionError {
+                                            code: crate::module_resolver::CANNOT_FIND_MODULE,
+                                            message: format!(
+                                                "Cannot find module '{}' or its corresponding type declarations.",
+                                                specifier
+                                            ),
+                                        },
+                                    );
+                                    continue; // Don't add to resolved_modules - this is an error
+                                }
+                            }
+
+                            // Fallback succeeded and passed validation - add to resolved paths
+                            let canonical = canonicalize_or_owned(&resolved);
+                            if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                                resolved_module_paths
+                                    .insert((file_idx, specifier.clone()), target_idx);
+                            }
+                            continue; // Virtual file found and validated, skip error
+                        }
+                    }
+
                     // Convert ResolutionFailure to Diagnostic to get the error code and message
                     let diagnostic = failure.to_diagnostic();
                     resolved_module_errors.insert(
@@ -1462,7 +1513,9 @@ fn collect_diagnostics(
         checker
             .ctx
             .set_resolved_module_paths(resolved_module_paths.clone());
-        checker.ctx.set_resolved_module_errors(resolved_module_errors.clone());
+        checker
+            .ctx
+            .set_resolved_module_errors(resolved_module_errors.clone());
         checker.ctx.set_current_file_idx(file_idx);
 
         // Build resolved_modules set for backward compatibility

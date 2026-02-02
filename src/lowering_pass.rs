@@ -1146,8 +1146,7 @@ impl<'a> LoweringPass<'a> {
         self.has_export_assignment = self.contains_export_assignment(&source.statements);
         self.commonjs_mode = if self.ctx.is_commonjs() {
             true
-        } else if self.ctx.auto_detect_module
-            && matches!(self.ctx.options.module, ModuleKind::None)
+        } else if self.ctx.auto_detect_module && matches!(self.ctx.options.module, ModuleKind::None)
         {
             self.file_is_module(&source.statements)
         } else {

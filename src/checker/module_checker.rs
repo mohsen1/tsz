@@ -108,7 +108,9 @@ impl<'a> CheckerState<'a> {
             let error_code = error.code;
             let error_message = error.message.clone();
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key.clone());
+                self.ctx
+                    .modules_with_ts2307_emitted
+                    .insert(module_key.clone());
                 self.error_at_node(arg_idx, &error_message, error_code);
             }
             return;
