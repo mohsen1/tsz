@@ -223,6 +223,7 @@ impl<'a> IRPrinter<'a> {
                 parameters,
                 body,
                 is_expression_body,
+                body_source_range,
             } => {
                 self.write("function ");
                 if let Some(n) = name {
@@ -238,9 +239,24 @@ impl<'a> IRPrinter<'a> {
                     self.write("{ }");
                     return;
                 }
-                // Arrow-to-function with single return: { return expr; }
+                // Single-line function body: { return expr; }
+                // Applies to arrow-to-function conversions (is_expression_body)
+                // and regular function expressions that were single-line in source
+                let is_source_single_line = body_source_range
+                    .and_then(|(pos, end)| {
+                        self.source_text.map(|text| {
+                            let start = pos as usize;
+                            let end = std::cmp::min(end as usize, text.len());
+                            if start < end {
+                                !text[start..end].contains('\n')
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                    .unwrap_or(false);
                 if !has_defaults
-                    && *is_expression_body
+                    && (*is_expression_body || is_source_single_line)
                     && body.len() == 1
                     && let IRNode::ReturnStatement(Some(expr)) = &body[0]
                 {
