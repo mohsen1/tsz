@@ -33,7 +33,7 @@ impl<'a> CheckerState<'a> {
     /// `type AB = A & B`, the intersection contains Ref(A) and Ref(B). Before we
     /// can check assignability against the intersection, we need to ensure A and B
     /// are resolved and in type_env so the subtype checker can resolve them.
-    fn ensure_refs_resolved(&mut self, type_id: TypeId) {
+    pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
         use crate::solver::TypeKey;
 
         let Some(type_key) = self.ctx.types.lookup(type_id) else {
@@ -90,6 +90,23 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // For callables, resolve call/construct signature params and returns
+            TypeKey::Callable(sig) => {
+                let callable = self.ctx.types.callable_shape(sig);
+                for signature in &callable.call_signatures {
+                    self.ensure_refs_resolved(signature.return_type);
+                    for param in &signature.params {
+                        self.ensure_refs_resolved(param.type_id);
+                    }
+                }
+                for signature in &callable.construct_signatures {
+                    self.ensure_refs_resolved(signature.return_type);
+                    for param in &signature.params {
+                        self.ensure_refs_resolved(param.type_id);
+                    }
+                }
+            }
+
             // For objects, resolve property types and index signatures
             TypeKey::Object(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
@@ -134,23 +151,6 @@ impl<'a> CheckerState<'a> {
                 let elems = self.ctx.types.tuple_list(tuple_id);
                 for elem in elems.iter() {
                     self.ensure_refs_resolved(elem.type_id);
-                }
-            }
-
-            // For callables (overloaded signatures), resolve all signatures
-            TypeKey::Callable(callable_id) => {
-                let callable = self.ctx.types.callable_shape(callable_id);
-                for sig in &callable.call_signatures {
-                    self.ensure_refs_resolved(sig.return_type);
-                    for param in &sig.params {
-                        self.ensure_refs_resolved(param.type_id);
-                    }
-                }
-                for sig in &callable.construct_signatures {
-                    self.ensure_refs_resolved(sig.return_type);
-                    for param in &sig.params {
-                        self.ensure_refs_resolved(param.type_id);
-                    }
                 }
             }
 

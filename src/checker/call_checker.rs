@@ -175,6 +175,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         args: &[NodeIndex],
         signatures: &[crate::solver::CallSignature],
+        force_bivariant_callbacks: bool,
     ) -> Option<TypeId> {
         use crate::solver::{CallEvaluator, CallResult, CompatChecker, FunctionShape};
 
@@ -192,7 +193,7 @@ impl<'a> CheckerState<'a> {
                 type_params: sig.type_params.clone(),
                 type_predicate: sig.type_predicate.clone(),
                 is_constructor: false,
-                is_method: false,
+                is_method: sig.is_method,
             };
             let func_type = self.ctx.types.function(func_shape);
             let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, func_type);
@@ -210,11 +211,18 @@ impl<'a> CheckerState<'a> {
             for &arg_type in &arg_types {
                 self.ensure_application_symbols_resolved(arg_type);
             }
+
+            // Ensure all Ref types are resolved into type_env for assignability.
+            self.ensure_refs_resolved(func_type);
+            for &arg_type in &arg_types {
+                self.ensure_refs_resolved(arg_type);
+            }
             let result = {
                 let env = self.ctx.type_env.borrow();
                 let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
                 self.ctx.configure_compat_checker(&mut checker);
                 let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
+                evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
                 evaluator.resolve_call(func_type, &arg_types)
             };
 

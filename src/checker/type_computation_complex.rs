@@ -321,8 +321,11 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(signatures) = overload_signatures.as_deref()
-            && let Some(return_type) =
-                self.resolve_overloaded_call_with_signatures(args, signatures)
+            && let Some(return_type) = self.resolve_overloaded_call_with_signatures(
+                args,
+                signatures,
+                false,
+            )
         {
             return return_type;
         }
@@ -1066,6 +1069,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_call_expression_inner(&mut self, idx: NodeIndex) -> TypeId {
         use crate::parser::node_flags;
         use crate::solver::{CallEvaluator, CallResult, CompatChecker};
+        use crate::parser::syntax_kind_ext;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -1188,9 +1192,18 @@ impl<'a> CheckerState<'a> {
         };
 
         // Overload candidates need signature-specific contextual typing.
+        let force_bivariant_callbacks = matches!(
+            self.ctx.arena.get(call.expression).map(|n| n.kind),
+            Some(syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+                | Some(syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+        );
+
         if let Some(signatures) = overload_signatures.as_deref()
-            && let Some(return_type) =
-                self.resolve_overloaded_call_with_signatures(args, signatures)
+            && let Some(return_type) = self.resolve_overloaded_call_with_signatures(
+                args,
+                signatures,
+                force_bivariant_callbacks,
+            )
         {
             let return_type =
                 self.apply_this_substitution_to_call_return(return_type, call.expression);
@@ -1226,11 +1239,18 @@ impl<'a> CheckerState<'a> {
         // This handles interfaces with call signatures, merged declarations, etc.
         let callee_type_for_call = self.resolve_ref_type(callee_type_for_call);
 
+        // Ensure all Ref types in callee/args are resolved into type_env for assignability.
+        self.ensure_refs_resolved(callee_type_for_call);
+        for &arg_type in &arg_types {
+            self.ensure_refs_resolved(arg_type);
+        }
+
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
             self.ctx.configure_compat_checker(&mut checker);
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
+            evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
             evaluator.resolve_call(callee_type_for_call, &arg_types)
         };
 

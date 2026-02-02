@@ -47,6 +47,14 @@ pub trait AssignabilityChecker {
     fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_assignable_to(source, target)
     }
+
+    /// Assignability check for bivariant callback parameters.
+    ///
+    /// This is used for method parameter positions where TypeScript allows
+    /// bivariant checking for function-typed callbacks.
+    fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_to(source, target)
+    }
 }
 
 // =============================================================================
@@ -98,6 +106,7 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     interner: &'a dyn QueryDatabase,
     checker: &'a mut C,
     defaulted_placeholders: FxHashSet<TypeId>,
+    force_bivariant_callbacks: bool,
     /// Current recursion depth for constrain_types to prevent infinite loops
     constraint_recursion_depth: RefCell<usize>,
     /// Visited (source, target) pairs during constraint collection.
@@ -110,9 +119,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             interner,
             checker,
             defaulted_placeholders: FxHashSet::default(),
+            force_bivariant_callbacks: false,
             constraint_recursion_depth: RefCell::new(0),
             constraint_pairs: RefCell::new(FxHashSet::default()),
         }
+    }
+
+    pub fn set_force_bivariant_callbacks(&mut self, enabled: bool) {
+        self.force_bivariant_callbacks = enabled;
     }
 
     pub fn infer_call_signature(&mut self, sig: &CallSignature, arg_types: &[TypeId]) -> TypeId {
@@ -123,7 +137,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             type_params: sig.type_params.clone(),
             type_predicate: sig.type_predicate.clone(),
             is_constructor: false,
-            is_method: false,
+            is_method: sig.is_method,
         };
         match self.resolve_function_call(&func, arg_types) {
             CallResult::Success(ret) => ret,
@@ -394,7 +408,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return self.resolve_generic_call(func, arg_types);
         }
 
-        if let Some(result) = self.check_argument_types(&func.params, arg_types) {
+        if let Some(result) =
+            self.check_argument_types(&func.params, arg_types, func.is_method)
+        {
             return result;
         }
 
@@ -620,7 +636,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: arg_types.len(),
             };
         }
-        if let Some(result) = self.check_argument_types_with(&instantiated_params, arg_types, true)
+        if let Some(result) = self.check_argument_types_with(
+            &instantiated_params,
+            arg_types,
+            true,
+            func.is_method,
+        )
         {
             return result;
         }
@@ -633,8 +654,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &mut self,
         params: &[ParamInfo],
         arg_types: &[TypeId],
+        allow_bivariant_callbacks: bool,
     ) -> Option<CallResult> {
-        self.check_argument_types_with(params, arg_types, false)
+        self.check_argument_types_with(params, arg_types, false, allow_bivariant_callbacks)
     }
 
     fn check_argument_types_with(
@@ -642,6 +664,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         params: &[ParamInfo],
         arg_types: &[TypeId],
         strict: bool,
+        allow_bivariant_callbacks: bool,
     ) -> Option<CallResult> {
         let arg_count = arg_types.len();
         for (i, arg_type) in arg_types.iter().enumerate() {
@@ -662,7 +685,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 _ => self.expand_type_param(*arg_type),
             };
 
-            let assignable = if strict {
+            let assignable = if allow_bivariant_callbacks || self.force_bivariant_callbacks {
+                self.checker
+                    .is_assignable_to_bivariant_callback(expanded_arg_type, param_type)
+            } else if strict {
                 self.checker
                     .is_assignable_to_strict(expanded_arg_type, param_type)
             } else {
@@ -1904,7 +1930,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 type_params: sig.type_params.clone(),
                 type_predicate: sig.type_predicate.clone(),
                 is_constructor: false,
-                is_method: false,
+                is_method: sig.is_method,
             };
             return self.resolve_function_call(&func, arg_types);
         }
@@ -1925,7 +1951,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 type_params: sig.type_params.clone(),
                 type_predicate: sig.type_predicate.clone(),
                 is_constructor: false,
-                is_method: false,
+                is_method: sig.is_method,
             };
 
             match self.resolve_function_call(&func, arg_types) {
