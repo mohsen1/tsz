@@ -829,7 +829,7 @@ The second fix addresses TS2300 "Duplicate identifier" errors for lib types by e
 |----------|-------------|----------|-------------|--------|
 | **1** | ~719 | Null/undefined checks | TS18050, TS18047, TS18048, TS18049 | Implement strictNullChecks enforcement |
 | **2** | ~556 | Global/lib type resolution | TS2318, TS2583, TS2584 | Fix utility type resolution in lib.d.ts |
-| **3** | ~517 | Module/import resolution | TS2307, TS2792, TS2834, TS2835 | Fix module resolver for node/bundler modes |
+| **3** | ~517 | Module/import resolution | TS2307, TS2792, TS2834, TS2835 | ✅ Module resolver updated with TS2792/TS2834 support. Pending: enable `report_unresolved_imports` (blocked by cross-lib type resolution) |
 | **4** | ~456 | Operator type constraints | TS2365, TS2362, TS2363, TS2469 | Implement binary operator type checking |
 | **5** | ~343 | Type assignability | TS2322, TS2345, TS2741 | Review specific failing patterns |
 | **6** | ~321 | Duplicate identifier | TS2300, TS2451, TS2392, TS2393 | Check edge cases in merging |
