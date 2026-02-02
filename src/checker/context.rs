@@ -1029,6 +1029,15 @@ impl<'a> CheckerContext<'a> {
         self.def_to_symbol.get(&def_id).copied()
     }
 
+    /// Look up an existing DefId for a symbol without creating a new one.
+    ///
+    /// Returns None if the symbol doesn't have a DefId yet.
+    /// This is used by the DefId resolver in TypeLowering to prefer
+    /// DefId when available but fall back to SymbolRef otherwise.
+    pub fn get_existing_def_id(&self, sym_id: SymbolId) -> Option<DefId> {
+        self.symbol_to_def.get(&sym_id).copied()
+    }
+
     /// Register a resolved type in the TypeEnvironment for both SymbolRef and DefId.
     ///
     /// This ensures that both the old `TypeKey::Ref(SymbolRef)` and new `TypeKey::Lazy(DefId)`

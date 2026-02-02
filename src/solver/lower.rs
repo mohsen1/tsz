@@ -261,6 +261,29 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
+    /// Create a TypeLowering with both type and DefId resolvers (Phase 2 migration).
+    ///
+    /// This allows TypeLowering to prefer DefId when available, but fall back
+    /// to SymbolId for types that don't have a DefId yet.
+    pub fn with_hybrid_resolver(
+        arena: &'a NodeArena,
+        interner: &'a dyn QueryDatabase,
+        type_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
+        def_id_resolver: &'a dyn Fn(NodeIndex) -> Option<DefId>,
+        value_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
+    ) -> Self {
+        TypeLowering {
+            arena,
+            interner: interner.as_type_database(),
+            type_resolver: Some(type_resolver),
+            def_id_resolver: Some(def_id_resolver),
+            value_resolver: Some(value_resolver),
+            type_param_scopes: RefCell::new(Vec::new()),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
+        }
+    }
+
     /// Create a new TypeLowering sharing the same context/state but using a different arena.
     /// This is used for lowering merged interface declarations that span multiple lib files.
     pub fn with_arena<'b>(&'b self, arena: &'b NodeArena) -> TypeLowering<'b>
@@ -2269,6 +2292,11 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a qualified name type (A.B).
     fn lower_qualified_name_type(&self, node_idx: NodeIndex) -> TypeId {
+        // Phase 2: Prefer DefId over SymbolId for type identity
+        if let Some(def_id) = self.resolve_def_id(node_idx) {
+            return self.interner.intern(TypeKey::Lazy(def_id));
+        }
+        // Fall back to SymbolId for compatibility
         if let Some(symbol_id) = self.resolve_type_symbol(node_idx) {
             return self.interner.reference(SymbolRef(symbol_id));
         }
@@ -2289,6 +2317,11 @@ impl<'a> TypeLowering<'a> {
                 return type_param;
             }
 
+            // Phase 2: Prefer DefId over SymbolId for type identity
+            if let Some(def_id) = self.resolve_def_id(node_idx) {
+                return self.interner.intern(TypeKey::Lazy(def_id));
+            }
+            // Fall back to SymbolId for compatibility
             if let Some(symbol_id) = self.resolve_type_symbol(node_idx) {
                 return self.interner.reference(SymbolRef(symbol_id));
             }
