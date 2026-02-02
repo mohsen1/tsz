@@ -29,6 +29,7 @@ pub(crate) use crate::cli::driver_resolution::{
     normalize_base_url, normalize_output_dir, normalize_root_dir,
 };
 use crate::cli::fs::{FileDiscoveryOptions, discover_ts_files};
+use crate::cli::incremental::{BuildInfo, default_build_info_path};
 use crate::parallel::{self, BindResult, BoundFile, MergedProgram};
 use crate::parser::NodeIndex;
 use crate::parser::ParseDiagnostic;
@@ -285,6 +286,152 @@ impl CompilationCache {
     }
 }
 
+/// Convert CompilationCache to BuildInfo for persistence
+fn compilation_cache_to_build_info(
+    cache: &CompilationCache,
+    root_files: &[PathBuf],
+    base_dir: &Path,
+    options: &ResolvedCompilerOptions,
+) -> BuildInfo {
+    use crate::cli::incremental::{BuildInfoOptions, EmitSignature, FileInfo as IncrementalFileInfo};
+    use std::collections::BTreeMap;
+
+    let mut file_infos = BTreeMap::new();
+    let mut dependencies = BTreeMap::new();
+    let mut emit_signatures = BTreeMap::new();
+
+    // Convert each file's cache entry to BuildInfo format
+    for (path, hash) in &cache.export_hashes {
+        let relative_path = path
+            .strip_prefix(base_dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // Create file info with version (hash) and signature
+        let version = format!("{:016x}", hash);
+        let signature = Some(format!("{:016x}", hash));
+        file_infos.insert(relative_path.clone(), IncrementalFileInfo {
+            version,
+            signature,
+            affected_files_pending_emit: false,
+            implied_format: None,
+        });
+
+        // Convert dependencies
+        if let Some(deps) = cache.dependencies.get(path) {
+            let dep_strs: Vec<String> = deps
+                .iter()
+                .map(|d| {
+                    d.strip_prefix(base_dir)
+                        .unwrap_or(d)
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                        .to_string()
+                })
+                .collect();
+            dependencies.insert(relative_path.clone(), dep_strs);
+        }
+
+        // Add emit signature (empty for now, populated during emit)
+        emit_signatures.insert(relative_path, EmitSignature {
+            js: None,
+            dts: None,
+            map: None,
+        });
+    }
+
+    // Convert root files to relative paths
+    let root_files_str: Vec<String> = root_files
+        .iter()
+        .map(|p| {
+            p.strip_prefix(base_dir)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_string()
+        })
+        .collect();
+
+    // Build compiler options
+    let build_options = BuildInfoOptions {
+        target: Some(format!("{:?}", options.checker.target)),
+        module: Some(format!("{:?}", options.printer.module)),
+        declaration: Some(options.emit_declarations),
+        strict: Some(options.checker.strict),
+        ..Default::default()
+    };
+
+    BuildInfo {
+        version: crate::cli::incremental::BUILD_INFO_VERSION.to_string(),
+        compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+        root_files: root_files_str,
+        file_infos,
+        dependencies,
+        semantic_diagnostics_per_file: BTreeMap::new(), // TODO: implement if needed
+        emit_signatures,
+        options: build_options,
+        build_time: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    }
+}
+
+/// Load BuildInfo and create an initial CompilationCache from it
+fn build_info_to_compilation_cache(
+    build_info: &BuildInfo,
+    base_dir: &Path,
+) -> CompilationCache {
+    let mut cache = CompilationCache::default();
+
+    // Convert string paths back to PathBuf and populate export_hashes
+    for (path_str, file_info) in &build_info.file_infos {
+        let full_path = base_dir.join(path_str);
+
+        // Parse version hash back to u64
+        if let Ok(hash) = u64::from_str_radix(&file_info.version, 16) {
+            cache.export_hashes.insert(full_path.clone(), hash);
+        }
+
+        // Convert dependencies
+        if let Some(deps) = build_info.get_dependencies(path_str) {
+            let mut dep_paths = HashSet::new();
+            for dep in deps {
+                let dep_path = base_dir.join(dep);
+                cache.reverse_dependencies
+                    .entry(dep_path.clone())
+                    .or_default()
+                    .insert(full_path.clone());
+                dep_paths.insert(dep_path);
+            }
+            cache.dependencies.insert(full_path, dep_paths);
+        }
+    }
+
+    cache
+}
+
+/// Get the .tsbuildinfo file path based on compiler options
+fn get_build_info_path(
+    tsconfig_path: Option<&Path>,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+) -> Option<PathBuf> {
+    if !options.incremental && options.ts_build_info_file.is_none() {
+        return None;
+    }
+
+    if let Some(ref explicit_path) = options.ts_build_info_file {
+        return Some(base_dir.join(explicit_path));
+    }
+
+    // Use tsconfig path to determine default buildinfo location
+    let config_path = tsconfig_path?;
+    let out_dir = options.out_dir.as_ref().map(|od| base_dir.join(od));
+    Some(default_build_info_path(config_path, out_dir.as_deref()))
+}
+
 pub fn compile(args: &CliArgs, cwd: &Path) -> Result<CompilationResult> {
     compile_inner(args, cwd, None, None, None, None)
 }
@@ -400,6 +547,35 @@ fn compile_inner(
         out_dir.as_deref(),
     )?;
     let mut file_paths = discover_ts_files(&discovery)?;
+
+    // Track if we should save BuildInfo after successful compilation
+    let mut should_save_build_info = false;
+
+    // Local cache for BuildInfo-loaded compilation state
+    let mut local_cache: Option<CompilationCache> = None;
+
+    // Load BuildInfo if incremental compilation is enabled and no cache was provided
+    if cache.is_none() && (resolved.incremental || resolved.ts_build_info_file.is_some()) {
+        let tsconfig_path_ref = tsconfig_path.as_deref();
+        if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir) {
+            if build_info_path.exists() {
+                match BuildInfo::load(&build_info_path) {
+                    Ok(build_info) => {
+                        // Create a local cache from BuildInfo
+                        local_cache = Some(build_info_to_compilation_cache(&build_info, &base_dir));
+                        tracing::info!("Loaded BuildInfo from: {}", build_info_path.display());
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load BuildInfo from {}: {}, starting fresh", build_info_path.display(), e);
+                    }
+                }
+            }
+            should_save_build_info = true;
+        }
+    }
+
+    // Determine which cache to use: local cache from BuildInfo, or provided cache, or none
+    // When cache is None, we can use local_cache; otherwise we use the provided cache
     let type_files = collect_type_root_files(&base_dir, &resolved);
 
     // Add type definition files (e.g., @types packages) to the source file list.
@@ -422,21 +598,28 @@ fn compile_inner(
             .map(|path| canonicalize_or_owned(path))
             .collect::<HashSet<_>>()
     });
+
+    // Create a unified effective cache reference that works for both cases
+    // This follows Gemini's recommended pattern to handle the two cache sources
+    let mut local_cache_ref = local_cache.as_mut();
+    let mut effective_cache = local_cache_ref.as_deref_mut().or(cache.as_deref_mut());
+
     let SourceReadResult {
         sources: all_sources,
         dependencies,
     } = {
-        let cache_ref = cache.as_deref();
         read_source_files(
             &file_paths,
             &base_dir,
             &resolved,
-            cache_ref,
+            effective_cache.as_deref(),
             changed_set.as_ref(),
         )?
     };
-    if let Some(cache) = cache.as_deref_mut() {
-        cache.update_dependencies(dependencies);
+
+    // Update dependencies in the cache
+    if let Some(ref mut c) = effective_cache {
+        c.update_dependencies(dependencies);
     }
 
     // Separate binary files from regular sources - binary files get TS1490
@@ -471,8 +654,8 @@ fn compile_inner(
         resolved.lib_files.clone()
     };
 
-    let (program, dirty_paths) = if let Some(cache) = cache.as_deref_mut() {
-        let result = build_program_with_cache(sources, cache, &lib_paths);
+    let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
+        let result = build_program_with_cache(sources, c, &lib_paths);
         (result.program, Some(result.dirty_paths))
     } else {
         let compile_inputs: Vec<(String, String)> = sources
@@ -491,8 +674,10 @@ fn compile_inner(
             None,
         )
     };
-    if let Some(cache) = cache.as_deref_mut() {
-        update_import_symbol_ids(&program, &resolved, &base_dir, cache);
+
+    // Update import symbol IDs if we have a cache
+    if let Some(ref mut c) = effective_cache {
+        update_import_symbol_ids(&program, &resolved, &base_dir, c);
     }
 
     // Load lib files only when type checking is needed (lazy loading for faster startup)
@@ -501,7 +686,8 @@ fn compile_inner(
     } else {
         load_lib_files_for_contexts(&lib_paths, resolved.printer.target)
     };
-    let mut diagnostics = collect_diagnostics(&program, &resolved, &base_dir, cache, &lib_contexts);
+
+    let mut diagnostics = collect_diagnostics(&program, &resolved, &base_dir, effective_cache, &lib_contexts);
     // Add TS1490 diagnostics for binary files
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.sort_by(|left, right| {
@@ -542,6 +728,38 @@ fn compile_inner(
         )?;
         write_outputs(&outputs)?
     };
+
+    // Save BuildInfo if incremental compilation is enabled
+    if should_save_build_info && has_error == false {
+        let tsconfig_path_ref = tsconfig_path.as_deref();
+        if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir) {
+            // Build BuildInfo from the cache (which has been updated by collect_diagnostics)
+            // If local_cache exists (from BuildInfo), use it; otherwise create minimal info
+            let build_info = if let Some(ref lc) = local_cache {
+                compilation_cache_to_build_info(lc, &file_paths, &base_dir, &resolved)
+            } else {
+                // No cache available - create minimal BuildInfo with just file info
+                BuildInfo {
+                    version: crate::cli::incremental::BUILD_INFO_VERSION.to_string(),
+                    compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+                    root_files: file_paths.iter().map(|p| {
+                        p.strip_prefix(&base_dir)
+                            .unwrap_or(p)
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                            .to_string()
+                    }).collect(),
+                    ..Default::default()
+                }
+            };
+
+            if let Err(e) = build_info.save(&build_info_path) {
+                tracing::warn!("Failed to save BuildInfo to {}: {}", build_info_path.display(), e);
+            } else {
+                tracing::info!("Saved BuildInfo to: {}", build_info_path.display());
+            }
+        }
+    }
 
     Ok(CompilationResult {
         diagnostics,
@@ -1574,27 +1792,24 @@ fn collect_diagnostics(
         }
         diagnostics.extend(file_diagnostics.clone());
 
-        if let Some(cache) = cache.as_deref_mut() {
+        // Update the cache with results from this file
+        if let Some(c) = cache.as_deref_mut() {
             let export_hash = compute_export_hash(program, file, file_idx, &mut checker);
-            cache
-                .type_caches
+            c.type_caches
                 .insert(file_path.clone(), checker.extract_cache());
-            cache
-                .diagnostics
+            c.diagnostics
                 .insert(file_path.clone(), file_diagnostics);
-            cache.export_hashes.insert(file_path, export_hash);
+            c.export_hashes.insert(file_path, export_hash);
         }
     }
 
-    if let Some(cache) = cache {
-        cache
-            .type_caches
+    // Cleanup unused entries from the cache
+    if let Some(c) = cache {
+        c.type_caches
             .retain(|path, _| used_paths.contains(path));
-        cache
-            .diagnostics
+        c.diagnostics
             .retain(|path, _| used_paths.contains(path));
-        cache
-            .export_hashes
+        c.export_hashes
             .retain(|path, _| used_paths.contains(path));
     }
 

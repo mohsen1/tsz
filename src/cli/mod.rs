@@ -5,6 +5,7 @@ pub mod config;
 pub mod driver;
 pub mod driver_resolution;
 pub mod fs;
+pub mod incremental;
 pub mod locale;
 pub mod project_refs;
 pub mod reporter;
