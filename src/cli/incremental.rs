@@ -14,7 +14,7 @@
 //! - Emitted file signatures for output caching
 
 use anyhow::{Context, Result, bail};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -229,7 +229,7 @@ impl ChangeTracker {
         current_files: &[PathBuf],
     ) -> Result<()> {
         let current_set: FxHashSet<_> = current_files.iter().collect();
-        let previous_set: FxHashSet<_> = build_info.file_infos.keys()
+        let _previous_set: FxHashSet<_> = build_info.file_infos.keys()
             .map(PathBuf::from)
             .collect();
 
