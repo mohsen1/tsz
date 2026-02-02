@@ -21,6 +21,102 @@
 use crate::parser::node::NodeArena;
 use crate::transforms::ir::*;
 
+/// Find the end of a statement in source text by scanning for ';' at depth 0
+/// or a balanced closing '}' that returns brace depth to 0.
+/// Handles strings, parens, and brace nesting.
+fn find_statement_end(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut brace_depth: i32 = 0;
+    let mut paren_depth: i32 = 0;
+    let mut in_string = false;
+    let mut string_char: u8 = 0;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+
+        // Handle line comments
+        if in_line_comment {
+            if b == b'\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Handle block comments
+        if in_block_comment {
+            if b == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
+                in_block_comment = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Handle strings
+        if in_string {
+            if b == b'\\' {
+                i += 2; // skip escaped character
+                continue;
+            }
+            if b == string_char {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match b {
+            b'"' | b'\'' | b'`' => {
+                in_string = true;
+                string_char = b;
+            }
+            b'/' if i + 1 < len => {
+                if bytes[i + 1] == b'/' {
+                    in_line_comment = true;
+                    i += 2;
+                    continue;
+                }
+                if bytes[i + 1] == b'*' {
+                    in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+            }
+            b'(' => paren_depth += 1,
+            b')' => {
+                paren_depth -= 1;
+            }
+            b'{' => brace_depth += 1,
+            b'}' => {
+                brace_depth -= 1;
+                if brace_depth == 0 && paren_depth == 0 {
+                    // End of a block construct (function, if, for, etc.)
+                    return i + 1;
+                }
+                if brace_depth < 0 {
+                    // Extra '}' from parent block
+                    return i;
+                }
+            }
+            b';' if brace_depth == 0 && paren_depth == 0 => {
+                return i + 1;
+            }
+            _ => {}
+        }
+
+        i += 1;
+    }
+
+    // No terminator found - return trimmed end
+    text.trim_end().len()
+}
+
 /// IR Printer - converts IR nodes to JavaScript strings
 pub struct IRPrinter<'a> {
     output: String,
@@ -744,16 +840,29 @@ impl<'a> IRPrinter<'a> {
                 }
             }
             IRNode::ASTRef(idx) => {
-                // Fallback: emit a placeholder or use the arena if available
+                // Emit AST node by using its source text.
+                // node.pos includes leading trivia, and node.end may extend past the
+                // node's actual content into the next sibling's trivia or the parent
+                // block's closing brace. We skip leading trivia and find the actual
+                // statement end by scanning for ';' or balanced '}' at depth 0.
                 if let Some(arena) = self.arena
                     && let Some(text) = self.source_text
                     && let Some(node) = arena.get(*idx)
                 {
                     let start = node.pos as usize;
-                    let end = node.end as usize;
-                    if start < end && end <= text.len() {
-                        self.write(&text[start..end]);
-                        return;
+                    let end = std::cmp::min(node.end as usize, text.len());
+                    if start < end {
+                        let raw = &text[start..end];
+                        // Skip leading whitespace/trivia
+                        let trimmed = raw.trim_start_matches(|c: char| c.is_whitespace());
+                        if !trimmed.is_empty() {
+                            let stmt_end = find_statement_end(trimmed);
+                            let result = &trimmed[..stmt_end];
+                            if !result.is_empty() {
+                                self.write(result);
+                                return;
+                            }
+                        }
                     }
                 }
                 self.write("/* ASTRef */");
