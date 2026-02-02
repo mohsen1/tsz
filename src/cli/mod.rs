@@ -17,6 +17,9 @@ pub mod watch;
 #[path = "tests/args_tests.rs"]
 mod args_tests;
 #[cfg(test)]
+#[path = "tests/build_tests.rs"]
+mod build_tests;
+#[cfg(test)]
 #[path = "tests/config_tests.rs"]
 mod config_tests;
 #[cfg(test)]
