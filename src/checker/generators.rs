@@ -270,18 +270,16 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             );
         }
 
-        // Generator global not found - emit TS2318 if lib files should be loaded
-        // but aren't providing the type (matching TSC behavior)
-        if self.ctx.has_lib_loaded() || !self.ctx.no_lib() {
-            use crate::lib_loader;
-            self.ctx
-                .push_diagnostic(lib_loader::emit_error_global_type_missing(
-                    "Generator",
-                    self.ctx.file_name.clone(),
-                    0,
-                    0,
-                ));
-        }
+        // Generator global not found - emit TS2318 regardless of noLib setting.
+        // TSC emits this error even with noLib: true when generator functions are used.
+        use crate::lib_loader;
+        self.ctx
+            .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                "Generator",
+                self.ctx.file_name.clone(),
+                0,
+                0,
+            ));
 
         // Fall back to structural Generator type
         self.create_generator_type(info.yield_type, info.return_type, info.next_type)
@@ -300,20 +298,16 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             );
         }
 
-        // AsyncGenerator global not found - emit TS2318 if lib files should be loaded
-        // but aren't providing the type (matching TSC behavior)
-        if self.ctx.has_lib_loaded() || !self.ctx.no_lib() {
-            // Use lib_loader to emit the error at position 0 (file-level diagnostic)
-            // This matches TSC which emits global type errors at the start of the file
-            use crate::lib_loader;
-            self.ctx
-                .push_diagnostic(lib_loader::emit_error_global_type_missing(
-                    "AsyncGenerator",
-                    self.ctx.file_name.clone(),
-                    0,
-                    0,
-                ));
-        }
+        // AsyncGenerator global not found - emit TS2318 regardless of noLib setting.
+        // TSC emits this error even with noLib: true when async generator functions are used.
+        use crate::lib_loader;
+        self.ctx
+            .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                "AsyncGenerator",
+                self.ctx.file_name.clone(),
+                0,
+                0,
+            ));
 
         // Fall back to structural AsyncGenerator type
         self.create_async_generator_type(info.yield_type, info.return_type, info.next_type)
