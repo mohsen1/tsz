@@ -33132,37 +33132,9 @@ class MyClass {
 /// types like Array and Object should resolve correctly without TS2318.
 #[test]
 fn test_lib_merge_no_ts2318_for_basic_globals() {
-    use crate::binder::LibContext as BinderLibContext;
-    use crate::checker::context::LibContext as CheckerLibContext;
-    use std::sync::Arc;
+    use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 
-    // Create a minimal lib binder with Array and Object
-    let mut lib_binder = BinderState::new();
-    let array_id = lib_binder
-        .symbols
-        .alloc(crate::binder::symbol_flags::INTERFACE, "Array".to_string());
-    let object_id = lib_binder
-        .symbols
-        .alloc(crate::binder::symbol_flags::INTERFACE, "Object".to_string());
-    lib_binder.file_locals.set("Array".to_string(), array_id);
-    lib_binder.file_locals.set("Object".to_string(), object_id);
-
-    let lib_arena = Arc::new(NodeArena::new());
-    let lib_binder_arc = Arc::new(lib_binder);
-
-    // Create binder LibContext for merging
-    let binder_lib_context = BinderLibContext {
-        arena: Arc::clone(&lib_arena),
-        binder: Arc::clone(&lib_binder_arc),
-    };
-
-    // Create checker LibContext for the checker
-    let checker_lib_context = CheckerLibContext {
-        arena: Arc::clone(&lib_arena),
-        binder: Arc::clone(&lib_binder_arc),
-    };
-
-    // Source that references Array
+    // Source that references Array and Object
     let source = r#"
 const arr: Array<number> = [1, 2, 3];
 const obj: Object = {};
@@ -33172,8 +33144,7 @@ const obj: Object = {};
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    // Merge lib symbols with proper remapping
-    binder.merge_lib_contexts_into_binder(&[binder_lib_context]);
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     // Verify lib symbols are merged
@@ -33199,9 +33170,7 @@ const obj: Object = {};
         crate::checker::context::CheckerOptions::default(),
     );
 
-    // Set lib contexts for checker
-    checker.ctx.set_lib_contexts(vec![checker_lib_context]);
-
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should NOT have TS2318 (global type not found)
