@@ -2259,6 +2259,10 @@ mod tests;
 mod index_signature_tests;
 
 #[cfg(test)]
+#[path = "tests/generics_rules_tests.rs"]
+mod generics_rules_tests;
+
+#[cfg(test)]
 #[path = "tests/callable_tests.rs"]
 mod callable_tests;
 
