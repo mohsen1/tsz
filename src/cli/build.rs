@@ -139,12 +139,13 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
     let root_dir = &project.root_dir;
 
     // Discover all TypeScript source files in the project
+    // Note: out_dir is passed so output files are excluded from discovery
     let discovery_options = FileDiscoveryOptions {
         base_dir: root_dir.clone(),
         files: Vec::new(),
         include: None,
         exclude: None,
-        out_dir: None,
+        out_dir: project.out_dir.clone(),
         follow_links: false,
     };
 
@@ -159,9 +160,21 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
         }
     };
 
+    // Normalize paths to relative paths (from root_dir) for comparison with BuildInfo
+    // But we need to keep absolute paths for ChangeTracker to read files
+    let current_files_relative: Vec<PathBuf> = current_files
+        .iter()
+        .filter_map(|path| {
+            path.strip_prefix(root_dir)
+                .ok()
+                .map(|p| p.to_path_buf())
+        })
+        .collect();
+
     // Use ChangeTracker to detect modifications
+    // Note: We pass absolute paths for file reading, but ChangeTracker compares using relative paths
     let mut tracker = ChangeTracker::new();
-    if let Err(e) = tracker.compute_changes(&build_info, &current_files) {
+    if let Err(e) = tracker.compute_changes_with_base(&build_info, &current_files, root_dir) {
         if args.build_verbose {
             warn!("Failed to compute changes: {}", e);
         }
@@ -272,11 +285,11 @@ fn are_referenced_projects_uptodate(
 
 /// Get the path to the .tsbuildinfo file for a project
 fn get_build_info_path(project: &ResolvedProject) -> Option<PathBuf> {
-    // TODO: This should match the logic in incremental.rs
-    // For now, use a simple heuristic: tsconfig.tsbuildinfo next to the config file
-    let config_dir = project.config_path.parent()?;
-    let config_name = project.config_path.file_stem()?.to_str()?;
-    Some(config_dir.join(format!("{}.tsbuildinfo", config_name)))
+    use crate::cli::incremental::default_build_info_path;
+
+    // Use the same logic as incremental.rs
+    let out_dir = project.out_dir.as_deref();
+    Some(default_build_info_path(&project.config_path, out_dir))
 }
 
 /// Find a tsconfig.json file in the given directory

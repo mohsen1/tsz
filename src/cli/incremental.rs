@@ -327,6 +327,67 @@ impl ChangeTracker {
         Ok(())
     }
 
+    /// Compute changes with absolute file paths
+    /// Automatically normalizes paths relative to base_dir for comparison with BuildInfo
+    pub fn compute_changes_with_base(
+        &mut self,
+        build_info: &BuildInfo,
+        current_files: &[PathBuf],
+        base_dir: &Path,
+    ) -> Result<()> {
+        // Normalize absolute paths to relative paths for BuildInfo comparison
+        let current_files_relative: Vec<PathBuf> = current_files
+            .iter()
+            .filter_map(|path| {
+                path.strip_prefix(base_dir)
+                    .ok()
+                    .map(|p| p.to_path_buf())
+            })
+            .collect();
+
+        // Compute changes using relative paths, but store absolute paths in results
+        let current_set: FxHashSet<_> = current_files_relative.iter().collect();
+        let _previous_set: FxHashSet<_> = build_info.file_infos.keys()
+            .map(PathBuf::from)
+            .collect();
+
+        // Find new files
+        for (i, file_rel) in current_files_relative.iter().enumerate() {
+            let path_str = file_rel.to_string_lossy();
+            if !build_info.file_infos.contains_key(path_str.as_ref()) {
+                let abs_path = &current_files[i];
+                self.new_files.insert(abs_path.clone());
+                self.affected_files.insert(abs_path.clone());
+            }
+        }
+
+        // Find deleted files
+        for path_str in build_info.file_infos.keys() {
+            let path = PathBuf::from(path_str);
+            if !current_set.contains(&path) {
+                self.deleted_files.insert(path);
+            }
+        }
+
+        // Check for modified files
+        for (i, file_rel) in current_files_relative.iter().enumerate() {
+            let abs_path = &current_files[i];
+            if self.new_files.contains(abs_path) {
+                continue;
+            }
+
+            let current_version = compute_file_version(abs_path)?;
+            let path_str = file_rel.to_string_lossy();
+
+            if build_info.has_file_changed(&path_str, &current_version) {
+                self.changed_files.insert(abs_path.clone());
+                self.affected_files.insert(abs_path.clone());
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get files that have changed
     pub fn changed_files(&self) -> &FxHashSet<PathBuf> {
         &self.changed_files
