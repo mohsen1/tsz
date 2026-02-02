@@ -10,6 +10,7 @@ use crate::interner::Atom;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
+use crate::solver::def::DefId;
 use crate::solver::TypeId;
 
 impl<'a> CheckerState<'a> {

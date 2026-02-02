@@ -21,6 +21,7 @@
 //! This design allows true parallel type checking without lock contention.
 
 use crate::interner::{Atom, ShardedInterner};
+use crate::solver::def::DefId;
 use crate::solver::types::*;
 use crate::solver::visitor::{is_literal_type, is_object_like_type};
 use dashmap::DashMap;
@@ -1898,6 +1899,17 @@ impl TypeInterner {
     /// Intern a type reference
     pub fn reference(&self, symbol: SymbolRef) -> TypeId {
         self.intern(TypeKey::Ref(symbol))
+    }
+
+    /// Intern a lazy type reference (DefId-based).
+    ///
+    /// This is the replacement for `reference()` that uses Solver-owned
+    /// DefIds instead of Binder-owned SymbolRefs.
+    ///
+    /// Phase 1 migration: Use this method for all new type references
+    /// to enable O(1) type equality across Binder and Solver boundaries.
+    pub fn lazy(&self, def_id: DefId) -> TypeId {
+        self.intern(TypeKey::Lazy(def_id))
     }
 
     /// Intern a generic type application
