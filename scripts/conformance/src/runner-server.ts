@@ -1333,9 +1333,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   // Load TSC cache (required for meaningful conformance comparison)
   const tscCache = loadTscCache(ROOT_DIR);
   if (!tscCache) {
-    log(`\n${'═'.repeat(60)}`, colors.red);
-    log(`  ERROR: TSC cache not found!`, colors.red);
-    log(`${'═'.repeat(60)}`, colors.red);
+    log(`\nERROR: TSC cache not found!`, colors.red);
     log(`\n  The conformance runner requires a TSC baseline cache to compare against.`, colors.yellow);
     log(`  Without it, tests can only pass if tsz produces zero errors.\n`, colors.yellow);
     log(`  Generate the cache first:`, colors.bold);
@@ -1347,15 +1345,10 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
   const cacheEntries = tscCache.entries;
   log(`\n  TSC cache loaded: ${Object.keys(cacheEntries).length} entries`, colors.dim);
 
-  log(`\n${'═'.repeat(60)}`, colors.cyan);
-  log(`  TSZ Server Mode Conformance Runner`, colors.bold);
-  log(`${'═'.repeat(60)}`, colors.cyan);
-  log(`  Server: ${serverPath}`, colors.dim);
-  log(`  Workers: ${workerCount}`, colors.dim);
-  log(`  Max tests: ${formatNumber(maxTests)}`, colors.dim);
-  log(`  Timeout: dynamic (10x avg, ${INITIAL_TIMEOUT_MS}ms initial)`, colors.dim);
-  log(`  Memory: ${formatMemory(memoryLimitMB)}/worker (${formatMemory(Math.round(memoryLimitMB * workerCount))} total, system: ${formatMemory(totalMemoryMB)})`, colors.dim);
-  log(`${'═'.repeat(60)}\n`, colors.cyan);
+  log(`\nTSZ Server Mode Conformance Runner`, colors.bold);
+  log(`Server: ${serverPath}`, colors.dim);
+  log(`Workers: ${workerCount}  Max: ${formatNumber(maxTests)}  Timeout: dynamic (10x avg, ${INITIAL_TIMEOUT_MS}ms initial)`, colors.dim);
+  log(`Memory: ${formatMemory(memoryLimitMB)}/worker (${formatMemory(Math.round(memoryLimitMB * workerCount))} total, system: ${formatMemory(totalMemoryMB)})\n`, colors.dim);
 
   // Initialize stats
   const stats: TestStats = {
@@ -1690,9 +1683,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     stats.workerStats.respawned = poolStats.totalRestarts;
 
     // Print summary
-    log('\n' + '═'.repeat(60), colors.dim);
-    log('CONFORMANCE TEST RESULTS', colors.bold);
-    log('═'.repeat(60), colors.dim);
+    log('\nCONFORMANCE TEST RESULTS', colors.bold);
 
     // Calculate stats
     const actualFailed = stats.failed - stats.oom - stats.timedOut;
@@ -1789,8 +1780,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
       log(`  Crashed: ${stats.crashed}  OOM: ${stats.oom}  Timeout: ${stats.timedOut}`, colors.red);
     }
 
-    log('\n' + '═'.repeat(60), colors.dim);
-    log(`Tip: --error-code=TSXXXX to filter by error, --filter=PATTERN --print-test for details, --trace to dig deep (add tracing::debug! in Rust)`, colors.dim);
+    log(`\nTip: --error-code=TSXXXX to filter by error, --filter=PATTERN --print-test for details, --trace to dig deep (add tracing::debug! in Rust)`, colors.dim);
 
     // Dump per-test results if requested
     if (dumpResults) {

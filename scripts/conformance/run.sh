@@ -15,9 +15,7 @@
 
 set -euo pipefail
 
-# =============================================================================
 # Signal Handling
-# =============================================================================
 
 # Aggressive cleanup for Ctrl+C - kill everything immediately
 interrupt_cleanup() {
@@ -50,9 +48,7 @@ normal_cleanup() {
 trap interrupt_cleanup INT TERM
 trap normal_cleanup EXIT
 
-# =============================================================================
 # Paths & Colors
-# =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -65,9 +61,7 @@ else
     RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' DIM='' RESET=''
 fi
 
-# =============================================================================
 # Global Config (set by parse_args)
-# =============================================================================
 
 CFG_MODE="server"
 CFG_MAX=99999
@@ -83,9 +77,7 @@ CFG_PASS_RATE_ONLY=false
 CFG_DRY_RUN=false
 CFG_TRACE=""
 
-# =============================================================================
 # Logging & Utilities
-# =============================================================================
 
 log_info()    { echo -e "${BLUE}ℹ${RESET}  $*"; }
 log_success() { echo -e "${GREEN}✓${RESET}  $*"; }
@@ -122,9 +114,7 @@ get_target_dir() {
     echo "$ROOT_DIR/target"
 }
 
-# =============================================================================
 # Build Functions
-# =============================================================================
 
 build_wasm() {
     log_step "Building WASM module..."
@@ -194,31 +184,18 @@ build_runner() {
     log_success "Runner built"
 }
 
-# =============================================================================
 # Output
-# =============================================================================
 
 print_banner() {
     local mode_desc="$1"
     echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}║${RESET}${BOLD}         TSZ Conformance Test Runner                          ${RESET}${CYAN}║${RESET}"
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${RESET}"
-    echo -e "${CYAN}║${RESET}  Mode:       $(printf '%-48s' "$mode_desc")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Tests:      $(printf '%-48s' "$CFG_MAX")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Workers:    $(printf '%-48s' "$CFG_WORKERS")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Categories: $(printf '%-48s' "$CFG_CATEGORIES")${CYAN}║${RESET}"
-    echo -e "${CYAN}║${RESET}  Timeout:    $(printf '%-48s' "${CFG_TIMEOUT}s")${CYAN}║${RESET}"
-    if [[ -n "$CFG_FILTER" ]]; then
-        echo -e "${CYAN}║${RESET}  Filter:     $(printf '%-48s' "$CFG_FILTER")${CYAN}║${RESET}"
-    fi
-    if [[ -n "$CFG_ERROR_CODE" ]]; then
-        echo -e "${CYAN}║${RESET}  Error Code: $(printf '%-48s' "TS$CFG_ERROR_CODE")${CYAN}║${RESET}"
-    fi
-    if [[ -n "$CFG_TRACE" ]]; then
-        echo -e "${CYAN}║${RESET}  ${YELLOW}Trace:      $(printf '%-48s' "RUST_LOG=$CFG_TRACE")${RESET}${CYAN}║${RESET}"
-    fi
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
+    echo -e "${BOLD}TSZ Conformance Test Runner${RESET}"
+    echo -e "${DIM}Mode:${RESET} $mode_desc"
+    echo -e "${DIM}Tests:${RESET} $CFG_MAX  ${DIM}Workers:${RESET} $CFG_WORKERS  ${DIM}Timeout:${RESET} ${CFG_TIMEOUT}s"
+    echo -e "${DIM}Categories:${RESET} $CFG_CATEGORIES"
+    [[ -n "$CFG_FILTER" ]] && echo -e "${DIM}Filter:${RESET} $CFG_FILTER"
+    [[ -n "$CFG_ERROR_CODE" ]] && echo -e "${DIM}Error Code:${RESET} TS$CFG_ERROR_CODE"
+    [[ -n "$CFG_TRACE" ]] && echo -e "${YELLOW}Trace:${RESET} RUST_LOG=$CFG_TRACE"
     echo ""
 }
 
@@ -239,9 +216,7 @@ run_node() {
     return $exit_code
 }
 
-# =============================================================================
 # Help
-# =============================================================================
 
 show_help() {
     cat << 'EOF'
@@ -300,6 +275,27 @@ EXIT CODES:
     1    Some tests failed
     2    Configuration error
     124  Timeout exceeded
+
+INVESTIGATING ERROR CODES:
+    Use --error-code to filter tests by TypeScript diagnostic code (e.g., TS2304).
+    This is useful for debugging a specific class of errors across the test suite.
+
+    Examples:
+      ./run.sh --error-code=2304              # Run all tests involving TS2304
+      ./run.sh --error-code=2304 --verbose    # With verbose output
+      ./run.sh --error-code=2304 --max=10     # Limit to first 10 matches
+      ./run.sh --error-code=2304 --print-test # Show test content & expected vs actual
+      ./run.sh --error-code=2304 --trace      # Deep trace (single test, debug build)
+
+    Combine with --filter for targeted investigation:
+      ./run.sh --error-code=2304 --filter="generic"   # TS2304 in tests matching "generic"
+
+    Common error codes:
+      TS2304  Cannot find name 'X'
+      TS2322  Type 'X' is not assignable to type 'Y'
+      TS2339  Property 'X' does not exist on type 'Y'
+      TS2345  Argument of type 'X' is not assignable to parameter of type 'Y'
+      TS2683  'this' implicitly has type 'any'
 EOF
 }
 
@@ -309,9 +305,7 @@ show_version() {
     echo "Node: $(node --version 2>/dev/null || echo 'not installed')"
 }
 
-# =============================================================================
 # Commands: cache, single
-# =============================================================================
 
 cmd_cache() {
     local subcmd="${1:-status}"
@@ -350,9 +344,7 @@ cmd_single() {
     echo "─────────────────────────────────────────────────────────────"
 }
 
-# =============================================================================
 # Run Modes
-# =============================================================================
 
 # Build runner args from global config.
 build_runner_args() {
@@ -452,9 +444,7 @@ run_mode() {
     esac
 }
 
-# =============================================================================
 # Argument Parsing
-# =============================================================================
 
 parse_args() {
     local command=""
@@ -528,9 +518,7 @@ parse_args() {
     esac
 }
 
-# =============================================================================
 # Main
-# =============================================================================
 
 main() {
     parse_args "$@"

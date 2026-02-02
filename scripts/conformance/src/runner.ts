@@ -560,9 +560,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     }
   }
 
-  log('╔══════════════════════════════════════════════════════════╗', colors.cyan);
-  log('║    High-Performance Parallel Conformance Test Runner     ║', colors.cyan);
-  log('╚══════════════════════════════════════════════════════════╝', colors.cyan);
+  log('High-Performance Parallel Conformance Test Runner', colors.cyan);
 
   log(`\nStreaming test files...`, colors.cyan);
   log(`  Workers: ${cfg.workers} | Timeout: ${cfg.testTimeout}ms`, colors.dim);
@@ -729,9 +727,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   const rate = (stats.total / ((Date.now() - startTime) / 1000)).toFixed(0);
 
   // Results
-  log('\n' + '═'.repeat(60), colors.dim);
-  log('CONFORMANCE TEST RESULTS', colors.bold);
-  log('═'.repeat(60), colors.dim);
+  log('\nCONFORMANCE TEST RESULTS', colors.bold);
 
   // Pass rate excludes skipped tests from denominator
   const effectiveTotal = stats.total - stats.skipped;
@@ -808,7 +804,6 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     log(`  TS${c}: ${n}x`, colors.yellow);
   }
 
-  log('\n' + '═'.repeat(60), colors.dim);
   return stats;
 }
 
