@@ -138,10 +138,17 @@ impl<'a> CheckerState<'a> {
                         {
                             // Global type symbol exists in lib binders - try to resolve it
                             if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                                // Successfully resolved - process type arguments and return
+                                // Successfully resolved - create a TypeApplication if there are type arguments
                                 if let Some(args) = &type_ref.type_arguments {
-                                    for &arg_idx in &args.nodes {
-                                        let _ = self.get_type_from_type_node(arg_idx);
+                                    if !args.nodes.is_empty() {
+                                        // Collect type argument IDs
+                                        let type_args: Vec<TypeId> = args
+                                            .nodes
+                                            .iter()
+                                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                            .collect();
+                                        // Create a TypeApplication to instantiate the generic type
+                                        return self.ctx.types.application(type_id, type_args);
                                     }
                                 }
                                 return type_id;
@@ -153,10 +160,17 @@ impl<'a> CheckerState<'a> {
                         // Fall back to resolve_lib_type_by_name for cases where type may exist
                         // but get_global_type_with_libs doesn't find it
                         if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                            // Successfully resolved via alternate path
+                            // Successfully resolved via alternate path - create TypeApplication if there are type arguments
                             if let Some(args) = &type_ref.type_arguments {
-                                for &arg_idx in &args.nodes {
-                                    let _ = self.get_type_from_type_node(arg_idx);
+                                if !args.nodes.is_empty() {
+                                    // Collect type argument IDs
+                                    let type_args: Vec<TypeId> = args
+                                        .nodes
+                                        .iter()
+                                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                        .collect();
+                                    // Create a TypeApplication to instantiate the generic type
+                                    return self.ctx.types.application(type_id, type_args);
                                 }
                             }
                             return type_id;

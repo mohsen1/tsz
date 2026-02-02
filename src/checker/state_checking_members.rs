@@ -2071,7 +2071,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 self.ctx.enter_async_context();
             }
 
-            self.push_return_type(return_type);
+            // For generator functions with explicit return type (Generator<Y, R, N> or AsyncGenerator<Y, R, N>),
+            // return statements should be checked against TReturn (R), not the full Generator type.
+            // This matches TypeScript's behavior where `return x` in a generator checks `x` against TReturn.
+            let is_generator = func.asterisk_token;
+            let body_return_type = if is_generator && has_type_annotation {
+                self.get_generator_return_type_argument(return_type)
+                    .unwrap_or(return_type)
+            } else {
+                return_type
+            };
+
+            self.push_return_type(body_return_type);
             self.check_statement(func.body);
 
             // Check for error 2355: function with return type must return a value
