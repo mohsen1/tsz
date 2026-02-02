@@ -20,7 +20,11 @@
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
-use crate::solver::visitor::{is_function_type_db, is_literal_type_db, is_object_like_type_db};
+use crate::solver::visitor::{
+    intersection_list_id, is_function_type_db, is_literal_type_db, is_object_like_type_db,
+    literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
+    type_param_info, union_list_id,
+};
 use tracing::{Level, span, trace};
 
 #[cfg(test)]
@@ -58,9 +62,9 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let members = match self.interner.lookup(union_type) {
-            Some(TypeKey::Union(m)) => self.interner.type_list(m),
-            _ => return vec![],
+        let members = match union_list_id(self.interner, union_type) {
+            Some(members_id) => self.interner.type_list(members_id),
+            None => return vec![],
         };
 
         if members.len() < 2 {
@@ -73,7 +77,7 @@ impl<'a> NarrowingContext<'a> {
         let mut member_props: Vec<Vec<(Atom, TypeId)>> = Vec::new();
 
         for &member in members.iter() {
-            if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(member) {
+            if let Some(shape_id) = object_shape_id(self.interner, member) {
                 let shape = self.interner.object_shape(shape_id);
                 let props_vec: Vec<(Atom, TypeId)> = shape
                     .properties
@@ -197,15 +201,15 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let members = match self.interner.lookup(union_type) {
-            Some(TypeKey::Union(m)) => self.interner.type_list(m),
-            _ => return union_type,
+        let members = match union_list_id(self.interner, union_type) {
+            Some(members_id) => self.interner.type_list(members_id),
+            None => return union_type,
         };
 
         let mut remaining: Vec<TypeId> = Vec::new();
 
         for &member in members.iter() {
-            if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(member) {
+            if let Some(shape_id) = object_shape_id(self.interner, member) {
                 let shape = self.interner.object_shape(shape_id);
                 let prop_type = shape
                     .properties
@@ -300,7 +304,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // If source is a union, filter members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(source_type) {
+        if let Some(members) = union_list_id(self.interner, source_type) {
             let members = self.interner.type_list(members);
             trace!(
                 "Narrowing union with {} members to type {}",
@@ -352,7 +356,7 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow a type to exclude members assignable to target.
     pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
-        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(source_type) {
+        if let Some(members) = intersection_list_id(self.interner, source_type) {
             let members = self.interner.type_list(members);
             let mut narrowed_members = Vec::with_capacity(members.len());
             let mut changed = false;
@@ -373,12 +377,12 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // If source is a union, filter out matching members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(source_type) {
+        if let Some(members) = union_list_id(self.interner, source_type) {
             let members = self.interner.type_list(members);
             let remaining: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
-                    if matches!(self.interner.lookup(member), Some(TypeKey::Intersection(_))) {
+                    if intersection_list_id(self.interner, member).is_some() {
                         let narrowed = self.narrow_excluding_type(member, excluded_type);
                         if narrowed == TypeId::NEVER {
                             return None;
@@ -423,7 +427,7 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow to function types only.
     fn narrow_to_function(&self, source_type: TypeId) -> TypeId {
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(source_type) {
+        if let Some(members) = union_list_id(self.interner, source_type) {
             let members = self.interner.type_list(members);
             let functions: Vec<TypeId> = members
                 .iter()
@@ -459,14 +463,14 @@ impl<'a> NarrowingContext<'a> {
             source_type
         } else if source_type == TypeId::OBJECT {
             self.function_type()
-        } else if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(source_type) {
+        } else if let Some(shape_id) = object_shape_id(self.interner, source_type) {
             let shape = self.interner.object_shape(shape_id);
             if shape.properties.is_empty() {
                 self.function_type()
             } else {
                 TypeId::NEVER
             }
-        } else if let Some(TypeKey::ObjectWithIndex(shape_id)) = self.interner.lookup(source_type) {
+        } else if let Some(shape_id) = object_with_index_shape_id(self.interner, source_type) {
             let shape = self.interner.object_shape(shape_id);
             if shape.properties.is_empty()
                 && shape.string_index.is_none()
@@ -495,7 +499,7 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow a type to exclude function-like members (typeof !== "function").
     pub fn narrow_excluding_function(&self, source_type: TypeId) -> TypeId {
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(source_type) {
+        if let Some(members) = union_list_id(self.interner, source_type) {
             let members = self.interner.type_list(members);
             let remaining: Vec<TypeId> = members
                 .iter()
@@ -541,10 +545,7 @@ impl<'a> NarrowingContext<'a> {
     }
 
     fn narrow_type_param(&self, source: TypeId, target: TypeId) -> Option<TypeId> {
-        let info = match self.interner.lookup(source) {
-            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info,
-            _ => return None,
-        };
+        let info = type_param_info(self.interner, source)?;
 
         let constraint = info.constraint.unwrap_or(TypeId::UNKNOWN);
         if constraint == source {
@@ -565,10 +566,7 @@ impl<'a> NarrowingContext<'a> {
     }
 
     fn narrow_type_param_to_function(&self, source: TypeId) -> Option<TypeId> {
-        let info = match self.interner.lookup(source) {
-            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info,
-            _ => return None,
-        };
+        let info = type_param_info(self.interner, source)?;
 
         let constraint = info.constraint.unwrap_or(TypeId::UNKNOWN);
         if constraint == source || constraint == TypeId::UNKNOWN {
@@ -585,10 +583,7 @@ impl<'a> NarrowingContext<'a> {
     }
 
     fn narrow_type_param_excluding(&self, source: TypeId, excluded: TypeId) -> Option<TypeId> {
-        let info = match self.interner.lookup(source) {
-            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info,
-            _ => return None,
-        };
+        let info = type_param_info(self.interner, source)?;
 
         let constraint = info.constraint?;
         if constraint == source || constraint == TypeId::UNKNOWN {
@@ -607,10 +602,7 @@ impl<'a> NarrowingContext<'a> {
     }
 
     fn narrow_type_param_excluding_function(&self, source: TypeId) -> Option<TypeId> {
-        let info = match self.interner.lookup(source) {
-            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info,
-            _ => return None,
-        };
+        let info = type_param_info(self.interner, source)?;
 
         let constraint = info.constraint.unwrap_or(TypeId::UNKNOWN);
         if constraint == source || constraint == TypeId::UNKNOWN {
@@ -664,7 +656,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Literal to base type
-        if let Some(TypeKey::Literal(lit)) = self.interner.lookup(source) {
+        if let Some(lit) = literal_value(self.interner, source) {
             match (lit, target) {
                 (LiteralValue::String(_), t) if t == TypeId::STRING => return true,
                 (LiteralValue::Number(_), t) if t == TypeId::NUMBER => return true,
@@ -685,7 +677,7 @@ impl<'a> NarrowingContext<'a> {
             return false;
         }
 
-        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(source) {
+        if let Some(members) = intersection_list_id(self.interner, source) {
             let members = self.interner.type_list(members);
             if members
                 .iter()
@@ -695,12 +687,7 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        if target == TypeId::STRING
-            && matches!(
-                self.interner.lookup(source),
-                Some(TypeKey::TemplateLiteral(_))
-            )
-        {
+        if target == TypeId::STRING && template_literal_id(self.interner, source).is_some() {
             return true;
         }
 
@@ -743,10 +730,7 @@ pub fn narrow_by_typeof(
 // =============================================================================
 
 fn top_level_union_members(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
-    match types.lookup(type_id) {
-        Some(TypeKey::Union(list_id)) => Some(types.type_list(list_id).to_vec()),
-        _ => None,
-    }
+    union_list_id(types, type_id).map(|list_id| types.type_list(list_id).to_vec())
 }
 
 fn is_nullish_intrinsic(type_id: TypeId) -> bool {

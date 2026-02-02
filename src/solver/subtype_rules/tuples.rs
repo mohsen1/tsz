@@ -8,6 +8,7 @@
 //! - Array-to-tuple and tuple-to-array compatibility
 
 use crate::solver::types::*;
+use crate::solver::visitor::{array_element_type, tuple_list_id};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -325,41 +326,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Nested rest elements are recursively expanded, so:
     /// - `[A, ...[...B[], C]]` → fixed: [A], variadic: Some(B), tail: [C]
     pub(crate) fn expand_tuple_rest(&self, type_id: TypeId) -> TupleRestExpansion {
-        match self.interner.lookup(type_id) {
-            Some(TypeKey::Array(elem)) => TupleRestExpansion {
+        if let Some(elem) = array_element_type(self.interner, type_id) {
+            return TupleRestExpansion {
                 fixed: Vec::new(),
                 variadic: Some(elem),
                 tail: Vec::new(),
-            },
-            Some(TypeKey::Tuple(elements)) => {
-                let elements = self.interner.tuple_list(elements);
-                let mut fixed = Vec::new();
-                for (i, elem) in elements.iter().enumerate() {
-                    if elem.rest {
-                        let inner = self.expand_tuple_rest(elem.type_id);
-                        fixed.extend(inner.fixed);
-                        // Capture tail elements: inner.tail + elements after the rest
-                        let mut tail = inner.tail;
-                        tail.extend(elements[i + 1..].iter().cloned());
-                        return TupleRestExpansion {
-                            fixed,
-                            variadic: inner.variadic,
-                            tail,
-                        };
-                    }
-                    fixed.push(elem.clone());
+            };
+        }
+
+        if let Some(elements) = tuple_list_id(self.interner, type_id) {
+            let elements = self.interner.tuple_list(elements);
+            let mut fixed = Vec::new();
+            for (i, elem) in elements.iter().enumerate() {
+                if elem.rest {
+                    let inner = self.expand_tuple_rest(elem.type_id);
+                    fixed.extend(inner.fixed);
+                    // Capture tail elements: inner.tail + elements after the rest
+                    let mut tail = inner.tail;
+                    tail.extend(elements[i + 1..].iter().cloned());
+                    return TupleRestExpansion {
+                        fixed,
+                        variadic: inner.variadic,
+                        tail,
+                    };
                 }
-                TupleRestExpansion {
-                    fixed,
-                    variadic: None,
-                    tail: Vec::new(),
-                }
+                fixed.push(elem.clone());
             }
-            _ => TupleRestExpansion {
-                fixed: Vec::new(),
-                variadic: Some(type_id),
+            return TupleRestExpansion {
+                fixed,
+                variadic: None,
                 tail: Vec::new(),
-            },
+            };
+        }
+
+        TupleRestExpansion {
+            fixed: Vec::new(),
+            variadic: Some(type_id),
+            tail: Vec::new(),
         }
     }
 
@@ -370,10 +373,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if type_id == TypeId::ANY {
             return TypeId::ANY;
         }
-        match self.interner.lookup(type_id) {
-            Some(TypeKey::Array(elem)) => elem,
-            // For any[], the type itself is assignable from anything
-            _ => type_id,
-        }
+        array_element_type(self.interner, type_id).unwrap_or(type_id)
     }
 }

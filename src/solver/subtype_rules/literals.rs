@@ -9,6 +9,7 @@
 
 use crate::interner::Atom;
 use crate::solver::types::*;
+use crate::solver::visitor::{intrinsic_kind, literal_value, union_list_id};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -122,97 +123,81 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
             TemplateSpan::Type(type_id) => {
-                // Determine what kind of pattern this type represents
-                match self.interner.lookup(*type_id) {
-                    Some(TypeKey::Intrinsic(IntrinsicKind::String)) => {
-                        // String type can match any substring (including empty)
-                        // Try all possible lengths using backtracking
+                let type_id = *type_id;
+                if let Some(kind) = intrinsic_kind(self.interner, type_id) {
+                    return match kind {
+                        IntrinsicKind::String => self.match_string_wildcard(remaining, spans, span_idx),
+                        IntrinsicKind::Number => self.match_number_pattern(remaining, spans, span_idx),
+                        IntrinsicKind::Boolean => self.match_boolean_pattern(remaining, spans, span_idx),
+                        IntrinsicKind::Bigint => self.match_bigint_pattern(remaining, spans, span_idx),
+                        _ => false,
+                    };
+                }
+
+                if let Some(literal) = literal_value(self.interner, type_id) {
+                    return match literal {
+                        LiteralValue::String(pattern) => {
+                            let pattern_str = self.interner.resolve_atom(pattern);
+                            if remaining.starts_with(pattern_str.as_str()) {
+                                self.match_template_literal_recursive(
+                                    &remaining[pattern_str.len()..],
+                                    spans,
+                                    span_idx + 1,
+                                )
+                            } else {
+                                false
+                            }
+                        }
+                        LiteralValue::Number(num) => {
+                            let num_str = format_number_for_template(num.0);
+                            if remaining.starts_with(&num_str) {
+                                self.match_template_literal_recursive(
+                                    &remaining[num_str.len()..],
+                                    spans,
+                                    span_idx + 1,
+                                )
+                            } else {
+                                false
+                            }
+                        }
+                        LiteralValue::Boolean(b) => {
+                            let bool_str = if b { "true" } else { "false" };
+                            if remaining.starts_with(bool_str) {
+                                self.match_template_literal_recursive(
+                                    &remaining[bool_str.len()..],
+                                    spans,
+                                    span_idx + 1,
+                                )
+                            } else {
+                                false
+                            }
+                        }
+                        LiteralValue::BigInt(n) => {
+                            let bigint_str = self.interner.resolve_atom(n);
+                            if remaining.starts_with(bigint_str.as_str()) {
+                                self.match_template_literal_recursive(
+                                    &remaining[bigint_str.len()..],
+                                    spans,
+                                    span_idx + 1,
+                                )
+                            } else {
+                                false
+                            }
+                        }
+                    };
+                }
+
+                if let Some(members) = union_list_id(self.interner, type_id) {
+                    return self.match_union_pattern(remaining, spans, span_idx, members);
+                }
+
+                match self.apparent_primitive_kind_for_type(type_id) {
+                    Some(IntrinsicKind::String) => {
                         self.match_string_wildcard(remaining, spans, span_idx)
                     }
-                    Some(TypeKey::Intrinsic(IntrinsicKind::Number)) => {
-                        // Number type matches numeric strings
-                        self.match_number_pattern(remaining, spans, span_idx)
-                    }
-                    Some(TypeKey::Intrinsic(IntrinsicKind::Boolean)) => {
-                        // Boolean type matches "true" or "false"
-                        self.match_boolean_pattern(remaining, spans, span_idx)
-                    }
-                    Some(TypeKey::Intrinsic(IntrinsicKind::Bigint)) => {
-                        // Bigint type matches integer strings
-                        self.match_bigint_pattern(remaining, spans, span_idx)
-                    }
-                    Some(TypeKey::Literal(LiteralValue::String(pattern))) => {
-                        let pattern_str = self.interner.resolve_atom(pattern);
-                        // Literal string must match exactly at this position
-                        if remaining.starts_with(pattern_str.as_str()) {
-                            self.match_template_literal_recursive(
-                                &remaining[pattern_str.len()..],
-                                spans,
-                                span_idx + 1,
-                            )
-                        } else {
-                            false
-                        }
-                    }
-                    Some(TypeKey::Literal(LiteralValue::Number(num))) => {
-                        // Literal number - convert to string and match
-                        let num_str = format_number_for_template(num.0);
-                        if remaining.starts_with(&num_str) {
-                            self.match_template_literal_recursive(
-                                &remaining[num_str.len()..],
-                                spans,
-                                span_idx + 1,
-                            )
-                        } else {
-                            false
-                        }
-                    }
-                    Some(TypeKey::Literal(LiteralValue::Boolean(b))) => {
-                        // Literal boolean - convert to string and match
-                        let bool_str = if b { "true" } else { "false" };
-                        if remaining.starts_with(bool_str) {
-                            self.match_template_literal_recursive(
-                                &remaining[bool_str.len()..],
-                                spans,
-                                span_idx + 1,
-                            )
-                        } else {
-                            false
-                        }
-                    }
-                    Some(TypeKey::Literal(LiteralValue::BigInt(n))) => {
-                        // Literal bigint - convert to string and match
-                        let bigint_str = self.interner.resolve_atom(n);
-                        if remaining.starts_with(bigint_str.as_str()) {
-                            self.match_template_literal_recursive(
-                                &remaining[bigint_str.len()..],
-                                spans,
-                                span_idx + 1,
-                            )
-                        } else {
-                            false
-                        }
-                    }
-                    Some(TypeKey::Union(members)) => {
-                        // For unions, try each member
-                        self.match_union_pattern(remaining, spans, span_idx, members)
-                    }
-                    _ => {
-                        // For other types, check if they're string-compatible
-                        match self.apparent_primitive_kind_for_type(*type_id) {
-                            Some(IntrinsicKind::String) => {
-                                // Treat as string wildcard
-                                self.match_string_wildcard(remaining, spans, span_idx)
-                            }
-                            Some(IntrinsicKind::Number) => {
-                                self.match_number_pattern(remaining, spans, span_idx)
-                            }
-                            Some(IntrinsicKind::Boolean) => {
-                                self.match_boolean_pattern(remaining, spans, span_idx)
-                            }
-                            _ => false,
-                        }
-                    }
+                    Some(IntrinsicKind::Number) => self.match_number_pattern(remaining, spans, span_idx),
+                    Some(IntrinsicKind::Boolean) => self.match_boolean_pattern(remaining, spans, span_idx),
+                    _ => false,
                 }
             }
         }
@@ -375,82 +360,83 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let members = self.interner.type_list(members);
 
         for &member in members.iter() {
-            match self.interner.lookup(member) {
-                Some(TypeKey::Literal(LiteralValue::String(pattern))) => {
-                    let pattern_str = self.interner.resolve_atom(pattern);
-                    if remaining.starts_with(pattern_str.as_str()) {
-                        if self.match_template_literal_recursive(
-                            &remaining[pattern_str.len()..],
-                            spans,
-                            span_idx + 1,
-                        ) {
-                            return true;
+            if let Some(literal) = literal_value(self.interner, member) {
+                let matched = match literal {
+                    LiteralValue::String(pattern) => {
+                        let pattern_str = self.interner.resolve_atom(pattern);
+                        if remaining.starts_with(pattern_str.as_str()) {
+                            self.match_template_literal_recursive(
+                                &remaining[pattern_str.len()..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        } else {
+                            false
                         }
                     }
-                }
-                Some(TypeKey::Literal(LiteralValue::Number(num))) => {
-                    let num_str = format_number_for_template(num.0);
-                    if remaining.starts_with(&num_str) {
-                        if self.match_template_literal_recursive(
-                            &remaining[num_str.len()..],
-                            spans,
-                            span_idx + 1,
-                        ) {
-                            return true;
+                    LiteralValue::Number(num) => {
+                        let num_str = format_number_for_template(num.0);
+                        if remaining.starts_with(&num_str) {
+                            self.match_template_literal_recursive(
+                                &remaining[num_str.len()..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        } else {
+                            false
                         }
                     }
-                }
-                Some(TypeKey::Literal(LiteralValue::BigInt(n))) => {
-                    let bigint_str = self.interner.resolve_atom(n);
-                    if remaining.starts_with(bigint_str.as_str()) {
-                        if self.match_template_literal_recursive(
-                            &remaining[bigint_str.len()..],
-                            spans,
-                            span_idx + 1,
-                        ) {
-                            return true;
+                    LiteralValue::BigInt(n) => {
+                        let bigint_str = self.interner.resolve_atom(n);
+                        if remaining.starts_with(bigint_str.as_str()) {
+                            self.match_template_literal_recursive(
+                                &remaining[bigint_str.len()..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        } else {
+                            false
                         }
                     }
-                }
-                Some(TypeKey::Literal(LiteralValue::Boolean(b))) => {
-                    let bool_str = if b { "true" } else { "false" };
-                    if remaining.starts_with(bool_str) {
-                        if self.match_template_literal_recursive(
-                            &remaining[bool_str.len()..],
-                            spans,
-                            span_idx + 1,
-                        ) {
-                            return true;
+                    LiteralValue::Boolean(b) => {
+                        let bool_str = if b { "true" } else { "false" };
+                        if remaining.starts_with(bool_str) {
+                            self.match_template_literal_recursive(
+                                &remaining[bool_str.len()..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        } else {
+                            false
                         }
                     }
+                };
+                if matched {
+                    return true;
                 }
-                Some(TypeKey::Intrinsic(IntrinsicKind::String)) => {
-                    // String in union acts as a wildcard
+                continue;
+            }
+
+            if let Some(kind) = intrinsic_kind(self.interner, member) {
+                let matched = match kind {
+                    IntrinsicKind::String => self.match_string_wildcard(remaining, spans, span_idx),
+                    IntrinsicKind::Number => self.match_number_pattern(remaining, spans, span_idx),
+                    IntrinsicKind::Boolean => self.match_boolean_pattern(remaining, spans, span_idx),
+                    _ => false,
+                };
+                if matched {
+                    return true;
+                }
+                continue;
+            }
+
+            match self.apparent_primitive_kind_for_type(member) {
+                Some(IntrinsicKind::String) => {
                     if self.match_string_wildcard(remaining, spans, span_idx) {
                         return true;
                     }
                 }
-                Some(TypeKey::Intrinsic(IntrinsicKind::Number)) => {
-                    if self.match_number_pattern(remaining, spans, span_idx) {
-                        return true;
-                    }
-                }
-                Some(TypeKey::Intrinsic(IntrinsicKind::Boolean)) => {
-                    if self.match_boolean_pattern(remaining, spans, span_idx) {
-                        return true;
-                    }
-                }
-                _ => {
-                    // For other types, check primitive kind
-                    match self.apparent_primitive_kind_for_type(member) {
-                        Some(IntrinsicKind::String) => {
-                            if self.match_string_wildcard(remaining, spans, span_idx) {
-                                return true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                _ => {}
             }
         }
         false

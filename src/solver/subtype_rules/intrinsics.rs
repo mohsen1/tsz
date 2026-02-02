@@ -8,6 +8,12 @@
 
 use crate::solver::types::*;
 use crate::solver::{ApparentMemberKind, apparent_primitive_members};
+use crate::solver::visitor::{
+    application_id, array_element_type, callable_shape_id, function_shape_id,
+    intersection_list_id, intrinsic_kind, is_this_type, literal_value, mapped_type_id,
+    object_shape_id, object_with_index_shape_id, readonly_inner_type, ref_symbol,
+    template_literal_id, tuple_list_id, type_param_info, union_list_id,
+};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -103,45 +109,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             _ => {}
         }
 
-        let key = match self.interner.lookup(source) {
-            Some(key) => key,
-            None => return false,
-        };
-
-        match &key {
-            TypeKey::Object(_)
-            | TypeKey::ObjectWithIndex(_)
-            | TypeKey::Array(_)
-            | TypeKey::Tuple(_)
-            | TypeKey::Function(_)
-            | TypeKey::Callable(_)
-            | TypeKey::Mapped(_)
-            | TypeKey::Application(_)
-            | TypeKey::ThisType => true,
-            TypeKey::ReadonlyType(inner) => self.check_subtype(*inner, TypeId::OBJECT).is_true(),
-            // Union: all members must be object types (e.g., {a:1} | {b:2} is assignable to object)
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(*members);
-                members.iter().all(|&m| self.is_object_keyword_type(m))
-            }
-            // Intersection: at least one member must be an object type
-            TypeKey::Intersection(members) => {
-                let members = self.interner.type_list(*members);
-                members.iter().any(|&m| self.is_object_keyword_type(m))
-            }
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => match info.constraint {
-                Some(constraint) => self.check_subtype(constraint, TypeId::OBJECT).is_true(),
-                None => false,
-            },
-            TypeKey::Ref(sym) => {
-                if let Some(resolved) = self.resolver.resolve_ref(*sym, self.interner) {
-                    self.check_subtype(resolved, TypeId::OBJECT).is_true()
-                } else {
-                    false
-                }
-            }
-            _ => false,
+        if object_shape_id(self.interner, source).is_some()
+            || object_with_index_shape_id(self.interner, source).is_some()
+            || array_element_type(self.interner, source).is_some()
+            || tuple_list_id(self.interner, source).is_some()
+            || function_shape_id(self.interner, source).is_some()
+            || callable_shape_id(self.interner, source).is_some()
+            || mapped_type_id(self.interner, source).is_some()
+            || application_id(self.interner, source).is_some()
+            || is_this_type(self.interner, source)
+        {
+            return true;
         }
+
+        if let Some(inner) = readonly_inner_type(self.interner, source) {
+            return self.check_subtype(inner, TypeId::OBJECT).is_true();
+        }
+
+        if let Some(members) = union_list_id(self.interner, source) {
+            let members = self.interner.type_list(members);
+            return members.iter().all(|&m| self.is_object_keyword_type(m));
+        }
+
+        if let Some(members) = intersection_list_id(self.interner, source) {
+            let members = self.interner.type_list(members);
+            return members.iter().any(|&m| self.is_object_keyword_type(m));
+        }
+
+        if let Some(info) = type_param_info(self.interner, source) {
+            return info
+                .constraint
+                .map(|constraint| self.check_subtype(constraint, TypeId::OBJECT).is_true())
+                .unwrap_or(false);
+        }
+
+        if let Some(sym) = ref_symbol(self.interner, source) {
+            if let Some(resolved) = self.resolver.resolve_ref(sym, self.interner) {
+                return self.check_subtype(resolved, TypeId::OBJECT).is_true();
+            }
+        }
+
+        false
     }
 
     /// Check if a type is callable (can be invoked as a function).
@@ -188,74 +196,78 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             _ => {}
         }
 
-        let key = match self.interner.lookup(source) {
-            Some(key) => key,
-            None => return false,
-        };
-
-        match &key {
-            TypeKey::Function(_) | TypeKey::Callable(_) => true,
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(*members);
-                // A union is callable if all members are callable
-                members.iter().all(|&m| self.is_callable_type(m))
-            }
-            TypeKey::Intersection(members) => {
-                let members = self.interner.type_list(*members);
-                // An intersection is callable if at least one member is callable
-                members.iter().any(|&m| self.is_callable_type(m))
-            }
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                // Type parameters are not inherently callable without a callable constraint
-                match info.constraint {
-                    Some(constraint) => self.is_callable_type(constraint),
-                    None => false,
-                }
-            }
-            TypeKey::Ref(sym) => {
-                if let Some(resolved) = self.resolver.resolve_ref(*sym, self.interner) {
-                    self.is_callable_type(resolved)
-                } else {
-                    false
-                }
-            }
-            _ => false,
+        if function_shape_id(self.interner, source).is_some()
+            || callable_shape_id(self.interner, source).is_some()
+        {
+            return true;
         }
+
+        if let Some(members) = union_list_id(self.interner, source) {
+            let members = self.interner.type_list(members);
+            return members.iter().all(|&m| self.is_callable_type(m));
+        }
+
+        if let Some(members) = intersection_list_id(self.interner, source) {
+            let members = self.interner.type_list(members);
+            return members.iter().any(|&m| self.is_callable_type(m));
+        }
+
+        if let Some(info) = type_param_info(self.interner, source) {
+            return info
+                .constraint
+                .map(|constraint| self.is_callable_type(constraint))
+                .unwrap_or(false);
+        }
+
+        if let Some(sym) = ref_symbol(self.interner, source) {
+            if let Some(resolved) = self.resolver.resolve_ref(sym, self.interner) {
+                return self.is_callable_type(resolved);
+            }
+        }
+
+        false
     }
 
-    /// Get the apparent primitive shape for a type key.
+    /// Get the apparent primitive shape for a type.
     ///
     /// When primitives are used in object-like operations (e.g., `"hello".length`),
     /// TypeScript wraps them in their corresponding wrapper types. This function
     /// returns the object shape that represents those wrapper type members.
-    pub(crate) fn apparent_primitive_shape_for_key(
+    pub(crate) fn apparent_primitive_shape_for_type(
         &mut self,
-        key: &TypeKey,
+        type_id: TypeId,
     ) -> Option<ObjectShape> {
-        let kind = self.apparent_primitive_kind(key)?;
+        let kind = self.apparent_primitive_kind(type_id)?;
         Some(self.apparent_primitive_shape(kind))
     }
 
-    /// Get the intrinsic kind that a type key represents (if it's a primitive).
-    pub(crate) fn apparent_primitive_kind(&self, key: &TypeKey) -> Option<IntrinsicKind> {
-        match key {
-            TypeKey::Intrinsic(kind) => match kind {
+    /// Get the intrinsic kind that a type represents (if it's a primitive).
+    pub(crate) fn apparent_primitive_kind(&self, type_id: TypeId) -> Option<IntrinsicKind> {
+        if let Some(kind) = intrinsic_kind(self.interner, type_id) {
+            return match kind {
                 IntrinsicKind::String
                 | IntrinsicKind::Number
                 | IntrinsicKind::Boolean
                 | IntrinsicKind::Bigint
-                | IntrinsicKind::Symbol => Some(*kind),
+                | IntrinsicKind::Symbol => Some(kind),
                 _ => None,
-            },
-            TypeKey::Literal(literal) => match literal {
+            };
+        }
+
+        if let Some(literal) = literal_value(self.interner, type_id) {
+            return match literal {
                 LiteralValue::String(_) => Some(IntrinsicKind::String),
                 LiteralValue::Number(_) => Some(IntrinsicKind::Number),
                 LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
                 LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-            },
-            TypeKey::TemplateLiteral(_) => Some(IntrinsicKind::String),
-            _ => None,
+            };
         }
+
+        if template_literal_id(self.interner, type_id).is_some() {
+            return Some(IntrinsicKind::String);
+        }
+
+        None
     }
 
     /// Build the apparent object shape for a primitive type.
@@ -332,18 +344,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &self,
         type_id: TypeId,
     ) -> Option<IntrinsicKind> {
-        let key = self.interner.lookup(type_id);
-        match key {
-            Some(TypeKey::Intrinsic(kind)) => Some(kind),
-            Some(TypeKey::Literal(literal)) => match literal {
-                LiteralValue::String(_) => Some(IntrinsicKind::String),
-                LiteralValue::Number(_) => Some(IntrinsicKind::Number),
-                LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
-                LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-            },
-            Some(TypeKey::TemplateLiteral(_)) => Some(IntrinsicKind::String),
-            _ => None,
-        }
+        self.apparent_primitive_kind(type_id)
     }
 
     /// Check if a primitive intrinsic is a subtype of a boxed interface type (Rule #33).

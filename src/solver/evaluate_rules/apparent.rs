@@ -7,6 +7,7 @@ use crate::solver::ApparentMemberKind;
 use crate::solver::apparent::apparent_primitive_members;
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::*;
+use crate::solver::visitor::{intrinsic_kind, literal_value, template_literal_id};
 
 use super::super::evaluate::TypeEvaluator;
 
@@ -21,32 +22,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Get the apparent object shape for a type key if it's a primitive.
-    pub(crate) fn apparent_primitive_shape_for_key(&self, key: &TypeKey) -> Option<ObjectShape> {
-        let kind = self.apparent_primitive_kind(key)?;
+    /// Get the apparent object shape for a type if it's a primitive.
+    pub(crate) fn apparent_primitive_shape_for_type(&self, type_id: TypeId) -> Option<ObjectShape> {
+        let kind = self.apparent_primitive_kind(type_id)?;
         Some(self.apparent_primitive_shape(kind))
     }
 
-    /// Get the intrinsic kind for a type key if it represents a primitive.
-    pub(crate) fn apparent_primitive_kind(&self, key: &TypeKey) -> Option<IntrinsicKind> {
-        match key {
-            TypeKey::Intrinsic(kind) => match kind {
+    /// Get the intrinsic kind for a type if it represents a primitive.
+    pub(crate) fn apparent_primitive_kind(&self, type_id: TypeId) -> Option<IntrinsicKind> {
+        if let Some(kind) = intrinsic_kind(self.interner(), type_id) {
+            return match kind {
                 IntrinsicKind::String
                 | IntrinsicKind::Number
                 | IntrinsicKind::Boolean
                 | IntrinsicKind::Bigint
-                | IntrinsicKind::Symbol => Some(*kind),
+                | IntrinsicKind::Symbol => Some(kind),
                 _ => None,
-            },
-            TypeKey::Literal(literal) => match literal {
+            };
+        }
+
+        if let Some(literal) = literal_value(self.interner(), type_id) {
+            return match literal {
                 LiteralValue::String(_) => Some(IntrinsicKind::String),
                 LiteralValue::Number(_) => Some(IntrinsicKind::Number),
                 LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
                 LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-            },
-            TypeKey::TemplateLiteral(_) => Some(IntrinsicKind::String),
-            _ => None,
+            };
         }
+
+        if template_literal_id(self.interner(), type_id).is_some() {
+            return Some(IntrinsicKind::String);
+        }
+
+        None
     }
 
     /// Build an object shape for a primitive type's apparent members.
