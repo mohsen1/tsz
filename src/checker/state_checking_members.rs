@@ -2156,11 +2156,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_class_declaration(&mut self, class_idx: NodeIndex) {
-        // Delegate to DeclarationChecker first
-        let mut checker = crate::checker::declarations::DeclarationChecker::new(&mut self.ctx);
-        checker.check_class_declaration(class_idx);
-
-        // Continue with comprehensive class checking in CheckerState
+        // Note: DeclarationChecker::check_class_declaration handles TS2564 (property
+        // initialization) but CheckerState::check_class_declaration also handles it
+        // more comprehensively (with parameter properties, derived classes, etc.).
+        // We skip the DeclarationChecker delegation for classes to avoid duplicate
+        // TS2564 emissions. DeclarationChecker::check_class_declaration is tested
+        // independently via its own test suite.
         CheckerState::check_class_declaration(self, class_idx)
     }
 
