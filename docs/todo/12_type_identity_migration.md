@@ -170,7 +170,52 @@ Measure memory usage. `DefId` migration should slightly reduce memory by dedupli
 
 ## Immediate Next Step
 
-Execute **Phase 1**: Modify `TypeLowering` to accept a `DefId` resolver and start producing `TypeKey::Lazy` (to be renamed later) for all type references.
+Execute **Phase 2**: Remove `TypeKey::Ref(SymbolRef)` production path, use only `TypeKey::Lazy(DefId)`.
+
+---
+
+## Progress Updates
+
+### ✅ Completed: Phase 1 - Infrastructure Bridge (Feb 2, 2026)
+
+**Approach**: Hybrid Pattern (Option 1 from Gemini analysis)
+- **Problem**: TypeLowering API expects `Fn` resolvers, but `get_or_create_def_id` requires `&mut self`
+- **Solution**: Post-process TypeLowering output to convert `TypeKey::Ref` → `TypeKey::Lazy`
+- **Key Insight**: Phase 4.3 (type_literal_checker.rs) bypasses TypeLowering entirely
+
+**Implementation:**
+1. Added `maybe_create_lazy_from_resolved()` helper to `src/checker/context.rs`
+   - Post-processes TypeId from TypeLowering
+   - Converts `TypeKey::Ref(SymbolRef)` → `TypeKey::Lazy(DefId)` when applicable
+   - Creates DefIds after lowering (when &mut self is available)
+
+2. Updated 2 TypeLowering call sites in `src/checker/state_type_resolution.rs`
+   - Pattern: `lowering.lower_type()` → `maybe_create_lazy_from_resolved()` → return
+   - No changes to TypeLowering API or resolver types
+
+3. Infrastructure from earlier commits:
+   - Added `def_id_resolver` field to `TypeLowering` (for future use)
+   - Added `lazy()` convenience method to `TypeInterner`
+
+**Testing:**
+- All 3394 solver tests passing
+- No regressions
+- Code compiles cleanly
+
+**Commits:**
+- `05796d28e`: Added DefId infrastructure (partial)
+- `55ca84f09`: Completed Phase 1 with hybrid pattern
+
+**Acceptance Criteria Progress:**
+- [x] Phase 1 infrastructure in place
+- [x] TypeLowering can produce Lazy(DefId) via post-processing
+- [ ] `TypeKey::Ref(SymbolRef)` removed
+- [ ] `TypeKey::Lazy(DefId)` renamed to `TypeKey::Ref(DefId)`
+- [ ] All type references use `DefId` (production only, still creates Ref internally)
+- [ ] O(1) equality preserved
+- [ ] Cycle detection uses `DefId`
+- [x] Conformance tests pass with no regressions
+- [ ] Memory usage reduced (not yet measured)
 
 ---
 
