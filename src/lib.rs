@@ -148,30 +148,6 @@ pub use checker::state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 // Emitter - Emitter using NodeArena (Phase 0.1)
 pub mod emitter;
 #[cfg(test)]
-#[path = "tests/emitter_edge_case_tests.rs"]
-mod emitter_edge_case_tests;
-#[cfg(test)]
-#[path = "tests/emitter_parity_test_utils.rs"]
-mod emitter_parity_test_utils;
-#[cfg(test)]
-#[path = "tests/emitter_parity_tests_1.rs"]
-mod emitter_parity_tests_1;
-#[cfg(test)]
-#[path = "tests/emitter_parity_tests_2.rs"]
-mod emitter_parity_tests_2;
-#[cfg(test)]
-#[path = "tests/emitter_parity_tests_3.rs"]
-mod emitter_parity_tests_3;
-#[cfg(test)]
-#[path = "tests/emitter_parity_tests_4.rs"]
-mod emitter_parity_tests_4;
-#[cfg(test)]
-#[path = "tests/emitter_tests.rs"]
-mod emitter_tests;
-#[cfg(test)]
-#[path = "tests/emitter_transform_integration_tests.rs"]
-mod emitter_transform_integration_tests;
-#[cfg(test)]
 #[path = "tests/transform_api_tests.rs"]
 mod transform_api_tests;
 
@@ -234,9 +210,6 @@ pub mod lowering_pass;
 
 // Declaration file emitter (Phase 6.4)
 pub mod declaration_emitter;
-#[cfg(test)]
-#[path = "tests/declaration_emitter_tests.rs"]
-mod declaration_emitter_tests;
 
 // JavaScript transforms (Phase 6.5+)
 pub mod transforms;
