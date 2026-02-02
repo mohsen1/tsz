@@ -367,6 +367,7 @@ fn compile_inner(
     forced_dirty_paths: Option<&HashSet<PathBuf>>,
     explicit_config_path: Option<&Path>,
 ) -> Result<CompilationResult> {
+    let _compile_span = tracing::info_span!("compile", cwd = %cwd.display()).entered();
     let cwd = canonicalize_or_owned(cwd);
     let tsconfig_path = if let Some(path) = explicit_config_path {
         Some(path.to_path_buf())
@@ -850,7 +851,7 @@ pub enum FileReadResult {
 }
 
 /// Read a source file, detecting binary files that should emit TS1490.
-/// 
+///
 /// TypeScript detects binary files by checking for:
 /// - UTF-16 BOM (FE FF for BE, FF FE for LE)  
 /// - Non-valid UTF-8 sequences
@@ -875,7 +876,7 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
 }
 
 /// Check if file content appears to be binary (not valid source code).
-/// 
+///
 /// Matches TypeScript's binary detection:
 /// - UTF-16 BOM at start
 /// - Many consecutive null bytes (embedded binaries, corrupted files)
@@ -1169,7 +1170,11 @@ fn read_source_files(
 
     let mut list: Vec<SourceEntry> = sources
         .into_iter()
-        .map(|(path, (text, is_binary))| SourceEntry { path, text, is_binary })
+        .map(|(path, (text, is_binary))| SourceEntry {
+            path,
+            text,
+            is_binary,
+        })
         .collect();
     list.sort_by(|left, right| {
         left.path
@@ -1500,6 +1505,7 @@ fn collect_diagnostics(
         }
         // Skip full type checking when --noCheck is set; only parse/emit diagnostics are reported.
         if !options.no_check {
+            let _check_span = tracing::info_span!("check_file", file = %file.file_name).entered();
             checker.check_source_file(file.source_file);
             file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
         }

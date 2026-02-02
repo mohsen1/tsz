@@ -767,6 +767,11 @@ impl<'a> CheckerState<'a> {
 
         // Check cache first
         if let Some(&cached) = self.ctx.symbol_types.get(&sym_id) {
+            trace!(
+                sym_id = sym_id.0,
+                type_id = cached.0,
+                "(cached) get_type_of_symbol"
+            );
             return cached;
         }
 
@@ -820,6 +825,7 @@ impl<'a> CheckerState<'a> {
 
         // Cache result
         self.ctx.symbol_types.insert(sym_id, result);
+        trace!(sym_id = sym_id.0, type_id = result.0, "get_type_of_symbol");
 
         // Also populate the type environment for Application expansion
         // IMPORTANT: We use the type_params returned by compute_type_of_symbol

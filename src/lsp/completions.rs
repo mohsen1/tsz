@@ -731,7 +731,11 @@ impl<'a> Completions<'a> {
             Some(b'=') => {
                 let before = &trimmed[..trimmed.len() - 1];
                 let prev = before.as_bytes().last().copied();
-                if prev != Some(b'=') && prev != Some(b'!') && prev != Some(b'>') && prev != Some(b'<') {
+                if prev != Some(b'=')
+                    && prev != Some(b'!')
+                    && prev != Some(b'>')
+                    && prev != Some(b'<')
+                {
                     return true;
                 }
             }
@@ -1765,8 +1769,9 @@ impl<'a> Completions<'a> {
                 let mut item = CompletionItem::new(name.to_string(), kind);
                 let is_deprecated = DEPRECATED_GLOBALS.contains(&name);
                 if is_deprecated {
-                    item.sort_text =
-                        Some(sort_priority::deprecated(sort_priority::GLOBALS_OR_KEYWORDS));
+                    item.sort_text = Some(sort_priority::deprecated(
+                        sort_priority::GLOBALS_OR_KEYWORDS,
+                    ));
                     item.kind_modifiers = Some("deprecated,declare".to_string());
                 } else {
                     item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
