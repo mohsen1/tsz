@@ -1730,45 +1730,68 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         &resolver,
                     );
-                    // For interfaces, use all declarations (handles declaration merging)
+                    
+                    // Try to lower as interface first (handles declaration merging)
                     if !symbol.declarations.is_empty() {
                         let (ty, params) =
                             lowering.lower_interface_declarations_with_params(&symbol.declarations);
 
-                        // For the first definition, record canonical type parameter TypeIds
-                        if !first_params_set && !params.is_empty() {
-                            first_params_set = true;
-                            canonical_param_type_ids = params
-                                .iter()
-                                .map(|p| self.ctx.types.intern(TypeKey::TypeParameter(p.clone())))
-                                .collect();
-                            lib_types.push(ty);
-                        } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
-                            // For subsequent definitions, substitute type params with canonical ones
-                            let mut subst = TypeSubstitution::new();
-                            for (i, p) in params.iter().enumerate() {
-                                if i < canonical_param_type_ids.len() {
-                                    subst.insert(p.name, canonical_param_type_ids[i]);
+                        // If lower_interface_declarations succeeded (not ERROR), use the result
+                        if ty != TypeId::ERROR {
+                            // For the first definition, record canonical type parameter TypeIds
+                            if !first_params_set && !params.is_empty() {
+                                first_params_set = true;
+                                canonical_param_type_ids = params
+                                    .iter()
+                                    .map(|p| self.ctx.types.intern(TypeKey::TypeParameter(p.clone())))
+                                    .collect();
+                                lib_types.push(ty);
+                            } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
+                                // For subsequent definitions, substitute type params with canonical ones
+                                let mut subst = TypeSubstitution::new();
+                                for (i, p) in params.iter().enumerate() {
+                                    if i < canonical_param_type_ids.len() {
+                                        subst.insert(p.name, canonical_param_type_ids[i]);
+                                    }
                                 }
-                            }
-                            if !subst.is_empty() {
-                                let mut instantiator =
-                                    TypeInstantiator::new(self.ctx.types, &subst);
-                                let substituted_ty = instantiator.instantiate(ty);
-                                lib_types.push(substituted_ty);
+                                if !subst.is_empty() {
+                                    let mut instantiator =
+                                        TypeInstantiator::new(self.ctx.types, &subst);
+                                    let substituted_ty = instantiator.instantiate(ty);
+                                    lib_types.push(substituted_ty);
+                                } else {
+                                    lib_types.push(ty);
+                                }
                             } else {
                                 lib_types.push(ty);
                             }
-                        } else {
-                            lib_types.push(ty);
+                            continue;
                         }
-                        continue;
+                        
+                        // Interface lowering returned ERROR - try as type alias
+                        // Type aliases like Partial<T>, Pick<T,K>, Record<K,T> have their
+                        // declaration in symbol.declarations but are not interface nodes
+                        for &decl_idx in &symbol.declarations {
+                            if let Some(node) = arena_ref.get(decl_idx) {
+                                if let Some(alias) = arena_ref.get_type_alias(node) {
+                                    let ty = lowering.lower_type_alias_declaration(alias);
+                                    if ty != TypeId::ERROR {
+                                        lib_types.push(ty);
+                                        // Type aliases don't merge across files, take the first one
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if !lib_types.is_empty() {
+                            continue;
+                        }
                     }
-                    // For type aliases and other single-declaration types
+                    
+                    // For value declarations (vars, consts, functions)
                     let decl_idx = symbol.value_declaration;
                     if decl_idx.0 != u32::MAX {
                         lib_types.push(lowering.lower_type(decl_idx));
-                        // Type aliases don't merge across files, take the first one
                         break;
                     }
                 }
@@ -1889,38 +1912,58 @@ impl<'a> CheckerState<'a> {
                         let (ty, params) =
                             lowering.lower_interface_declarations_with_params(&symbol.declarations);
 
-                        // For the first definition, record canonical type parameter TypeIds
-                        if first_params.is_none() && !params.is_empty() {
-                            first_params = Some(params.clone());
-                            // Compute TypeIds for these canonical params
-                            canonical_param_type_ids = params
-                                .iter()
-                                .map(|p| self.ctx.types.intern(TypeKey::TypeParameter(p.clone())))
-                                .collect();
-                            lib_types.push(ty);
-                        } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
-                            // For subsequent definitions with type params, substitute them
-                            // with the canonical TypeIds to ensure consistency.
-                            // This fixes the Array<T1> & Array<T2> problem where T1 != T2.
-                            let mut subst = TypeSubstitution::new();
-                            for (i, p) in params.iter().enumerate() {
-                                if i < canonical_param_type_ids.len() {
-                                    subst.insert(p.name, canonical_param_type_ids[i]);
+                        // If interface lowering succeeded (not ERROR), use the result
+                        if ty != TypeId::ERROR {
+                            // For the first definition, record canonical type parameter TypeIds
+                            if first_params.is_none() && !params.is_empty() {
+                                first_params = Some(params.clone());
+                                // Compute TypeIds for these canonical params
+                                canonical_param_type_ids = params
+                                    .iter()
+                                    .map(|p| self.ctx.types.intern(TypeKey::TypeParameter(p.clone())))
+                                    .collect();
+                                lib_types.push(ty);
+                            } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
+                                // For subsequent definitions with type params, substitute them
+                                // with the canonical TypeIds to ensure consistency.
+                                // This fixes the Array<T1> & Array<T2> problem where T1 != T2.
+                                let mut subst = TypeSubstitution::new();
+                                for (i, p) in params.iter().enumerate() {
+                                    if i < canonical_param_type_ids.len() {
+                                        subst.insert(p.name, canonical_param_type_ids[i]);
+                                    }
                                 }
-                            }
-                            if !subst.is_empty() {
-                                let mut instantiator =
-                                    TypeInstantiator::new(self.ctx.types, &subst);
-                                let substituted_ty = instantiator.instantiate(ty);
-                                lib_types.push(substituted_ty);
+                                if !subst.is_empty() {
+                                    let mut instantiator =
+                                        TypeInstantiator::new(self.ctx.types, &subst);
+                                    let substituted_ty = instantiator.instantiate(ty);
+                                    lib_types.push(substituted_ty);
+                                } else {
+                                    lib_types.push(ty);
+                                }
                             } else {
                                 lib_types.push(ty);
                             }
-                        } else {
-                            lib_types.push(ty);
+                            continue;
                         }
-                        continue;
+                        
+                        // Interface lowering returned ERROR - try as type alias
+                        for &decl_idx in &symbol.declarations {
+                            if let Some(node) = arena_ref.get(decl_idx) {
+                                if let Some(alias) = arena_ref.get_type_alias(node) {
+                                    let ty = lowering.lower_type_alias_declaration(alias);
+                                    if ty != TypeId::ERROR {
+                                        lib_types.push(ty);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if !lib_types.is_empty() {
+                            continue;
+                        }
                     }
+                    
                     let decl_idx = symbol.value_declaration;
                     if decl_idx.0 != u32::MAX {
                         lib_types.push(lowering.lower_type(decl_idx));
