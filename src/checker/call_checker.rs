@@ -223,6 +223,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.configure_compat_checker(&mut checker);
                 let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
                 evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
+                // Pass contextual type for generic type inference
+                // Example: `let x: string = id(42)` should infer T = string from context
+                evaluator.set_contextual_type(self.ctx.contextual_type);
                 evaluator.resolve_call(func_type, &arg_types)
             };
 
