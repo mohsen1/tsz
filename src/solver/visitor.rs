@@ -1336,7 +1336,7 @@ where
 
 /// Check if a type is a literal type (TypeDatabase version).
 pub fn is_literal_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(types.lookup(type_id), Some(TypeKey::Literal(_)))
+    LiteralTypeChecker::check(types, type_id)
 }
 
 /// Check if a type is a module namespace type (TypeDatabase version).
@@ -1346,64 +1346,18 @@ pub fn is_module_namespace_type_db(types: &dyn TypeDatabase, type_id: TypeId) ->
 
 /// Check if a type is a function type (TypeDatabase version).
 pub fn is_function_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_function_type_db_impl(types, type_id)
-}
-
-fn is_function_type_db_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match types.lookup(type_id) {
-        Some(TypeKey::Function(_) | TypeKey::Callable(_)) => true,
-        Some(TypeKey::Intersection(members)) => {
-            let members = types.type_list(members);
-            members
-                .iter()
-                .any(|&member| is_function_type_db_impl(types, member))
-        }
-        _ => false,
-    }
+    FunctionTypeChecker::check(types, type_id)
 }
 
 /// Check if a type is object-like (TypeDatabase version).
 pub fn is_object_like_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_object_like_type_db_impl(types, type_id)
-}
-
-fn is_object_like_type_db_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match types.lookup(type_id) {
-        Some(TypeKey::Object(_))
-        | Some(TypeKey::ObjectWithIndex(_))
-        | Some(TypeKey::Array(_))
-        | Some(TypeKey::Tuple(_))
-        | Some(TypeKey::Mapped(_)) => true,
-        Some(TypeKey::ReadonlyType(inner)) => is_object_like_type_db_impl(types, inner),
-        Some(TypeKey::Intersection(members)) => {
-            let members = types.type_list(members);
-            members
-                .iter()
-                .all(|&member| is_object_like_type_db_impl(types, member))
-        }
-        Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => info
-            .constraint
-            .map(|constraint| is_object_like_type_db_impl(types, constraint))
-            .unwrap_or(false),
-        _ => false,
-    }
+    ObjectTypeChecker::check(types, type_id)
 }
 
 /// Check if a type is an empty object type (TypeDatabase version).
 pub fn is_empty_object_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match types.lookup(type_id) {
-        Some(TypeKey::Object(shape_id)) => {
-            let shape = types.object_shape(shape_id);
-            shape.properties.is_empty()
-        }
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
-            let shape = types.object_shape(shape_id);
-            shape.properties.is_empty()
-                && shape.string_index.is_none()
-                && shape.number_index.is_none()
-        }
-        _ => false,
-    }
+    let checker = EmptyObjectChecker::new(types);
+    checker.check(type_id)
 }
 
 // =============================================================================
@@ -1429,5 +1383,105 @@ pub fn classify_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> Object
         Some(TypeKey::Object(shape_id)) => ObjectTypeKind::Object(shape_id),
         Some(TypeKey::ObjectWithIndex(shape_id)) => ObjectTypeKind::ObjectWithIndex(shape_id),
         _ => ObjectTypeKind::NotObject,
+    }
+}
+
+// =============================================================================
+// Visitor Pattern Implementations for Helper Functions
+// =============================================================================
+
+/// Visitor to check if a type is a literal type.
+struct LiteralTypeChecker;
+
+impl LiteralTypeChecker {
+    fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        match types.lookup(type_id) {
+            Some(TypeKey::Literal(_)) => true,
+            Some(TypeKey::ReadonlyType(inner)) => Self::check(types, inner),
+            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => {
+                info.constraint
+                    .map(|c| Self::check(types, c))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Visitor to check if a type is a function type.
+struct FunctionTypeChecker;
+
+impl FunctionTypeChecker {
+    fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        match types.lookup(type_id) {
+            Some(TypeKey::Function(_) | TypeKey::Callable(_)) => true,
+            Some(TypeKey::Intersection(members)) => {
+                let members = types.type_list(members);
+                members.iter().any(|&member| Self::check(types, member))
+            }
+            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => {
+                info.constraint
+                    .map(|c| Self::check(types, c))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Visitor to check if a type is object-like.
+struct ObjectTypeChecker;
+
+impl ObjectTypeChecker {
+    fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        match types.lookup(type_id) {
+            Some(TypeKey::Object(_))
+            | Some(TypeKey::ObjectWithIndex(_))
+            | Some(TypeKey::Array(_))
+            | Some(TypeKey::Tuple(_))
+            | Some(TypeKey::Mapped(_)) => true,
+            Some(TypeKey::ReadonlyType(inner)) => Self::check(types, inner),
+            Some(TypeKey::Intersection(members)) => {
+                let members = types.type_list(members);
+                members.iter().all(|&member| Self::check(types, member))
+            }
+            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => {
+                info.constraint
+                    .map(|constraint| Self::check(types, constraint))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Visitor to check if a type is an empty object type.
+struct EmptyObjectChecker<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> EmptyObjectChecker<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    fn check(&self, type_id: TypeId) -> bool {
+        match self.db.lookup(type_id) {
+            Some(TypeKey::Object(shape_id)) => {
+                let shape = self.db.object_shape(shape_id);
+                shape.properties.is_empty()
+            }
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.db.object_shape(shape_id);
+                shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+            }
+            Some(TypeKey::ReadonlyType(inner)) => self.check(inner),
+            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => {
+                info.constraint.map(|c| self.check(c)).unwrap_or(false)
+            }
+            _ => false,
+        }
     }
 }
