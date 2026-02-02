@@ -1403,9 +1403,8 @@ fn collect_diagnostics(
                                     || file_path_str.ends_with(".mjs");
 
                                 // Check if specifier has an extension
-                                let specifier_has_extension = Path::new(specifier)
-                                    .extension()
-                                    .is_some();
+                                let specifier_has_extension =
+                                    Path::new(specifier).extension().is_some();
 
                                 // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
                                 // If the import is extensionless, TypeScript treats it as "cannot find module" (TS2307)

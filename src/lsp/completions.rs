@@ -3251,16 +3251,17 @@ mod completions_tests {
         // and are interleaved with keywords, so we only check local declarations.
         let local_items: Vec<_> = items
             .iter()
-            .filter(|i| {
-                i.effective_sort_text() < sort_priority::GLOBALS_OR_KEYWORDS
-            })
+            .filter(|i| i.effective_sort_text() < sort_priority::GLOBALS_OR_KEYWORDS)
             .collect();
         let kw_items: Vec<_> = items
             .iter()
             .filter(|i| i.kind == CompletionItemKind::Keyword)
             .collect();
 
-        assert!(!local_items.is_empty(), "Should have local declarations (apple, banana)");
+        assert!(
+            !local_items.is_empty(),
+            "Should have local declarations (apple, banana)"
+        );
         assert!(!kw_items.is_empty(), "Should have keyword completions");
 
         if let (Some(last_local), Some(first_kw)) = (local_items.last(), kw_items.first()) {

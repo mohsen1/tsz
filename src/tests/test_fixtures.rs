@@ -44,15 +44,13 @@ pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> =
     use crate::checker::context::LibContext;
     use crate::parser::ParserState;
 
-    let embedded = crate::embedded_libs::get_default_libs_for_target(
-        crate::common::ScriptTarget::ES5,
-    );
+    let embedded =
+        crate::embedded_libs::get_default_libs_for_target(crate::common::ScriptTarget::ES5);
 
     let lib_contexts: Vec<LibContext> = embedded
         .into_iter()
         .filter_map(|lib| {
-            let mut parser =
-                ParserState::new(lib.file_name.to_string(), lib.content.to_string());
+            let mut parser = ParserState::new(lib.file_name.to_string(), lib.content.to_string());
             let root = parser.parse_source_file();
             if !parser.get_diagnostics().is_empty() {
                 return None;

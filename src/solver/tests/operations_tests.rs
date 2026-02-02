@@ -928,7 +928,10 @@ fn test_property_access_optional_property() {
 /// The interface includes: length, map, at, entries, and reduce.
 fn make_array_test_env(
     interner: &TypeInterner,
-) -> (crate::solver::subtype::TypeEnvironment, crate::solver::types::TypeParamInfo) {
+) -> (
+    crate::solver::subtype::TypeEnvironment,
+    crate::solver::types::TypeParamInfo,
+) {
     use crate::solver::subtype::TypeEnvironment;
     use crate::solver::types::TypeParamInfo;
 

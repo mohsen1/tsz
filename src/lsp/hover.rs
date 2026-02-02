@@ -1006,5 +1006,4 @@ mod hover_tests {
             info.kind
         );
     }
-
 }
