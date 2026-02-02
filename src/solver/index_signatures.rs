@@ -27,8 +27,9 @@
 //! }
 //! ```
 
-use crate::solver::types::{IndexInfo, IndexSignature};
-use crate::solver::{TypeDatabase, TypeId, TypeKey};
+use crate::solver::types::{IndexInfo, IndexSignature, ObjectShapeId};
+use crate::solver::visitor::TypeVisitor;
+use crate::solver::{TypeDatabase, TypeId};
 
 /// Distinguishes between string and numeric index signatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +38,254 @@ pub enum IndexKind {
     String,
     /// Numeric index signature: `{ [key: number]: T }`
     Number,
+}
+
+// =============================================================================
+// Visitor Implementations for Index Signature Resolution
+// =============================================================================
+
+/// Visitor for resolving string index signatures.
+struct StringIndexResolver<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for StringIndexResolver<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: crate::solver::types::IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &crate::solver::LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        shape.string_index.as_ref().map(|idx| idx.value_type)
+    }
+
+    fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
+        // Array/tuple types have readonly numeric index (which also supports string)
+        Some(element_type)
+    }
+
+    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
+        // Would need union of all elements, return UNKNOWN for simplicity
+        Some(TypeId::UNKNOWN)
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(crate::solver::types::TypeListId(list_id));
+        types.iter().find_map(|&t| self.visit_type(self.db, t))
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(crate::solver::types::TypeListId(list_id));
+        // For intersection, return the first one found
+        types.first().and_then(|&t| self.visit_type(self.db, t))
+    }
+
+    fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
+        self.visit_type(self.db, inner_type)
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+/// Visitor for resolving number index signatures.
+struct NumberIndexResolver<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for NumberIndexResolver<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: crate::solver::types::IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &crate::solver::LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        shape.number_index.as_ref().map(|idx| idx.value_type)
+    }
+
+    fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
+        Some(element_type)
+    }
+
+    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
+        Some(TypeId::UNKNOWN)
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(crate::solver::types::TypeListId(list_id));
+        types.iter().find_map(|&t| self.visit_type(self.db, t))
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(crate::solver::types::TypeListId(list_id));
+        types.first().and_then(|&t| self.visit_type(self.db, t))
+    }
+
+    fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
+        self.visit_type(self.db, inner_type)
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+/// Visitor for checking if an index signature is readonly.
+struct ReadonlyChecker<'a> {
+    db: &'a dyn TypeDatabase,
+    kind: IndexKind,
+}
+
+impl<'a> TypeVisitor for ReadonlyChecker<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, _kind: crate::solver::types::IntrinsicKind) -> Self::Output {
+        false
+    }
+
+    fn visit_literal(&mut self, _value: &crate::solver::LiteralValue) -> Self::Output {
+        false
+    }
+
+    fn visit_array(&mut self, _element_type: TypeId) -> Self::Output {
+        false // Arrays are mutable by default
+    }
+
+    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
+        false // Tuples are mutable by default
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        match self.kind {
+            IndexKind::String => {
+                shape.string_index.as_ref().is_some_and(|idx| idx.readonly)
+            }
+            IndexKind::Number => {
+                shape.number_index.as_ref().is_some_and(|idx| idx.readonly)
+            }
+        }
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(crate::solver::types::TypeListId(list_id));
+        // Union: any member being readonly makes it readonly
+        types.iter().any(|&t| self.visit_type(self.db, t))
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(crate::solver::types::TypeListId(list_id));
+        // Intersection: all must be readonly
+        types.iter().all(|&t| self.visit_type(self.db, t))
+    }
+
+    fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
+        self.visit_type(self.db, inner_type)
+    }
+
+    fn default_output() -> Self::Output {
+        false
+    }
+}
+
+/// Visitor for collecting index signature information.
+struct IndexInfoCollector<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for IndexInfoCollector<'a> {
+    type Output = IndexInfo;
+
+    fn visit_intrinsic(&mut self, _kind: crate::solver::types::IntrinsicKind) -> Self::Output {
+        IndexInfo {
+            string_index: None,
+            number_index: None,
+        }
+    }
+
+    fn visit_literal(&mut self, _value: &crate::solver::LiteralValue) -> Self::Output {
+        IndexInfo {
+            string_index: None,
+            number_index: None,
+        }
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        IndexInfo {
+            string_index: shape.string_index.clone(),
+            number_index: shape.number_index.clone(),
+        }
+    }
+
+    fn visit_array(&mut self, elem: TypeId) -> Self::Output {
+        IndexInfo {
+            string_index: None,
+            number_index: Some(IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: elem,
+                readonly: false,
+            }),
+        }
+    }
+
+    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
+        IndexInfo {
+            string_index: None,
+            number_index: Some(IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: TypeId::UNKNOWN,
+                readonly: false,
+            }),
+        }
+    }
+
+    fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
+        let mut info = self.visit_type(self.db, inner_type);
+        // Mark all signatures as readonly
+        if let Some(idx) = &mut info.string_index {
+            idx.readonly = true;
+        }
+        if let Some(idx) = &mut info.number_index {
+            idx.readonly = true;
+        }
+        info
+    }
+
+    fn visit_union(&mut self, _list_id: u32) -> Self::Output {
+        // Complex logic, return empty for now
+        IndexInfo {
+            string_index: None,
+            number_index: None,
+        }
+    }
+
+    fn visit_intersection(&mut self, _list_id: u32) -> Self::Output {
+        IndexInfo {
+            string_index: None,
+            number_index: None,
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        IndexInfo {
+            string_index: None,
+            number_index: None,
+        }
+    }
 }
 
 /// Resolver for index signature queries on types.
@@ -64,31 +313,8 @@ impl<'a> IndexSignatureResolver<'a> {
     /// - `{ [key: string]: string }` → `Some(TypeId::STRING)`
     /// - `{ a: number }` → `None`
     pub fn resolve_string_index(&self, obj: TypeId) -> Option<TypeId> {
-        match self.db.lookup(obj) {
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.db.object_shape(shape_id);
-                shape.string_index.as_ref().map(|idx| idx.value_type)
-            }
-            // Array/tuple types have readonly numeric index (which also supports string)
-            Some(TypeKey::Array(elem)) => Some(elem),
-            Some(TypeKey::Tuple(_)) => Some(TypeId::UNKNOWN), // Would need union of all elements
-            // Readonly wrapper: unwrap and check inner type
-            Some(TypeKey::ReadonlyType(inner)) => self.resolve_string_index(inner),
-            // Union: any member with string index makes it valid
-            Some(TypeKey::Union(types)) => {
-                let types = self.db.type_list(types);
-                types.iter().find_map(|&t| self.resolve_string_index(t))
-            }
-            // Intersection: all members must agree
-            Some(TypeKey::Intersection(types)) => {
-                let types = self.db.type_list(types);
-                let first = types.first().and_then(|&t| self.resolve_string_index(t));
-                // For intersection, we need all members to agree
-                // For simplicity, return the first one found
-                first
-            }
-            _ => None,
-        }
+        let mut visitor = StringIndexResolver { db: self.db };
+        visitor.visit_type(self.db, obj)
     }
 
     /// Resolve the numeric index signature type from an object type.
@@ -104,30 +330,8 @@ impl<'a> IndexSignatureResolver<'a> {
     ///
     /// Note: Array and tuple types have implicit numeric index signatures.
     pub fn resolve_number_index(&self, obj: TypeId) -> Option<TypeId> {
-        match self.db.lookup(obj) {
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.db.object_shape(shape_id);
-                shape.number_index.as_ref().map(|idx| idx.value_type)
-            }
-            // Array/tuple types have readonly numeric index
-            Some(TypeKey::Array(elem)) => Some(elem),
-            Some(TypeKey::Tuple(_)) => Some(TypeId::UNKNOWN), // Would need union of all elements
-            // Readonly wrapper: unwrap and check inner type
-            Some(TypeKey::ReadonlyType(inner)) => self.resolve_number_index(inner),
-            // Union: any member with number index makes it valid
-            Some(TypeKey::Union(types)) => {
-                let types = self.db.type_list(types);
-                types.iter().find_map(|&t| self.resolve_number_index(t))
-            }
-            // Intersection: all members must agree
-            Some(TypeKey::Intersection(types)) => {
-                let types = self.db.type_list(types);
-                let first = types.first().and_then(|&t| self.resolve_number_index(t));
-                // For simplicity, return the first one found
-                first
-            }
-            _ => None,
-        }
+        let mut visitor = NumberIndexResolver { db: self.db };
+        visitor.visit_type(self.db, obj)
     }
 
     /// Check if an index signature is readonly.
@@ -146,36 +350,11 @@ impl<'a> IndexSignatureResolver<'a> {
     /// - `{ readonly [x: string]: string }` with `IndexKind::String` → `true`
     /// - `{ [x: string]: string }` with `IndexKind::String` → `false`
     pub fn is_readonly(&self, obj: TypeId, kind: IndexKind) -> bool {
-        match self.db.lookup(obj) {
-            // Regular arrays/tuples are mutable (not readonly)
-            Some(TypeKey::Array(_) | TypeKey::Tuple(_)) => {
-                false // Arrays and tuples are mutable by default
-            }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.db.object_shape(shape_id);
-                match kind {
-                    IndexKind::String => {
-                        shape.string_index.as_ref().is_some_and(|idx| idx.readonly)
-                    }
-                    IndexKind::Number => {
-                        shape.number_index.as_ref().is_some_and(|idx| idx.readonly)
-                    }
-                }
-            }
-            // Readonly wrapper: unwrap and check inner type
-            Some(TypeKey::ReadonlyType(inner)) => self.is_readonly(inner, kind),
-            // Union: any member being readonly makes it readonly
-            Some(TypeKey::Union(types)) => {
-                let types = self.db.type_list(types);
-                types.iter().any(|&t| self.is_readonly(t, kind))
-            }
-            // Intersection: all must be readonly
-            Some(TypeKey::Intersection(types)) => {
-                let types = self.db.type_list(types);
-                types.iter().all(|&t| self.is_readonly(t, kind))
-            }
-            _ => false,
-        }
+        let mut visitor = ReadonlyChecker {
+            db: self.db,
+            kind,
+        };
+        visitor.visit_type(self.db, obj)
     }
 
     /// Get all index signatures from a type.
@@ -183,58 +362,8 @@ impl<'a> IndexSignatureResolver<'a> {
     /// Returns an `IndexInfo` struct containing both string and numeric
     /// index signatures if present.
     pub fn get_index_info(&self, obj: TypeId) -> IndexInfo {
-        match self.db.lookup(obj) {
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.db.object_shape(shape_id);
-                IndexInfo {
-                    string_index: shape.string_index.clone(),
-                    number_index: shape.number_index.clone(),
-                }
-            }
-            // Arrays have mutable numeric index
-            Some(TypeKey::Array(elem)) => IndexInfo {
-                string_index: None,
-                number_index: Some(IndexSignature {
-                    key_type: TypeId::NUMBER,
-                    value_type: elem,
-                    readonly: false, // Arrays are mutable by default
-                }),
-            },
-            Some(TypeKey::Tuple(_)) => {
-                // Tuples have mutable numeric index
-                // The element type would be a union of all tuple elements
-                // For simplicity, return unknown
-                IndexInfo {
-                    string_index: None,
-                    number_index: Some(IndexSignature {
-                        key_type: TypeId::NUMBER,
-                        value_type: TypeId::UNKNOWN,
-                        readonly: false, // Tuples are mutable by default
-                    }),
-                }
-            }
-            // Readonly wrapper: unwrap and get info
-            Some(TypeKey::ReadonlyType(inner)) => {
-                let mut info = self.get_index_info(inner);
-                // Mark all signatures as readonly
-                if let Some(idx) = &mut info.string_index {
-                    idx.readonly = true;
-                }
-                if let Some(idx) = &mut info.number_index {
-                    idx.readonly = true;
-                }
-                info
-            }
-            // Union/Intersection: complex logic, return empty for now
-            Some(TypeKey::Union(_) | TypeKey::Intersection(_)) => IndexInfo {
-                string_index: None,
-                number_index: None,
-            },
-            _ => IndexInfo {
-                string_index: None,
-                number_index: None,
-            },
-        }
+        let mut collector = IndexInfoCollector { db: self.db };
+        collector.visit_type(self.db, obj)
     }
 
     /// Check if a type has a specific index signature.
