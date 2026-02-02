@@ -1014,8 +1014,7 @@ impl<'a> CheckerState<'a> {
                             // This is different from `as` which coerces the type.
                             self.ensure_application_symbols_resolved(expr_type);
                             self.ensure_application_symbols_resolved(asserted_type);
-                            if asserted_type != TypeId::ANY
-                                && !self.type_contains_error(asserted_type)
+                            if !self.type_contains_error(asserted_type)
                                 && !self.is_assignable_to(expr_type, asserted_type)
                                 && !self.should_skip_weak_union_error(
                                     expr_type,

@@ -255,12 +255,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return Some(true);
         }
 
-        // Any propagation rules
-        if let Some(any_result) = self
-            .lawyer
-            .check_any_propagation(source, target, self.interner)
-        {
-            return Some(any_result);
+        // Any at the top-level is assignable to/from everything
+        if source == TypeId::ANY || target == TypeId::ANY {
+            return Some(true);
         }
 
         // Null/undefined in non-strict null check mode
@@ -296,13 +293,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Always use strict function types
         if source == target {
             return true;
-        }
-        // Use the lawyer layer for `any` propagation rules
-        if let Some(any_result) = self
-            .lawyer
-            .check_any_propagation(source, target, self.interner)
-        {
-            return any_result;
         }
         if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
             return true;
@@ -344,13 +334,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ) -> Option<SubtypeFailureReason> {
         // Fast path: if assignable, no failure to explain
         if source == target {
-            return None;
-        }
-        if self
-            .lawyer
-            .check_any_propagation(source, target, self.interner)
-            .is_some()
-        {
             return None;
         }
         if target == TypeId::UNKNOWN {
@@ -411,6 +394,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.exact_optional_property_types = self.exact_optional_property_types;
         self.subtype.strict_null_checks = self.strict_null_checks;
         self.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+        self.subtype.any_propagation = self.lawyer.any_propagation_mode();
         // In strict mode, disable method bivariance for soundness
         self.subtype.disable_method_bivariance = self.strict_subtype_checking;
     }
