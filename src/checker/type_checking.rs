@@ -2231,7 +2231,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(method) = self.ctx.arena.get_method_decl(node) {
                         if let Some(name_node) = self.ctx.arena.get(method.name) {
                             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+                                return self.ctx.arena.resolve_identifier_text(ident)
+                                    == expected_name;
                             }
                         }
                     }
@@ -2241,7 +2242,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(prop) = self.ctx.arena.get_property_decl(node) {
                         if let Some(name_node) = self.ctx.arena.get(prop.name) {
                             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+                                return self.ctx.arena.resolve_identifier_text(ident)
+                                    == expected_name;
                             }
                         }
                     }
@@ -2251,7 +2253,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(accessor) = self.ctx.arena.get_accessor(node) {
                         if let Some(name_node) = self.ctx.arena.get(accessor.name) {
                             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+                                return self.ctx.arena.resolve_identifier_text(ident)
+                                    == expected_name;
                             }
                         }
                     }
@@ -2261,7 +2264,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(module) = self.ctx.arena.get_module(node) {
                         if let Some(name_node) = self.ctx.arena.get(module.name) {
                             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
+                                return self.ctx.arena.resolve_identifier_text(ident)
+                                    == expected_name;
                             }
                         }
                     }
@@ -2683,10 +2687,11 @@ impl<'a> CheckerState<'a> {
                     // For simplicity, we check if any syntax that would need them exists
                     self.should_check_for_feature_type(type_name)
                 }
-                // Awaited is checked when using await type operator or async functions
+                // Awaited is checked when using await type operator, async functions, or Promise-like types
                 "Awaited" => {
-                    // Only check if async/await is actually used, not just because noLib is set
-                    self.ctx.async_depth > 0
+                    // TSC emits TS2318 for Awaited when Promise-like types are used, even without explicit await
+                    // Check if async/await is used OR if noLib is true (TSC checks it in that case)
+                    self.ctx.async_depth > 0 || self.ctx.no_lib()
                 }
                 // CallableFunction/NewableFunction are needed for strict checks
                 "CallableFunction" | "NewableFunction" => {
@@ -3103,8 +3108,8 @@ impl<'a> CheckerState<'a> {
     /// Check for unused declarations (TS6133).
     /// Reports variables, functions, classes, and other declarations that are never referenced.
     pub(crate) fn check_unused_declarations(&mut self) {
-        use crate::binder::symbol_flags;
         use crate::binder::ContainerKind;
+        use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::Diagnostic;
 
         let check_locals = self.ctx.no_unused_locals();
@@ -3164,10 +3169,8 @@ impl<'a> CheckerState<'a> {
             }
 
             // Skip special/internal names
-            if name == "default"
-                || name == "__export"
-                || name == "arguments"
-                || name == "React"  // JSX factory — always considered used when JSX is enabled
+            if name == "default" || name == "__export" || name == "arguments" || name == "React"
+            // JSX factory — always considered used when JSX is enabled
             {
                 continue;
             }
@@ -3240,10 +3243,7 @@ impl<'a> CheckerState<'a> {
                         || (flags & symbol_flags::REGULAR_ENUM) != 0
                         || (flags & symbol_flags::CONST_ENUM) != 0;
                     let (msg, code) = if is_type_only {
-                        (
-                            format!("'{}' is declared but never used.", name),
-                            6196,
-                        )
+                        (format!("'{}' is declared but never used.", name), 6196)
                     } else {
                         (
                             format!("'{}' is declared but its value is never read.", name),
@@ -3300,7 +3300,10 @@ impl<'a> CheckerState<'a> {
     /// Check if a declaration is a catch clause variable.
     fn is_catch_clause_variable(&self, idx: NodeIndex) -> bool {
         use crate::parser::syntax_kind_ext;
-        let parent_idx = self.ctx.arena.get_extended(idx)
+        let parent_idx = self
+            .ctx
+            .arena
+            .get_extended(idx)
             .map(|ext| ext.parent)
             .unwrap_or(NodeIndex::NONE);
         if parent_idx.is_none() {
@@ -3322,7 +3325,10 @@ impl<'a> CheckerState<'a> {
         // Structure: Parameter → SyntaxList/ParameterList → FunctionDecl/MethodDecl/Constructor
         let mut current = idx;
         for _ in 0..5 {
-            let parent_idx = self.ctx.arena.get_extended(current)
+            let parent_idx = self
+                .ctx
+                .arena
+                .get_extended(current)
                 .map(|ext| ext.parent)
                 .unwrap_or(NodeIndex::NONE);
             if parent_idx.is_none() {

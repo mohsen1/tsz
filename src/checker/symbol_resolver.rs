@@ -1938,7 +1938,11 @@ impl<'a> CheckerState<'a> {
         // For regular variables (e.g., `typeof x.p` where x is a local variable),
         // the qualified name refers to a property access, not a namespace member.
         let is_namespace_like = left_symbol.flags
-            & (symbol_flags::MODULE | CLASS | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM | symbol_flags::INTERFACE)
+            & (symbol_flags::MODULE
+                | CLASS
+                | symbol_flags::REGULAR_ENUM
+                | symbol_flags::CONST_ENUM
+                | symbol_flags::INTERFACE)
             != 0;
         if !is_namespace_like {
             return false;

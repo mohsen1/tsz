@@ -1718,7 +1718,11 @@ impl Server {
                             param
                         })
                         .collect();
-                    let name_kind = if sig.is_constructor { "className" } else { "functionName" };
+                    let name_kind = if sig.is_constructor {
+                        "className"
+                    } else {
+                        "functionName"
+                    };
                     let prefix_parts = Self::tokenize_sig_prefix(&sig.prefix, name_kind);
                     let suffix_parts = Self::tokenize_sig_suffix(&sig.suffix, name_kind);
                     let mut item = serde_json::json!({
@@ -1737,10 +1741,14 @@ impl Server {
                         item["documentation"] = serde_json::json!([]);
                     }
                     // Build tags from parameter documentation
-                    let tags: Vec<serde_json::Value> = sig.parameters.iter()
+                    let tags: Vec<serde_json::Value> = sig
+                        .parameters
+                        .iter()
                         .filter_map(|p| {
                             let doc = p.documentation.as_ref()?;
-                            if doc.is_empty() { return None; }
+                            if doc.is_empty() {
+                                return None;
+                            }
                             Some(serde_json::json!({
                                 "name": "param",
                                 "text": [
@@ -1803,7 +1811,9 @@ impl Server {
                 }
                 parts.push(serde_json::json!({"text": "<", "kind": "punctuation"}));
                 let type_params_inner = &stripped[angle_pos + 1..];
-                let type_params_inner = type_params_inner.strip_suffix('>').unwrap_or(type_params_inner);
+                let type_params_inner = type_params_inner
+                    .strip_suffix('>')
+                    .unwrap_or(type_params_inner);
                 // Tokenize type parameters
                 Self::tokenize_type_params(type_params_inner, &mut parts);
                 parts.push(serde_json::json!({"text": ">", "kind": "punctuation"}));
@@ -2221,16 +2231,12 @@ impl Server {
             }
 
             // Compute trigger span length from the range
-            let start_offset = line_map.position_to_offset(
-                info.trigger_span.start,
-                &source_text,
-            )
-            .unwrap_or(0) as usize;
-            let end_offset = line_map.position_to_offset(
-                info.trigger_span.end,
-                &source_text,
-            )
-            .unwrap_or(0) as usize;
+            let start_offset = line_map
+                .position_to_offset(info.trigger_span.start, &source_text)
+                .unwrap_or(0) as usize;
+            let end_offset = line_map
+                .position_to_offset(info.trigger_span.end, &source_text)
+                .unwrap_or(0) as usize;
             let trigger_length = end_offset.saturating_sub(start_offset);
 
             // Get rename locations from references
@@ -3087,11 +3093,9 @@ impl Server {
 
             if let Some(match_offset) = match_pos {
                 let pos1 = line_map.offset_to_position(byte_offset as u32, &source_text);
-                let pos1_end =
-                    line_map.offset_to_position((byte_offset + 1) as u32, &source_text);
+                let pos1_end = line_map.offset_to_position((byte_offset + 1) as u32, &source_text);
                 let pos2 = line_map.offset_to_position(match_offset as u32, &source_text);
-                let pos2_end =
-                    line_map.offset_to_position((match_offset + 1) as u32, &source_text);
+                let pos2_end = line_map.offset_to_position((match_offset + 1) as u32, &source_text);
 
                 let span1 = serde_json::json!({
                     "start": {"line": pos1.line + 1, "offset": pos1.character + 1},
@@ -3195,7 +3199,8 @@ impl Server {
     ) -> Vec<wasm::checker::types::diagnostics::Diagnostic> {
         let options = CheckOptions::default();
 
-        // Use unified lib loading for proper cross-lib symbol resolution
+        // Use unified lib loading for proper cross-lib symbol resolution.
+        // The unified binder has declaration_arenas tracking each declaration's source arena.
         let lib_files = match if options.no_lib {
             Ok(vec![])
         } else {
@@ -3288,7 +3293,8 @@ impl Server {
         files: HashMap<String, String>,
         options: CheckOptions,
     ) -> Result<Vec<i32>> {
-        // Use unified lib loading for proper cross-lib symbol resolution
+        // Use unified lib loading for proper cross-lib symbol resolution.
+        // The unified binder has declaration_arenas tracking each declaration's source arena.
         let lib_files = if options.no_lib {
             vec![]
         } else {
@@ -3509,7 +3515,8 @@ impl Server {
 
         // Phase 4: Create a unified LibFile
         // Use the first arena as representative (the unified binder tracks symbol_arenas)
-        let unified_arena = lib_files.first()
+        let unified_arena = lib_files
+            .first()
             .map(|lib| Arc::clone(&lib.arena))
             .unwrap_or_else(|| Arc::new(wasm::parser::node::NodeArena::new()));
 
@@ -3546,7 +3553,7 @@ impl Server {
             if candidate.exists() {
                 let content = std::fs::read_to_string(candidate)
                     .with_context(|| format!("failed to read lib file: {}", candidate.display()))?;
-                
+
                 // First, recursively load dependencies
                 let references = Self::parse_lib_references(&content);
                 for ref_lib in &references {
@@ -3560,7 +3567,7 @@ impl Server {
                     .unwrap_or_else(|| format!("lib.{}.d.ts", normalized));
                 let mut parser = wasm::parser::ParserState::new(file_name.clone(), content);
                 let root_idx = parser.parse_source_file();
-                
+
                 // Add to result in dependency order
                 result.push((file_name, parser, root_idx));
                 return Ok(());
@@ -3887,7 +3894,13 @@ fn build_code_map(bytes: &[u8]) -> Vec<bool> {
 
 /// Scan forward from `start` (exclusive) to find the matching closing brace.
 /// Returns the byte offset of the matching close brace, or None.
-fn scan_forward(bytes: &[u8], code_map: &[bool], start: usize, open: u8, close: u8) -> Option<usize> {
+fn scan_forward(
+    bytes: &[u8],
+    code_map: &[bool],
+    start: usize,
+    open: u8,
+    close: u8,
+) -> Option<usize> {
     let mut depth = 1i32;
     let mut i = start + 1;
     while i < bytes.len() {
@@ -3908,7 +3921,13 @@ fn scan_forward(bytes: &[u8], code_map: &[bool], start: usize, open: u8, close: 
 
 /// Scan backward from `start` (exclusive) to find the matching opening brace.
 /// Returns the byte offset of the matching open brace, or None.
-fn scan_backward(bytes: &[u8], code_map: &[bool], start: usize, close: u8, open: u8) -> Option<usize> {
+fn scan_backward(
+    bytes: &[u8],
+    code_map: &[bool],
+    start: usize,
+    close: u8,
+    open: u8,
+) -> Option<usize> {
     let mut depth = 1i32;
     let mut i = start;
     while i > 0 {
@@ -4113,14 +4132,9 @@ fn write_content_length_message(stdout: &mut std::io::Stdout, message: &str) -> 
 // =============================================================================
 
 fn main() -> Result<()> {
-    // Initialize tracing (stderr so it doesn't interfere with protocol)
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::WARN.into()),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    // Initialize tracing (always stderr so it doesn't interfere with protocol).
+    // Supports TSZ_LOG_FORMAT=tree|json|text (see src/tracing_config.rs).
+    wasm::tracing_config::init_tracing();
 
     let args = ServerArgs::parse();
     let mut server = Server::new(&args).context("failed to initialize server")?;

@@ -446,6 +446,17 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                 .application(iterable_iterator_base, vec![element_type]);
         }
 
+        // IterableIterator global not found - emit TS2318 regardless of noLib setting.
+        // TSC emits this error even with noLib: true when IterableIterator is needed.
+        use crate::lib_loader;
+        self.ctx
+            .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                "IterableIterator",
+                self.ctx.file_name.clone(),
+                0,
+                0,
+            ));
+
         // Fallback: use the iterator type (structural equivalent)
         // IterableIterator<T> is essentially Iterator<T> with [Symbol.iterator]() returning itself
         // For the structural fallback, we just return Iterator<T> since Symbol.iterator
@@ -484,6 +495,17 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                 .types
                 .application(async_iterable_iterator_base, vec![element_type]);
         }
+
+        // AsyncIterableIterator global not found - emit TS2318 regardless of noLib setting.
+        // TSC emits this error even with noLib: true when AsyncIterableIterator is needed.
+        use crate::lib_loader;
+        self.ctx
+            .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                "AsyncIterableIterator",
+                self.ctx.file_name.clone(),
+                0,
+                0,
+            ));
 
         // Fallback: use async iterator type
         self.create_async_iterator_type(element_type)

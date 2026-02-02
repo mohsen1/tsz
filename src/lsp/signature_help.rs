@@ -319,9 +319,7 @@ impl<'a> SignatureHelpProvider<'a> {
 
         // Compute applicable span (byte offsets for the argument region)
         let (span_start, span_length) = match &call_site {
-            CallSite::Regular(call_expr) => {
-                self.compute_applicable_span(call_node_idx, call_expr)
-            }
+            CallSite::Regular(call_expr) => self.compute_applicable_span(call_node_idx, call_expr),
             CallSite::TaggedTemplate(tagged) => {
                 // For tagged templates, span covers the template
                 if let Some(tmpl_node) = self.arena.get(tagged.template) {
@@ -473,9 +471,7 @@ impl<'a> SignatureHelpProvider<'a> {
                                 let backtick_pos = (tmpl_start + backtick_rel) as u32;
                                 // Cursor must be strictly after opening backtick
                                 // and strictly before closing backtick
-                                if cursor_offset > backtick_pos
-                                    && cursor_offset < tmpl_node.end
-                                {
+                                if cursor_offset > backtick_pos && cursor_offset < tmpl_node.end {
                                     return Some((
                                         current,
                                         CallSite::TaggedTemplate(data),
@@ -606,11 +602,7 @@ impl<'a> SignatureHelpProvider<'a> {
 
     /// Compute the applicable span for a regular call expression.
     /// Returns (start_offset, length) as byte offsets in the source text.
-    fn compute_applicable_span(
-        &self,
-        call_idx: NodeIndex,
-        data: &CallExprData,
-    ) -> (u32, u32) {
+    fn compute_applicable_span(&self, call_idx: NodeIndex, data: &CallExprData) -> (u32, u32) {
         let call_node = match self.arena.get(call_idx) {
             Some(n) => n,
             None => return (0, 0),
@@ -686,7 +678,9 @@ impl<'a> SignatureHelpProvider<'a> {
 
         // Walk spans: region from head.end/prev-literal.end to this literal.pos is expression area
         for (i, &span_idx) in tmpl_expr.template_spans.nodes.iter().enumerate() {
-            let Some(span_node) = self.arena.get(span_idx) else { continue };
+            let Some(span_node) = self.arena.get(span_idx) else {
+                continue;
+            };
             if let Some(span_data) = self.arena.get_template_span(span_node) {
                 if let Some(lit_node) = self.arena.get(span_data.literal) {
                     // Cursor at or before the literal's `}` → in expression area → param i+1

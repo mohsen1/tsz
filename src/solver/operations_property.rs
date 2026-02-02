@@ -157,12 +157,9 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         // For example: Boxified<T> where T extends any[]
         // - Numeric properties (0, 1, 2) → Box<T[number]>
         // - Array methods (pop, push) → resolved from Array<Box<T[number]>>
-        if let Some(result) = self.resolve_array_mapped_type_method(
-            &mapped,
-            mapped_id,
-            prop_name,
-            prop_atom,
-        ) {
+        if let Some(result) =
+            self.resolve_array_mapped_type_method(&mapped, mapped_id, prop_name, prop_atom)
+        {
             return Some(result);
         }
 
@@ -362,7 +359,9 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 let members = self.interner.type_list(members);
                 // For intersection of key types, a key is valid if it's in the intersection
                 // This is conservative - we check if it might be valid
-                members.iter().any(|&m| self.is_key_in_mapped_constraint(m, prop_name))
+                members
+                    .iter()
+                    .any(|&m| self.is_key_in_mapped_constraint(m, prop_name))
             }
 
             // string type covers all string properties

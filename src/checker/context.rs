@@ -132,6 +132,13 @@ impl CheckerOptions {
 use crate::binder::BinderState;
 use crate::parser::node::NodeArena;
 
+/// Represents a failed module resolution with specific error details.
+#[derive(Clone, Debug)]
+pub struct ResolutionError {
+    pub code: u32,
+    pub message: String,
+}
+
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]
 pub struct EnclosingClassInfo {
@@ -404,6 +411,11 @@ pub struct CheckerContext<'a> {
     /// Resolved module specifiers for this file (multi-file CLI mode).
     pub resolved_modules: Option<HashSet<String>>,
 
+    /// Map of resolution errors: (source_file_idx, specifier) -> Error details.
+    /// Populated by the driver when ModuleResolver returns a specific error.
+    /// Contains structured error information (code, message) for TS2834, TS2835, TS2792, etc.
+    pub resolved_module_errors: Option<FxHashMap<(usize, String), ResolutionError>>,
+
     /// Import resolution stack for circular import detection.
     /// Tracks the chain of modules being resolved to detect circular dependencies.
     pub import_resolution_stack: Vec<String>,
@@ -535,6 +547,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
@@ -617,6 +630,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
@@ -701,6 +715,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
@@ -784,6 +799,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
             actual_lib_file_count: 0,
@@ -828,6 +844,23 @@ impl<'a> CheckerContext<'a> {
     /// Used to suppress TS2307 errors for known modules.
     pub fn set_resolved_modules(&mut self, modules: HashSet<String>) {
         self.resolved_modules = Some(modules);
+    }
+
+    /// Set resolved module errors map for cross-file import resolution.
+    /// Populated by the driver when ModuleResolver returns specific errors (TS2834, TS2835, TS2792, etc.).
+    pub fn set_resolved_module_errors(
+        &mut self,
+        errors: FxHashMap<(usize, String), ResolutionError>,
+    ) {
+        self.resolved_module_errors = Some(errors);
+    }
+
+    /// Get the resolution error for a specifier, if any.
+    /// Returns the specific error (TS2834, TS2835, TS2792, etc.) if the module resolution failed with a known error.
+    pub fn get_resolution_error(&self, specifier: &str) -> Option<&ResolutionError> {
+        self.resolved_module_errors
+            .as_ref()
+            .and_then(|errors| errors.get(&(self.current_file_idx, specifier.to_string())))
     }
 
     /// Set the current file index.
@@ -1013,6 +1046,14 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.emitted_diagnostics.insert(key);
+        tracing::debug!(
+            code,
+            start,
+            length,
+            file = %self.file_name,
+            message = %message,
+            "diagnostic"
+        );
         self.diagnostics.push(Diagnostic::error(
             self.file_name.clone(),
             start,
@@ -1043,6 +1084,14 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.emitted_diagnostics.insert(key);
+        tracing::debug!(
+            code = diag.code,
+            start = diag.start,
+            length = diag.length,
+            file = %diag.file,
+            message = %diag.message_text,
+            "diagnostic"
+        );
         self.diagnostics.push(diag);
     }
 

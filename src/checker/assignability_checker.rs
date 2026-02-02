@@ -16,6 +16,7 @@ use crate::checker::state::{CheckerOverrideProvider, CheckerState};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeId;
+use tracing::trace;
 
 // =============================================================================
 // Assignability Checking Methods
@@ -232,7 +233,14 @@ impl<'a> CheckerState<'a> {
         let overrides = CheckerOverrideProvider::new(self, Some(&*env));
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
         self.ctx.configure_compat_checker(&mut checker);
-        checker.is_assignable_with_overrides(source, target, &overrides)
+        let result = checker.is_assignable_with_overrides(source, target, &overrides);
+        trace!(
+            source = source.0,
+            target = target.0,
+            result,
+            "is_assignable_to"
+        );
+        result
     }
 
     /// Check if `source` type is assignable to `target` type, resolving Ref types.
