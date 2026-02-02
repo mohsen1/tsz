@@ -430,6 +430,17 @@ impl<'a> FlowGraphBuilder<'a> {
         // Save flow before the condition
         let pre_condition_flow = self.current_flow;
 
+        // If already unreachable, stay unreachable (Bug #3.1 fix)
+        if pre_condition_flow == self.graph.unreachable_flow {
+            // Build branches for error checking but don't resurrect flow
+            self.build_statement(if_stmt.then_statement);
+            if !if_stmt.else_statement.is_none() {
+                self.build_statement(if_stmt.else_statement);
+            }
+            // Stay unreachable - don't resurrect with merge label
+            return;
+        }
+
         // Create flow node for the true branch
         let true_flow = self.create_flow_node(
             flow_flags::TRUE_CONDITION,
