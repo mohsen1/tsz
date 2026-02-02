@@ -76,17 +76,21 @@ Refactored completely to use visitor pattern:
 
 ## Work In Progress
 
-### 4. src/solver/contextual.rs (PARTIAL) 🔄
-**Commits**: `29ee333cd`, `d41a3474c`, `a8ae65cae`, `35fab866f`
-**Status**: 6 of 11 methods refactored (55% complete)
+### 4. src/solver/contextual.rs (NEARLY COMPLETE) ✅
+**Commits**: `29ee333cd`, `d41a3474c`, `a8ae65cae`, `35fab866f`, `b6cebc34d`, `ab299355a`
+**Status**: 10 of 11 main methods refactored (91% complete)
 
-**Created Visitor Structs:**
+**Created Visitor Structs (10 total):**
 - `ThisTypeExtractor` - Extracts this types from callable types (handles multi-signature)
 - `ReturnTypeExtractor` - Extracts return types from callable types (handles multi-signature)
-- `ArrayElementExtractor` - Extracts array element type or union of tuple elements
-- `TupleElementExtractor` - Extracts specific tuple element by index (handles rest parameters)
-- `PropertyExtractor` - Extracts object property type by name
+- `ArrayElementExtractor` - Extracts array/tuple element extraction
+- `TupleElementExtractor` - Extracts indexed tuple element with rest handling
+- `PropertyExtractor` - Extracts object property lookup by name
 - `ParameterExtractor` - Extracts function parameter type (handles rest parameters, multi-signature)
+- `ParameterForCallExtractor` - Extracts parameter with arity filtering for overloaded functions
+- `GeneratorYieldExtractor` - Extracts Y type from Generator<Y, R, N>
+- `GeneratorReturnExtractor` - Extracts R type from Generator<Y, R, N>
+- `GeneratorNextExtractor` - Extracts N type from Generator<Y, R, N>
 
 **Refactored Methods:**
 - `get_this_type` ✅
@@ -95,19 +99,22 @@ Refactored completely to use visitor pattern:
 - `get_tuple_element_type` ✅
 - `get_property_type` ✅
 - `get_parameter_type` ✅
+- `get_parameter_type_for_call` ✅
+- `get_generator_yield_type` ✅
+- `get_generator_return_type` ✅
+- `get_generator_next_type` ✅
 
-**Remaining Methods:**
-- `get_parameter_type_for_call` - Lines 108-151 (similar to get_parameter_type with arity)
-- `get_generator_yield_type` - Lines 551-585
-- `get_generator_return_type` - Lines 590-624
-- `get_generator_next_type` - Lines 630-664
-- GeneratorContextualType methods - Lines 785-959
+**Remaining Work:**
+- GeneratorContextualType helper methods - These are specialized object shape navigations
+  that find 'next', 'return', 'then' methods on generator objects. This is quite different
+  from the main contextual type extraction pattern and can be tackled as a separate refinement task.
 
 **Pattern Proven:**
 - Explicit Union handling (collects results from all members)
 - Explicit Application handling (unwraps to base type)
 - Multi-signature support (unions results from all overload signatures)
 - Rest parameter handling (extracts element type for any index)
+- Arity-based filtering for overloaded functions
 - All tests passing (7826)
 
 **Architecture Benefits:**
@@ -116,17 +123,36 @@ Refactored completely to use visitor pattern:
 - Consistency: All methods follow same pattern
 - Reusability: Visitors can be shared across methods
 
-**Next Steps:**
-- Complete get_parameter_type_for_call using ParameterExtractor pattern
-- Create GeneratorTypeExtractor visitor for generator methods
-- Test incrementally after each method
+**File Organization:**
+- contextual.rs is 1534 lines with 10 visitor structs
+- Consider moving visitors to separate module for better organization
+- Can be done as cleanup task (separate from visitor pattern enforcement)
 
 ---
 
 ## Remaining Work
 
-### src/solver/contextual.rs (completion)
-**Complexity:** HIGH
+### src/solver/contextual.rs (GeneratorContextualType completion)
+**Complexity:** HIGH (different pattern than main methods)
+
+**Remaining Methods:**
+- extract_yield_type_from_generator - Navigates object to find 'next' method
+- extract_yield_from_next_method - Unwraps Promise/IteratorResult
+- extract_value_from_iterator_result - Extracts value from union
+- extract_value_property - Extracts 'value' property
+- extract_next_type_from_generator - Navigates object to find 'next' method
+- extract_next_from_method - Extracts first parameter
+- extract_return_type_from_generator - Navigates object to find 'return' method
+- extract_return_from_method - Extracts first parameter
+
+These are specialized object shape navigation patterns, quite different from the main
+contextual type extraction. Should be tackled as a separate refinement task.
+
+---
+
+## Remaining Work
+
+### Other files with TypeKey violations
 **Reason for deferral:** Large file (1034 lines) with complex recursive patterns
 
 **Methods that need refactoring:**
@@ -323,25 +349,26 @@ fn visit_union(&mut self, list_id: u32) -> Self::Output {
 - [x] index_signatures.rs - COMPLETE (Commit: 83ca43479)
 - [x] binary_ops.rs - COMPLETE (Commit: 8239e483c)
 - [x] compat.rs - COMPLETE (Commit: 915d2c3bb)
-- [~] contextual.rs - IN PROGRESS (Commits: 29ee333cd, d41a3474c, a8ae65cae, 35fab866f)
-  - Progress: 6 of 11 methods done (55%)
-  - Remaining: get_parameter_type_for_call + 4 generator methods
+- [~] contextual.rs - NEARLY COMPLETE (Commits: 29ee333cd, d41a3474c, a8ae65cae, 35fab866f, b6cebc34d, ab299355a)
+  - Progress: 10 of 11 main methods done (91%)
+  - File size: 1534 lines (10 visitor structs)
+  - Remaining: GeneratorContextualType helper methods (different pattern, can be separate task)
 - [ ] Any other files with TypeKey violations - PENDING
 
 **Progress Summary:**
 - 3 files completely refactored
-- 1 file partially refactored (contextual.rs: 55% complete, 6/11 methods)
-- Total TypeKey refs eliminated: ~132 out of ~159 (83%)
+- 1 file nearly complete (contextual.rs: 91% complete, 10/11 main methods)
+- Total TypeKey refs eliminated: ~140 out of ~159 (88%)
 - All 7826 tests passing throughout
 - Visitor pattern proven effective for:
   - Simple type extraction (arrays, tuples, properties)
   - Callable type extraction (this, return, parameters)
-  - Complex scenarios (rest parameters, multi-signature, Union/Application handling)
+  - Complex scenarios (rest parameters, multi-signature, Union/Application handling, Generator types)
 
 **Remaining Effort Estimate:**
-- contextual.rs completion: ~4-5 hours (5 remaining methods)
-- Most complex methods (generators) still pending
-- Pattern is established and proven
+- GeneratorContextualType helper methods: ~2-3 hours (8 methods, different pattern)
+- Pattern is well-established and proven
+- File organization cleanup (optional, separate task): Move 10 visitors to separate module
 
 ---
 
