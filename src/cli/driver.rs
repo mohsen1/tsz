@@ -10,13 +10,15 @@ use crate::checker::TypeCache;
 use crate::checker::context::LibContext;
 use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
+    Diagnostic, DiagnosticCategory, diagnostic_codes,
 };
 use crate::cli::args::CliArgs;
 use crate::cli::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
     resolve_compiler_options, resolve_default_lib_files, resolve_lib_files,
 };
+use crate::module_resolver::ModuleResolver;
+use crate::span::Span;
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use crate::cli::driver_resolution::{
     ModuleResolutionCache, canonicalize_or_owned, collect_export_binding_nodes,
@@ -1323,13 +1325,30 @@ fn collect_diagnostics(
         .map(|file| Arc::clone(&file.arena))
         .collect();
 
+    // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
+    let mut module_resolver = ModuleResolver::new(options);
+
     // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
+    // Also build resolved_module_errors map for specific error codes
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    let mut resolved_module_errors: FxHashMap<(usize, String), crate::checker::context::ResolutionError> = FxHashMap::default();
+    
     for (file_idx, file) in program.files.iter().enumerate() {
         let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
-        for (specifier, _) in &module_specifiers {
+        let file_path = Path::new(&file.file_name);
+        
+        for (specifier, specifier_node) in &module_specifiers {
+            // Get span from the specifier node
+            let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
+                Span::new(spec_node.pos, spec_node.end)
+            } else {
+                Span::new(0, 0) // Fallback for invalid nodes
+            };
+            
+            // First try the old resolver for virtual test files (known_files check)
+            // This handles test harness virtual files that don't exist on disk
             if let Some(resolved) = resolve_module_specifier(
-                Path::new(&file.file_name),
+                file_path,
                 specifier,
                 options,
                 base_dir,
@@ -1339,6 +1358,29 @@ fn collect_diagnostics(
                 let canonical = canonicalize_or_owned(&resolved);
                 if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
                     resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                }
+                continue; // Successfully resolved, skip ModuleResolver
+            }
+            
+            // Use ModuleResolver to get specific error types for real files
+            // This will catch TS2834/TS2835/TS2792 errors
+            match module_resolver.resolve(specifier, file_path, span) {
+                Ok(resolved_module) => {
+                    let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
+                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                        resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                    }
+                }
+                Err(failure) => {
+                    // Convert ResolutionFailure to Diagnostic to get the error code and message
+                    let diagnostic = failure.to_diagnostic();
+                    resolved_module_errors.insert(
+                        (file_idx, specifier.clone()),
+                        crate::checker::context::ResolutionError {
+                            code: diagnostic.code,
+                            message: diagnostic.message,
+                        },
+                    );
                 }
             }
         }
@@ -1420,21 +1462,30 @@ fn collect_diagnostics(
         checker
             .ctx
             .set_resolved_module_paths(resolved_module_paths.clone());
+        checker.ctx.set_resolved_module_errors(resolved_module_errors.clone());
         checker.ctx.set_current_file_idx(file_idx);
 
+        // Build resolved_modules set for backward compatibility
+        // Only include modules that were successfully resolved (not in error map)
         let mut resolved_modules = HashSet::new();
         for (specifier, _) in &module_specifiers {
-            if let Some(resolved) = resolve_module_specifier(
-                Path::new(&file.file_name),
-                specifier,
-                options,
-                base_dir,
-                &mut resolution_cache,
-                &program_paths,
-            ) {
-                let canonical = canonicalize_or_owned(&resolved);
-                if program_paths.contains(&canonical) {
-                    resolved_modules.insert(specifier.clone());
+            // Check if this specifier is in resolved_module_paths (successfully resolved)
+            if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
+                resolved_modules.insert(specifier.clone());
+            } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone())) {
+                // Not in error map either - might be external module, check with old resolver
+                if let Some(resolved) = resolve_module_specifier(
+                    Path::new(&file.file_name),
+                    specifier,
+                    options,
+                    base_dir,
+                    &mut resolution_cache,
+                    &program_paths,
+                ) {
+                    let canonical = canonicalize_or_owned(&resolved);
+                    if program_paths.contains(&canonical) {
+                        resolved_modules.insert(specifier.clone());
+                    }
                 }
             }
         }
@@ -1446,58 +1497,8 @@ fn collect_diagnostics(
                 parse_diagnostic,
             ));
         }
-        let file_path_for_resolve = Path::new(&file.file_name);
-        for (specifier, specifier_node) in module_specifiers {
-            if specifier.is_empty() {
-                continue;
-            }
-            // Skip ambient module declarations (declared_modules has body, shorthand has none)
-            // Both should not emit TS2307 as they provide type information
-            if program.declared_modules.contains(specifier.as_str()) {
-                continue;
-            }
-            if program
-                .shorthand_ambient_modules
-                .contains(specifier.as_str())
-            {
-                continue;
-            }
-            let resolved = resolve_module_specifier(
-                file_path_for_resolve,
-                &specifier,
-                options,
-                base_dir,
-                &mut resolution_cache,
-                &program_paths,
-            );
-            if let Some(resolved_path) = resolved {
-                let canonical = canonicalize_or_owned(&resolved_path);
-                if program_paths.contains(&canonical) {
-                    continue;
-                }
-                // Module resolved to a path outside program_paths (e.g., node_modules)
-                // Still emit TS2307 since it's not part of the compilation
-            }
-            if specifier_node.is_none() {
-                continue;
-            }
-            let Some(spec_node) = file.arena.get(specifier_node) else {
-                continue;
-            };
-            let start = spec_node.pos;
-            let length = spec_node.end.saturating_sub(spec_node.pos);
-            let message = format_message(
-                diagnostic_messages::CANNOT_FIND_MODULE,
-                &[specifier.as_str()],
-            );
-            file_diagnostics.push(Diagnostic::error(
-                file.file_name.clone(),
-                start,
-                length,
-                message,
-                diagnostic_codes::CANNOT_FIND_MODULE,
-            ));
-        }
+        // Module resolution errors (TS2307, TS2834, TS2835, TS2792) are now handled by the checker
+        // via resolved_module_errors map, so we don't emit them here anymore.
         // Skip full type checking when --noCheck is set; only parse/emit diagnostics are reported.
         if !options.no_check {
             checker.check_source_file(file.source_file);
