@@ -128,6 +128,102 @@ impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
     }
 }
 
+/// Visitor to extract array element type or union of tuple element types.
+struct ArrayElementExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> ArrayElementExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for ArrayElementExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_array(&mut self, elem_type: TypeId) -> Self::Output {
+        Some(elem_type)
+    }
+
+    fn visit_tuple(&mut self, elements_id: u32) -> Self::Output {
+        let elements = self.db.tuple_list(TupleListId(elements_id));
+        if elements.is_empty() {
+            None
+        } else {
+            let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
+            Some(self.db.union(types))
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+/// Visitor to extract tuple element at a specific index.
+struct TupleElementExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+    index: usize,
+}
+
+impl<'a> TupleElementExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase, index: usize) -> Self {
+        Self { db, index }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for TupleElementExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_tuple(&mut self, elements_id: u32) -> Self::Output {
+        let elements = self.db.tuple_list(TupleListId(elements_id));
+        if self.index < elements.len() {
+            Some(elements[self.index].type_id)
+        } else if let Some(last) = elements.last() {
+            if last.rest {
+                Some(last.type_id)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn visit_array(&mut self, elem_type: TypeId) -> Self::Output {
+        Some(elem_type)
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 /// Context for contextual typing.
 /// Holds the expected type and provides methods to extract type information.
 pub struct ContextualTypeContext<'a> {
@@ -343,42 +439,15 @@ impl<'a> ContextualTypeContext<'a> {
     /// ```
     pub fn get_array_element_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
-
-        match key {
-            TypeKey::Array(elem) => Some(elem),
-            TypeKey::Tuple(elements) => {
-                let elements = self.interner.tuple_list(elements);
-                if elements.is_empty() {
-                    None
-                } else {
-                    let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
-                    Some(self.interner.union(types))
-                }
-            }
-            _ => None,
-        }
+        let mut extractor = ArrayElementExtractor::new(self.interner);
+        extractor.extract(expected)
     }
 
     /// Get the contextual type for a specific tuple element.
     pub fn get_tuple_element_type(&self, index: usize) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
-
-        match key {
-            TypeKey::Tuple(elements) => {
-                let elements = self.interner.tuple_list(elements);
-                if index < elements.len() {
-                    Some(elements[index].type_id)
-                } else if let Some(last) = elements.last() {
-                    if last.rest { Some(last.type_id) } else { None }
-                } else {
-                    None
-                }
-            }
-            TypeKey::Array(elem) => Some(elem),
-            _ => None,
-        }
+        let mut extractor = TupleElementExtractor::new(self.interner, index);
+        extractor.extract(expected)
     }
 
     /// Get the contextual type for an object property.
