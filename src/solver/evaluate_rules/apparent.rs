@@ -3,13 +3,34 @@
 //! This module provides utilities for working with apparent types of primitives.
 //! Apparent types define the shape of primitive values (e.g., string has .length, .charAt(), etc.)
 
-use crate::solver::ApparentMemberKind;
+use crate::solver::{ApparentMemberKind, TypeDatabase};
 use crate::solver::apparent::apparent_primitive_members;
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::*;
 use crate::solver::visitor::{intrinsic_kind, literal_value, template_literal_id};
 
 use super::super::evaluate::TypeEvaluator;
+
+/// Standalone helper to create an apparent method type.
+/// Used by both TypeEvaluator and visitors.
+pub(crate) fn make_apparent_method_type(db: &dyn TypeDatabase, return_type: TypeId) -> TypeId {
+    let rest_array = db.array(TypeId::ANY);
+    let rest_param = ParamInfo {
+        name: None,
+        type_id: rest_array,
+        optional: false,
+        rest: true,
+    };
+    db.function(FunctionShape {
+        params: vec![rest_param],
+        this_type: None,
+        return_type,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    })
+}
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Get the apparent type kind for a literal value.
@@ -104,22 +125,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Create a function type representing a method.
     pub(crate) fn apparent_method_type(&self, return_type: TypeId) -> TypeId {
-        let rest_array = self.interner().array(TypeId::ANY);
-        let rest_param = ParamInfo {
-            name: None,
-            type_id: rest_array,
-            optional: false,
-            rest: true,
-        };
-        self.interner().function(FunctionShape {
-            params: vec![rest_param],
-            this_type: None,
-            return_type,
-            type_params: Vec::new(),
-            type_predicate: None,
-            is_constructor: false,
-            is_method: false,
-        })
+        make_apparent_method_type(self.interner(), return_type)
     }
 
     /// Get keyof for a primitive type.

@@ -3,7 +3,7 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
-use crate::solver::ApparentMemberKind;
+use crate::solver::{ApparentMemberKind, TypeDatabase};
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -11,6 +11,7 @@ use crate::solver::visitor::{
     TypeVisitor, array_element_type, literal_number, literal_string, tuple_list_id, union_list_id,
 };
 
+use super::apparent::make_apparent_method_type;
 use super::super::evaluate::{
     ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
     ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
@@ -18,6 +19,30 @@ use super::super::evaluate::{
 
 fn is_member(name: &str, list: &[&str]) -> bool {
     list.contains(&name)
+}
+
+/// Standalone helper to get array member kind.
+/// Extracted from TypeEvaluator to be usable by visitors.
+pub(crate) fn get_array_member_kind(name: &str) -> Option<ApparentMemberKind> {
+    if name == "length" {
+        return Some(ApparentMemberKind::Value(TypeId::NUMBER));
+    }
+    if is_member(name, ARRAY_METHODS_RETURN_ANY) {
+        return Some(ApparentMemberKind::Method(TypeId::ANY));
+    }
+    if is_member(name, ARRAY_METHODS_RETURN_BOOLEAN) {
+        return Some(ApparentMemberKind::Method(TypeId::BOOLEAN));
+    }
+    if is_member(name, ARRAY_METHODS_RETURN_NUMBER) {
+        return Some(ApparentMemberKind::Method(TypeId::NUMBER));
+    }
+    if is_member(name, ARRAY_METHODS_RETURN_VOID) {
+        return Some(ApparentMemberKind::Method(TypeId::VOID));
+    }
+    if is_member(name, ARRAY_METHODS_RETURN_STRING) {
+        return Some(ApparentMemberKind::Method(TypeId::STRING));
+    }
+    None
 }
 
 struct IndexAccessVisitor<'a, 'b, R: TypeResolver> {
@@ -183,6 +208,107 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         self.evaluate_apparent_primitive(IntrinsicKind::String)
     }
 
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+// =============================================================================
+// Visitor Pattern Implementations for Index Type Evaluation
+// =============================================================================
+
+/// Visitor to handle array index access: `Array[K]`
+///
+/// Evaluates what type is returned when indexing an array with various key types.
+/// Uses Option<TypeId> to signal "use default fallback" via None.
+struct ArrayKeyVisitor<'a> {
+    db: &'a dyn TypeDatabase,
+    element_type: TypeId,
+    array_member_types_cache: Option<Vec<TypeId>>,
+}
+
+impl<'a> ArrayKeyVisitor<'a> {
+    fn new(db: &'a dyn TypeDatabase, element_type: TypeId) -> Self {
+        Self {
+            db,
+            element_type,
+            array_member_types_cache: None,
+        }
+    }
+
+    /// Driver method that handles the fallback logic
+    fn evaluate(&mut self, index_type: TypeId) -> TypeId {
+        let result = self.visit_type(self.db, index_type);
+        result.unwrap_or(self.element_type)
+    }
+
+    fn get_array_member_types(&mut self) -> Vec<TypeId> {
+        self.array_member_types_cache.get_or_insert_with(|| {
+            vec![
+                TypeId::NUMBER,
+                make_apparent_method_type(self.db, TypeId::ANY),
+                make_apparent_method_type(self.db, TypeId::BOOLEAN),
+                make_apparent_method_type(self.db, TypeId::NUMBER),
+                make_apparent_method_type(self.db, TypeId::VOID),
+                make_apparent_method_type(self.db, TypeId::STRING),
+            ]
+        })
+        .clone()
+    }
+}
+
+impl<'a> TypeVisitor for ArrayKeyVisitor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        let mut results = Vec::new();
+        for &member in members.iter() {
+            let result = self.evaluate(member);
+            if result != TypeId::UNDEFINED {
+                results.push(result);
+            }
+        }
+        if results.is_empty() {
+            Some(TypeId::UNDEFINED)
+        } else {
+            Some(self.db.union(results))
+        }
+    }
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        match kind {
+            IntrinsicKind::Number => Some(self.element_type),
+            IntrinsicKind::String => Some(self.db.union(self.get_array_member_types())),
+            _ => Some(TypeId::UNDEFINED),
+        }
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        match value {
+            LiteralValue::Number(_) => Some(self.element_type),
+            LiteralValue::String(atom) => {
+                let name = self.db.resolve_atom_ref(*atom);
+                if utils::is_numeric_property_name(self.db, *atom) {
+                    return Some(self.element_type);
+                }
+                // Check for known array members
+                if let Some(member) = get_array_member_kind(name.as_ref()) {
+                    return match member {
+                        ApparentMemberKind::Value(type_id) => Some(type_id),
+                        ApparentMemberKind::Method(return_type) => {
+                            Some(make_apparent_method_type(self.db, return_type))
+                        }
+                    };
+                }
+                Some(TypeId::UNDEFINED)
+            }
+            // For other literals, signal "use default fallback"
+            _ => None,
+        }
+    }
+
+    /// Signal "use the default fallback" for unhandled type variants
     fn default_output() -> Self::Output {
         None
     }
@@ -557,6 +683,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     pub(crate) fn evaluate_array_index(&self, elem: TypeId, index_type: TypeId) -> TypeId {
+        // Handle Union explicitly (distributes over union members)
         if let Some(members) = union_list_id(self.interner(), index_type) {
             let members = self.interner().type_list(members);
             let mut results = Vec::new();
@@ -572,32 +699,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().union(results);
         }
 
-        if self.is_number_like(index_type) {
-            return self.add_undefined_if_unchecked(elem);
-        }
+        // Use ArrayKeyVisitor to handle the index type
+        let mut visitor = ArrayKeyVisitor::new(self.interner(), elem);
+        let result = visitor.evaluate(index_type);
 
-        if index_type == TypeId::STRING {
-            let union = self.interner().union(self.array_member_types());
-            return self.add_undefined_if_unchecked(union);
-        }
-
-        if let Some(name) = literal_string(self.interner(), index_type) {
-            if utils::is_numeric_property_name(self.interner(), name) {
-                return self.add_undefined_if_unchecked(elem);
-            }
-            let name_str = self.interner().resolve_atom_ref(name);
-            if let Some(member) = self.array_member_kind(name_str.as_ref()) {
-                return match member {
-                    ApparentMemberKind::Value(type_id) => type_id,
-                    ApparentMemberKind::Method(return_type) => {
-                        self.apparent_method_type(return_type)
-                    }
-                };
-            }
-            return TypeId::UNDEFINED;
-        }
-
-        elem
+        // Add undefined if unchecked indexed access is allowed
+        self.add_undefined_if_unchecked(result)
     }
 
     pub(crate) fn array_member_types(&self) -> Vec<TypeId> {
