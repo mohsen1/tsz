@@ -201,12 +201,12 @@ Start **Phase 1** by moving `get_type_of_conditional_expression` logic to `solve
 
 ## Acceptance Criteria
 
-- [x] All type computation moved from Checker to Solver (Phase 1 & partial Phase 2)
+- [x] All type computation moved from Checker to Solver (Phase 1-3 COMPLETE)
 - [x] Checker only calls Solver APIs, no manual type math (for migrated operations)
-- [ ] `checker/state.rs` reduced significantly in size (Phase 4)
-- [x] Solver has comprehensive unit tests (16 tests added)
-- [x] Conformance tests pass with no regressions (7810 tests pass)
-- [ ] No `TypeKey::` matches in Checker (use visitor pattern)
+- [ ] `checker/state.rs` reduced significantly in size (Phase 4 - future work)
+- [x] Solver has comprehensive unit tests (25 tests added: 16 + 9 narrowing)
+- [x] Conformance tests pass with no regressions (7819 tests pass)
+- [ ] No `TypeKey::` matches in Checker (use visitor pattern - Phase 4)
 
 ## Progress Updates
 
@@ -216,7 +216,7 @@ Start **Phase 1** by moving `get_type_of_conditional_expression` logic to `solve
 - Implemented `compute_template_expression_type()` with ERROR/NEVER propagation
 - Refactored `checker/type_computation.rs` to use solver APIs
 - Added 16 comprehensive unit tests
-- All 7810 tests pass, no regressions
+- All tests pass, no regressions
 - Commits: `36d616b09`, `3984bb15d`, `5dea09f46`
 
 ### ✅ Completed: Phase 2 (Partial) - Array Literal BCT (Feb 2, 2025)
@@ -225,8 +225,17 @@ Start **Phase 1** by moving `get_type_of_conditional_expression` logic to `solve
 - Object literals already using `solver.object_fresh()` (no migration needed)
 - Commit: `3984bb15d`
 
-### 🚧 Next: Phase 3 - Control Flow Narrowing
-- See `docs/todo/10_narrowing_to_solver.md` for detailed plan
-- Create `src/solver/narrowing.rs` module
-- Move set algebra from `checker/control_flow.rs` to Solver
-- Implement `narrow_type()` and `narrow_type_exclude()` APIs
+### ✅ Completed: Phase 3 - Control Flow Narrowing (Feb 2, 2025)
+- Created AST-agnostic `TypeGuard` enum in `src/solver/narrowing.rs`
+- Implemented `narrow_type()` method that takes `TypeGuard` and applies it
+- Implemented `extract_type_guard()` in Checker to extract guards from AST
+- Added 9 comprehensive unit tests for TypeGuard variants
+- All 7819 tests pass, no regressions
+- Commits: `274809c2b`, `d6c5faccb`
+- See `docs/todo/10_narrowing_to_solver.md` for details
+
+### 📋 Next: Phase 4 - State Cleanup (Future Work)
+- Extract dispatcher from massive `match node.kind` in `compute_type_of_node`
+- Reduce `checker/state.rs` line count
+- Remove local helpers that are now redundant
+- Ensure no `TypeKey::` matches in Checker (use visitor pattern)
