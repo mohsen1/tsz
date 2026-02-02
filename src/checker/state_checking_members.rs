@@ -198,6 +198,10 @@ impl<'a> CheckerState<'a> {
 
         let mut seen_names: HashMap<String, MemberInfo> = HashMap::new();
 
+        // Track accessor occurrences for duplicate detection
+        // Key: "get:name" or "set:name" (with "static:" prefix for static members)
+        let mut seen_accessors: HashMap<String, Vec<NodeIndex>> = HashMap::new();
+
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -227,7 +231,24 @@ impl<'a> CheckerState<'a> {
                     })
                     .unwrap_or_default(),
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    // Accessors are handled separately (getter/setter pairs are allowed)
+                    // Track accessors for duplicate detection (getter/setter pairs are allowed,
+                    // but duplicate getters or duplicate setters are not)
+                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                        if let Some(name) = self.get_member_name_text(accessor.name) {
+                            let is_static = self.has_static_modifier(&accessor.modifiers);
+                            let kind = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                                "get"
+                            } else {
+                                "set"
+                            };
+                            let key = if is_static {
+                                format!("static:{}:{}", kind, name)
+                            } else {
+                                format!("{}:{}", kind, name)
+                            };
+                            seen_accessors.entry(key).or_default().push(member_idx);
+                        }
+                    }
                     continue;
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -340,6 +361,34 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // else: Only method signatures + at most 1 implementation = valid overloads
+        }
+
+        // Report TS2300 for duplicate accessors (e.g., two getters or two setters with same name)
+        for (_key, indices) in seen_accessors {
+            if indices.len() <= 1 {
+                continue;
+            }
+            for &idx in &indices {
+                let Some(member_node) = self.ctx.arena.get(idx) else {
+                    continue;
+                };
+                if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                    if let Some(name) = self.get_member_name_text(accessor.name) {
+                        let error_node = if accessor.name.is_none() {
+                            idx
+                        } else {
+                            accessor.name
+                        };
+                        let message =
+                            format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        );
+                    }
+                }
+            }
         }
     }
 

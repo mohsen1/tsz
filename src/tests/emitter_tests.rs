@@ -320,12 +320,12 @@ fn test_emit_for_of_es5() {
 
     let output = printer.get_output();
     assert!(
-        output.contains("_i < _a.length"),
+        output.contains("_i < arr_1.length"),
         "Expected array indexing pattern in ES5 output: {}",
         output
     );
     assert!(
-        output.contains("var v = _a[_i]"),
+        output.contains("var v = arr_1[_i]"),
         "Expected loop binding in ES5 output: {}",
         output
     );

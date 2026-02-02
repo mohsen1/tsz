@@ -11432,13 +11432,14 @@ fn test_index_signature_at_solver_level() {
     }
 }
 
-// ============== Ambient module pattern tests (errors 5061, 2819) ==============
+// ============== Ambient module pattern tests (errors 2436, 2819) ==============
 
 #[test]
-fn test_ambient_module_relative_path_5061() {
+fn test_ambient_module_relative_path_2436() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
-    // TS5061: Ambient module declaration cannot specify relative module name
+    // TS2436: Ambient module declaration cannot specify relative module name
     let source = r#"
 declare module "./relative-module" {
     export function foo(): void;
@@ -11472,11 +11473,16 @@ declare module "." {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let error_count = codes.iter().filter(|&&c| c == 5061).count();
+    let error_count = codes
+        .iter()
+        .filter(|&&c| {
+            c == diagnostic_codes::AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME
+        })
+        .count();
 
     assert_eq!(
         error_count, 3,
-        "Expected 3 errors with code 5061 for relative module names, got: {:?}",
+        "Expected 3 errors with code 2436 for relative module names, got: {:?}",
         codes
     );
 }
