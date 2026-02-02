@@ -241,26 +241,25 @@ impl CompletionItem {
 }
 
 /// Derive a default sort text from the completion kind, following tsserver
-/// conventions. Local declarations get priority "10", types get "11".
+/// conventions.
 pub fn default_sort_text(kind: CompletionItemKind) -> &'static str {
     match kind {
-        // Local declarations (variables, functions, parameters)
+        // Local declarations: variables, functions, parameters
         CompletionItemKind::Variable
         | CompletionItemKind::Function
-        | CompletionItemKind::Parameter => sort_priority::LOCAL_DECLARATION,
-        // Type declarations
+        | CompletionItemKind::Parameter
+        | CompletionItemKind::Constructor => sort_priority::LOCAL_DECLARATION,
+        // Member completions: properties and methods
+        CompletionItemKind::Property | CompletionItemKind::Method => sort_priority::MEMBER,
+        // Type declarations: classes, interfaces, enums, type aliases, modules, type params
         CompletionItemKind::Class
         | CompletionItemKind::Interface
         | CompletionItemKind::Enum
         | CompletionItemKind::TypeAlias
         | CompletionItemKind::Module
         | CompletionItemKind::TypeParameter => sort_priority::TYPE_DECLARATION,
-        // Members (properties, methods)
-        CompletionItemKind::Property | CompletionItemKind::Method => sort_priority::MEMBER,
-        // Keywords
+        // Keywords and globals
         CompletionItemKind::Keyword => sort_priority::GLOBALS_OR_KEYWORDS,
-        // Everything else gets location priority
-        _ => sort_priority::LOCATION_PRIORITY,
     }
 }
 
@@ -1435,7 +1434,10 @@ impl<'a> Completions<'a> {
                     return true;
                 }
                 if node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                    // Check if cursor is after `{` (member position)
+                    // Check if cursor is after `{` and still within the enum body
+                    if offset >= node.end {
+                        return false; // Cursor is past the closing `}`
+                    }
                     let text_before = &self.source_text[node.pos as usize..offset as usize];
                     if text_before.contains('{') {
                         return true;
@@ -2936,7 +2938,6 @@ mod completions_tests {
     }
 
     #[test]
-    #[ignore = "TODO: Enum symbols not appearing in completions - needs binder investigation"]
     fn test_completions_enum_kind() {
         // Enums should be reported as CompletionItemKind::Enum.
         let source = "enum Color { Red, Green, Blue }\n";
@@ -3244,8 +3245,9 @@ mod completions_tests {
         let completions = Completions::new(arena, &binder, &line_map, source);
         let items = completions.get_completions(root, position).unwrap();
 
-        // Local declarations (apple, banana) should appear before keywords.
-        // Note: Global variables (like "undefined") share sort_text "15" with keywords
+        // User-declared identifiers (apple, banana) with sort_text "10" should
+        // appear before keywords with sort_text "15".
+        // Note: global variables (Array, Object, etc.) also have sort_text "15"
         // and are interleaved with keywords, so we only check local declarations.
         let local_items: Vec<_> = items
             .iter()
@@ -3273,7 +3275,7 @@ mod completions_tests {
                 .unwrap();
             assert!(
                 last_local_pos < first_kw_pos,
-                "Local declarations should appear before keywords in the sorted list"
+                "All local declarations should appear before all keywords in the sorted list"
             );
         }
     }

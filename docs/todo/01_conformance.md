@@ -82,7 +82,28 @@ if self.ctx.has_lib_loaded() {
 
 ---
 
-### Phase 2: Fix Specialized Global Type Checks (~700 tests)
+### Phase 2: Fix Lib Loading - Use .full Libs (~1079 tests) - IN PROGRESS
+
+**Status:** Root cause identified and fix applied (Feb 2, 2026)
+
+**Root Cause:** The conformance runner was sending abbreviated lib names ('esnext') instead of '.full' lib names ('esnext.full') when no `@lib` was specified. This caused:
+- Missing ES5 base types (Array, Object, Boolean, etc.) → TS2318
+- Missing utility types (Partial, Pick, Record) → TS2318  
+- Missing ES2015+ types (Set, Map, Promise) → TS2583/TS2584
+
+**Fix Applied:**
+1. Updated `test-utils.ts` to use `getFullLibNameForTarget()` instead of `getCoreLibNameForTarget()`
+2. Updated `tsc-runner.ts` to use `.full` libs for TSC cache generation
+3. Both now match tsc's actual default behavior
+
+**Next Steps:**
+1. Regenerate TSC cache: `./scripts/conformance/run.sh cache generate`
+2. Run conformance tests to verify TS2318/TS2583/TS2584 errors are resolved
+3. Expected impact: ~1079 tests should pass
+
+---
+
+### Phase 2b: Fix Specialized Global Type Checks (~700 tests)
 
 **Status:** Multi-arena merged interface resolution FIXED (Feb 2, 2026)
 - `resolve_lib_type_with_params` now uses `declaration_arenas` for proper multi-arena support

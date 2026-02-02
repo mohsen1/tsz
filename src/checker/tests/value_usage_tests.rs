@@ -581,7 +581,6 @@ const result = str + num;  // OK: string concatenation
 }
 
 #[test]
-#[ignore = "TODO: Enum member type resolution for arithmetic needs refinement"]
 fn test_enum_arithmetic_valid() {
     // Test that enum members can be used in arithmetic
     let source = r#"

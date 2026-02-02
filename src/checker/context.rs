@@ -1046,6 +1046,14 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.emitted_diagnostics.insert(key);
+        tracing::debug!(
+            code,
+            start,
+            length,
+            file = %self.file_name,
+            message = %message,
+            "diagnostic"
+        );
         self.diagnostics.push(Diagnostic::error(
             self.file_name.clone(),
             start,
@@ -1076,6 +1084,14 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.emitted_diagnostics.insert(key);
+        tracing::debug!(
+            code = diag.code,
+            start = diag.start,
+            length = diag.length,
+            file = %diag.file,
+            message = %diag.message_text,
+            "diagnostic"
+        );
         self.diagnostics.push(diag);
     }
 

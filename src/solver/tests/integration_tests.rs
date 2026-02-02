@@ -20,7 +20,6 @@ mod generic_strictness_tests {
     /// implemented. Generic types should use their constraint for subtyping checks, not
     /// be treated as `any`.
     #[test]
-    #[ignore = "Generic constraint usage in strict subtyping not fully implemented"]
     fn test_generic_with_constraint_uses_constraint_not_any() {
         let interner = TypeInterner::new();
         let mut checker = CompatChecker::new(&interner);
@@ -134,7 +133,6 @@ mod generic_strictness_tests {
     /// implemented. The type checker should combine multiple constraints using
     /// intersection types, but this is not working correctly.
     #[test]
-    #[ignore = "Multiple generic constraint combination not fully implemented"]
     fn test_multiple_generic_constraints() {
         let interner = TypeInterner::new();
         let mut checker = CompatChecker::new(&interner);

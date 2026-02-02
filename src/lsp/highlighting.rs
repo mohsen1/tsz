@@ -355,19 +355,17 @@ impl<'a> DocumentHighlightProvider<'a> {
         // If there's an else clause, highlight the "else" keyword
         if !if_data.else_statement.is_none() {
             if let Some(else_node) = self.arena.get(if_data.else_statement) {
-                // The "else" keyword appears between the then statement end
-                // and the else statement start
-                let then_node = self.arena.get(if_data.then_statement);
-                if let Some(then) = then_node {
-                    let search_start = then.end as usize;
-                    let search_end = else_node.end as usize;
-                    if let Some(else_offset) =
-                        self.find_keyword_in_range(search_start, search_end, "else")
-                    {
-                        highlights.push(DocumentHighlight::text(
-                            self.keyword_range(else_offset as u32, 4),
-                        ));
-                    }
+                // The "else" keyword appears just before the else clause.
+                // Note: then_node.end includes trailing trivia which may extend
+                // past the "else" keyword, so search a window before else_node.pos.
+                let else_search_end = else_node.pos as usize;
+                let else_search_start = else_search_end.saturating_sub(20);
+                if let Some(else_offset) =
+                    self.find_keyword_in_range(else_search_start, else_search_end, "else")
+                {
+                    highlights.push(DocumentHighlight::text(
+                        self.keyword_range(else_offset as u32, 4),
+                    ));
                 }
             }
         }
@@ -394,17 +392,21 @@ impl<'a> DocumentHighlightProvider<'a> {
 
         if word == "else" {
             // Find the if-statement whose else branch contains this offset
-            // The else keyword is between the then-statement end and else-statement start
+            // The else keyword appears before the else clause.
+            // Note: then_node.end may include trailing trivia past "else",
+            // so search a window before else_node.pos instead.
             for (i, node) in self.arena.nodes.iter().enumerate() {
                 if node.kind == syntax_kind_ext::IF_STATEMENT {
                     if let Some(if_data) = self.arena.get_if_statement(node) {
                         if !if_data.else_statement.is_none() {
-                            if let Some(then_node) = self.arena.get(if_data.then_statement) {
-                                // Check if the "else" keyword is between then.end and else.start
-                                let then_end = then_node.end as usize;
-                                if let Some(else_kw_off) =
-                                    self.find_keyword_in_range(then_end, node.end as usize, "else")
-                                {
+                            if let Some(else_node) = self.arena.get(if_data.else_statement) {
+                                let else_search_end = else_node.pos as usize;
+                                let else_search_start = else_search_end.saturating_sub(20);
+                                if let Some(else_kw_off) = self.find_keyword_in_range(
+                                    else_search_start,
+                                    else_search_end,
+                                    "else",
+                                ) {
                                     if else_kw_off == word_start {
                                         return Some(NodeIndex(i as u32));
                                     }
@@ -706,14 +708,32 @@ impl<'a> DocumentHighlightProvider<'a> {
                             self.keyword_range(word_start as u32, 2),
                         ));
 
-                        // Find the matching "while" keyword
+                        // Find the matching "while" keyword.
+                        // Note: stmt_node.end may include trailing trivia past
+                        // "while", so search a window before the condition node.
                         if let Some(loop_data) = self.arena.get_loop(node) {
-                            if let Some(stmt_node) = self.arena.get(loop_data.statement) {
-                                if let Some(while_kw) = self.find_keyword_in_range(
-                                    stmt_node.end as usize,
-                                    node.end as usize,
-                                    "while",
-                                ) {
+                            // Try condition node position first
+                            if !loop_data.condition.is_none() {
+                                if let Some(cond_node) = self.arena.get(loop_data.condition) {
+                                    let search_end = cond_node.pos as usize;
+                                    let search_start = search_end.saturating_sub(20);
+                                    if let Some(while_kw) = self.find_keyword_in_range(
+                                        search_start,
+                                        search_end,
+                                        "while",
+                                    ) {
+                                        highlights.push(DocumentHighlight::text(
+                                            self.keyword_range(while_kw as u32, 5),
+                                        ));
+                                    }
+                                }
+                            } else if let Some(stmt_node) = self.arena.get(loop_data.statement) {
+                                // Fallback: search from after statement to end of do-stmt
+                                let search_start = stmt_node.end as usize;
+                                let search_end = node.end as usize;
+                                if let Some(while_kw) =
+                                    self.find_keyword_in_range(search_start, search_end, "while")
+                                {
                                     highlights.push(DocumentHighlight::text(
                                         self.keyword_range(while_kw as u32, 5),
                                     ));
@@ -736,15 +756,27 @@ impl<'a> DocumentHighlightProvider<'a> {
         for (i, node) in self.arena.nodes.iter().enumerate() {
             if node.kind == syntax_kind_ext::DO_STATEMENT {
                 if let Some(loop_data) = self.arena.get_loop(node) {
-                    if let Some(stmt_node) = self.arena.get(loop_data.statement) {
-                        if let Some(while_kw) = self.find_keyword_in_range(
+                    // Search using condition node position to avoid trivia issues
+                    let found_kw = if !loop_data.condition.is_none() {
+                        if let Some(cond_node) = self.arena.get(loop_data.condition) {
+                            let search_end = cond_node.pos as usize;
+                            let search_start = search_end.saturating_sub(20);
+                            self.find_keyword_in_range(search_start, search_end, "while")
+                        } else {
+                            None
+                        }
+                    } else if let Some(stmt_node) = self.arena.get(loop_data.statement) {
+                        self.find_keyword_in_range(
                             stmt_node.end as usize,
                             node.end as usize,
                             "while",
-                        ) {
-                            if while_kw == while_kw_start {
-                                return Some(NodeIndex(i as u32));
-                            }
+                        )
+                    } else {
+                        None
+                    };
+                    if let Some(while_kw) = found_kw {
+                        if while_kw == while_kw_start {
+                            return Some(NodeIndex(i as u32));
                         }
                     }
                 }
@@ -1037,7 +1069,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_document_highlight_simple_variable() {
         let source = "let x = 1;\nlet y = x + 1;\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1065,7 +1096,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_document_highlight_function() {
         let source = "function foo() {\n  return 1;\n}\nfoo();\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1093,7 +1123,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_document_highlight_compound_assignment() {
         let source = "let count = 0;\ncount += 1;\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1160,7 +1189,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_document_highlight_structs() {
         let source = "let x = 1;\nconsole.log(x);\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1418,7 +1446,6 @@ mod highlighting_tests {
     // ---- NEW TESTS: AST-based write detection ----
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_write_access_via_ast() {
         // Test that variable declarations are detected as writes via the AST path
         let source = "let x = 1;\nx = 2;\nconsole.log(x);\n";
@@ -1457,7 +1484,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_function_declaration_is_write() {
         // Function name should be marked as write at declaration
         let source = "function greet() {}\ngreet();\n";
@@ -1490,7 +1516,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_parameter_is_write() {
         // Function parameter should be marked as write at declaration
         let source = "function add(a: number, b: number) {\n  return a + b;\n}\n";
@@ -1524,7 +1549,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_multiple_reads() {
         // Variable used multiple times should have multiple read highlights
         let source = "let val = 10;\nlet a = val;\nlet b = val;\nlet c = val;\n";
@@ -1568,7 +1592,6 @@ mod highlighting_tests {
     // ---- NEW TESTS: Keyword highlighting ----
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_if_keyword() {
         let source = "if (true) {\n  console.log('yes');\n} else {\n  console.log('no');\n}\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1598,7 +1621,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_else_keyword() {
         let source = "if (true) {\n  console.log('yes');\n} else {\n  console.log('no');\n}\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1744,7 +1766,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_do_while_keywords() {
         let source = "do {\n  foo();\n} while (true);\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

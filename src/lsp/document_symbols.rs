@@ -1254,8 +1254,8 @@ mod document_symbols_tests {
 
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "Point");
-        // Type aliases use Struct kind (maps to "type" in tsserver)
-        // TypeParameter is reserved for generic type parameters like <T>
+        // Type aliases use SymbolKind::Struct which maps to "type" in tsserver.
+        // TypeParameter is reserved for generic type params like <T>.
         assert_eq!(symbols[0].kind, SymbolKind::Struct);
     }
 

@@ -107,7 +107,6 @@ fn test_ts2304_emitted_for_undefined_name() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
     let diagnostics = check_with_lib(r#"console.log("hello");"#);
 

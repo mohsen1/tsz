@@ -13,16 +13,9 @@ const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
 
 fn main() -> Result<()> {
-    // Only initialize tracing if RUST_LOG is set (saves ~2-5ms startup)
-    // Use RUST_LOG=debug for detailed tracing, RUST_LOG=trace for everything
-    if std::env::var("RUST_LOG").is_ok() {
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::from_default_env()
-                    .add_directive(tracing::Level::WARN.into()),
-            )
-            .init();
-    }
+    // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
+    // Supports TSZ_LOG_FORMAT=tree|json|text (see src/tracing_config.rs).
+    wasm::tracing_config::init_tracing();
 
     // Preprocess args for tsc compatibility:
     // - Convert -v to -V (tsc uses lowercase -v for version, clap uses -V)

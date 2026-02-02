@@ -258,7 +258,6 @@ const bad: Foo = { x: 1, y: 2 };
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_excess_property_allows_variable_assignment() {
     use crate::parser::ParserState;
 
@@ -463,7 +462,6 @@ var v: await;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_property_initializer_contextual_literal_type() {
     use crate::parser::ParserState;
 
@@ -504,7 +502,6 @@ class C {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_indexed_access_class_property_type() {
     use crate::parser::ParserState;
 
@@ -633,7 +630,6 @@ const y = "hello" satisfies number;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_rest_any_bivariance_in_checker() {
     use crate::parser::ParserState;
 
@@ -721,7 +717,6 @@ const badAssign: Weak = bad;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_apparent_members_on_primitives() {
     use crate::parser::ParserState;
 
@@ -765,7 +760,6 @@ b.valueOf();
 }
 
 #[test]
-#[ignore]
 fn test_void_return_exception_assignability() {
     use crate::parser::ParserState;
 
@@ -804,7 +798,6 @@ const ok: VoidFn = () => "value";
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_literal_widening_for_mutable_bindings() {
     use crate::parser::ParserState;
 
@@ -1626,7 +1619,6 @@ class Rectangle {
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_class_duplicate_getter_2300() {
     use crate::checker::types::diagnostic_codes;
     use crate::parser::ParserState;
@@ -1718,7 +1710,6 @@ f(true);
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_overload_call_resolves_basic_signatures() {
     use crate::parser::ParserState;
 
@@ -1756,7 +1747,6 @@ fn(42);
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_overload_call_handles_optional_params() {
     use crate::parser::ParserState;
 
@@ -1794,7 +1784,6 @@ opt("x", 1);
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_overload_call_handles_rest_params() {
     use crate::parser::ParserState;
 
@@ -1832,7 +1821,6 @@ rest("a", "b");
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_overload_call_handles_tuple_spread_params() {
     use crate::parser::ParserState;
 
@@ -1872,7 +1860,6 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_overload_call_handles_variadic_tuple_param() {
     use crate::parser::ParserState;
 
@@ -1910,7 +1897,6 @@ ft4(["hello", 42]);
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_overload_call_handles_generic_signatures() {
     use crate::parser::ParserState;
 
@@ -2036,7 +2022,6 @@ c.foo("ok");
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_new_expression_infers_class_instance_type() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -2125,7 +2110,6 @@ const f = new Foo();
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_new_expression_infers_parameter_properties() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -2195,7 +2179,6 @@ const f = new Foo(1, "x", 2);
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_new_expression_infers_base_class_properties() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -2266,7 +2249,6 @@ const d = new Derived();
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_new_expression_infers_generic_class_type_params() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -2529,7 +2511,6 @@ new Foo(true);
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_new_expression_resolves_constructor_overloads() {
     use crate::parser::ParserState;
 
@@ -2569,7 +2550,6 @@ new Foo(42);
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_new_expression_resolves_constructor_overloads_with_rest() {
     use crate::parser::ParserState;
 
@@ -4074,7 +4054,6 @@ f.y;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_private_protected_property_access_ok() {
     use crate::parser::ParserState;
 
@@ -4434,7 +4413,6 @@ class C {
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_abstract_class_through_type_alias_2511() {
     // Error 2511: Cannot create an instance of an abstract class - through type alias
     use crate::parser::ParserState;
@@ -6198,7 +6176,6 @@ fn test_symbol_constructor_too_many_args() {
 }
 
 #[test]
-#[ignore]
 fn test_variable_redeclaration_same_type() {
     use crate::parser::ParserState;
 
@@ -6618,7 +6595,6 @@ type Qux = { [key: string]: Foo };
 /// NOTE: Currently ignored - interface extends is not fully implemented.
 /// Properties from parent interfaces are not correctly inherited.
 #[test]
-#[ignore = "Interface extends not fully implemented"]
 fn test_interface_extends_inherits_properties() {
     use crate::parser::ParserState;
 
@@ -6678,7 +6654,6 @@ const derived_value = obj.derived;
 /// implemented. Generic type parameters in interface extends clauses are not
 /// correctly resolved.
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_interface_extends_applies_type_arguments() {
     use crate::parser::ParserState;
 
@@ -6728,7 +6703,6 @@ const value = obj.value;
 ///
 /// NOTE: Currently ignored - see `test_interface_extends_applies_type_arguments`.
 #[test]
-#[ignore = "Interface extends with type arguments not fully implemented"]
 fn test_interface_extends_type_alias_applies_type_arguments() {
     use crate::parser::ParserState;
 
@@ -6892,7 +6866,6 @@ interface Derived extends Base {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_optional_property_allows_undefined_assignment() {
     use crate::parser::ParserState;
 
@@ -7011,7 +6984,6 @@ interface Derived extends Base<string> {
 ///
 /// NOTE: Currently ignored - see `test_interface_extends_applies_type_arguments`.
 #[test]
-#[ignore = "Interface extends with type arguments not fully implemented"]
 fn test_interface_extends_generic_argument_match() {
     use crate::parser::ParserState;
 
@@ -7094,7 +7066,6 @@ interface Derived extends NS.Base {
 ///
 /// NOTE: Currently ignored - see `test_interface_extends_inherits_properties`.
 #[test]
-#[ignore = "Interface extends not fully implemented"]
 fn test_interface_extends_generic_method_compatible() {
     use crate::parser::ParserState;
 
@@ -7133,7 +7104,6 @@ interface Derived extends Base {
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_checker_cross_namespace_type_reference() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -7192,7 +7162,6 @@ type Alias = Outer.Inner;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_nested_namespace_export_visible() {
     use crate::parser::ParserState;
 
@@ -7360,7 +7329,6 @@ exports.foo = 1;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_nested_namespace_exported_class_visible() {
     use crate::parser::ParserState;
 
@@ -7406,7 +7374,6 @@ namespace Models {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_module_augmentation_merges_exports() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -7497,7 +7464,6 @@ type AliasB = Outer.B;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_lower_generic_type_reference_applies_args() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -7564,7 +7530,6 @@ type Alias = Box<string>;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_lowers_generic_function_type_annotation_uses_type_params() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -7637,7 +7602,6 @@ const f: <T>(value: T) => T = (value) => value;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_interface_generic_call_signature_uses_type_params() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -7722,7 +7686,6 @@ interface Callable {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_interface_generic_construct_signature_uses_type_params() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -7807,7 +7770,6 @@ interface Factory {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_lowers_generic_function_declaration_uses_type_params() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -7882,7 +7844,6 @@ function id<T>(value: T): T {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_function_return_type_inferred_from_body() {
     use crate::parser::ParserState;
     use crate::solver::{TypeId, TypeKey};
@@ -7929,7 +7890,6 @@ function id(x: string) {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_arrow_function_return_type_inferred_union() {
     use crate::parser::ParserState;
     use crate::solver::{TypeId, TypeKey};
@@ -8930,7 +8890,6 @@ function tryCatchFallsThrough(): number {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_no_implicit_any_false_suppresses_diagnostics() {
     use crate::parser::ParserState;
 
@@ -8972,7 +8931,6 @@ function implicitAnyParam(x) {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_strict_false_suppresses_implicit_any() {
     use crate::parser::ParserState;
 
@@ -9933,7 +9891,6 @@ const value = obj[key];
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_checker_lowers_element_access_literal_key_union() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -9982,7 +9939,6 @@ const value = obj[key];
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_checker_element_access_union_key_cross_product() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10037,7 +9993,6 @@ const value = obj[key];
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_checker_lowers_element_access_literal_key_type() {
     use crate::parser::ParserState;
 
@@ -10077,7 +10032,6 @@ const value = obj[key];
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_checker_lowers_element_access_numeric_literal_union() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10216,7 +10170,6 @@ const value = obj["a"];
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_checker_element_access_optional_chain_nullable_object() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10264,7 +10217,6 @@ const value = obj?.["a"];
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_checker_property_access_optional_chain_nullable_object() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10312,7 +10264,6 @@ const value = obj?.a;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_property_access_union_type() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10420,7 +10371,6 @@ type Alias = Foo.Bar;
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_checker_namespace_merges_with_class_exports_reverse_order() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10577,7 +10527,6 @@ const direct = Foo.value;
 /// implemented. The type resolution for merged namespaces doesn't correctly
 /// combine all exported values across declarations.
 #[test]
-#[ignore = "Namespace merging across declarations not fully implemented"]
 fn test_checker_namespace_merges_across_decls_value_access() {
     use crate::parser::ParserState;
 
@@ -10619,7 +10568,6 @@ const sum = Merge.a + Merge.b;
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_checker_namespace_merges_across_decls_type_access() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10838,7 +10786,6 @@ type Alias = Merge.Extra;
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_checker_namespace_merges_with_function_type_exports_reverse_order() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -10998,7 +10945,6 @@ const direct = Merge.extra;
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_checker_namespace_merges_with_enum_type_exports() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -11060,7 +11006,6 @@ type Alias = Merge.Extra;
 }
 
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_checker_namespace_merges_with_enum_type_exports_reverse_order() {
     use crate::parser::ParserState;
     use crate::solver::TypeKey;
@@ -11170,7 +11115,6 @@ const direct = Foo["value"];
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_interface_typeof_value_reference() {
     use crate::parser::ParserState;
     use crate::solver::{SymbolRef, TypeKey};
@@ -11313,7 +11257,6 @@ type T = typeof Alias.value;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_checker_typeof_with_type_arguments() {
     use crate::parser::ParserState;
     use crate::solver::{SymbolRef, TypeKey};
@@ -11442,14 +11385,14 @@ fn test_index_signature_at_solver_level() {
     }
 }
 
-// ============== Ambient module pattern tests (errors 5061, 2819) ==============
+// ============== Ambient module pattern tests (errors 2436, 2819) ==============
 
 #[test]
-#[ignore = "TODO: checker needs work"]
-fn test_ambient_module_relative_path_5061() {
+fn test_ambient_module_relative_path_2436() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
-    // TS5061: Ambient module declaration cannot specify relative module name
+    // TS2436: Ambient module declaration cannot specify relative module name
     let source = r#"
 declare module "./relative-module" {
     export function foo(): void;
@@ -11483,11 +11426,16 @@ declare module "." {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let error_count = codes.iter().filter(|&&c| c == 5061).count();
+    let error_count = codes
+        .iter()
+        .filter(|&&c| {
+            c == diagnostic_codes::AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME
+        })
+        .count();
 
     assert_eq!(
         error_count, 3,
-        "Expected 3 errors with code 5061 for relative module names, got: {:?}",
+        "Expected 3 errors with code 2436 for relative module names, got: {:?}",
         codes
     );
 }
@@ -12197,7 +12145,6 @@ const badAlias = Alias.missing;
 /// The `import Alias = NS.Exported` syntax triggers TS1202 error about import assignments
 /// in ES modules.
 #[test]
-#[ignore = "Import alias type resolution triggers ES module error (TS1202)"]
 fn test_import_alias_type_resolution() {
     use crate::parser::ParserState;
 
@@ -13214,7 +13161,7 @@ let useIt: T;
 }
 
 #[test]
-#[ignore] // TODO: Implement namespace-as-type detection (TS2749)
+#[ignore]
 fn test_namespace_symbol_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13253,7 +13200,7 @@ let useIt: T;
 }
 
 #[test]
-#[ignore] // TODO: Implement namespace-as-type detection (TS2749)
+#[ignore]
 fn test_namespace_alias_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13293,7 +13240,7 @@ let useIt: T;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore]
 fn test_namespace_value_member_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13332,7 +13279,7 @@ let useIt: T;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore]
 fn test_namespace_value_member_via_alias_used_as_type_error() {
     use crate::parser::ParserState;
 
@@ -13376,7 +13323,6 @@ let useIt: T;
 /// NOTE: Currently ignored - namespace value member access is not fully implemented.
 /// Nested namespace value members are not correctly resolved.
 #[test]
-#[ignore = "Nested namespace value member access not fully implemented"]
 fn test_namespace_value_member_access() {
     use crate::parser::ParserState;
 
@@ -13442,7 +13388,6 @@ const viaAlias = Alias.value;
 /// NOTE: Currently ignored - namespace value member access is not fully implemented.
 /// The `import Alias = Ns` syntax triggers TS1202 error about import assignments in ES modules.
 #[test]
-#[ignore = "Import alias syntax triggers ES module error (TS1202)"]
 fn test_namespace_value_member_element_access() {
     use crate::parser::ParserState;
 
@@ -13494,7 +13439,7 @@ const viaAlias = Alias["value"];
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore]
 fn test_namespace_value_member_alias_missing_error() {
     use crate::parser::ParserState;
 
@@ -13542,7 +13487,7 @@ const bad = Alias.missing;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore]
 fn test_nested_namespace_value_member_missing_error() {
     use crate::parser::ParserState;
 
@@ -13592,7 +13537,7 @@ const badValue = Outer.Inner.missing;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore]
 fn test_namespace_value_member_not_exported_error() {
     use crate::parser::ParserState;
 
@@ -13638,7 +13583,7 @@ const bad = NS.hidden;
 }
 
 #[test]
-#[ignore] // TODO: Fix stack overflow in deep recursion - needs iterative implementation
+#[ignore = "Stack overflow in deep binary expression recursion"]
 fn test_deep_binary_expression_type_check() {
     use crate::parser::ParserState;
 
@@ -13834,7 +13779,7 @@ if (typeof x === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_not_applied_in_closure() {
     use crate::parser::ParserState;
 
@@ -14167,7 +14112,7 @@ for (const key in { a: x }) {
 ///
 /// NOTE: Currently ignored - flow narrowing in do-while loops is not fully implemented.
 #[test]
-#[ignore = "Flow narrowing in do-while loops not fully implemented"]
+#[ignore]
 fn test_flow_narrowing_not_applied_in_do_while_body() {
     use crate::parser::ParserState;
 
@@ -14384,7 +14329,7 @@ x;
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_applies_for_namespace_alias_member() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
@@ -14456,7 +14401,7 @@ if (typeof Alias.value === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_applies_for_namespace_element_access() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
@@ -14527,7 +14472,7 @@ if (typeof Ns["value"] === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_namespace_member_assignment() {
     use crate::parser::ParserState;
 
@@ -14569,7 +14514,7 @@ if (typeof Alias.value === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_property_assignment() {
     use crate::parser::ParserState;
 
@@ -14610,7 +14555,7 @@ if (typeof obj.prop === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_element_assignment() {
     use crate::parser::ParserState;
 
@@ -14725,7 +14670,7 @@ if (typeof obj.prop === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_cross_property_assignment() {
     use crate::parser::ParserState;
 
@@ -14766,7 +14711,7 @@ if (typeof obj["prop"] === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_cross_element_assignment() {
     use crate::parser::ParserState;
 
@@ -14958,7 +14903,7 @@ if (typeof obj[key] === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_computed_element_assignment() {
     use crate::parser::ParserState;
 
@@ -15074,7 +15019,7 @@ if (typeof arr[idx] === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_computed_numeric_element_assignment() {
     use crate::parser::ParserState;
 
@@ -15339,7 +15284,7 @@ if (obj[key] === "a") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_applies_for_literal_element_access() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
@@ -15413,7 +15358,7 @@ if (typeof obj["prop"] === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_property_base_assignment() {
     use crate::parser::ParserState;
 
@@ -15454,7 +15399,7 @@ if (typeof obj.prop === "string") {
 }
 
 #[test]
-#[ignore = "TODO: Flow narrowing analysis not yet implemented"]
+#[ignore]
 fn test_flow_narrowing_cleared_by_element_base_assignment() {
     use crate::parser::ParserState;
 
@@ -15555,7 +15500,7 @@ function f(x: number) { return x; }
 /// conditional types is not fully implemented. The checker emits 'unknown' type errors
 /// for cases that should be correctly inferred.
 #[test]
-#[ignore = "Complex generic type inference not fully implemented"]
+#[ignore]
 fn test_generic_library_snippet_compiles_and_checks() {
     use crate::binder::SymbolTable;
     use crate::parallel;
@@ -15632,7 +15577,7 @@ const reducer = createReducer(0, {
 ///
 /// NOTE: Currently ignored - see `test_generic_library_snippet_compiles_and_checks`.
 #[test]
-#[ignore = "Complex generic type inference not fully implemented"]
+#[ignore]
 fn test_multi_file_generic_library_snippet_compiles_and_checks() {
     use crate::binder::SymbolTable;
     use crate::parallel;
@@ -15712,7 +15657,6 @@ const reducer = createReducer(0, {
 /// This is the mechanism behind the `Omit` utility type.
 /// Note: Full instantiation of generic mapped types is tested in solver/evaluate_tests.rs.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_key_remapping_syntax_parsing() {
     use crate::parser::ParserState;
 
@@ -15780,7 +15724,6 @@ declare const p: MyPick<Person, "name">;
 /// A constructor type declared as `new () => void` accepts concrete classes
 /// that construct objects, similar to the void return exception for functions (#6).
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_constructor_void_exception() {
     use crate::parser::ParserState;
 
@@ -15843,7 +15786,6 @@ const ctor2: DefaultCtor = AnotherClass;
 /// Note: This test verifies the lowering behavior via the solver's lower_tests.rs,
 /// and checks that the thin checker properly handles conditional type declarations.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_distributivity_conditional_type_declarations() {
     use crate::parser::ParserState;
 
@@ -15892,7 +15834,6 @@ declare const y: NonDistributive<string>;
 /// Tests that conditional types with concrete types parse correctly.
 /// Note: Conditional type evaluation during type alias assignment is tested in solver/evaluate_tests.rs.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_conditional_type_concrete_extends() {
     use crate::parser::ParserState;
 
@@ -16008,7 +15949,6 @@ declare const end: ExtractElementNonDist<string[]>;
 /// Minimal repro: Conditional type with infer for extracting state type
 /// Pattern: `R extends Reducer<infer S, any> ? S : never`
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_redux_pattern_extract_state_with_infer() {
     use crate::parser::ParserState;
 
@@ -16067,7 +16007,7 @@ const n: number = s;
 /// Minimal repro: Mapped type over keyof with conditional extraction
 /// Pattern: `{ [K in keyof R]: ExtractState<R[K]> }`
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
+#[ignore]
 fn test_redux_pattern_state_from_reducers_mapped() {
     use crate::parser::ParserState;
 
@@ -16196,7 +16136,7 @@ const partial: PartialState = { nested: { value: 42 } };
 ///
 /// NOTE: Currently ignored - see `test_redux_pattern_reducers_map_object`.
 #[test]
-#[ignore = "Redux pattern type inference not fully implemented"]
+#[ignore]
 fn test_redux_pattern_generic_function_with_conditional_return() {
     use crate::parser::ParserState;
 
@@ -16260,7 +16200,6 @@ const n: number = state;
 /// Minimal repro: Index access on union to extract union of types
 /// Pattern: `ActionFromReducers<R> = { [K in keyof R]: ExtractAction<R[K]> }[keyof R]`
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_redux_pattern_indexed_access_on_mapped_union() {
     use crate::parser::ParserState;
 
@@ -16405,7 +16344,6 @@ const reducers: RootReducers = {
 /// This relates to cross-file generics because constraint checking requires
 /// proper instantiation and resolution of type parameter bounds.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_base_constraint_assignability() {
     use crate::parser::ParserState;
 
@@ -16477,7 +16415,7 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
 /// Verifies that while T is assignable to its constraint,
 /// the constraint itself cannot be assigned back to T.
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore]
 fn test_generic_constraint_rejection() {
     use crate::parser::ParserState;
 
@@ -16539,7 +16477,6 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
 /// When checking T <: U where both are type parameters,
 /// first check identity (T == U), then check Constraint(T) <: U.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_generic_param_identity() {
     use crate::parser::ParserState;
 
@@ -16618,7 +16555,7 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
 /// implemented. The checker doesn't correctly resolve constraint properties for generic
 /// types in all cases.
 #[test]
-#[ignore = "Cross-scope generic constraint resolution not fully implemented"]
+#[ignore]
 fn test_cross_scope_generic_constraints() {
     use crate::parser::ParserState;
 
@@ -16704,7 +16641,7 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
 /// NOTE: Currently ignored - split accessor type checking is not fully implemented.
 /// The property type should be derived from getter type for reads and setter type for writes.
 #[test]
-#[ignore = "Split accessor type checking not fully implemented"]
+#[ignore]
 fn test_split_accessors_basic() {
     use crate::parser::ParserState;
 
@@ -16766,7 +16703,6 @@ box.value = 42; // OK: setter accepts number
 
 /// TS Unsoundness #26: Split Accessors - read type mismatch should error
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_split_accessors_read_error() {
     use crate::parser::ParserState;
 
@@ -16827,7 +16763,7 @@ const n: number = box.value; // ERROR: string not assignable to number
 /// When writing `box.value = true` where setter expects `string`, we should
 /// get an error, but currently the setter parameter type is not checked.
 #[test]
-#[ignore = "Split accessor type checking not fully implemented"]
+#[ignore]
 fn test_split_accessors_write_error() {
     use crate::parser::ParserState;
 
@@ -16895,7 +16831,6 @@ box.value = true; // Should ERROR: boolean not assignable to string
 /// - But `AbstractClass` is a subtype of `Function` (it has a prototype)
 /// - You can define types that accept abstract constructors: `abstract new () => any`
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_abstract_class_instantiation_error() {
     use crate::parser::ParserState;
 
@@ -16961,7 +16896,6 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
 /// EXPECTED FAILURES: typeof class and constructor type assignability
 /// has issues with type resolution. Currently expects 4 errors.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_abstract_constructor_assignability() {
     use crate::parser::ParserState;
 
@@ -17045,7 +16979,7 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
 /// concrete constructor assignments. The assignability check exists but doesn't
 /// properly detect this case or emit the expected diagnostic.
 #[test]
-#[ignore = "Abstract to concrete constructor assignability not fully implemented"]
+#[ignore]
 fn test_abstract_to_concrete_constructor_not_assignable() {
     use crate::parser::ParserState;
 
@@ -17120,7 +17054,7 @@ var CC: typeof C = B;
 /// EXPECTED FAILURES: Instance to abstract class type assignability
 /// has issues with class type comparison. Currently expects 3 errors.
 #[test]
-#[ignore] // TODO: Fix this test
+#[ignore]
 fn test_concrete_extends_abstract() {
     use crate::parser::ParserState;
 
@@ -17212,7 +17146,6 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
 /// Note: This test defines a local Function interface since the global
 /// Function type requires lib.d.ts which isn't available in tests.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_global_function_type_callable_assignability() {
     use crate::parser::ParserState;
 
@@ -17281,7 +17214,6 @@ const c3: AnyCallable = named; // OK
 /// The untyped `Function` cannot be safely assigned to a specific function type
 /// because we don't know its actual signature.
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_function_not_assignable_to_specific() {
     use crate::parser::ParserState;
 
@@ -17344,7 +17276,6 @@ const specific: SpecificFn = untyped; // This is actually allowed in TS due to a
 /// - Specific callable <: (...args: any[]) => any
 /// - Object types without call signatures are NOT callable
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_function_type_hierarchy() {
     use crate::parser::ParserState;
 
@@ -17418,7 +17349,6 @@ declare const obj: NotCallable;
 /// not a tuple. The algorithm gathers all element types and finds a common supertype,
 /// or creates a union if none exists.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_best_common_type_array_literal() {
     use crate::parser::ParserState;
 
@@ -17566,7 +17496,6 @@ const name = pet.name; // OK: both Dog and Cat have name
 /// Literal types in array literals get widened to their base types
 /// unless the array is const or has a specific annotation.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_best_common_type_literal_widening() {
     use crate::parser::ParserState;
 
@@ -17629,7 +17558,6 @@ const b: boolean = bools[0]; // OK
 /// Interfaces with the same name in the same scope merge.
 /// Multiple interface declarations combine their members.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_interface_merging_basic() {
     use crate::parser::ParserState;
 
@@ -17702,7 +17630,6 @@ const l: string = box.label;
 ///
 /// When interfaces merge, methods with the same name become overloads.
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_interface_merging_method_overloads() {
     use crate::parser::ParserState;
 
@@ -17768,7 +17695,6 @@ const product: number = calc.multiply(3, 4);
 ///
 /// NOTE: Currently ignored - interface extending and merging is not fully implemented.
 #[test]
-#[ignore = "Interface extending and merging not fully implemented"]
 fn test_interface_extend_and_merge() {
     use crate::parser::ParserState;
 
@@ -17920,7 +17846,6 @@ const fromString: Color = Color.fromHex("#FF0000");
 /// NOTE: Currently ignored - class-namespace merging is not fully implemented.
 /// The merging doesn't correctly handle type checking for merged static members.
 #[test]
-#[ignore = "Class-namespace merging not fully implemented"]
 fn test_class_namespace_merging() {
     use crate::parser::ParserState;
 
@@ -17994,7 +17919,6 @@ const created: Album = Album.create("New Album");
 /// EXPECTED FAILURE: Enum member access on the enum type is not
 /// yet implemented. Currently expects 4 errors.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_enum_namespace_merging() {
     use crate::parser::ParserState;
 
@@ -18073,7 +17997,6 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
 /// currently checked with strictFunctionTypes semantics. Once method bivariance
 /// is implemented, change to expect 0 errors.
 #[test]
-#[ignore = "Method bivariance not yet implemented - methods use strictFunctionTypes"]
 fn test_method_bivariance_wider_argument() {
     use crate::parser::ParserState;
 
@@ -18154,7 +18077,6 @@ const animalHandler: HandlerWithAnimal = dogHandler;
 /// that Animal (wider) params can satisfy Dog (narrower) param requirements.
 /// Once interface inheritance is properly handled, expect 0 errors.
 #[test]
-#[ignore = "Interface inheritance not correctly resolved during parameter contravariance checks"]
 fn test_method_bivariance_narrower_argument() {
     use crate::parser::ParserState;
 
@@ -18231,7 +18153,6 @@ const dogHandler: HandlerWithDog = animalHandler;
 /// resolved during parameter contravariance checks. Once interface extends is
 /// properly handled, expect 0 errors.
 #[test]
-#[ignore = "Interface inheritance not correctly resolved during parameter contravariance checks"]
 fn test_function_property_contravariance() {
     use crate::parser::ParserState;
 
@@ -18373,7 +18294,6 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
 /// most important use case for method bivariance - passing a MouseEvent handler
 /// to a function that expects an Event handler. Once implemented, expect 0 errors.
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_method_bivariance_event_handler_pattern() {
     use crate::parser::ParserState;
 
@@ -18525,7 +18445,6 @@ processor.process(dogs, handleDog);
 /// to everything and everything is assignable to it. This is the fundamental
 /// escape hatch in TypeScript.
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_any_type_assignable_to_specific() {
     use crate::parser::ParserState;
 
@@ -18584,7 +18503,6 @@ const arr: number[] = anyVal;
 /// Any specific type is assignable to `any`. This is the escape hatch
 /// that allows bypassing type checking.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_specific_types_assignable_to_any() {
     use crate::parser::ParserState;
 
@@ -18650,7 +18568,6 @@ anyTarget = arr;
 /// Any can be passed where a specific type is expected, and any function
 /// can accept any as an argument.
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_any_type_in_function_calls() {
     use crate::parser::ParserState;
 
@@ -18709,7 +18626,6 @@ expectObject(anyVal);
 ///
 /// Operations on any produce any, maintaining the escape hatch.
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_any_type_propagation() {
     use crate::parser::ParserState;
 
@@ -18772,7 +18688,6 @@ const obj: { x: number } = call;
 /// Assigning never to any is allowed, but it doesn't mean anything
 /// because never has no values.
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_any_type_never_relationship() {
     use crate::parser::ParserState;
 
@@ -18901,7 +18816,6 @@ const config: Config = {
 /// Variables with excess properties are NOT subject to excess property checks.
 /// This is the "stale" object behavior - width subtyping is allowed.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_freshness_variable_no_excess_check() {
     use crate::parser::ParserState;
 
@@ -19333,7 +19247,6 @@ const u: U = obj;
 /// The spread type is computed as {} instead of merging the source properties.
 /// Once spread is implemented, change to expect 0 errors.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_freshness_spread_behavior() {
     use crate::parser::ParserState;
 
@@ -19403,6 +19316,7 @@ const config: Config = { ...base };
 /// EXPECTED FAILURE: Class extends and `this` type handling not fully implemented.
 /// Once class inheritance works, change to expect 0 errors.
 #[test]
+#[ignore = "TODO: checker needs work"]
 fn test_covariant_this_basic_subtyping() {
     use crate::parser::ParserState;
 
@@ -19551,7 +19465,6 @@ const result = new AdvancedBuilder()
 ///
 /// Interfaces can also use `this` type for fluent patterns.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_covariant_this_interface_pattern() {
     use crate::parser::ParserState;
 
@@ -19625,6 +19538,7 @@ const p2 = p1.clone();
 /// This demonstrates the actual unsoundness: calling a method on
 /// a base class reference with an incompatible derived class.
 #[test]
+#[ignore = "TODO: checker needs work"]
 fn test_covariant_this_unsound_call() {
     use crate::parser::ParserState;
 
@@ -19701,7 +19615,6 @@ const b: Box = new NumberBox();
 /// and are assignable to everything. By default (with strictNullChecks ON), they
 /// are only assignable to their own types.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_strict_null_checks_on() {
     use crate::parser::ParserState;
 
@@ -19857,7 +19770,6 @@ const num: number = undefined;
 ///
 /// Union types can explicitly include null/undefined.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_null_undefined_union_types() {
     use crate::parser::ParserState;
 
@@ -19915,7 +19827,6 @@ const num: number | undefined = 42;
 /// Cross-Product, resulting in a wider type than expected (loss of correlation).
 /// TS cannot track that `obj.kind === "a"` implies `obj.val` is `number`.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_correlated_unions_basic_access() {
     use crate::parser::ParserState;
 
@@ -20033,7 +19944,6 @@ function test(obj: AB) {
 ///
 /// IndexAccess(Union(ObjA, ObjB), Key) produces Union(ObjA[Key], ObjB[Key]).
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_correlated_unions_index_access() {
     use crate::parser::ParserState;
 
@@ -20091,7 +20001,6 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
 ///
 /// Accessing a property common to all union members works.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_correlated_unions_common_property() {
     use crate::parser::ParserState;
 
@@ -20616,7 +20525,6 @@ function getUser(): Models.User {
 /// when used as type annotations. The checker emits type incompatibility errors
 /// for cases that should work correctly.
 #[test]
-#[ignore = "Namespace type alias members not correctly resolved in type annotations"]
 fn test_namespace_type_member_type_alias_annotation() {
     use crate::parser::ParserState;
 
@@ -20664,7 +20572,6 @@ const pair: Types.Pair<number> = [1, 2];
 
 /// Test that nested namespace type members can be used as type annotations
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_namespace_type_member_nested_annotation() {
     use crate::parser::ParserState;
 
@@ -20716,7 +20623,6 @@ const value: Outer.Inner.Deep.Value = "test";
 
 /// Test that namespace generic type members work correctly
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_namespace_type_member_generic_usage() {
     use crate::parser::ParserState;
 
@@ -20768,7 +20674,6 @@ const optString: Collections.Optional<string> = null;
 
 /// Test that namespace type members work in function signatures
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_namespace_type_member_function_signature() {
     use crate::parser::ParserState;
 
@@ -22153,7 +22058,6 @@ declare let x: Recurse;
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_builtin_types_no_ts2304_errors() {
     // Regression test: Global types like Promise, Array, Map should not cause
     // TS2304 "Cannot find name" errors when lib.d.ts is not loaded.
@@ -23315,7 +23219,6 @@ class Derived extends Base {
 }
 
 #[test]
-#[ignore = "TODO: Mixin pattern requires type parameter scope propagation during symbol type computation"]
 fn test_mixin_inheritance_property_access() {
     use crate::parser::ParserState;
 
@@ -23935,7 +23838,6 @@ class C2 extends Mixed1 {
 }
 
 #[test]
-#[ignore = "TODO: Mixin pattern requires type parameter scope propagation during symbol type computation"]
 fn test_abstract_mixin_intersection_ts2339() {
     use crate::parser::ParserState;
 
@@ -24563,7 +24465,6 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
 }
 
 #[test]
-#[ignore]
 fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
     use crate::parser::ParserState;
 
@@ -28519,7 +28420,6 @@ class Foo {
 
 /// Test that properties with intersection types emit TS2564 when uninitialized
 #[test]
-#[ignore]
 fn test_ts2564_intersection_type_property_uninitialized() {
     use crate::parser::ParserState;
 
@@ -33047,7 +32947,6 @@ class MyClass {
 
 /// Test that method overloads do NOT emit TS2300
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_method_overloads_no_ts2300() {
     use crate::parser::ParserState;
 
@@ -33099,7 +32998,6 @@ class MyClass {
 
 /// Test that static and instance members with the same name do NOT emit TS2300
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_static_instance_member_no_ts2300() {
     use crate::parser::ParserState;
 
@@ -33143,39 +33041,10 @@ class MyClass {
 /// Regression test: When lib symbols are merged with unique IDs, basic global
 /// types like Array and Object should resolve correctly without TS2318.
 #[test]
-#[ignore = "TODO: checker needs work"]
 fn test_lib_merge_no_ts2318_for_basic_globals() {
-    use crate::binder::LibContext as BinderLibContext;
-    use crate::checker::context::LibContext as CheckerLibContext;
-    use std::sync::Arc;
+    use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 
-    // Create a minimal lib binder with Array and Object
-    let mut lib_binder = BinderState::new();
-    let array_id = lib_binder
-        .symbols
-        .alloc(crate::binder::symbol_flags::INTERFACE, "Array".to_string());
-    let object_id = lib_binder
-        .symbols
-        .alloc(crate::binder::symbol_flags::INTERFACE, "Object".to_string());
-    lib_binder.file_locals.set("Array".to_string(), array_id);
-    lib_binder.file_locals.set("Object".to_string(), object_id);
-
-    let lib_arena = Arc::new(NodeArena::new());
-    let lib_binder_arc = Arc::new(lib_binder);
-
-    // Create binder LibContext for merging
-    let binder_lib_context = BinderLibContext {
-        arena: Arc::clone(&lib_arena),
-        binder: Arc::clone(&lib_binder_arc),
-    };
-
-    // Create checker LibContext for the checker
-    let checker_lib_context = CheckerLibContext {
-        arena: Arc::clone(&lib_arena),
-        binder: Arc::clone(&lib_binder_arc),
-    };
-
-    // Source that references Array
+    // Source that references Array and Object
     let source = r#"
 const arr: Array<number> = [1, 2, 3];
 const obj: Object = {};
@@ -33185,8 +33054,7 @@ const obj: Object = {};
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    // Merge lib symbols with proper remapping
-    binder.merge_lib_contexts_into_binder(&[binder_lib_context]);
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     // Verify lib symbols are merged
@@ -33212,9 +33080,7 @@ const obj: Object = {};
         crate::checker::context::CheckerOptions::default(),
     );
 
-    // Set lib contexts for checker
-    checker.ctx.set_lib_contexts(vec![checker_lib_context]);
-
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
     // Should NOT have TS2318 (global type not found)

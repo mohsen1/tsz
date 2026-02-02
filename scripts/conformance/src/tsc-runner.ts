@@ -147,6 +147,23 @@ function defaultCoreLibNameForTarget(targetName: string): string {
   }
 }
 
+function defaultFullLibNameForTarget(targetName: string): string {
+  const normalized = targetName.toLowerCase();
+  switch (normalized) {
+    case 'es3':
+    case 'es5':
+      return 'es5.full';
+    case 'es6':
+    case 'es2015':
+      return 'es2015.full';
+    default:
+      if (normalized.startsWith('es20')) {
+        return `${normalized}.full`;
+      }
+      return 'esnext.full';
+  }
+}
+
 function getLibNamesForTestCase(
   opts: Record<string, unknown>,
   compilerOptionsTarget: ts.ScriptTarget | undefined
@@ -155,9 +172,10 @@ function getLibNamesForTestCase(
   const explicit = parseLibOption(opts.lib);
   if (explicit.length > 0) return explicit;
 
-  // No explicit @lib - return default libs based on target
+  // No explicit @lib - use FULL libs (like tsc does) to ensure all base types are available.
+  // This matches tsc's actual default behavior and fixes TS2318/TS2583/TS2584 errors.
   const targetName = normalizeTargetName(compilerOptionsTarget ?? opts.target);
-  return [defaultCoreLibNameForTarget(targetName)];
+  return [defaultFullLibNameForTarget(targetName)];
 }
 
 export function collectLibFiles(libNames: string[], libDir: string): Map<string, string> {

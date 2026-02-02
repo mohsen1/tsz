@@ -367,6 +367,7 @@ fn compile_inner(
     forced_dirty_paths: Option<&HashSet<PathBuf>>,
     explicit_config_path: Option<&Path>,
 ) -> Result<CompilationResult> {
+    let _compile_span = tracing::info_span!("compile", cwd = %cwd.display()).entered();
     let cwd = canonicalize_or_owned(cwd);
     let tsconfig_path = if let Some(path) = explicit_config_path {
         Some(path.to_path_buf())
@@ -1201,7 +1202,7 @@ fn read_source_files(
 /// duplicate symbol declarations.
 fn load_lib_files_for_contexts(
     lib_files: &[PathBuf],
-    _target: crate::emitter::ScriptTarget,
+    target: crate::emitter::ScriptTarget,
 ) -> Vec<LibContext> {
     use crate::binder::BinderState;
     use crate::parser::ParserState;
@@ -1235,6 +1236,20 @@ fn load_lib_files_for_contexts(
             Some((file_name, source_text))
         })
         .collect();
+
+    // If no disk lib files were found, fall back to embedded libs.
+    // This ensures global types (Array, String, etc.) are always available,
+    // even in test environments without TypeScript installed.
+    #[cfg(feature = "embedded_libs")]
+    let lib_contents = if lib_contents.is_empty() {
+        let embedded = crate::embedded_libs::get_default_libs_for_target(target);
+        embedded
+            .into_iter()
+            .map(|lib| (lib.file_name.to_string(), lib.content.to_string()))
+            .collect()
+    } else {
+        lib_contents
+    };
 
     // Parse and bind all libs in parallel
     let lib_contexts: Vec<LibContext> = lib_contents
@@ -1350,25 +1365,7 @@ fn collect_diagnostics(
                 Span::new(0, 0) // Fallback for invalid nodes
             };
 
-            // First try the old resolver for virtual test files (known_files check)
-            // This handles test harness virtual files that don't exist on disk
-            if let Some(resolved) = resolve_module_specifier(
-                file_path,
-                specifier,
-                options,
-                base_dir,
-                &mut resolution_cache,
-                &program_paths,
-            ) {
-                let canonical = canonicalize_or_owned(&resolved);
-                if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                    resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
-                }
-                continue; // Successfully resolved, skip ModuleResolver
-            }
-
-            // Use ModuleResolver to get specific error types for real files
-            // This will catch TS2834/TS2835/TS2792 errors
+            // Always try ModuleResolver first to get specific error types (TS2834/TS2835/TS2792)
             match module_resolver.resolve(specifier, file_path, span) {
                 Ok(resolved_module) => {
                     let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
@@ -1377,6 +1374,69 @@ fn collect_diagnostics(
                     }
                 }
                 Err(failure) => {
+                    // Check if this is NotFound and the old resolver would find it (virtual test files)
+                    // In that case, validate Node16 rules before accepting the fallback
+                    if failure.is_not_found() {
+                        if let Some(resolved) = resolve_module_specifier(
+                            file_path,
+                            specifier,
+                            options,
+                            base_dir,
+                            &mut resolution_cache,
+                            &program_paths,
+                        ) {
+                            // Validate Node16/NodeNext extension requirements for virtual files
+                            let resolution_kind = options.effective_module_resolution();
+                            let is_node16_or_next = matches!(
+                                resolution_kind,
+                                crate::cli::config::ModuleResolutionKind::Node16
+                                    | crate::cli::config::ModuleResolutionKind::NodeNext
+                            );
+
+                            if is_node16_or_next {
+                                // Check if importing file is ESM (by extension or path)
+                                let file_path_str = file_path.to_string_lossy();
+                                let importing_ext =
+                                    crate::module_resolver::ModuleExtension::from_path(file_path);
+                                let is_esm = importing_ext.forces_esm()
+                                    || file_path_str.ends_with(".mts")
+                                    || file_path_str.ends_with(".mjs");
+
+                                // Check if specifier has an extension
+                                let specifier_has_extension =
+                                    Path::new(specifier).extension().is_some();
+
+                                // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
+                                // If the import is extensionless, TypeScript treats it as "cannot find module" (TS2307)
+                                // even though the file exists, because ESM requires explicit extensions
+                                if is_esm && !specifier_has_extension && specifier.starts_with('.')
+                                {
+                                    // Emit TS2307 error - module cannot be found with the exact specifier
+                                    // (even though the file exists, ESM requires explicit extension)
+                                    resolved_module_errors.insert(
+                                        (file_idx, specifier.clone()),
+                                        crate::checker::context::ResolutionError {
+                                            code: crate::module_resolver::CANNOT_FIND_MODULE,
+                                            message: format!(
+                                                "Cannot find module '{}' or its corresponding type declarations.",
+                                                specifier
+                                            ),
+                                        },
+                                    );
+                                    continue; // Don't add to resolved_modules - this is an error
+                                }
+                            }
+
+                            // Fallback succeeded and passed validation - add to resolved paths
+                            let canonical = canonicalize_or_owned(&resolved);
+                            if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                                resolved_module_paths
+                                    .insert((file_idx, specifier.clone()), target_idx);
+                            }
+                            continue; // Virtual file found and validated, skip error
+                        }
+                    }
+
                     // Convert ResolutionFailure to Diagnostic to get the error code and message
                     let diagnostic = failure.to_diagnostic();
                     resolved_module_errors.insert(
@@ -1508,6 +1568,7 @@ fn collect_diagnostics(
         // via resolved_module_errors map, so we don't emit them here anymore.
         // Skip full type checking when --noCheck is set; only parse/emit diagnostics are reported.
         if !options.no_check {
+            let _check_span = tracing::info_span!("check_file", file = %file.file_name).entered();
             checker.check_source_file(file.source_file);
             file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
         }
