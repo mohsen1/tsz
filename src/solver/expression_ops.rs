@@ -177,20 +177,198 @@ fn is_definitely_falsy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 #[cfg(test)]
 mod tests {
-    // Note: These are placeholder tests. Real tests need a TypeDatabase implementation.
+    use super::*;
+    use crate::solver::intern::TypeInterner;
+
+    // =========================================================================
+    // Conditional Expression Tests
+    // =========================================================================
 
     #[test]
     fn test_conditional_both_same() {
-        // Placeholder: true ? A : A -> A
+        let interner = TypeInterner::new();
+        // string ? string : string -> string
+        let result = compute_conditional_expression_type(
+            &interner,
+            TypeId::BOOLEAN,
+            TypeId::STRING,
+            TypeId::STRING,
+        );
+        assert_eq!(result, TypeId::STRING);
     }
 
     #[test]
     fn test_conditional_different_branches() {
-        // Placeholder: boolean ? string : number -> string | number
+        let interner = TypeInterner::new();
+        // boolean ? string : number -> string | number
+        let result = compute_conditional_expression_type(
+            &interner,
+            TypeId::BOOLEAN,
+            TypeId::STRING,
+            TypeId::NUMBER,
+        );
+        // Result should be a union type (not equal to either branch)
+        assert_ne!(result, TypeId::STRING);
+        assert_ne!(result, TypeId::NUMBER);
     }
 
     #[test]
+    fn test_conditional_error_propagation() {
+        let interner = TypeInterner::new();
+        // ERROR ? string : number -> ERROR
+        let result = compute_conditional_expression_type(
+            &interner,
+            TypeId::ERROR,
+            TypeId::STRING,
+            TypeId::NUMBER,
+        );
+        assert_eq!(result, TypeId::ERROR);
+
+        // boolean ? ERROR : number -> ERROR
+        let result = compute_conditional_expression_type(
+            &interner,
+            TypeId::BOOLEAN,
+            TypeId::ERROR,
+            TypeId::NUMBER,
+        );
+        assert_eq!(result, TypeId::ERROR);
+    }
+
+    #[test]
+    fn test_conditional_any_condition() {
+        let interner = TypeInterner::new();
+        // any ? string : number -> string | number
+        let result = compute_conditional_expression_type(
+            &interner,
+            TypeId::ANY,
+            TypeId::STRING,
+            TypeId::NUMBER,
+        );
+        // Result should be a union type
+        assert_ne!(result, TypeId::STRING);
+        assert_ne!(result, TypeId::NUMBER);
+    }
+
+    #[test]
+    fn test_conditional_never_condition() {
+        let interner = TypeInterner::new();
+        // never ? string : number -> never
+        let result = compute_conditional_expression_type(
+            &interner,
+            TypeId::NEVER,
+            TypeId::STRING,
+            TypeId::NUMBER,
+        );
+        assert_eq!(result, TypeId::NEVER);
+    }
+
+    #[test]
+    fn test_conditional_truthy_condition() {
+        let interner = TypeInterner::new();
+        // true ? string : number -> string
+        let true_type = interner.literal_boolean(true);
+        let result = compute_conditional_expression_type(
+            &interner,
+            true_type,
+            TypeId::STRING,
+            TypeId::NUMBER,
+        );
+        assert_eq!(result, TypeId::STRING);
+    }
+
+    #[test]
+    fn test_conditional_falsy_condition() {
+        let interner = TypeInterner::new();
+        // false ? string : number -> number
+        let false_type = interner.literal_boolean(false);
+        let result = compute_conditional_expression_type(
+            &interner,
+            false_type,
+            TypeId::STRING,
+            TypeId::NUMBER,
+        );
+        assert_eq!(result, TypeId::NUMBER);
+    }
+
+    // =========================================================================
+    // Template Expression Tests
+    // =========================================================================
+
+    #[test]
     fn test_template_always_string() {
-        // Placeholder: `foo${bar}` -> string
+        let interner = TypeInterner::new();
+        // `foo${bar}` -> string
+        let result = compute_template_expression_type(&interner, &[TypeId::STRING, TypeId::NUMBER]);
+        assert_eq!(result, TypeId::STRING);
+    }
+
+    #[test]
+    fn test_template_empty() {
+        let interner = TypeInterner::new();
+        // `` -> string
+        let result = compute_template_expression_type(&interner, &[]);
+        assert_eq!(result, TypeId::STRING);
+    }
+
+    #[test]
+    fn test_template_error_propagation() {
+        let interner = TypeInterner::new();
+        // `foo${ERROR}` -> ERROR
+        let result = compute_template_expression_type(&interner, &[TypeId::STRING, TypeId::ERROR]);
+        assert_eq!(result, TypeId::ERROR);
+    }
+
+    #[test]
+    fn test_template_never_propagation() {
+        let interner = TypeInterner::new();
+        // `foo${never}` -> never
+        let result = compute_template_expression_type(&interner, &[TypeId::STRING, TypeId::NEVER]);
+        assert_eq!(result, TypeId::NEVER);
+    }
+
+    // =========================================================================
+    // Best Common Type Tests
+    // =========================================================================
+
+    #[test]
+    fn test_bct_empty() {
+        let interner = TypeInterner::new();
+        // BCT of empty set -> never
+        let result = compute_best_common_type(&interner, &[]);
+        assert_eq!(result, TypeId::NEVER);
+    }
+
+    #[test]
+    fn test_bct_single() {
+        let interner = TypeInterner::new();
+        // BCT of [string] -> string
+        let result = compute_best_common_type(&interner, &[TypeId::STRING]);
+        assert_eq!(result, TypeId::STRING);
+    }
+
+    #[test]
+    fn test_bct_all_same() {
+        let interner = TypeInterner::new();
+        // BCT of [string, string, string] -> string
+        let result = compute_best_common_type(&interner, &[TypeId::STRING, TypeId::STRING, TypeId::STRING]);
+        assert_eq!(result, TypeId::STRING);
+    }
+
+    #[test]
+    fn test_bct_different() {
+        let interner = TypeInterner::new();
+        // BCT of [string, number] -> string | number
+        let result = compute_best_common_type(&interner, &[TypeId::STRING, TypeId::NUMBER]);
+        // Result should be a union type (not equal to either input)
+        assert_ne!(result, TypeId::STRING);
+        assert_ne!(result, TypeId::NUMBER);
+    }
+
+    #[test]
+    fn test_bct_error_propagation() {
+        let interner = TypeInterner::new();
+        // BCT of [string, ERROR, number] -> ERROR
+        let result = compute_best_common_type(&interner, &[TypeId::STRING, TypeId::ERROR, TypeId::NUMBER]);
+        assert_eq!(result, TypeId::ERROR);
     }
 }
