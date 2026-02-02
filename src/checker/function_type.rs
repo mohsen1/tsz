@@ -713,10 +713,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type of the object
-        let object_type = self.get_type_of_node(access.expression);
+        let original_object_type = self.get_type_of_node(access.expression);
 
         // Evaluate Application types to resolve generic type aliases/interfaces
-        let object_type = self.evaluate_application_type(object_type);
+        // But preserve original for error messages to maintain nominal identity (e.g., D<string>)
+        let object_type = self.evaluate_application_type(original_object_type);
 
         if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
             return self.get_type_of_private_property_access(
@@ -892,9 +893,10 @@ impl<'a> CheckerState<'a> {
                         // Property access expressions are VALUE context - always emit TS2339.
                         // TS2694 (namespace has no exported member) is for TYPE context only,
                         // which is handled separately in type name resolution.
+                        // Use original_object_type to preserve nominal identity (e.g., D<string>)
                         self.error_property_not_exist_at(
                             property_name,
-                            object_type_for_access,
+                            original_object_type,
                             idx,
                         );
                     }

@@ -1490,6 +1490,9 @@ impl<'a> CheckerState<'a> {
 
         let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
 
+        // Evaluate for type checking but preserve original for error messages
+        // This preserves nominal identity (e.g., D<string>) in error messages
+        let original_object_type = object_type;
         let object_type = self.evaluate_application_type(object_type);
         let (object_type_for_check, nullish_cause) = self.split_nullish_type(object_type);
         let Some(object_type_for_check) = object_type_for_check else {
@@ -1552,7 +1555,8 @@ impl<'a> CheckerState<'a> {
 
                     // Property not found, emit error if appropriate
                     if saw_class_scope {
-                        self.error_property_not_exist_at(&property_name, object_type, name_idx);
+                        // Use original_object_type to preserve nominal identity (e.g., D<string>)
+                        self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
                     }
                     return TypeId::ERROR;
                 }
@@ -1563,9 +1567,10 @@ impl<'a> CheckerState<'a> {
             Some(ty) => ty,
             None => {
                 if saw_class_scope {
+                    // Use original_object_type to preserve nominal identity (e.g., D<string>)
                     self.error_property_not_exist_at(
                         &property_name,
-                        object_type_for_check,
+                        original_object_type,
                         name_idx,
                     );
                 }
@@ -1609,7 +1614,8 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ANY;
             }
 
-            self.error_property_not_exist_at(&property_name, object_type_for_check, name_idx);
+            // Use original_object_type to preserve nominal identity (e.g., D<string>)
+            self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
             return TypeId::ERROR;
         }
 
@@ -1625,9 +1631,10 @@ impl<'a> CheckerState<'a> {
             } => {
                 if from_index_signature {
                     // Private fields can't come from index signatures
+                    // Use original_object_type to preserve nominal identity (e.g., D<string>)
                     self.error_property_not_exist_at(
                         &property_name,
-                        object_type_for_check,
+                        original_object_type,
                         name_idx,
                     );
                     return TypeId::ERROR;
@@ -1662,7 +1669,8 @@ impl<'a> CheckerState<'a> {
             PropertyAccessResult::IsUnknown => {
                 // TS2339: Property does not exist on type 'unknown'
                 // Use the same error as TypeScript for property access on unknown
-                self.error_property_not_exist_at(&property_name, object_type_for_check, name_idx);
+                // Use original_object_type to preserve nominal identity (e.g., D<string>)
+                self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
                 TypeId::ERROR
             }
         };
