@@ -42,6 +42,10 @@ Replace all manual `TypeKey` matches with `TypeVisitor` implementations from `sr
 ## Progress Updates
 
 - 2026-02-02: Refactored `src/solver/subtype_rules/generics.rs` to use visitor helpers
+- 2026-02-02: Refactored `src/solver/index_signatures.rs` to use visitor pattern
+  - Created 4 visitor structs: StringIndexResolver, NumberIndexResolver, ReadonlyChecker, IndexInfoCollector
+  - Replaced all manual TypeKey matches with visitor pattern
+  - All 7819 tests passing
 
 ---
 
