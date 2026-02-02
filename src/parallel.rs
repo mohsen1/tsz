@@ -597,8 +597,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // Create global symbol arena with pre-allocated capacity
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
     let mut symbol_arenas = FxHashMap::default();
-    let mut declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>> =
-        FxHashMap::default();
+    let declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>> = FxHashMap::default();
     let mut globals = SymbolTable::new();
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());

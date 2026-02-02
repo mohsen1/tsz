@@ -152,6 +152,11 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Transform the innermost body - use the last name part for member exports
         let body = self.transform_namespace_body(innermost_body, &name_parts);
 
+        // Skip non-instantiated namespaces (only contain types)
+        if body.is_empty() {
+            return None;
+        }
+
         // Root name is the first part
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -519,6 +524,11 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Transform body
         let body = self.transform_namespace_body(ns_data.body, &name_parts);
 
+        // Skip non-instantiated namespaces (only contain types)
+        if body.is_empty() {
+            return None;
+        }
+
         let name = name_parts.first().cloned().unwrap_or_default();
 
         Some(IRNode::NamespaceIIFE {
@@ -554,6 +564,11 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Transform body
         let body = self.transform_namespace_body(ns_data.body, &name_parts);
+
+        // Skip non-instantiated namespaces (only contain types)
+        if body.is_empty() {
+            return None;
+        }
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -609,6 +624,11 @@ impl<'a> NamespaceTransformContext<'a> {
 
         // Transform body
         let body = self.transform_namespace_body(innermost_body, &name_parts);
+
+        // Skip non-instantiated namespaces (only contain types)
+        if body.is_empty() {
+            return None;
+        }
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -985,6 +1005,11 @@ impl<'a> NamespaceTransformContext<'a> {
         // Transform body
         let body = self.transform_namespace_body(innermost_body, &name_parts);
 
+        // Skip non-instantiated namespaces (only contain types)
+        if body.is_empty() {
+            return None;
+        }
+
         let name = name_parts.first().cloned().unwrap_or_default();
 
         Some(IRNode::NamespaceIIFE {
@@ -1020,6 +1045,11 @@ impl<'a> NamespaceTransformContext<'a> {
 
         // Transform body
         let body = self.transform_namespace_body(innermost_body, &name_parts);
+
+        // Skip non-instantiated namespaces (only contain types)
+        if body.is_empty() {
+            return None;
+        }
 
         let name = name_parts.first().cloned().unwrap_or_default();
 
@@ -1207,9 +1237,15 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_namespace_es5_simple_namespace() {
+    fn test_namespace_es5_empty_namespace_skipped() {
         let ir = transform_namespace("namespace M { }");
-        assert!(ir.is_some(), "Should produce IR for simple namespace");
+        assert!(ir.is_none(), "Empty namespace should produce no IR");
+    }
+
+    #[test]
+    fn test_namespace_es5_simple_namespace() {
+        let ir = transform_namespace("namespace M { export var x = 1; }");
+        assert!(ir.is_some(), "Should produce IR for namespace with content");
 
         if let Some(IRNode::NamespaceIIFE {
             name,
@@ -1230,7 +1266,7 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_simple_namespace_output() {
-        let output = transform_and_emit("namespace M { }");
+        let output = transform_and_emit("namespace M { export var x = 1; }");
         assert!(output.contains("var M;"), "Should declare var M");
         assert!(output.contains("(function (M)"), "Should have IIFE");
         assert!(
@@ -1240,9 +1276,21 @@ mod tests {
     }
 
     #[test]
-    fn test_namespace_es5_exported_namespace() {
+    fn test_namespace_es5_exported_empty_namespace_skipped() {
         let ir = transform_namespace("export namespace M { }");
-        assert!(ir.is_some(), "Should produce IR for exported namespace");
+        assert!(
+            ir.is_none(),
+            "Empty exported namespace should produce no IR"
+        );
+    }
+
+    #[test]
+    fn test_namespace_es5_exported_namespace() {
+        let ir = transform_namespace("export namespace M { export var x = 1; }");
+        assert!(
+            ir.is_some(),
+            "Should produce IR for exported namespace with content"
+        );
 
         if let Some(IRNode::NamespaceIIFE {
             name,
@@ -1265,7 +1313,7 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_qualified_name_two_parts() {
-        let ir = transform_namespace("namespace A.B { }");
+        let ir = transform_namespace("namespace A.B { export var x = 1; }");
         assert!(ir.is_some(), "Should produce IR for qualified namespace");
 
         if let Some(IRNode::NamespaceIIFE {
@@ -1281,7 +1329,7 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_qualified_name_three_parts() {
-        let ir = transform_namespace("namespace A.B.C { }");
+        let ir = transform_namespace("namespace A.B.C { export var x = 1; }");
         assert!(ir.is_some(), "Should produce IR for qualified namespace");
 
         if let Some(IRNode::NamespaceIIFE {
@@ -1297,7 +1345,7 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_qualified_name_output() {
-        let output = transform_and_emit("namespace A.B.C { }");
+        let output = transform_and_emit("namespace A.B.C { export var x = 1; }");
         // Should have var declarations for each level
         assert!(output.contains("var A;"), "Should declare var A");
         assert!(
@@ -1342,8 +1390,10 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_commonjs_exported() {
-        let mut parser =
-            ParserState::new("test.ts".to_string(), "export namespace M { }".to_string());
+        let mut parser = ParserState::new(
+            "test.ts".to_string(),
+            "export namespace M { export var x = 1; }".to_string(),
+        );
         let root = parser.parse_source_file();
 
         let ir = if let Some(root_node) = parser.arena.get(root)
@@ -1383,7 +1433,7 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_commonjs_exported_output() {
-        let output = transform_and_emit_commonjs("export namespace M { }");
+        let output = transform_and_emit_commonjs("export namespace M { export var x = 1; }");
         // In CommonJS mode, exported namespaces attach to exports
         // The pattern is: M = exports.M || (exports.M = {})
         assert!(
@@ -1395,7 +1445,7 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_commonjs_non_exported() {
-        let output = transform_and_emit_commonjs("namespace M { }");
+        let output = transform_and_emit_commonjs("namespace M { export var x = 1; }");
         // Non-exported namespace in CommonJS mode should not attach to exports
         assert!(
             !output.contains("exports.M"),
@@ -1463,29 +1513,17 @@ mod tests {
     }
 
     #[test]
-    fn test_namespace_es5_interface_skipped() {
+    fn test_namespace_es5_interface_only_skipped() {
+        // Namespace with only interfaces is non-instantiated, should be skipped
         let ir = transform_namespace("namespace M { interface Foo { } }");
-        assert!(ir.is_some());
-
-        if let Some(IRNode::NamespaceIIFE { body, .. }) = ir {
-            // Interfaces should be filtered out
-            assert!(body.is_empty(), "Interface should be filtered out");
-        } else {
-            panic!("Expected NamespaceIIFE IR node");
-        }
+        assert!(ir.is_none(), "Interface-only namespace should be skipped");
     }
 
     #[test]
-    fn test_namespace_es5_type_alias_skipped() {
+    fn test_namespace_es5_type_alias_only_skipped() {
+        // Namespace with only type aliases is non-instantiated, should be skipped
         let ir = transform_namespace("namespace M { type Foo = string; }");
-        assert!(ir.is_some());
-
-        if let Some(IRNode::NamespaceIIFE { body, .. }) = ir {
-            // Type aliases should be filtered out
-            assert!(body.is_empty(), "Type alias should be filtered out");
-        } else {
-            panic!("Expected NamespaceIIFE IR node");
-        }
+        assert!(ir.is_none(), "Type-alias-only namespace should be skipped");
     }
 
     // =========================================================================
@@ -1494,7 +1532,7 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_nested_namespace() {
-        let ir = transform_namespace("namespace A { namespace B { } }");
+        let ir = transform_namespace("namespace A { namespace B { export var x = 1; } }");
         assert!(ir.is_some());
 
         if let Some(IRNode::NamespaceIIFE {
@@ -1517,8 +1555,19 @@ mod tests {
     }
 
     #[test]
+    fn test_namespace_es5_nested_empty_namespace_skipped() {
+        // Namespace A contains only an empty nested namespace B, which gets skipped.
+        // Since A then has no runtime content, A should also be skipped.
+        let ir = transform_namespace("namespace A { namespace B { } }");
+        assert!(
+            ir.is_none(),
+            "Namespace with only empty nested namespace should be skipped"
+        );
+    }
+
+    #[test]
     fn test_namespace_es5_nested_exported_namespace() {
-        let ir = transform_namespace("namespace A { export namespace B { } }");
+        let ir = transform_namespace("namespace A { export namespace B { export var x = 1; } }");
         assert!(ir.is_some());
 
         if let Some(IRNode::NamespaceIIFE { body, .. }) = ir {
@@ -1547,10 +1596,12 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_namespace_es5_empty_qualified_name() {
-        // This shouldn't happen in practice, but let's ensure we handle it
+    fn test_namespace_es5_empty_namespace_no_output() {
         let output = transform_and_emit("namespace A { }");
-        assert!(!output.is_empty());
+        assert!(
+            output.is_empty() || output.trim().is_empty(),
+            "Empty namespace should produce no output"
+        );
     }
 
     #[test]
@@ -1567,8 +1618,10 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_transformer_set_commonjs() {
-        let mut parser =
-            ParserState::new("test.ts".to_string(), "export namespace M { }".to_string());
+        let mut parser = ParserState::new(
+            "test.ts".to_string(),
+            "export namespace M { export var x = 1; }".to_string(),
+        );
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root)

@@ -126,8 +126,17 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_namespace() {
+    fn test_empty_namespace_skipped() {
         let output = emit_namespace("namespace M { }");
+        assert!(
+            output.is_empty() || output.trim().is_empty(),
+            "Empty namespace should produce no output"
+        );
+    }
+
+    #[test]
+    fn test_namespace_with_content() {
+        let output = emit_namespace("namespace M { export var x = 1; }");
         assert!(output.contains("var M;"), "Should declare var M");
         assert!(output.contains("(function (M)"), "Should have IIFE");
         assert!(

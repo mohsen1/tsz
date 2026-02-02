@@ -13,9 +13,14 @@ impl<'a> Printer<'a> {
         };
 
         self.emit(binary.left);
-        self.write_space();
-        self.write(get_operator_text(binary.operator_token));
-        self.write_space();
+        // Comma operator: no space before, space after (e.g., `(1, 2, 3)`)
+        if binary.operator_token == SyntaxKind::CommaToken as u16 {
+            self.write(", ");
+        } else {
+            self.write_space();
+            self.write(get_operator_text(binary.operator_token));
+            self.write_space();
+        }
         self.emit(binary.right);
     }
 
@@ -197,8 +202,18 @@ impl<'a> Printer<'a> {
 
         // ES5 computed/spread lowering is handled via TransformDirective::ES5ObjectLiteral.
 
-        // Multi-line format for object literals with multiple properties
-        if obj.elements.nodes.len() > 1 {
+        // Preserve single-line formatting from source
+        if self.is_single_line(node) || obj.elements.nodes.len() == 1 {
+            self.write("{ ");
+            for (i, &prop) in obj.elements.nodes.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.emit(prop);
+            }
+            self.write(" }");
+        } else {
+            // Multi-line format for object literals
             self.write("{");
             self.write_line();
             self.increase_indent();
@@ -211,11 +226,6 @@ impl<'a> Printer<'a> {
             }
             self.decrease_indent();
             self.write("}");
-        } else {
-            // Single property: { key: value }
-            self.write("{ ");
-            self.emit(obj.elements.nodes[0]);
-            self.write(" }");
         }
     }
 

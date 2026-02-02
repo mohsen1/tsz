@@ -421,10 +421,7 @@ impl Server {
             // (e.g. `/** Doc */` → don't expand; `/**  */` or `/** */` → expand)
             if let Some(jsdoc_pos) = before_cursor.find("/**") {
                 let after_jsdoc = before_cursor[jsdoc_pos + 3..].trim();
-                if !after_jsdoc.is_empty()
-                    && after_jsdoc != "*"
-                    && !after_jsdoc.starts_with("*/")
-                {
+                if !after_jsdoc.is_empty() && after_jsdoc != "*" && !after_jsdoc.starts_with("*/") {
                     // JSDoc has meaningful content - don't regenerate
                     return None;
                 }
@@ -432,7 +429,8 @@ impl Server {
 
             // Check for multi-declarator variable statements (e.g. `let a = 1, b = 2;`)
             // These should not extract params from initializer functions
-            let is_multi_declarator = Self::is_multi_declarator_var(&decl_text, source_text, decl_offset);
+            let is_multi_declarator =
+                Self::is_multi_declarator_var(&decl_text, source_text, decl_offset);
 
             // Extract parameters from the declaration
             let params = if is_multi_declarator {
@@ -470,15 +468,9 @@ impl Server {
                 for param in &params {
                     if is_js_file {
                         if let Some(name) = param.strip_prefix("...") {
-                            lines.push(format!(
-                                "{} * @param {{...any}} {}",
-                                template_indent, name
-                            ));
+                            lines.push(format!("{} * @param {{...any}} {}", template_indent, name));
                         } else {
-                            lines.push(format!(
-                                "{} * @param {{any}} {}",
-                                template_indent, param
-                            ));
+                            lines.push(format!("{} * @param {{any}} {}", template_indent, param));
                         }
                     } else {
                         // For TS, strip the ... prefix
@@ -677,9 +669,7 @@ impl Server {
     /// continuation indentation on the next line.
     fn needs_keyword_continuation(prev_trimmed: &str) -> bool {
         // Bare control flow keywords without parens or braces
-        let bare_keywords = [
-            "if", "else", "while", "for", "do", "else if",
-        ];
+        let bare_keywords = ["if", "else", "while", "for", "do", "else if"];
         for kw in &bare_keywords {
             if prev_trimmed == *kw {
                 return true;
@@ -744,8 +734,12 @@ impl Server {
                     let prev = if i > 0 { chars[i - 1] } else { ' ' };
                     let next = chars.get(i + 1).copied().unwrap_or(' ');
                     // Exclude ==, !=, >=, <=, =>
-                    if prev != '!' && prev != '<' && prev != '>' && prev != '='
-                        && next != '=' && next != '>'
+                    if prev != '!'
+                        && prev != '<'
+                        && prev != '>'
+                        && prev != '='
+                        && next != '='
+                        && next != '>'
                     {
                         eq_count += 1;
                         if eq_count > 1 {
@@ -838,11 +832,7 @@ impl Server {
                     let _after_trimmed = after_close.trim();
                     // Check if paren wraps the expression:
                     // what follows should be end-of-statement or another closing paren
-                    let after_on_line = after_close
-                        .split('\n')
-                        .next()
-                        .unwrap_or("")
-                        .trim();
+                    let after_on_line = after_close.split('\n').next().unwrap_or("").trim();
                     if after_on_line.is_empty()
                         || after_on_line.starts_with(';')
                         || after_on_line.starts_with(',')
@@ -894,7 +884,8 @@ impl Server {
                 }
                 let class_body = &full[brace_start..brace_end];
                 // Search for constructor only within the class body
-                if let Some(ctor_pos) = class_body.find("constructor(")
+                if let Some(ctor_pos) = class_body
+                    .find("constructor(")
                     .or_else(|| class_body.find("constructor ("))
                 {
                     let ctor_decl = &full[brace_start + ctor_pos..];
@@ -1343,7 +1334,7 @@ impl Server {
 
                 for &(line_idx, _) in &non_empty_lines {
                     let one_line = line_idx + 1; // 1-based
-                        // Insert // at min_indent position (zero-length insertion)
+                    // Insert // at min_indent position (zero-length insertion)
                     let insert_col = min_indent + 1; // 1-based offset
                     edits.push(serde_json::json!({
                         "start": {"line": one_line, "offset": insert_col},
@@ -1372,15 +1363,19 @@ impl Server {
             let source_text = self.open_files.get(file)?.clone();
 
             // Compute byte offsets from 1-based line/offset
-            let sel_start = Self::line_offset_to_byte(&source_text, start_line as u32, start_offset as u32);
-            let sel_end = Self::line_offset_to_byte(&source_text, end_line as u32, end_offset as u32);
+            let sel_start =
+                Self::line_offset_to_byte(&source_text, start_line as u32, start_offset as u32);
+            let sel_end =
+                Self::line_offset_to_byte(&source_text, end_line as u32, end_offset as u32);
             let lines: Vec<&str> = source_text.lines().collect();
 
             // Find all /* */ comment ranges in the source
             let comment_ranges = Self::find_multiline_comments(&source_text);
 
             // Check if selection is fully inside an existing comment
-            let enclosing = comment_ranges.iter().find(|(cs, ce)| *cs <= sel_start && sel_end <= *ce);
+            let enclosing = comment_ranges
+                .iter()
+                .find(|(cs, ce)| *cs <= sel_start && sel_end <= *ce);
 
             // Find comments that overlap with the selection
             let overlapping: Vec<(usize, usize)> = comment_ranges

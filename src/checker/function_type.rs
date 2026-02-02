@@ -373,10 +373,10 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if should_emit_ts2705 {
+                        use crate::checker::context::ScriptTarget;
                         use crate::checker::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages,
                         };
-                        use crate::checker::context::ScriptTarget;
 
                         // For ES5/ES3 targets, emit TS1055 instead of TS2705
                         // TS1055: "Type 'X' is not a valid async function return type in ES5 because

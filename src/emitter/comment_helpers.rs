@@ -58,6 +58,104 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Emit comments found in the gap between two source positions.
+    /// Scans from `from_pos` forward for comments, stopping at `to_pos`.
+    #[allow(dead_code)] // Infrastructure for comment preservation
+    pub(super) fn emit_gap_comments(&mut self, from_pos: u32, to_pos: u32) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        let start = std::cmp::min(from_pos as usize, text.len());
+        let end = std::cmp::min(to_pos as usize, text.len());
+
+        if start >= end {
+            return;
+        }
+
+        let gap_text = safe_slice::slice(text, start, end);
+        if gap_text.is_empty() {
+            return;
+        }
+
+        let bytes = gap_text.as_bytes();
+        let len = bytes.len();
+        let mut pos = 0;
+
+        while pos < len {
+            let ch = bytes[pos];
+
+            // Skip whitespace
+            if ch == b' ' || ch == b'\t' || ch == b'\r' || ch == b'\n' {
+                pos += 1;
+                continue;
+            }
+
+            // Check for comment start
+            if ch == b'/' && pos + 1 < len {
+                let next = bytes[pos + 1];
+
+                if next == b'/' {
+                    // Single-line comment
+                    let comment_start = start + pos;
+                    let mut comment_end = pos + 2;
+                    while comment_end < len
+                        && bytes[comment_end] != b'\n'
+                        && bytes[comment_end] != b'\r'
+                    {
+                        comment_end += 1;
+                    }
+                    let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
+                    if !comment_text.is_empty() {
+                        self.write(comment_text);
+                    }
+                    self.write_line();
+
+                    pos = comment_end;
+                    if pos < len && bytes[pos] == b'\r' {
+                        pos += 1;
+                    }
+                    if pos < len && bytes[pos] == b'\n' {
+                        pos += 1;
+                    }
+                    continue;
+                } else if next == b'*' {
+                    // Multi-line comment
+                    let comment_start = start + pos;
+                    let mut comment_end = pos + 2;
+                    let mut found_end = false;
+                    while comment_end + 1 < len {
+                        if bytes[comment_end] == b'*' && bytes[comment_end + 1] == b'/' {
+                            comment_end += 2;
+                            found_end = true;
+                            break;
+                        }
+                        comment_end += 1;
+                    }
+                    if !found_end {
+                        // Unterminated block comment - skip to end
+                        comment_end = len;
+                    }
+                    let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
+                    if !comment_text.is_empty() {
+                        self.write(comment_text);
+                    }
+                    self.write_line();
+
+                    pos = comment_end;
+                    continue;
+                }
+            }
+
+            // Hit non-whitespace, non-comment content - stop scanning
+            break;
+        }
+    }
+
     /// Emit comments in the gap between last_processed_pos and the given position.
     /// This handles comments that appear between AST nodes.
     #[allow(dead_code)] // Infrastructure for comment preservation

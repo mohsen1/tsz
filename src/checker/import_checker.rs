@@ -278,12 +278,10 @@ impl<'a> CheckerState<'a> {
             let error_code = error.code;
             let error_message = error.message.clone();
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key.clone());
-                self.error_at_node(
-                    import.module_specifier,
-                    &error_message,
-                    error_code,
-                );
+                self.ctx
+                    .modules_with_ts2307_emitted
+                    .insert(module_key.clone());
+                self.error_at_node(import.module_specifier, &error_message, error_code);
             }
             return;
         }
@@ -407,12 +405,10 @@ impl<'a> CheckerState<'a> {
             let error_message = error.message.clone();
             // Check if we've already emitted an error for this module (prevents duplicate emissions)
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key.clone());
-                self.error_at_node(
-                    import.module_specifier,
-                    &error_message,
-                    error_code,
-                );
+                self.ctx
+                    .modules_with_ts2307_emitted
+                    .insert(module_key.clone());
+                self.error_at_node(import.module_specifier, &error_message, error_code);
             }
             self.ctx.import_resolution_stack.pop();
             return;

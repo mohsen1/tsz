@@ -109,6 +109,7 @@ impl<'a> EnumES5Transformer<'a> {
                 parameters: vec![IRParam::new(&name)],
                 body,
                 is_expression_body: false,
+                body_source_range: None,
             }),
             arguments: vec![iife_arg],
         };

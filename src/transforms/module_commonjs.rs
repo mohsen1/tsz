@@ -132,7 +132,9 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
                         continue;
                     }
                     if export_decl.is_default_export {
-                        exports.push("default".to_string());
+                        // Skip default exports from void 0 initialization -
+                        // TypeScript doesn't emit `exports.default = void 0;`
+                        // Default exports are always assigned inline
                         continue;
                     }
 
@@ -272,6 +274,9 @@ pub fn collect_export_names_categorized(
             other_exports.push(name);
         }
     }
+
+    // TypeScript emits void 0 initialization in reverse declaration order
+    other_exports.reverse();
 
     (func_exports, other_exports)
 }

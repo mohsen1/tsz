@@ -946,7 +946,10 @@ impl ModuleResolver {
                 let resolved_ext = ModuleExtension::from_path(&resolved);
                 // Suggest the .js extension (TypeScript convention: import .js, compile from .ts)
                 let suggested_ext = match resolved_ext {
-                    ModuleExtension::Ts | ModuleExtension::Tsx | ModuleExtension::Js | ModuleExtension::Jsx => ".js",
+                    ModuleExtension::Ts
+                    | ModuleExtension::Tsx
+                    | ModuleExtension::Js
+                    | ModuleExtension::Jsx => ".js",
                     ModuleExtension::Mts | ModuleExtension::Mjs => ".mjs",
                     ModuleExtension::Cts | ModuleExtension::Cjs => ".cjs",
                     ModuleExtension::Dts => ".js",
@@ -2353,7 +2356,11 @@ mod tests {
         let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION);
         assert_eq!(diagnostic.file_name, "/src/index.mts");
-        assert!(diagnostic.message.contains("Relative import paths need explicit file extensions"));
+        assert!(
+            diagnostic
+                .message
+                .contains("Relative import paths need explicit file extensions")
+        );
         assert!(diagnostic.message.contains("node16"));
         assert!(diagnostic.message.contains("nodenext"));
         assert!(diagnostic.message.contains("./utils.js"));
@@ -2407,7 +2414,11 @@ mod tests {
         let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, MODULE_RESOLUTION_MODE_MISMATCH);
         assert_eq!(diagnostic.file_name, "/src/index.ts");
-        assert!(diagnostic.message.contains("Cannot find module 'modern-esm-package'"));
+        assert!(
+            diagnostic
+                .message
+                .contains("Cannot find module 'modern-esm-package'")
+        );
         assert!(diagnostic.message.contains("moduleResolution"));
         assert!(diagnostic.message.contains("nodenext"));
         assert!(diagnostic.message.contains("paths"));

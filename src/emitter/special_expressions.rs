@@ -28,6 +28,9 @@ impl<'a> Printer<'a> {
         if !unary.expression.is_none() {
             self.write(" ");
             self.emit_expression(unary.expression);
+        } else if unary.asterisk_token {
+            // TypeScript emits `yield* ;` (with space) when yield* has no expression
+            self.write(" ");
         }
     }
 

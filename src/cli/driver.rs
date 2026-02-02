@@ -9,9 +9,7 @@ use crate::binder::{SymbolId, SymbolTable, symbol_flags};
 use crate::checker::TypeCache;
 use crate::checker::context::LibContext;
 use crate::checker::state::CheckerState;
-use crate::checker::types::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes,
-};
+use crate::checker::types::diagnostics::{Diagnostic, DiagnosticCategory, diagnostic_codes};
 use crate::cli::args::CliArgs;
 use crate::cli::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
@@ -852,7 +850,7 @@ pub enum FileReadResult {
 }
 
 /// Read a source file, detecting binary files that should emit TS1490.
-/// 
+///
 /// TypeScript detects binary files by checking for:
 /// - UTF-16 BOM (FE FF for BE, FF FE for LE)  
 /// - Non-valid UTF-8 sequences
@@ -877,7 +875,7 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
 }
 
 /// Check if file content appears to be binary (not valid source code).
-/// 
+///
 /// Matches TypeScript's binary detection:
 /// - UTF-16 BOM at start
 /// - Many consecutive null bytes (embedded binaries, corrupted files)
@@ -1171,7 +1169,11 @@ fn read_source_files(
 
     let mut list: Vec<SourceEntry> = sources
         .into_iter()
-        .map(|(path, (text, is_binary))| SourceEntry { path, text, is_binary })
+        .map(|(path, (text, is_binary))| SourceEntry {
+            path,
+            text,
+            is_binary,
+        })
         .collect();
     list.sort_by(|left, right| {
         left.path
@@ -1331,12 +1333,15 @@ fn collect_diagnostics(
     // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
     // Also build resolved_module_errors map for specific error codes
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
-    let mut resolved_module_errors: FxHashMap<(usize, String), crate::checker::context::ResolutionError> = FxHashMap::default();
-    
+    let mut resolved_module_errors: FxHashMap<
+        (usize, String),
+        crate::checker::context::ResolutionError,
+    > = FxHashMap::default();
+
     for (file_idx, file) in program.files.iter().enumerate() {
         let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
         let file_path = Path::new(&file.file_name);
-        
+
         for (specifier, specifier_node) in &module_specifiers {
             // Get span from the specifier node
             let span = if let Some(spec_node) = file.arena.get(*specifier_node) {
@@ -1344,7 +1349,7 @@ fn collect_diagnostics(
             } else {
                 Span::new(0, 0) // Fallback for invalid nodes
             };
-            
+
             // First try the old resolver for virtual test files (known_files check)
             // This handles test harness virtual files that don't exist on disk
             if let Some(resolved) = resolve_module_specifier(
@@ -1361,7 +1366,7 @@ fn collect_diagnostics(
                 }
                 continue; // Successfully resolved, skip ModuleResolver
             }
-            
+
             // Use ModuleResolver to get specific error types for real files
             // This will catch TS2834/TS2835/TS2792 errors
             match module_resolver.resolve(specifier, file_path, span) {
@@ -1462,7 +1467,9 @@ fn collect_diagnostics(
         checker
             .ctx
             .set_resolved_module_paths(resolved_module_paths.clone());
-        checker.ctx.set_resolved_module_errors(resolved_module_errors.clone());
+        checker
+            .ctx
+            .set_resolved_module_errors(resolved_module_errors.clone());
         checker.ctx.set_current_file_idx(file_idx);
 
         // Build resolved_modules set for backward compatibility
