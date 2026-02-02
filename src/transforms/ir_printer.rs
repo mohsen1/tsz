@@ -226,9 +226,13 @@ impl<'a> IRPrinter<'a> {
                 right,
             } => {
                 self.emit_node(left);
-                self.write(" ");
-                self.write(operator);
-                self.write(" ");
+                if *operator == "," {
+                    self.write(", ");
+                } else {
+                    self.write(" ");
+                    self.write(operator);
+                    self.write(" ");
+                }
                 self.emit_node(right);
             }
             IRNode::PrefixUnaryExpr { operator, operand } => {

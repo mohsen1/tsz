@@ -13,9 +13,14 @@ impl<'a> Printer<'a> {
         };
 
         self.emit(binary.left);
-        self.write_space();
-        self.write(get_operator_text(binary.operator_token));
-        self.write_space();
+        // Comma operator: no space before, space after (e.g., `(1, 2, 3)`)
+        if binary.operator_token == SyntaxKind::CommaToken as u16 {
+            self.write(", ");
+        } else {
+            self.write_space();
+            self.write(get_operator_text(binary.operator_token));
+            self.write_space();
+        }
         self.emit(binary.right);
     }
 
