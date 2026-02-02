@@ -1783,16 +1783,8 @@ impl<'a> Printer<'a> {
                 self.arena,
                 &source.statements.nodes,
             );
-            // Emit function exports: exports.compile = compile;
-            for name in &func_exports {
-                self.write("exports.");
-                self.write(name);
-                self.write(" = ");
-                self.write(name);
-                self.write(";");
-                self.write_line();
-            }
-            // Emit other exports: exports.X = void 0;
+            // Emit other exports first: exports.X = void 0;
+            // TypeScript emits void 0 initialization before hoisted function exports
             if !other_exports.is_empty() {
                 for (i, name) in other_exports.iter().enumerate() {
                     if i > 0 {
@@ -1802,6 +1794,15 @@ impl<'a> Printer<'a> {
                     self.write(name);
                 }
                 self.write(" = void 0;");
+                self.write_line();
+            }
+            // Emit function exports: exports.compile = compile;
+            for name in &func_exports {
+                self.write("exports.");
+                self.write(name);
+                self.write(" = ");
+                self.write(name);
+                self.write(";");
                 self.write_line();
             }
         }

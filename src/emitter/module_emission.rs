@@ -1424,17 +1424,8 @@ impl<'a> Printer<'a> {
         let (func_exports, other_exports) =
             module_commonjs::collect_export_names_categorized(self.arena, &statements.nodes);
 
-        // Emit hoisted function exports: exports.f = f;
-        for name in &func_exports {
-            self.write("exports.");
-            self.write(name);
-            self.write(" = ");
-            self.write(name);
-            self.write(";");
-            self.write_line();
-        }
-
-        // Emit non-hoisted exports: exports.a = exports.b = void 0;
+        // Emit non-hoisted exports first: exports.a = exports.b = void 0;
+        // TypeScript emits void 0 initialization before hoisted function exports
         if !other_exports.is_empty() {
             for (i, name) in other_exports.iter().enumerate() {
                 if i > 0 {
@@ -1444,6 +1435,16 @@ impl<'a> Printer<'a> {
                 self.write(name);
             }
             self.write(" = void 0;");
+            self.write_line();
+        }
+
+        // Emit hoisted function exports: exports.f = f;
+        for name in &func_exports {
+            self.write("exports.");
+            self.write(name);
+            self.write(" = ");
+            self.write(name);
+            self.write(";");
             self.write_line();
         }
     }
