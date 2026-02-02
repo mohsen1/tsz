@@ -823,13 +823,20 @@ fn compile_inner(
         write_outputs(&outputs)?
     };
 
+    // Find the most recent .d.ts file for BuildInfo tracking
+    let latest_changed_dts_file = if !emitted_files.is_empty() {
+        find_latest_dts_file(&emitted_files, &base_dir)
+    } else {
+        None
+    };
+
     // Save BuildInfo if incremental compilation is enabled
     if should_save_build_info && has_error == false {
         let tsconfig_path_ref = tsconfig_path.as_deref();
         if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir) {
             // Build BuildInfo from the cache (which has been updated by collect_diagnostics)
             // If local_cache exists (from BuildInfo), use it; otherwise create minimal info
-            let build_info = if let Some(ref lc) = local_cache {
+            let mut build_info = if let Some(ref lc) = local_cache {
                 compilation_cache_to_build_info(lc, &file_paths, &base_dir, &resolved)
             } else {
                 // No cache available - create minimal BuildInfo with just file info
@@ -846,6 +853,9 @@ fn compile_inner(
                     ..Default::default()
                 }
             };
+
+            // Set the most recent .d.ts file for cross-project invalidation
+            build_info.latest_changed_dts_file = latest_changed_dts_file;
 
             if let Err(e) = build_info.save(&build_info_path) {
                 tracing::warn!("Failed to save BuildInfo to {}: {}", build_info_path.display(), e);
@@ -2600,4 +2610,36 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
 
     Ok(())
+}
+
+/// Find the most recent .d.ts file from a list of emitted files
+/// Returns the relative path (from base_dir) as a String, or None if no .d.ts files were found
+fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<String> {
+    use std::collections::BTreeMap;
+
+    let mut dts_files_with_times: BTreeMap<std::time::SystemTime, PathBuf> = BTreeMap::new();
+
+    // Filter for .d.ts files and get their modification times
+    for path in emitted_files {
+        if path.extension().and_then(|s| s.to_str()) == Some("d.ts") {
+            if let Ok(metadata) = std::fs::metadata(path) {
+                if let Ok(modified) = metadata.modified() {
+                    dts_files_with_times.insert(modified, path.clone());
+                }
+            }
+        }
+    }
+
+    // Get the most recent file (highest time in BTreeMap)
+    if let Some((_, latest_path)) = dts_files_with_times.last_key_value() {
+        // Convert to relative path from base_dir
+        let relative = latest_path
+            .strip_prefix(base_dir)
+            .unwrap_or(latest_path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        Some(relative)
+    } else {
+        None
+    }
 }
