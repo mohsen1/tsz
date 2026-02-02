@@ -7,7 +7,6 @@ use crate::binder::BinderState;
 use crate::parser::ParserState;
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_lsp_workflow_simple() {
     // Simple test: const x = 1; x + x;
     let source = "const x = 1;\nx + x;";

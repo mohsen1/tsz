@@ -496,7 +496,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_parameter_binding_pattern() {
         let source = "function demo({ foo }: { foo: number }) {\n  return foo;\n}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -529,7 +528,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_class_method_local() {
         let source = "class Foo {\n  method() {\n    const value = 1;\n    return value;\n  }\n}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -651,7 +649,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_class_expression_name() {
         let source = "const Foo = class Bar {\n  method() {\n    return Bar;\n  }\n};";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -684,7 +681,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_nested_arrow_in_conditional() {
         let source =
             "const handler = cond ? (() => {\n  const value = 1;\n  return value;\n}) : null;";
@@ -715,7 +711,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_nested_arrow_in_if_condition() {
         let source = "if ((() => {\n  const value = 1;\n  return value;\n})()) {}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -748,7 +743,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_nested_arrow_in_while_condition() {
         let source = "while ((() => {\n  const value = 1;\n  return value;\n})()) {}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -781,7 +775,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_nested_arrow_in_for_of_expression() {
         let source = "for (const item of (() => {\n  const value = 1;\n  return value;\n})()) {}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -814,7 +807,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_export_default_expression() {
         let source = "export default (() => {\n  const value = 1;\n  return value;\n})();";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -847,7 +839,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_labeled_statement_local() {
         let source = "label: {\n  const value = 1;\n  value;\n}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -880,7 +871,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_with_statement_local() {
         let source = "with (obj) {\n  const value = 1;\n  value;\n}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -913,7 +903,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_var_hoisted_in_nested_block() {
         let source = "function demo() {\n  value;\n  if (cond) {\n    var value = 1;\n  }\n}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -975,7 +964,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_decorator_argument_local() {
         let source = "const deco = (cb) => cb();\n@deco(() => {\n  const value = 1;\n  return value;\n})\nclass Foo {}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1008,7 +996,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_nested_arrow_in_object_literal() {
         let source = "const holder = { run: () => {\n  const value = 1;\n  return value;\n} };";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1041,7 +1028,6 @@ mod definition_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_goto_definition_class_static_block_local() {
         let source = "class Foo {\n  static {\n    const value = 1;\n    value;\n  }\n}";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

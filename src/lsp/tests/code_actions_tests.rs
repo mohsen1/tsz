@@ -444,7 +444,6 @@ fn test_extract_variable_blocks_tdz_for_loop_initializer() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_extract_variable_blocks_tdz_in_jsx_tag() {
     let source = "const view = <Widget />;\nconst Widget = () => null;";
     let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
@@ -664,7 +663,6 @@ fn test_organize_imports_sort_only() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_remove_unused_named_import() {
     let source = "import { foo, bar } from \"mod\";\nbar;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -753,7 +751,6 @@ fn test_quickfix_remove_unused_named_import_entire_decl() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_remove_unused_default_import() {
     let source = "import foo, { bar } from \"mod\";\nbar;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -798,7 +795,6 @@ fn test_quickfix_remove_unused_default_import() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_preserves_type_only_named_import() {
     let source = "import { type Foo, Bar } from \"mod\";\nlet x: Foo;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -843,7 +839,6 @@ fn test_quickfix_preserves_type_only_named_import() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_property_object_literal_single_line() {
     let source = "const foo = { a: 1 }; foo.b;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -891,7 +886,6 @@ fn test_quickfix_add_missing_property_object_literal_single_line() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_property_object_literal_single_line_trailing_comma() {
     let source = "const foo = { a: 1, }; foo.b;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -987,7 +981,6 @@ fn test_quickfix_add_missing_property_object_literal_element_access() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_property_object_literal_multiline() {
     let source = "const foo = {\n  a: 1\n};\nfoo.b;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1038,7 +1031,6 @@ fn test_quickfix_add_missing_property_object_literal_multiline() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_property_to_class() {
     let source = "class Foo {\n  method() {\n    this.bar;\n  }\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1137,7 +1129,6 @@ fn test_quickfix_add_missing_property_to_class_element_access() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_named() {
     let source = "foo();\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1187,7 +1178,6 @@ fn test_quickfix_add_missing_import_named() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_after_existing_import() {
     let source = "import { bar } from \"./bar\";\nfoo();\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1341,7 +1331,6 @@ fn test_quickfix_add_missing_import_merge_named_multiline() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_merge_named_with_default() {
     let source = "import Foo from \"./foo\";\nbar();\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1391,7 +1380,6 @@ fn test_quickfix_add_missing_import_merge_named_with_default() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_merge_default_with_named() {
     let source = "import { bar } from \"./foo\";\nFoo();\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1440,7 +1428,6 @@ fn test_quickfix_add_missing_import_merge_default_with_named() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_merge_default_with_namespace() {
     let source = "import * as ns from \"./foo\";\nFoo();\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1489,7 +1476,6 @@ fn test_quickfix_add_missing_import_merge_default_with_namespace() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_default() {
     let source = "Foo();\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1538,7 +1524,6 @@ fn test_quickfix_add_missing_import_default() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_namespace() {
     let source = "ns.foo;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1587,7 +1572,6 @@ fn test_quickfix_add_missing_import_namespace() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_type_position_uses_import_type() {
     let source = "let x: Foo;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1685,7 +1669,6 @@ fn test_quickfix_add_missing_import_value_skips_type_only_candidate() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_type_query_uses_value_import() {
     let source = "type T = typeof Foo;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1738,7 +1721,6 @@ fn test_quickfix_add_missing_import_type_query_uses_value_import() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_class_extends_uses_value_import() {
     let source = "class Bar extends Foo {}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1791,7 +1773,6 @@ fn test_quickfix_add_missing_import_class_extends_uses_value_import() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_add_missing_import_class_implements_uses_import_type() {
     let source = "class Bar implements Foo {}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1932,7 +1913,6 @@ fn test_quickfix_remove_unused_variable_const() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_remove_unused_function() {
     let source = "function unused() {}\nfunction used() {}\nused();\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1978,7 +1958,6 @@ fn test_quickfix_remove_unused_function() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_quickfix_remove_unused_class() {
     let source = "class Unused {}\nclass Used {}\nnew Used();\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
