@@ -2637,3 +2637,152 @@ function test() {
         "Should NOT have TS2454 error when variable has initializer"
     );
 }
+
+/// Test that && creates intermediate flow condition nodes for the right operand.
+///
+/// For `typeof x === 'object' && x`, the `x` on the right side of `&&` should
+/// have a TRUE_CONDITION flow node so that it sees the typeof narrowing.
+#[test]
+fn test_and_expression_creates_intermediate_flow_nodes() {
+    use crate::binder::{BinderState, flow_flags};
+    use crate::parser::ParserState;
+
+    let source = r#"
+let x: string | number | null;
+if (typeof x === "string" && x) {
+  x;
+} else {
+  x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Navigate to the condition: typeof x === "string" && x
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let if_idx = *source_file.statements.nodes.get(1).expect("if statement");
+    let if_node = arena.get(if_idx).expect("if node");
+    let if_data = arena.get_if_statement(if_node).expect("if data");
+
+    // The condition is: typeof x === "string" && x
+    let condition_idx = if_data.expression;
+    let cond_node = arena.get(condition_idx).expect("condition");
+    let bin = arena.get_binary_expr(cond_node).expect("binary &&");
+
+    // bin.right is the `x` on the right side of &&
+    let right_x = bin.right;
+
+    // The flow node for right_x should be a TRUE_CONDITION
+    let flow_id = binder
+        .get_node_flow(right_x)
+        .expect("flow node for right operand of &&");
+    let flow_node = binder.flow_nodes.get(flow_id).expect("flow node data");
+
+    assert!(
+        flow_node.has_any_flags(flow_flags::TRUE_CONDITION),
+        "Right operand of && should have TRUE_CONDITION flow node, got flags: {}",
+        flow_node.flags,
+    );
+
+    // The condition of this TRUE_CONDITION should be the left operand (typeof x === "string")
+    assert_eq!(
+        flow_node.node, bin.left,
+        "TRUE_CONDITION should reference the left operand of &&"
+    );
+}
+
+/// Test that typeof narrowing works correctly through && in the then-block.
+///
+/// For `if (typeof x === "string" && x) { x }`, x in the then-block
+/// should be narrowed to `string` (typeof removes number|null, truthiness is redundant).
+#[test]
+fn test_typeof_and_truthiness_narrows_in_then_block() {
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+let x: string | number | null;
+if (typeof x === "string" && x) {
+  x;
+} else {
+  x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let union = types.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::NULL]);
+
+    let ident_then = get_if_branch_expression(arena, root, 1, true);
+    let flow_then = binder.get_node_flow(ident_then).expect("flow then");
+    let narrowed_then = analyzer.get_flow_type(ident_then, union, flow_then);
+
+    // In the then-block, typeof x === "string" narrows to string,
+    // and && x truthiness is redundant (string already excludes null/undefined)
+    assert_eq!(narrowed_then, TypeId::STRING);
+}
+
+/// Test that || creates intermediate FALSE_CONDITION flow nodes for the right operand.
+#[test]
+fn test_or_expression_creates_intermediate_flow_nodes() {
+    use crate::binder::{BinderState, flow_flags};
+    use crate::parser::ParserState;
+
+    let source = r#"
+let x: string | number | null;
+if (typeof x === "string" || x) {
+  x;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Navigate to the condition
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let if_idx = *source_file.statements.nodes.get(1).expect("if statement");
+    let if_node = arena.get(if_idx).expect("if node");
+    let if_data = arena.get_if_statement(if_node).expect("if data");
+    let cond_node = arena.get(if_data.expression).expect("condition");
+    let bin = arena.get_binary_expr(cond_node).expect("binary ||");
+
+    // bin.right is the `x` on the right side of ||
+    let right_x = bin.right;
+
+    let flow_id = binder
+        .get_node_flow(right_x)
+        .expect("flow node for right operand of ||");
+    let flow_node = binder.flow_nodes.get(flow_id).expect("flow node data");
+
+    assert!(
+        flow_node.has_any_flags(flow_flags::FALSE_CONDITION),
+        "Right operand of || should have FALSE_CONDITION flow node, got flags: {}",
+        flow_node.flags,
+    );
+
+    // The condition of this FALSE_CONDITION should be the left operand
+    assert_eq!(
+        flow_node.node, bin.left,
+        "FALSE_CONDITION should reference the left operand of ||"
+    );
+}

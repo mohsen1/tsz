@@ -1904,6 +1904,78 @@ impl BinderState {
         }
     }
 
+    /// Bind a short-circuit binary expression (&&, ||, ??) with intermediate
+    /// flow condition nodes.
+    ///
+    /// For `a && b`: the right operand `b` is only evaluated when `a` is truthy,
+    /// so we create a TRUE_CONDITION node for `a` before binding `b`. This allows
+    /// references in `b` to see type narrowing from `a`.
+    ///
+    /// For `a || b` and `a ?? b`: the right operand `b` is only evaluated when `a`
+    /// is falsy/nullish, so we create a FALSE_CONDITION node for `a` before binding `b`.
+    pub(crate) fn bind_short_circuit_expression(
+        &mut self,
+        arena: &NodeArena,
+        idx: NodeIndex,
+        left: NodeIndex,
+        right: NodeIndex,
+        operator: u16,
+    ) {
+        self.record_flow(idx);
+
+        // Bind the left operand
+        self.bind_expression(arena, left);
+        let after_left_flow = self.current_flow;
+
+        if operator == SyntaxKind::AmpersandAmpersandToken as u16 {
+            // For &&: right side is only evaluated when left is truthy
+            let true_condition = self.create_flow_condition(
+                flow_flags::TRUE_CONDITION,
+                after_left_flow,
+                left,
+            );
+            self.current_flow = true_condition;
+            self.bind_expression(arena, right);
+            let after_right_flow = self.current_flow;
+
+            // Short-circuit path: left is falsy, right is not evaluated
+            let false_condition = self.create_flow_condition(
+                flow_flags::FALSE_CONDITION,
+                after_left_flow,
+                left,
+            );
+
+            // Merge both paths
+            let merge = self.create_branch_label();
+            self.add_antecedent(merge, after_right_flow);
+            self.add_antecedent(merge, false_condition);
+            self.current_flow = merge;
+        } else {
+            // For || and ??: right side is only evaluated when left is falsy/nullish
+            let false_condition = self.create_flow_condition(
+                flow_flags::FALSE_CONDITION,
+                after_left_flow,
+                left,
+            );
+            self.current_flow = false_condition;
+            self.bind_expression(arena, right);
+            let after_right_flow = self.current_flow;
+
+            // Short-circuit path: left is truthy, right is not evaluated
+            let true_condition = self.create_flow_condition(
+                flow_flags::TRUE_CONDITION,
+                after_left_flow,
+                left,
+            );
+
+            // Merge both paths
+            let merge = self.create_branch_label();
+            self.add_antecedent(merge, after_right_flow);
+            self.add_antecedent(merge, true_condition);
+            self.current_flow = merge;
+        }
+    }
+
     pub(crate) fn bind_binary_expression_flow_iterative(
         &mut self,
         arena: &NodeArena,
@@ -1934,6 +2006,14 @@ impl BinderState {
                                 if !bin.left.is_none() {
                                     stack.push(WorkItem::Visit(bin.left));
                                 }
+                                continue;
+                            }
+                            // Delegate short-circuit operators to proper flow handling
+                            if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                                || bin.operator_token == SyntaxKind::BarBarToken as u16
+                                || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                            {
+                                self.bind_short_circuit_expression(arena, idx, bin.left, bin.right, bin.operator_token);
                                 continue;
                             }
                             if !bin.right.is_none() {
@@ -1969,15 +2049,26 @@ impl BinderState {
         };
 
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = arena.get_binary_expr(node)
-                && self.is_assignment_operator(bin.operator_token)
-            {
-                self.record_flow(idx);
-                self.bind_expression(arena, bin.left);
-                self.bind_expression(arena, bin.right);
-                let flow = self.create_flow_assignment(idx);
-                self.current_flow = flow;
-                return;
+            if let Some(bin) = arena.get_binary_expr(node) {
+                if self.is_assignment_operator(bin.operator_token) {
+                    self.record_flow(idx);
+                    self.bind_expression(arena, bin.left);
+                    self.bind_expression(arena, bin.right);
+                    let flow = self.create_flow_assignment(idx);
+                    self.current_flow = flow;
+                    return;
+                }
+
+                // Handle short-circuit operators (&&, ||, ??) with intermediate
+                // flow condition nodes so that the right operand sees narrowing
+                // from the left operand.
+                if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                    || bin.operator_token == SyntaxKind::BarBarToken as u16
+                    || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                {
+                    self.bind_short_circuit_expression(arena, idx, bin.left, bin.right, bin.operator_token);
+                    return;
+                }
             }
             self.bind_binary_expression_flow_iterative(arena, idx);
             return;
