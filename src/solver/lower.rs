@@ -231,6 +231,82 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
+    /// Create a new TypeLowering sharing the same context/state but using a different arena.
+    /// This is used for lowering merged interface declarations that span multiple lib files.
+    pub fn with_arena<'b>(&'b self, arena: &'b NodeArena) -> TypeLowering<'b>
+    where
+        'a: 'b,
+    {
+        TypeLowering {
+            arena,
+            interner: self.interner,
+            type_resolver: self.type_resolver,
+            value_resolver: self.value_resolver,
+            // Clone the RefCells to share state across arenas
+            type_param_scopes: self.type_param_scopes.clone(),
+            operations: self.operations.clone(),
+            limit_exceeded: self.limit_exceeded.clone(),
+        }
+    }
+
+    /// Lower interface declarations that may span multiple arenas (lib files).
+    ///
+    /// For merged interfaces like `Array` which is declared in es5.d.ts, es2015.d.ts, etc.,
+    /// each declaration may be in a different NodeArena. This method handles looking up
+    /// each declaration in its correct arena.
+    ///
+    /// # Arguments
+    /// * `declarations` - List of (NodeIndex, &NodeArena) pairs. Each declaration must be
+    ///                    paired with the NodeArena it belongs to.
+    pub fn lower_merged_interface_declarations(
+        &self,
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> (TypeId, Vec<TypeParamInfo>) {
+        if declarations.is_empty() {
+            return (TypeId::ERROR, Vec::new());
+        }
+
+        let mut parts = InterfaceParts::new();
+        let mut type_params_collected = false;
+        let mut collected_params = Vec::new();
+
+        for (decl_idx, decl_arena) in declarations {
+            // Create a lowering context for this specific arena
+            let lowerer = self.with_arena(decl_arena);
+
+            let Some(node) = decl_arena.get(*decl_idx) else {
+                continue;
+            };
+            let Some(interface) = decl_arena.get_interface(node) else {
+                continue;
+            };
+
+            // If we haven't collected type params yet, do it now
+            if !type_params_collected {
+                if let Some(params) = &interface.type_parameters {
+                    if !params.nodes.is_empty() {
+                        // Push scope on the shared state
+                        self.push_type_param_scope();
+                        // Use the specific lowerer to resolve param nodes in that arena
+                        collected_params = lowerer.collect_type_parameters(params);
+                        type_params_collected = true;
+                    }
+                }
+            }
+
+            // Collect members using the arena-specific lowerer
+            lowerer.collect_interface_members(&interface.members, &mut parts);
+        }
+
+        let result = self.finish_interface_parts(parts);
+
+        if type_params_collected {
+            self.pop_type_param_scope();
+        }
+
+        (result, collected_params)
+    }
+
     /// Check if the operation limit has been exceeded
     fn check_limit(&self) -> bool {
         if *self.limit_exceeded.borrow() {

@@ -253,9 +253,9 @@ async function withTimeout<T>(
   }
 }
 
-// Dynamic timeout: starts at 500ms, adapts to 10x average test time
-const INITIAL_TIMEOUT_MS = 200;   // Start with 200ms - most tests complete in <20ms
-const MIN_TIMEOUT_MS = 200;       // Never go below 200ms
+// Dynamic timeout: starts at 400ms, adapts to 10x average test time
+const INITIAL_TIMEOUT_MS = 400;   // Start with 400ms - account for cold worker cache rebuilds
+const MIN_TIMEOUT_MS = 400;       // Never go below 400ms
 const MAX_TIMEOUT_MS = 60000;
 const TIMEOUT_MULTIPLIER = 10;
 
@@ -283,7 +283,8 @@ function prepareTestFiles(
     const files: Record<string, string> = {};
     for (const file of parsed.files) {
       // Use original test file path for single-file tests
-      files[testFile] = file.content;
+      // Ensure content is always a string (defensive check for undefined from parser edge cases)
+      files[testFile] = file.content ?? '';
     }
     return { tempDir: null, files };
   }
@@ -303,11 +304,14 @@ function prepareTestFiles(
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    // Ensure content is always a string (defensive check for undefined from parser edge cases)
+    const content = file.content ?? '';
+
     // Write the file
-    fs.writeFileSync(filePath, file.content, 'utf-8');
+    fs.writeFileSync(filePath, content, 'utf-8');
 
     // Add to files map with absolute path
-    files[filePath] = file.content;
+    files[filePath] = content;
   }
 
   // Handle symlinks from harness options

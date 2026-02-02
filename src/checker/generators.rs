@@ -264,19 +264,40 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
         // Try to find the global Generator type from lib contexts
         // TSC emits TS2318 when Generator is not available
         if let Some(gen_base) = self.lookup_global_type("Generator") {
+            // Generator extends IterableIterator, so check for that too
+            // TSC emits TS2318 for IterableIterator when processing generators
+            if !self.ctx.has_name_in_lib("IterableIterator") {
+                use crate::lib_loader;
+                self.ctx
+                    .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                        "IterableIterator",
+                        self.ctx.file_name.clone(),
+                        0,
+                        0,
+                    ));
+            }
             return self.ctx.types.application(
                 gen_base,
                 vec![info.yield_type, info.return_type, info.next_type],
             );
         }
 
-        // Generator global not found - emit TS2318 if lib files should be loaded
-        // but aren't providing the type (matching TSC behavior)
-        if self.ctx.has_lib_loaded() || !self.ctx.no_lib() {
-            use crate::lib_loader;
+        // Generator global not found - emit TS2318 regardless of noLib setting.
+        // TSC emits this error even with noLib: true when generator functions are used.
+        use crate::lib_loader;
+        self.ctx
+            .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                "Generator",
+                self.ctx.file_name.clone(),
+                0,
+                0,
+            ));
+
+        // Also check for IterableIterator (Generator extends it)
+        if !self.ctx.has_name_in_lib("IterableIterator") {
             self.ctx
                 .push_diagnostic(lib_loader::emit_error_global_type_missing(
-                    "Generator",
+                    "IterableIterator",
                     self.ctx.file_name.clone(),
                     0,
                     0,
@@ -294,21 +315,40 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
         // Try to find the global AsyncGenerator type from lib contexts
         // TSC emits TS2318 when AsyncGenerator is not available
         if let Some(async_gen_base) = self.lookup_global_type("AsyncGenerator") {
+            // AsyncGenerator extends AsyncIterableIterator, so check for that too
+            // TSC emits TS2318 for AsyncIterableIterator when processing async generators
+            if !self.ctx.has_name_in_lib("AsyncIterableIterator") {
+                use crate::lib_loader;
+                self.ctx
+                    .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                        "AsyncIterableIterator",
+                        self.ctx.file_name.clone(),
+                        0,
+                        0,
+                    ));
+            }
             return self.ctx.types.application(
                 async_gen_base,
                 vec![info.yield_type, info.return_type, info.next_type],
             );
         }
 
-        // AsyncGenerator global not found - emit TS2318 if lib files should be loaded
-        // but aren't providing the type (matching TSC behavior)
-        if self.ctx.has_lib_loaded() || !self.ctx.no_lib() {
-            // Use lib_loader to emit the error at position 0 (file-level diagnostic)
-            // This matches TSC which emits global type errors at the start of the file
-            use crate::lib_loader;
+        // AsyncGenerator global not found - emit TS2318 regardless of noLib setting.
+        // TSC emits this error even with noLib: true when async generator functions are used.
+        use crate::lib_loader;
+        self.ctx
+            .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                "AsyncGenerator",
+                self.ctx.file_name.clone(),
+                0,
+                0,
+            ));
+
+        // Also check for AsyncIterableIterator (AsyncGenerator extends it)
+        if !self.ctx.has_name_in_lib("AsyncIterableIterator") {
             self.ctx
                 .push_diagnostic(lib_loader::emit_error_global_type_missing(
-                    "AsyncGenerator",
+                    "AsyncIterableIterator",
                     self.ctx.file_name.clone(),
                     0,
                     0,

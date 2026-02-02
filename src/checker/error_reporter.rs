@@ -1452,7 +1452,10 @@ impl<'a> CheckerState<'a> {
                 "undefined"
             };
             if let Some(loc) = self.get_source_location(left_idx) {
-                let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[value_name]);
+                let message = format_message(
+                    diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
+                    &[value_name],
+                );
                 self.ctx.diagnostics.push(Diagnostic {
                     code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
                     category: DiagnosticCategory::Error,
@@ -1473,7 +1476,10 @@ impl<'a> CheckerState<'a> {
                 "undefined"
             };
             if let Some(loc) = self.get_source_location(right_idx) {
-                let message = format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[value_name]);
+                let message = format_message(
+                    diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
+                    &[value_name],
+                );
                 self.ctx.diagnostics.push(Diagnostic {
                     code: diagnostic_codes::VALUE_CANNOT_BE_USED_HERE,
                     category: DiagnosticCategory::Error,
@@ -1503,8 +1509,9 @@ impl<'a> CheckerState<'a> {
         let right_is_symbol = evaluator.is_symbol_like(right_type);
 
         if left_is_symbol || right_is_symbol {
-            let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
-            
+            let mut formatter =
+                TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+
             // Emit TS2469 for symbol operands
             if left_is_symbol {
                 if let Some(loc) = self.get_source_location(left_idx) {
@@ -1524,7 +1531,7 @@ impl<'a> CheckerState<'a> {
                     });
                 }
             }
-            
+
             if right_is_symbol {
                 if let Some(loc) = self.get_source_location(right_idx) {
                     let type_str = formatter.format(right_type);
@@ -1543,12 +1550,12 @@ impl<'a> CheckerState<'a> {
                     });
                 }
             }
-            
+
             // If both are symbols, we're done (no need for TS2365)
             if left_is_symbol && right_is_symbol {
                 return;
             }
-            
+
             // If only one is symbol, continue to check the other operand
             // (but we've already emitted TS2469 for the symbol)
         }
@@ -1565,8 +1572,10 @@ impl<'a> CheckerState<'a> {
         // This properly handles number, bigint, any, and enum types (unions of number literals)
         // Note: evaluator was already created above for symbol checking
         // Skip arithmetic checks for symbol operands (we already emitted TS2469)
-        let left_is_valid_arithmetic = !left_is_symbol && evaluator.is_arithmetic_operand(left_type);
-        let right_is_valid_arithmetic = !right_is_symbol && evaluator.is_arithmetic_operand(right_type);
+        let left_is_valid_arithmetic =
+            !left_is_symbol && evaluator.is_arithmetic_operand(left_type);
+        let right_is_valid_arithmetic =
+            !right_is_symbol && evaluator.is_arithmetic_operand(right_type);
 
         // For + operator, check if we should emit TS2362/TS2363 or TS2365
         // TS2362/TS2363 are emitted when the operation cannot be string concatenation

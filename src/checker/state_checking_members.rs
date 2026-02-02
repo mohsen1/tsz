@@ -2009,10 +2009,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     && !self.return_type_annotation_looks_like_promise(func.type_annotation);
 
                 if should_emit_ts2705 {
+                    use crate::checker::context::ScriptTarget;
                     use crate::checker::types::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
-                    use crate::checker::context::ScriptTarget;
 
                     // For ES5/ES3 targets, emit TS1055 instead of TS2705
                     let is_es5_or_lower = matches!(

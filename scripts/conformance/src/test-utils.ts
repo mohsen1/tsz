@@ -18,7 +18,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as semver from 'semver';
 import { fileURLToPath } from 'url';
-import { normalizeLibName, getDefaultLibNameForTarget as getCoreLibNameForTarget } from './lib-manifest.js';
+import { normalizeLibName, getDefaultLibNameForTarget as getCoreLibNameForTarget, getFullLibNameForTarget } from './lib-manifest.js';
 import {
   isHarnessBuilt,
   loadHarness,
@@ -283,7 +283,7 @@ function parseTestCaseWithHarness(code: string, filePath: string): ParsedTestCas
   // Convert to our format
   const files: TestFile[] = parsed.testUnitData.map((unit: TestUnitData) => ({
     name: unit.name,
-    content: unit.content,
+    content: unit.content ?? '', // Ensure content is always a string (handle undefined from duplicate @filename)
   }));
 
   // Separate harness directives from compiler options
@@ -790,12 +790,11 @@ export function directivesToCheckOptions(
       options.lib = libVal.map(s => String(s).trim().toLowerCase()).filter(Boolean);
     }
   } else if (!directives.nolib) {
-    // For conformance testing: explicitly use CORE libs (without DOM) when no @lib specified.
-    // This matches how the TSC cache was generated and avoids loading 1.8MB of DOM types.
-    // Production tsz defaults to FULL libs (with DOM) to match tsc's actual behavior.
-    // Tests that need DOM should specify @lib: dom explicitly.
+    // Use FULL libs (like tsc does) to ensure all base types (Array, Object, Partial, Pick, etc.)
+    // are available. The .full libs include ES5 base types via /// <reference lib="..." /> directives.
+    // This matches tsc's actual default behavior and fixes TS2318/TS2583/TS2584 errors.
     const targetName = String(directives.target ?? 'es5').toLowerCase();
-    options.lib = [getCoreLibNameForTarget(targetName)];
+    options.lib = [getFullLibNameForTarget(targetName)];
   }
 
   // Strict mode flags

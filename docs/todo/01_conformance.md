@@ -17,7 +17,7 @@
 
 ## Executive Summary
 
-**Current Pass Rate: 48.6% (6,009/12,381)** — Updated Feb 1, 2026
+**Current Pass Rate: 50.2% (6,208/12,378)** — Updated Feb 2, 2026
 
 After deep analysis with ask-gemini and code inspection, I've identified **5 fundamental architectural issues** that are responsible for the majority of conformance failures. Fixing these in order will yield the biggest improvements.
 
@@ -30,7 +30,7 @@ After deep analysis with ask-gemini and code inspection, I've identified **5 fun
 | Error | Missing | Extra | Root Cause |
 |-------|---------|-------|------------|
 | **TS2304** | 1,405 | 831 | Symbol resolution returns ANY instead of erroring (Any Poisoning) |
-| **TS2318** | ~~1,185~~ ~~485~~ 336 | - | Global types not resolved from lib contexts (PARTIALLY FIXED) |
+| **TS2318** | ~703 | - | Missing specialized global types: `Promise`, `TypedPropertyDescriptor`, `AsyncIterableIterator` |
 | **TS2322** | 670 | 1,358 | Both directions: ANY suppresses real errors + false assignability |
 | **TS2339** | - | 1,288 | Property lookup falls back to incomplete hardcoded lists |
 | **TS18050** | 679 | - | Null checks don't trigger because type is ANY |
@@ -82,25 +82,54 @@ if self.ctx.has_lib_loaded() {
 
 ---
 
-### Phase 2: Fix Global Type Resolution (~1,200 tests)
+### Phase 2: Fix Lib Loading - Use .full Libs (~1079 tests) - IN PROGRESS
 
-**Problem:** Utility types like `Partial`, `Pick`, `Record`, `Promise` aren't being resolved from lib contexts even when lib files are loaded.
+**Status:** Root cause identified and fix applied (Feb 2, 2026)
+
+**Root Cause:** The conformance runner was sending abbreviated lib names ('esnext') instead of '.full' lib names ('esnext.full') when no `@lib` was specified. This caused:
+- Missing ES5 base types (Array, Object, Boolean, etc.) → TS2318
+- Missing utility types (Partial, Pick, Record) → TS2318  
+- Missing ES2015+ types (Set, Map, Promise) → TS2583/TS2584
+
+**Fix Applied:**
+1. Updated `test-utils.ts` to use `getFullLibNameForTarget()` instead of `getCoreLibNameForTarget()`
+2. Updated `tsc-runner.ts` to use `.full` libs for TSC cache generation
+3. Both now match tsc's actual default behavior
+
+**Next Steps:**
+1. Regenerate TSC cache: `./scripts/conformance/run.sh cache generate`
+2. Run conformance tests to verify TS2318/TS2583/TS2584 errors are resolved
+3. Expected impact: ~1079 tests should pass
+
+---
+
+### Phase 2b: Fix Specialized Global Type Checks (~700 tests)
+
+**Status:** Multi-arena merged interface resolution FIXED (Feb 2, 2026)
+- `resolve_lib_type_with_params` now uses `declaration_arenas` for proper multi-arena support
+- `Array.push()` with `lib: ['esnext']` now works correctly
+
+**Remaining Problem:** ~700 missing TS2318 errors for specialized global types when `noLib: true`:
+- `Promise` - async functions need this
+- `TypedPropertyDescriptor` - decorators need this  
+- `AsyncIterableIterator` - async iterators need this
+- `Generator`, `Iterable` - generators need these
 
 **Actions:**
 
-1. **Audit lib context integration in `resolve_type_reference`**
-   - File: `src/checker/state_type_resolution.rs`
-   - Verify `ctx.lib_contexts` are being searched for type symbols
+1. **Add implicit global type checks in type_computation.rs**
+   - When creating async function types, verify `Promise` exists
+   - When processing decorators, verify `TypedPropertyDescriptor` exists
+   - File: `src/checker/type_computation.rs`
 
-2. **Fix symbol lookup to search lib contexts for type names**
-   - File: `src/checker/symbol_resolver.rs`
-   - `resolve_identifier_symbol_in_type_position` must check lib binders
+2. **Expand CORE_GLOBAL_TYPES in state_checking.rs**
+   - Add: `Promise`, `TypedPropertyDescriptor`, `AsyncIterableIterator`, `Generator`, `Iterable`
+   - File: `src/checker/state_checking.rs`
 
-3. **Ensure merged lib binder has all symbols**
-   - File: `src/cli/driver.rs` - `load_lib_files_for_contexts()`
-   - Verify symbols aren't lost during merging
+3. **Add usage-site checks (like tsc does)**
+   - Emit TS2318 at the async function/decorator/generator location, not just file-level
 
-**Expected Impact:** ~1,200 TS2318 errors resolved
+**Expected Impact:** ~700 TS2318 errors resolved
 
 ---
 

@@ -147,6 +147,23 @@ function defaultCoreLibNameForTarget(targetName: string): string {
   }
 }
 
+function defaultFullLibNameForTarget(targetName: string): string {
+  const normalized = targetName.toLowerCase();
+  switch (normalized) {
+    case 'es3':
+    case 'es5':
+      return 'es5.full';
+    case 'es6':
+    case 'es2015':
+      return 'es2015.full';
+    default:
+      if (normalized.startsWith('es20')) {
+        return `${normalized}.full`;
+      }
+      return 'esnext.full';
+  }
+}
+
 function getLibNamesForTestCase(
   opts: Record<string, unknown>,
   compilerOptionsTarget: ts.ScriptTarget | undefined
@@ -155,9 +172,10 @@ function getLibNamesForTestCase(
   const explicit = parseLibOption(opts.lib);
   if (explicit.length > 0) return explicit;
 
-  // No explicit @lib - return default libs based on target
+  // No explicit @lib - use FULL libs (like tsc does) to ensure all base types are available.
+  // This matches tsc's actual default behavior and fixes TS2318/TS2583/TS2584 errors.
   const targetName = normalizeTargetName(compilerOptionsTarget ?? opts.target);
-  return [defaultCoreLibNameForTarget(targetName)];
+  return [defaultFullLibNameForTarget(targetName)];
 }
 
 export function collectLibFiles(libNames: string[], libDir: string): Map<string, string> {
@@ -299,8 +317,10 @@ export function parseTestDirectives(code: string, filePath: string): ParsedTestC
     for (const file of files) {
       if (path.basename(file.name) === 'tsconfig.json') {
         try {
+          // Ensure content is always a string (defensive check for undefined from parser edge cases)
+          const content = file.content ?? '';
           // Handle JSON with trailing commas by stripping them
-          const cleanJson = file.content.replace(/,\s*([}\]])/g, '$1');
+          const cleanJson = content.replace(/,\s*([}\]])/g, '$1');
           const tsconfig = JSON.parse(cleanJson);
           if (tsconfig?.compilerOptions) {
             for (const [key, value] of Object.entries(tsconfig.compilerOptions)) {
@@ -678,11 +698,13 @@ export function runTsc(
 
     // Resolve file name relative to root directory
     const resolvedFileName = path.resolve(rootDir, file.name);
-    virtualFileContents.set(resolvedFileName, file.content);
+    // Ensure content is always a string (defensive check for undefined from parser edge cases)
+    const content = file.content ?? '';
+    virtualFileContents.set(resolvedFileName, content);
 
     const sf = ts.createSourceFile(
       resolvedFileName,
-      file.content,
+      content,
       compilerOptions.target ?? ts.ScriptTarget.ES2020,
       true,
       scriptKind
@@ -764,7 +786,7 @@ export function runTsc(
       const resolved = path.resolve(rootDir, f.name);
       return resolved === name;
     });
-    if (file) return file.content;
+    if (file) return file.content ?? ''; // Ensure content is always a string
 
     // Check lib files
     if (libFiles.has(name)) return libFiles.get(name);

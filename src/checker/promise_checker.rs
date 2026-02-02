@@ -121,9 +121,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Called when processing async functions to ensure Promise is available.
     /// Matches TSC behavior which emits TS2318 "Cannot find global type 'Promise'"
-    /// when the Promise type is not in scope.
+    /// when the Promise type is not in scope - INCLUDING when noLib is true.
     pub fn check_global_promise_available(&mut self) {
-        if !self.ctx.has_name_in_lib("Promise") && !self.ctx.no_lib() {
+        // Emit TS2318 if Promise is not found, regardless of noLib setting.
+        // TSC emits this error even with noLib: true when async functions are used.
+        if !self.ctx.has_name_in_lib("Promise") {
             use crate::lib_loader;
             self.ctx
                 .push_diagnostic(lib_loader::emit_error_global_type_missing(

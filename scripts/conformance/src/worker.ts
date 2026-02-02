@@ -488,9 +488,11 @@ function runTsc(testCase: ParsedTestCase): number[] {
     else if (file.name.endsWith('.tsx')) scriptKind = ts.ScriptKind.TSX;
     else if (file.name.endsWith('.json')) scriptKind = ts.ScriptKind.JSON;
     
+    // Ensure content is always a string (defensive check for undefined from parser edge cases)
+    const content = file.content ?? '';
     const sf = ts.createSourceFile(
       file.name, 
-      file.content, 
+      content, 
       compilerOptions.target ?? ts.ScriptTarget.ES2020, 
       true,
       scriptKind
@@ -531,7 +533,7 @@ function runTsc(testCase: ParsedTestCase): number[] {
   host.fileExists = (name) => sourceFiles.has(name) || sourceFiles.has(path.basename(name));
   host.readFile = (name) => {
     const file = testCase.files.find(f => f.name === name);
-    if (file) return file.content;
+    if (file) return file.content ?? ''; // Ensure content is always a string
     const libName = libFiles.has(name) ? name : path.basename(name);
     if (libFiles.has(libName)) return libFiles.get(libName);
     if (libSource && libName === 'lib.d.ts') return libSource;
@@ -606,7 +608,8 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         }
 
         for (const file of testCase.files) {
-          program.addFile(file.name, file.content);
+          // Ensure content is always a string (defensive check for undefined from parser edge cases)
+          program.addFile(file.name, file.content ?? '');
         }
 
         // Safely extract diagnostic codes with defensive checks
@@ -623,7 +626,8 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
         return { codes, crashed: false, oom: false };
       } else {
         const file = testCase.files[0];
-        const parser = new wasmModule.Parser(file.name, file.content);
+        // Ensure content is always a string (defensive check for undefined from parser edge cases)
+        const parser = new wasmModule.Parser(file.name, file.content ?? '');
 
         // Add lib files unless noLib
         if (!testCase.options.nolib) {
@@ -738,7 +742,8 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
           if (parentDir !== tmpDir) {
             fs.mkdirSync(parentDir, { recursive: true });
           }
-          fs.writeFileSync(filePath, file.content);
+          // Ensure content is always a string (defensive check for undefined from parser edge cases)
+          fs.writeFileSync(filePath, file.content ?? '');
           filesToCheck.push(file.name);
         }
 
