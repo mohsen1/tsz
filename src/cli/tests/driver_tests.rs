@@ -3456,7 +3456,6 @@ fn compile_missing_tsconfig_uses_defaults() {
 // =============================================================================
 
 #[test]
-#[ignore = "TODO: Multi-file compilation needs refinement"]
 fn compile_generic_utility_library_array_utils() {
     // Test compilation of generic array utility functions
     let temp = TempDir::new().expect("temp dir");
@@ -3554,7 +3553,6 @@ export function reduce<T, U>(arr: T[], fn: (acc: U, item: T) => U, initial: U): 
 }
 
 #[test]
-#[ignore = "Failing test - function parameter resolution issue to be investigated"]
 fn compile_generic_utility_library_type_utilities() {
     // Test compilation with type-level utilities (conditional types, mapped types)
     let temp = TempDir::new().expect("temp dir");
@@ -4136,7 +4134,6 @@ export { internalHelper as helper, internalValue as value } from "./internal";
 }
 
 #[test]
-#[ignore = "TODO: Multi-file compilation needs refinement"]
 fn compile_module_star_reexports() {
     // Test star re-exports: export * from "./module"
     let temp = TempDir::new().expect("temp dir");
@@ -4994,7 +4991,6 @@ export const identity = <T>(x: T): T => x;
 }
 
 #[test]
-#[ignore = "TODO: Multi-file compilation needs refinement"]
 fn compile_arrow_function_with_rest_params() {
     // Test arrow function with rest parameters
     let temp = TempDir::new().expect("temp dir");
@@ -5858,7 +5854,6 @@ export function getProp(key: string): { [k: string]: number } {
 }
 
 #[test]
-#[ignore = "TODO: Multi-file compilation needs refinement"]
 fn compile_for_of_loop() {
     // Test for...of loop compilation
     let temp = TempDir::new().expect("temp dir");
