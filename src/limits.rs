@@ -20,12 +20,15 @@
 
 /// Maximum depth for type node checking (type annotations, type parameters).
 /// Prevents stack overflow when processing deeply nested generic types.
-/// Value: 500 - balances supporting complex types while preventing abuse.
-pub const MAX_TYPE_CHECK_DEPTH: u32 = 500;
+/// Value: 100 - safe for debug builds with 2MB stack (assumes ~20KB per frame)
+/// Increased from 500 which could cause stack overflow on deep nesting
+pub const MAX_TYPE_CHECK_DEPTH: u32 = 100;
 
 /// Maximum depth for expression type checking.
 /// Prevents stack overflow when processing deeply nested expressions.
-pub const MAX_EXPR_CHECK_DEPTH: u32 = 500;
+/// Value: 100 - safe for debug builds with 2MB stack (assumes ~20KB per frame)
+/// Increased from 500 which could cause stack overflow on deep nesting
+pub const MAX_EXPR_CHECK_DEPTH: u32 = 100;
 
 /// Maximum depth for generic type instantiation.
 /// Prevents infinite recursion in recursive generic types like `type Foo<T> = Foo<Foo<T>>`.
