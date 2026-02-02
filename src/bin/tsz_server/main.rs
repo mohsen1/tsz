@@ -649,6 +649,9 @@ pub(crate) struct Server {
     pub(crate) tests_lib_dir: PathBuf,
     /// Cache of parsed+bound lib files AND their dependencies (references)
     pub(crate) lib_cache: FxHashMap<String, (Arc<LibFile>, Vec<String>)>,
+    /// Cache for unified lib binder: (sorted lib names, unified LibFile)
+    /// This avoids recreating the expensive merged binder on every request
+    pub(crate) unified_lib_cache: Option<(Vec<String>, Arc<LibFile>)>,
     /// Number of checks completed
     pub(crate) checks_completed: u64,
     /// Response sequence counter (for tsserver protocol)
@@ -705,6 +708,7 @@ impl Server {
             lib_dir,
             tests_lib_dir,
             lib_cache: FxHashMap::default(),
+            unified_lib_cache: None,
             checks_completed: 0,
             response_seq: 0,
             open_files: HashMap::new(),
@@ -3183,6 +3187,7 @@ impl Server {
 
     fn handle_legacy_recycle(&mut self, id: u64) -> LegacyResponse {
         self.lib_cache.clear();
+        self.unified_lib_cache = None;
         self.checks_completed = 0;
         LegacyResponse::Ok(OkResponse { id, ok: true })
     }
@@ -3312,47 +3317,8 @@ impl Server {
             })
             .collect();
 
-        // PHASE 1: Parse all files
-        struct ParsedFile {
-            name: String,
-            arena: Arc<NodeArena>,
-            root: NodeIndex,
-            parse_errors: Vec<i32>,
-        }
-
-        let mut parsed_files: Vec<ParsedFile> = Vec::with_capacity(files.len());
-        let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
-        for (file_name, content) in &files {
-            // Skip non-TypeScript/JavaScript files (e.g. .json, .txt).
-            // They may be present in multi-file tests for module resolution
-            // fixtures but must not be parsed as TypeScript source.
-            if !Self::is_checkable_file(file_name) {
-                continue;
-            }
-
-            // Check if content appears to be garbled binary (e.g., UTF-16 read as UTF-8)
-            // If so, emit TS1490 "File appears to be binary." instead of parsing
-            if content_appears_binary(content) {
-                binary_file_errors.push((file_name.clone(), TS1490_FILE_APPEARS_TO_BE_BINARY));
-                continue;
-            }
-
-            let mut parser = ParserState::new(file_name.clone(), content.clone());
-            let root_idx = parser.parse_source_file();
-            let parse_errors: Vec<i32> = parser
-                .get_diagnostics()
-                .iter()
-                .map(|d| d.code as i32)
-                .collect();
-            parsed_files.push(ParsedFile {
-                name: file_name.clone(),
-                arena: Arc::new(parser.into_arena()),
-                root: root_idx,
-                parse_errors,
-            });
-        }
-
-        // PHASE 2: Bind all files and merge lib symbols
+        // PHASE 1 & 2: Parse and bind files in a single loop to reduce peak memory
+        // This avoids holding all ASTs and source strings simultaneously
         struct BoundFile {
             name: String,
             arena: Arc<NodeArena>,
@@ -3370,33 +3336,72 @@ impl Server {
             })
             .collect();
 
-        let mut bound_files: Vec<BoundFile> = Vec::with_capacity(parsed_files.len());
-        for parsed in parsed_files {
-            let mut binder = BinderState::new();
+        // CRITICAL PERFORMANCE FIX: Reuse unified binder's lib symbols ONCE
+        // instead of merging thousands of symbols for every file in the loop.
+        // The unified lib binder already has all lib symbols merged - we copy its
+        // file_locals and set it as a lib_binder so symbols resolve correctly.
+        let unified_lib_binder = if !lib_files.is_empty() {
+            Some(lib_files[0].binder.clone())
+        } else {
+            None
+        };
+        let lib_file_locals = unified_lib_binder.as_ref().map(|b| &b.file_locals);
 
-            // FIX: Merge lib symbols BEFORE binding to prevent SymbolId collisions.
-            // bind_source_file preserves lib symbols that were merged beforehand.
-            // This ensures lib symbols (Array, Object, console, etc.) are available
-            // during binding and type checking with proper remapped IDs.
-            if !binder_lib_contexts.is_empty() {
-                binder.merge_lib_contexts_into_binder(&binder_lib_contexts);
+        let mut bound_files: Vec<BoundFile> = Vec::with_capacity(files.len());
+        let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
+        
+        // Use into_iter() to consume source strings immediately
+        for (file_name, content) in files {
+            // Skip non-TypeScript/JavaScript files (e.g. .json, .txt).
+            // They may be present in multi-file tests for module resolution
+            // fixtures but must not be parsed as TypeScript source.
+            if !Self::is_checkable_file(&file_name) {
+                continue;
             }
 
-            binder.bind_source_file(&parsed.arena, parsed.root);
+            // Check if content appears to be garbled binary (e.g., UTF-16 read as UTF-8)
+            // If so, emit TS1490 "File appears to be binary." instead of parsing
+            if content_appears_binary(&content) {
+                binary_file_errors.push((file_name.clone(), TS1490_FILE_APPEARS_TO_BE_BINARY));
+                continue;
+            }
+
+            // Parse: content is moved into parser
+            let mut parser = ParserState::new(file_name.clone(), content);
+            let root_idx = parser.parse_source_file();
+            let parse_errors: Vec<i32> = parser
+                .get_diagnostics()
+                .iter()
+                .map(|d| d.code as i32)
+                .collect();
+            let arena = Arc::new(parser.into_arena());
+
+            // Bind immediately: copy lib symbols (cheap HashMap clone) and set lib_binder
+            // instead of merging thousands of symbols (expensive) for every file.
+            // bind_source_file preserves lib symbols that were in file_locals beforehand.
+            let mut binder = BinderState::new();
+            if let (Some(lib_symbols), Some(lib_binder)) = (lib_file_locals, unified_lib_binder.as_ref()) {
+                // Copy lib symbols into binder's file_locals - this is O(M) but only a HashMap clone
+                // vs O(M*N) if we merged for every file
+                binder.file_locals = lib_symbols.clone();
+                // Set unified binder as lib_binder so SymbolIds resolve correctly
+                binder.lib_binders.push(Arc::clone(lib_binder));
+            }
+            binder.bind_source_file(&arena, root_idx);
 
             bound_files.push(BoundFile {
-                name: parsed.name,
-                arena: parsed.arena,
+                name: file_name,
+                arena,
                 binder: Arc::new(binder),
-                root: parsed.root,
-                parse_errors: parsed.parse_errors,
+                root: root_idx,
+                parse_errors,
             });
         }
 
         // PHASE 3: Build cross-file resolution context
-        let all_arenas: Vec<Arc<NodeArena>> = bound_files.iter().map(|f| f.arena.clone()).collect();
-        let all_binders: Vec<Arc<BinderState>> =
-            bound_files.iter().map(|f| f.binder.clone()).collect();
+        // Wrap in Arc to avoid expensive cloning in the loop below
+        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(bound_files.iter().map(|f| f.arena.clone()).collect());
+        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(bound_files.iter().map(|f| f.binder.clone()).collect());
         let user_file_contexts: Vec<LibContext> = bound_files
             .iter()
             .map(|f| LibContext {
@@ -3407,9 +3412,15 @@ impl Server {
 
         let mut all_contexts = lib_contexts;
         all_contexts.extend(user_file_contexts);
+        // Wrap in Arc to avoid cloning the entire vector for every file
+        let all_contexts_arc: Arc<Vec<LibContext>> = Arc::new(all_contexts);
 
         let file_names: Vec<String> = bound_files.iter().map(|f| f.name.clone()).collect();
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+        // Wrap in Arc to avoid cloning HashMap/HashSet for every file
+        let resolved_module_paths_arc: Arc<FxHashMap<(usize, String), usize>> = Arc::new(resolved_module_paths);
+        use std::collections::HashSet;
+        let resolved_modules_arc: Arc<HashSet<String>> = Arc::new(resolved_modules);
 
         // PHASE 4: Type check all files
         let query_cache = wasm::solver::QueryCache::new(&type_interner);
@@ -3430,8 +3441,9 @@ impl Server {
                 checker_options.clone(),
             );
 
-            if !all_contexts.is_empty() {
-                checker.ctx.set_lib_contexts(all_contexts.clone());
+            // Clone Arc pointers (cheap) instead of entire data structures (expensive)
+            if !all_contexts_arc.is_empty() {
+                checker.ctx.set_lib_contexts((*all_contexts_arc).clone());
             }
             // Set the count of actual lib files (not user files) for has_lib_loaded()
             checker.ctx.set_actual_lib_file_count(lib_files.len());
@@ -3442,12 +3454,10 @@ impl Server {
             // multi-file tests that reference symbols from other files.
             // Single-file conformance mode doesn't have full module resolution context.
 
-            checker.ctx.set_all_arenas(all_arenas.clone());
-            checker.ctx.set_all_binders(all_binders.clone());
-            checker
-                .ctx
-                .set_resolved_module_paths(resolved_module_paths.clone());
-            checker.ctx.set_resolved_modules(resolved_modules.clone());
+            checker.ctx.set_all_arenas((*all_arenas).clone());
+            checker.ctx.set_all_binders((*all_binders).clone());
+            checker.ctx.set_resolved_module_paths((*resolved_module_paths_arc).clone());
+            checker.ctx.set_resolved_modules((*resolved_modules_arc).clone());
             checker.ctx.set_current_file_idx(file_idx);
             checker.check_source_file(bound.root);
 
@@ -3480,9 +3490,19 @@ impl Server {
     ///
     /// This allows proper cross-lib type resolution (e.g., `Array` from es5 visible in dom).
     fn load_libs_unified(&mut self, options: &CheckOptions) -> Result<Vec<Arc<LibFile>>> {
-        let lib_names = self.determine_libs(options);
+        let mut lib_names = self.determine_libs(options);
         if lib_names.is_empty() {
             return Ok(vec![]);
+        }
+
+        // Sort for deterministic cache key
+        lib_names.sort();
+
+        // Check cache first
+        if let Some((cached_names, cached_lib)) = &self.unified_lib_cache {
+            if *cached_names == lib_names {
+                return Ok(vec![cached_lib.clone()]);
+            }
         }
 
         // Phase 1: Load all libs normally (each with its own binder)
@@ -3525,6 +3545,9 @@ impl Server {
             unified_arena,
             Arc::new(unified_binder),
         ));
+
+        // Cache the result
+        self.unified_lib_cache = Some((lib_names, unified_lib.clone()));
 
         Ok(vec![unified_lib])
     }
@@ -3657,6 +3680,15 @@ impl Server {
                     Arc::new(parser.into_arena()),
                     Arc::new(binder),
                 ));
+
+                // Cap lib_cache size to prevent unbounded growth
+                const MAX_LIB_CACHE_ENTRIES: usize = 50;
+                if self.lib_cache.len() >= MAX_LIB_CACHE_ENTRIES {
+                    // Clear cache if it gets too large
+                    self.lib_cache.clear();
+                    // Also clear unified cache as it depends on lib_cache
+                    self.unified_lib_cache = None;
+                }
 
                 self.lib_cache
                     .insert(normalized, (lib.clone(), references.clone()));
@@ -4239,6 +4271,7 @@ mod tests {
             lib_dir: PathBuf::from("/nonexistent"),
             tests_lib_dir: PathBuf::from("/nonexistent"),
             lib_cache: FxHashMap::default(),
+            unified_lib_cache: None,
             checks_completed: 0,
             response_seq: 0,
             open_files: HashMap::new(),

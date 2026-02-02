@@ -2,6 +2,7 @@
 
 import { execSync } from 'child_process';
 import { parseArgs } from 'util';
+import { readFileSync, existsSync } from 'fs';
 import 'dotenv/config';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -191,6 +192,9 @@ function gatherContextWithLimit(yekTokenLimit, includePaths, filterTests) {
     encoding: 'utf-8',
   });
 
+  // Get set of important files for filtering
+  const importantFiles = getAllImportantFiles();
+
   // Apply filters
   const sections = context.split(/^(?=>>>> )/m);
   let testFilesFiltered = 0;
@@ -214,7 +218,8 @@ function gatherContextWithLimit(yekTokenLimit, includePaths, filterTests) {
       if (isTestFile) { testFilesFiltered++; return false; }
     }
 
-    if (filePath.endsWith('.md') && !filePath.endsWith('AGENTS.md')) {
+    // Allow important markdown files, filter out others
+    if (filePath.endsWith('.md') && !importantFiles.has(filePath)) {
       mdFilesFiltered++;
       return false;
     }
@@ -295,21 +300,139 @@ function findOptimalTokenLimit(includePaths, filterTests, verbose = true) {
   return bestResult;
 }
 
+// Important files that should always be included
+const IMPORTANT_FILES = {
+  // Core architecture and guidelines (always included)
+  core: [
+    'AGENTS.md',
+    'docs/architecture/NORTH_STAR.md',
+    'docs/DEVELOPMENT.md',
+  ],
+  // Category-specific important files
+  solver: [
+    'docs/walkthrough/05-solver.md',
+    'docs/specs/TS_UNSOUNDNESS_CATALOG.md',
+  ],
+  checker: [
+    'docs/walkthrough/04-checker.md',
+    'docs/specs/DIAGNOSTICS.md',
+  ],
+  binder: [
+    'docs/walkthrough/03-binder.md',
+  ],
+  parser: [
+    'docs/walkthrough/02-parser.md',
+    'docs/walkthrough/01-scanner.md',
+  ],
+  emitter: [
+    'docs/walkthrough/06-emitter.md',
+  ],
+  lsp: [
+    'docs/walkthrough/08-lsp-gaps.md',
+    'docs/todo/lsp/INDEX.md',
+  ],
+  types: [
+    'docs/walkthrough/05-solver.md',
+    'docs/walkthrough/04-checker.md',
+    'docs/specs/TS_UNSOUNDNESS_CATALOG.md',
+  ],
+  modules: [
+    'docs/architecture/TSC_LIB_LOADING.md',
+  ],
+  // General (no preset) important files
+  general: [
+    'docs/walkthrough/README.md',
+    'docs/specs/TS_UNSOUNDNESS_CATALOG.md',
+  ],
+};
+
+/**
+ * Get all important files across all categories (for filtering).
+ * @returns {Set<string>} - Set of all important file paths
+ */
+function getAllImportantFiles() {
+  const allFiles = new Set();
+  for (const category of Object.values(IMPORTANT_FILES)) {
+    if (Array.isArray(category)) {
+      for (const file of category) {
+        allFiles.add(file);
+      }
+    }
+  }
+  return allFiles;
+}
+
+/**
+ * Read and include important files directly in context (bypassing yek's ignore patterns).
+ * @param {string} category - Category name (solver, checker, etc.) or 'general' for no preset
+ * @returns {string} - Formatted context string with important files
+ */
+function includeImportantFiles(category = 'general') {
+  const important = [
+    ...IMPORTANT_FILES.core,
+    ...(IMPORTANT_FILES[category] || []),
+  ];
+  
+  const sections = [];
+  let filesIncluded = 0;
+  
+  for (const filePath of important) {
+    if (existsSync(filePath)) {
+      try {
+        const content = readFileSync(filePath, 'utf-8');
+        sections.push(`>>>> ${filePath}\n${content}`);
+        filesIncluded++;
+      } catch (err) {
+        // Silently skip files that can't be read
+      }
+    }
+  }
+  
+  if (sections.length > 0) {
+    return `\n${'='.repeat(50)}\nIMPORTANT DOCUMENTATION FILES (${filesIncluded} files):\n${'='.repeat(50)}\n\n${sections.join('\n\n')}\n\n`;
+  }
+  
+  return '';
+}
+
+/**
+ * Merge important files into a paths array, avoiding duplicates.
+ * @param {string[]} paths - Existing paths
+ * @param {string} category - Category name (solver, checker, etc.) or 'general' for no preset
+ * @returns {string[]} - Paths with important files added
+ */
+function addImportantFiles(paths, category = 'general') {
+  const important = [
+    ...IMPORTANT_FILES.core,
+    ...(IMPORTANT_FILES[category] || []),
+  ];
+  
+  // Add important files that aren't already in paths
+  const pathSet = new Set(paths);
+  for (const file of important) {
+    if (!pathSet.has(file)) {
+      paths.push(file);
+    }
+  }
+  
+  return paths;
+}
+
 // Focused presets for different areas of the codebase
 // Each preset uses directory wildcards to include all related files automatically
 // Focused presets - paths to include for each area (auto-sized to fit context)
 const PRESETS = {
   solver: {
     description: 'Type solver, inference, compatibility, and type operations',
-    paths: ['src/solver/', 'src/checker/state.rs', 'src/checker/context.rs', 'AGENTS.md'],
+    paths: ['src/solver/', 'src/checker/state.rs', 'src/checker/context.rs'],
   },
   checker: {
     description: 'Type checker, AST traversal, diagnostics, and error reporting',
-    paths: ['src/checker/', 'src/binder.rs', 'AGENTS.md'],
+    paths: ['src/checker/', 'src/binder.rs'],
   },
   binder: {
     description: 'Symbol binding, scopes, and control flow graph construction',
-    paths: ['src/binder/', 'src/binder.rs', 'src/checker/flow_graph_builder.rs', 'AGENTS.md'],
+    paths: ['src/binder/', 'src/binder.rs', 'src/checker/flow_graph_builder.rs'],
   },
   parser: {
     description: 'Parser, scanner, and AST nodes',
@@ -325,7 +448,7 @@ const PRESETS = {
   },
   types: {
     description: 'Type system overview (solver + checker type-related)',
-    paths: ['src/solver/', 'src/checker/', 'src/lowering_pass.rs', 'AGENTS.md'],
+    paths: ['src/solver/', 'src/checker/', 'src/lowering_pass.rs'],
   },
   modules: {
     description: 'Module resolution, imports, exports, and module graph',
@@ -455,9 +578,20 @@ const explicitTokenLimit = values.tokens || null;
 // Determine paths to include
 let includePaths = null;
 if (values.include) {
-  includePaths = values.include;
+  // User-specified paths: add core important files
+  const paths = values.include.split(/\s+/).filter(p => p);
+  const pathsWithImportant = addImportantFiles(paths, 'general');
+  includePaths = pathsWithImportant.length > 0 ? pathsWithImportant.join(' ') : null;
 } else if (activePreset) {
-  includePaths = activePreset.paths.join(' ');
+  // Preset active: add category-specific important files
+  const paths = [...activePreset.paths];
+  const pathsWithImportant = addImportantFiles(paths, presetName);
+  includePaths = pathsWithImportant.length > 0 ? pathsWithImportant.join(' ') : null;
+} else {
+  // No preset: add general important files
+  const paths = [];
+  const pathsWithImportant = addImportantFiles(paths, 'general');
+  includePaths = pathsWithImportant.length > 0 ? pathsWithImportant.join(' ') : null;
 }
 
 const useVertex = values['use-vertex'];
@@ -528,7 +662,7 @@ try {
     console.log(`  - Filtered out ${stats.testFilesFiltered} test file(s)`);
   }
   if (stats.mdFilesFiltered > 0) {
-    console.log(`  - Filtered out ${stats.mdFilesFiltered} markdown file(s) (keeping AGENTS.md)`);
+    console.log(`  - Filtered out ${stats.mdFilesFiltered} markdown file(s) (keeping important docs)`);
   }
   if (stats.localeFilesFiltered > 0) {
     console.log(`  - Filtered out ${stats.localeFilesFiltered} locale file(s)`);
@@ -557,8 +691,17 @@ try {
     }
   }
 
-  // Prepend skeletons to context
+  // Include important files directly (bypassing yek's ignore patterns)
+  const importantFilesContext = includeImportantFiles(presetName || 'general');
+  if (importantFilesContext) {
+    console.log('  - Including important documentation files directly');
+  }
+
+  // Assemble context: important files -> skeletons -> file contents
   let contextParts = [];
+  if (importantFilesContext) {
+    contextParts.push(importantFilesContext);
+  }
   if (skeletonOutput) {
     contextParts.push(skeletonOutput);
   }
