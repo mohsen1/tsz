@@ -166,10 +166,9 @@ Refactored completely to use visitor pattern:
 
 ## Remaining Work
 
-### Original Phase 1: src/solver/evaluate_rules/index_access.rs ✅ IN PROGRESS
+### Original Phase 1: src/solver/evaluate_rules/index_access.rs ✅ COMPLETE
 **Complexity**: MEDIUM
-**Reason for deferral**: Part of original plan, focused on evaluate_rules
-**Status**: ✅ ArrayKeyVisitor COMPLETE, ✅ TupleKeyVisitor COMPLETE
+**Status**: ✅ COMPLETE - Core violations addressed
 
 **Completed Visitor Implementations:**
 - ✅ **ArrayKeyVisitor** - Handles `Array[K]` index access
@@ -190,13 +189,14 @@ Refactored completely to use visitor pattern:
   - Array member types via get_array_member_kind helper
   - Uses Option<TypeId> fallback pattern
 
-**Remaining:**
-- `evaluate_object_with_index` - Could potentially use visitor pattern
-- `evaluate_object_index` - Could potentially use visitor pattern
+**Decision: NOT implementing ObjectKeyVisitor**
+- `evaluate_object_with_index` and `evaluate_object_index` are helper methods called BY visitors
+- They correctly use visitor helpers (`literal_string`, `literal_number`, `union_list_id`)
+- They represent business logic (property lookup semantics), not type dispatch
+- No TypeKey match violations to fix
+- Creating ObjectKeyVisitor would move logic without eliminating violations
 
-**Note:** The main evaluate_index_access already uses IndexAccessVisitor. The remaining methods (evaluate_object_with_index, evaluate_object_index) are more complex as they handle property lookups, index signatures, and multiple fallback cases. They may benefit from visitor pattern but require careful design.
-
-### Original Phase 2: src/solver/narrowing.rs
+### Original Phase 2: src/solver/narrowing.rs 🔄 NEXT TARGET
 **Complexity**: MEDIUM
 **Reason for deferral**: Part of original plan, focused on flow analysis
 
