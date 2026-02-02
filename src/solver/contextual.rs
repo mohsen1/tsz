@@ -266,6 +266,98 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     }
 }
 
+/// Visitor to extract parameter type from callable types.
+struct ParameterExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+    index: usize,
+}
+
+impl<'a> ParameterExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase, index: usize) -> Self {
+        Self { db, index }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+
+    fn extract_from_params(&self, params: &[ParamInfo]) -> Option<TypeId> {
+        // Check if there's a rest parameter at the end
+        if let Some(last_param) = params.last() {
+            if last_param.rest {
+                // For rest parameter, any index should get the element type
+                if let Some(TypeKey::Array(elem)) = self.db.lookup(last_param.type_id) {
+                    return Some(elem);
+                }
+                // For rest parameter with tuple type, extract the element at the given index
+                if let Some(TypeKey::Tuple(elements)) = self.db.lookup(last_param.type_id) {
+                    let elements = self.db.tuple_list(elements);
+                    // Find the tuple element at the given index
+                    if self.index < elements.len() {
+                        return Some(elements[self.index].type_id);
+                    } else if let Some(last_elem) = elements.last()
+                        && last_elem.rest
+                    {
+                        return Some(last_elem.type_id);
+                    }
+                }
+                // Return the rest parameter type itself
+                return Some(last_param.type_id);
+            }
+        }
+
+        // For non-rest parameters, check if index is within bounds
+        if self.index < params.len() {
+            Some(params[self.index].type_id)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> TypeVisitor for ParameterExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.function_shape(FunctionShapeId(shape_id));
+        self.extract_from_params(&shape.params)
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+        // For callables with multiple signatures, collect parameter types from all signatures
+        if shape.call_signatures.is_empty() {
+            return None;
+        }
+
+        let param_types: Vec<TypeId> = shape
+            .call_signatures
+            .iter()
+            .filter_map(|sig| self.extract_from_params(&sig.params))
+            .collect();
+
+        if param_types.is_empty() {
+            None
+        } else if param_types.len() == 1 {
+            Some(param_types[0])
+        } else {
+            Some(self.db.union(param_types))
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 /// Context for contextual typing.
 /// Holds the expected type and provides methods to extract type information.
 pub struct ContextualTypeContext<'a> {
@@ -310,49 +402,37 @@ impl<'a> ContextualTypeContext<'a> {
     /// ```
     pub fn get_parameter_type(&self, index: usize) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
 
-        match key {
-            TypeKey::Function(shape_id) => {
-                let shape = self.interner.function_shape(shape_id);
-                self.get_parameter_type_from_params(&shape.params, index)
-            }
-            TypeKey::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                self.get_parameter_type_from_signatures(&shape.call_signatures, index)
-            }
-            // For union of function types, try to find common parameter type
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let param_types: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&m| {
-                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_parameter_type(index)
-                    })
-                    .collect();
+        // Handle Union explicitly - collect parameter types from all members
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let param_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_parameter_type(index)
+                })
+                .collect();
 
-                if param_types.is_empty() {
-                    None
-                } else if param_types.len() == 1 {
-                    Some(param_types[0])
-                } else {
-                    // Union of parameter types
-                    Some(self.interner.union(param_types))
-                }
-            }
-            // For Application types (e.g., generic type aliases like Destructuring<TFuncs1, T>),
-            // unwrap to the base type and get parameter type from it
-            // This fixes TS2571 false positives where arrow function parameters are typed as UNKNOWN
-            // instead of the actual type from the Application
-            TypeKey::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                // Recursively get parameter type from the base type
-                let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
-                ctx.get_parameter_type(index)
-            }
-            _ => None,
+            return if param_types.is_empty() {
+                None
+            } else if param_types.len() == 1 {
+                Some(param_types[0])
+            } else {
+                Some(self.interner.union(param_types))
+            };
         }
+
+        // Handle Application explicitly - unwrap to base type
+        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
+            let app = self.interner.type_application(app_id);
+            let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+            return ctx.get_parameter_type(index);
+        }
+
+        // Use visitor for Function/Callable types
+        let mut extractor = ParameterExtractor::new(self.interner, index);
+        extractor.extract(expected)
     }
 
     /// Get the contextual type for a call argument at the given index and arity.
