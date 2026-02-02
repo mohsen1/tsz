@@ -1432,6 +1432,7 @@ impl ParserState {
                 | SyntaxKind::UniqueKeyword
                 | SyntaxKind::InferKeyword
                 | SyntaxKind::IsKeyword
+                | SyntaxKind::AnyKeyword
                 | SyntaxKind::NeverKeyword
                 | SyntaxKind::UnknownKeyword
                 | SyntaxKind::BigIntKeyword
