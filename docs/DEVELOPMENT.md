@@ -21,7 +21,7 @@ cargo build
 Pre-commit hooks are automatically installed on first build. They run:
 - `cargo fmt` - Format code
 - `cargo clippy --fix` - Lint and auto-fix issues
-- Unit tests via `scripts/test.sh`
+- Unit tests via `cargo nextest run`
 
 To manually install hooks:
 ```bash
@@ -37,16 +37,33 @@ git commit --no-verify
 
 ### Unit Tests
 
+We use [cargo-nextest](https://nexte.st/) for all test runs. It provides timeout protection,
+per-test isolation, and better output than `cargo test`.
+
 ```bash
+# Install nextest (one time)
+cargo install cargo-nextest
+
 # Run all unit tests
-cargo test --lib
+cargo nextest run
 
 # Run tests for a specific module
-cargo test --lib scanner
-cargo test --lib parser
-cargo test --lib binder
-cargo test --lib checker
+cargo nextest run -E 'test(/scanner/)'
+cargo nextest run -E 'test(/parser/)'
+cargo nextest run -E 'test(/binder/)'
+cargo nextest run -E 'test(/checker/)'
+
+# Quick mode (fail-fast, 10s timeout)
+cargo nextest run --profile quick
+
+# Run ignored tests
+cargo nextest run --run-ignored all
 ```
+
+Nextest profiles are configured in `.config/nextest.toml` with protection against:
+- **Hanging tests**: Auto-terminate after timeout periods
+- **Leaked threads**: Detect tests that don't terminate cleanly
+- **Slow tests**: Warn and kill tests exceeding time limits
 
 ### Conformance Tests
 
