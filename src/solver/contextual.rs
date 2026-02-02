@@ -224,6 +224,48 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
     }
 }
 
+/// Visitor to extract property type from object types by name.
+struct PropertyExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+    name: String,
+}
+
+impl<'a> PropertyExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase, name: String) -> Self {
+        Self { db, name }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for PropertyExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        for prop in &shape.properties {
+            if self.db.resolve_atom_ref(prop.name).as_ref() == self.name {
+                return Some(prop.type_id);
+            }
+        }
+        None
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 /// Context for contextual typing.
 /// Holds the expected type and provides methods to extract type information.
 pub struct ContextualTypeContext<'a> {
@@ -458,38 +500,30 @@ impl<'a> ContextualTypeContext<'a> {
     /// ```
     pub fn get_property_type(&self, name: &str) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
 
-        match key {
-            TypeKey::Object(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                for prop in &shape.properties {
-                    if self.interner.resolve_atom_ref(prop.name).as_ref() == name {
-                        return Some(prop.type_id);
-                    }
-                }
+        // Handle Union explicitly - collect property types from all members
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let prop_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_property_type(name)
+                })
+                .collect();
+
+            return if prop_types.is_empty() {
                 None
-            }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let prop_types: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&m| {
-                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_property_type(name)
-                    })
-                    .collect();
-
-                if prop_types.is_empty() {
-                    None
-                } else if prop_types.len() == 1 {
-                    Some(prop_types[0])
-                } else {
-                    Some(self.interner.union(prop_types))
-                }
-            }
-            _ => None,
+            } else if prop_types.len() == 1 {
+                Some(prop_types[0])
+            } else {
+                Some(self.interner.union(prop_types))
+            };
         }
+
+        // Use visitor for Object types
+        let mut extractor = PropertyExtractor::new(self.interner, name.to_string());
+        extractor.extract(expected)
     }
 
     /// Create a child context for a nested expression.
