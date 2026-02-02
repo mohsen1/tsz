@@ -3693,18 +3693,23 @@ impl Server {
     fn parse_target(target: &Option<String>) -> ScriptTarget {
         target
             .as_ref()
-            .map(|t| match t.to_lowercase().as_str() {
-                "es3" => ScriptTarget::ES3,
-                "es5" => ScriptTarget::ES5,
-                "es6" | "es2015" => ScriptTarget::ES2015,
-                "es2016" => ScriptTarget::ES2016,
-                "es2017" => ScriptTarget::ES2017,
-                "es2018" => ScriptTarget::ES2018,
-                "es2019" => ScriptTarget::ES2019,
-                "es2020" => ScriptTarget::ES2020,
-                "es2021" => ScriptTarget::ES2021,
-                "es2022" | "es2023" => ScriptTarget::ES2022,
-                _ => ScriptTarget::ESNext,
+            .map(|t| {
+                // Handle comma-separated targets (e.g., "es2015,es2017") by taking the first one
+                // This matches how TSC runs multi-target tests - one iteration per target
+                let first_target = t.split(',').next().unwrap_or(t).trim().to_lowercase();
+                match first_target.as_str() {
+                    "es3" => ScriptTarget::ES3,
+                    "es5" => ScriptTarget::ES5,
+                    "es6" | "es2015" => ScriptTarget::ES2015,
+                    "es2016" => ScriptTarget::ES2016,
+                    "es2017" => ScriptTarget::ES2017,
+                    "es2018" => ScriptTarget::ES2018,
+                    "es2019" => ScriptTarget::ES2019,
+                    "es2020" => ScriptTarget::ES2020,
+                    "es2021" => ScriptTarget::ES2021,
+                    "es2022" | "es2023" => ScriptTarget::ES2022,
+                    _ => ScriptTarget::ESNext,
+                }
             })
             .unwrap_or(ScriptTarget::ES5)
     }

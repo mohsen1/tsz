@@ -170,7 +170,11 @@ function runTszWithFullOutput(
   // Build args
   const args: string[] = [];
   if (options.strict) args.push('--strict');
-  if (options.target) args.push(`--target=${options.target}`);
+  // Handle comma-separated targets (e.g., "es2015,es2017") by taking the first one
+  if (options.target) {
+    const firstTarget = options.target.split(',')[0].trim();
+    args.push(`--target=${firstTarget}`);
+  }
   if (options.noLib) args.push('--noLib');
 
   // If the file exists on disk, use it directly; otherwise write to temp file

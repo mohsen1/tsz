@@ -771,9 +771,11 @@ export function directivesToCheckOptions(
 ): CheckOptions {
   const options: CheckOptions = {};
 
-  // Target - pass through as-is
+  // Target - handle comma-separated targets (e.g., "es2015,es2017") by taking the first one
   if (directives.target !== undefined) {
-    options.target = String(directives.target);
+    const targetStr = String(directives.target);
+    const firstTarget = targetStr.split(',')[0].trim();
+    options.target = firstTarget;
   }
 
   // noLib - pass through as-is
@@ -793,8 +795,9 @@ export function directivesToCheckOptions(
     // Use FULL libs (like tsc does) to ensure all base types (Array, Object, Partial, Pick, etc.)
     // are available. The .full libs include ES5 base types via /// <reference lib="..." /> directives.
     // This matches tsc's actual default behavior and fixes TS2318/TS2583/TS2584 errors.
-    const targetName = String(directives.target ?? 'es5').toLowerCase();
-    options.lib = [getFullLibNameForTarget(targetName)];
+    const targetStr = String(directives.target ?? 'es5');
+    const firstTarget = targetStr.split(',')[0].trim().toLowerCase();
+    options.lib = [getFullLibNameForTarget(firstTarget)];
   }
 
   // Strict mode flags
