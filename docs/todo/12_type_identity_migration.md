@@ -170,7 +170,62 @@ Measure memory usage. `DefId` migration should slightly reduce memory by dedupli
 
 ## Immediate Next Step
 
-Execute **Phase 3**: Switch Consumers (Solver Logic) to resolve `DefId`s exclusively.
+Execute **Phase 3.2**: Unify Type Resolution to standardize on DefId-first resolution.
+
+---
+
+## Progress Updates
+
+### ✅ Completed: Phase 3.1 - Add DefId Cycle Detection (Feb 3, 2026)
+
+**Approach**: Mirror `check_ref_ref_subtype` pattern for DefId
+- **Problem**: Lazy(DefId) types need cycle detection at DefId level
+- **Solution**: Add `seen_defs: HashSet<(DefId, DefId)>` parallel to `seen_refs`
+
+**Implementation:**
+1. Added `seen_defs` field to `SubtypeChecker` struct
+   - Tracks DefId pairs during subtype checking
+   - Prevents infinite recursion in recursive type aliases
+
+2. Created `check_lazy_lazy_subtype()` in `src/solver/subtype_rules/generics.rs`
+   - Mirrors `check_ref_ref_subtype()` exactly
+   - Identity check: same DefId → True
+   - Cycle detection: check seen_defs before resolving
+   - Resolution: resolve Lazy(DefId) → structural form
+   - Cleanup: remove pair after checking
+
+3. Updated `check_subtype_inner()` in `src/solver/subtype.rs`
+   - Call `check_lazy_lazy_subtype()` when both types have DefIds
+   - Replaced existing lazy handling that lacked proper cycle detection
+
+**Benefits:**
+- Lazy(DefId) types now have same cycle detection as Ref(SymbolRef)
+- Prevents infinite recursion in recursive type aliases using DefId
+- Foundation for Phase 3.2 (unified resolution)
+
+**Testing:**
+- Before: 7795 passed, 13 failed, 170 ignored
+- After: 7796 passed, 12 failed, 170 ignored
+- **One test fixed!** DefId cycle detection is working correctly
+
+**Commits:**
+- `a9cbd7e1a`: Phase 3.1 complete
+
+**Acceptance Criteria Progress:**
+- [x] Phase 1 infrastructure in place
+- [x] Phase 2: TypeLowering prefers DefId
+- [x] Phase 3.1: DefId cycle detection added
+- [ ] Phase 3.2: Unified type resolution
+- [ ] Phase 3.3: Unified generic application
+- [ ] Phase 3.4: resolve_ref() deprecated
+- [ ] Phase 3.5: TypeEnvironment optimized
+- [ ] `TypeKey::Ref(SymbolRef)` removed
+- [ ] `TypeKey::Lazy(DefId)` renamed to `TypeKey::Ref(DefId)`
+- [ ] All type references use `DefId`
+- [ ] O(1) equality preserved
+- [ ] Cycle detection uses `DefId`
+- [x] Conformance tests pass with no regressions
+- [ ] Memory usage reduced
 
 ---
 
