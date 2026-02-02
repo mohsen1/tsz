@@ -311,9 +311,7 @@ async function main() {
   const passRate = total > 0 ? ((passed / total) * 100).toFixed(1) : '0.0';
 
   console.log('');
-  console.log('════════════════════════════════════════════════════════════');
   console.log('CONFORMANCE TEST RESULTS');
-  console.log('════════════════════════════════════════════════════════════');
   console.log('');
   console.log(`Pass Rate: ${passRate}% (${passed}/${total})`);
   console.log('');
@@ -341,7 +339,6 @@ async function main() {
     console.log('');
   }
 
-  console.log('════════════════════════════════════════════════════════════');
 }
 
 main().catch(err => {
