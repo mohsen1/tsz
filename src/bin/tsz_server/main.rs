@@ -3763,12 +3763,8 @@ impl Server {
                     _ => wasm::ModuleKind::None, // Fallback
                 }
             } else {
-                // Default based on target when not specified
-                if checker_target.supports_es2015() {
-                    wasm::ModuleKind::ES2015
-                } else {
-                    wasm::ModuleKind::CommonJS
-                }
+                // Default to CommonJS if not specified (matches tsc behavior)
+                wasm::ModuleKind::CommonJS
             },
             es_module_interop: options.es_module_interop,
             allow_synthetic_default_imports: options
