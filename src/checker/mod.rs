@@ -69,6 +69,7 @@ pub mod reachability_analyzer;
 pub mod reachability_checker;
 pub mod scope_finder;
 pub mod signature_builder;
+pub mod sound_checker;
 pub mod state;
 pub mod state_checking;
 mod state_checking_members;

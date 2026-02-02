@@ -38,7 +38,7 @@
 //! let is_object = is_type_kind(&types, type_id, TypeKind::Object);
 //! ```
 
-use crate::solver::types::{IntrinsicKind, StringIntrinsicKind, TypeParamInfo};
+use crate::solver::types::{IntrinsicKind, ObjectShapeId, StringIntrinsicKind, TypeParamInfo};
 use crate::solver::{LiteralValue, TypeDatabase, TypeId, TypeKey};
 use rustc_hash::FxHashSet;
 
@@ -296,6 +296,44 @@ pub enum TypeKind {
     Error,
     /// Other/unknown
     Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectTypeKind {
+    Object(ObjectShapeId),
+    ObjectWithIndex(ObjectShapeId),
+    NotObject,
+}
+
+struct ObjectKindVisitor;
+
+impl TypeVisitor for ObjectKindVisitor {
+    type Output = ObjectTypeKind;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        ObjectTypeKind::NotObject
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        ObjectTypeKind::NotObject
+    }
+
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        ObjectTypeKind::Object(ObjectShapeId(shape_id))
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        ObjectTypeKind::ObjectWithIndex(ObjectShapeId(shape_id))
+    }
+
+    fn default_output() -> Self::Output {
+        ObjectTypeKind::NotObject
+    }
+}
+
+pub fn classify_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> ObjectTypeKind {
+    let mut visitor = ObjectKindVisitor;
+    visitor.visit_type(types, type_id)
 }
 
 /// Visitor that checks if a type is a specific TypeKind.

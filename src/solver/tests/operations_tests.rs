@@ -1387,6 +1387,7 @@ fn test_property_access_index_signature_no_unchecked() {
     let mut evaluator = PropertyAccessEvaluator::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -1430,6 +1431,7 @@ fn test_property_access_object_with_index_optional_property() {
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("x"),
             type_id: TypeId::NUMBER,
@@ -3474,6 +3476,7 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("box")),
             type_id: interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties: vec![PropertyInfo {
                     name: interner.intern_string("a"),
                     type_id: t_type,
@@ -3500,6 +3503,7 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
     };
 
     let arg = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("a"),
             type_id: TypeId::NUMBER,
@@ -3538,6 +3542,7 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("bag")),
             type_id: interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties: Vec::new(),
                 string_index: Some(IndexSignature {
                     key_type: TypeId::STRING,
@@ -3557,6 +3562,7 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
     };
 
     let arg = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -3588,6 +3594,7 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
         params: vec![ParamInfo {
             name: Some(interner.intern_string("bag")),
             type_id: interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties: Vec::new(),
                 string_index: None,
                 number_index: Some(IndexSignature {
@@ -3607,6 +3614,7 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
     };
 
     let arg = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -3891,6 +3899,7 @@ fn test_infer_generic_missing_property_uses_index_signature() {
     };
 
     let arg = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -3939,6 +3948,7 @@ fn test_infer_generic_missing_numeric_property_uses_number_index_signature() {
     };
 
     let arg = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4203,6 +4213,7 @@ fn test_infer_generic_index_signature() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4228,6 +4239,7 @@ fn test_infer_generic_index_signature() {
     };
 
     let indexed_number = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4254,6 +4266,7 @@ fn test_infer_generic_index_signature_from_object_literal() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4304,6 +4317,7 @@ fn test_infer_generic_index_signature_from_optional_property() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4355,6 +4369,7 @@ fn test_infer_generic_number_index_from_optional_property() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4406,6 +4421,7 @@ fn test_infer_generic_number_index_from_numeric_property() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4456,6 +4472,7 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4506,6 +4523,7 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4556,6 +4574,7 @@ fn test_infer_generic_number_index_from_nan_property() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4606,6 +4625,7 @@ fn test_infer_generic_number_index_from_exponent_property() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4656,6 +4676,7 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4712,6 +4733,7 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
     let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4810,6 +4832,7 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
     let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4909,6 +4932,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
     let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -5023,6 +5047,7 @@ fn test_infer_generic_property_from_source_index_signature() {
     };
 
     let indexed_number = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -5071,6 +5096,7 @@ fn test_infer_generic_property_from_number_index_signature_infinity() {
     };
 
     let indexed_number = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {

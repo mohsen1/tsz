@@ -521,9 +521,18 @@ pub struct IndexInfo {
     pub number_index: Option<IndexSignature>,
 }
 
+bitflags::bitflags! {
+    #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct ObjectFlags: u32 {
+        const FRESH_LITERAL = 1 << 0;
+    }
+}
+
 /// Object type with properties and optional index signatures
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ObjectShape {
+    /// Object-level flags (e.g. fresh literal tracking).
+    pub flags: ObjectFlags,
     /// Named properties (sorted by name for consistent hashing)
     pub properties: Vec<PropertyInfo>,
     /// String index signature: { [key: string]: T }

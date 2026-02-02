@@ -360,6 +360,7 @@ impl<'a> TypeInstantiator<'a> {
                         readonly: idx.readonly,
                     });
                 self.interner.object_with_index(ObjectShape {
+                    flags: shape.flags,
                     properties: instantiated_props,
                     string_index: instantiated_string_idx,
                     number_index: instantiated_number_idx,

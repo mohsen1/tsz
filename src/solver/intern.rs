@@ -386,6 +386,7 @@ impl TypeInterner {
     pub fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
         self.object_shapes.get(id.0).unwrap_or_else(|| {
             Arc::new(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties: Vec::new(),
                 string_index: None,
                 number_index: None,
@@ -1179,6 +1180,7 @@ impl TypeInterner {
         merged_props.sort_by_key(|p| p.name.0);
 
         let shape = ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: merged_props,
             string_index: merged_string_index,
             number_index: merged_number_index,
@@ -1538,11 +1540,26 @@ impl TypeInterner {
         self.intern(TypeKey::ReadonlyType(inner))
     }
 
-    /// Intern an object type with properties
-    pub fn object(&self, mut properties: Vec<PropertyInfo>) -> TypeId {
+    /// Intern an object type with properties.
+    pub fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.object_with_flags(properties, ObjectFlags::empty())
+    }
+
+    /// Intern a fresh object type with properties.
+    pub fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.object_with_flags(properties, ObjectFlags::FRESH_LITERAL)
+    }
+
+    /// Intern an object type with properties and custom flags.
+    pub fn object_with_flags(
+        &self,
+        mut properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+    ) -> TypeId {
         // Sort by property name for consistent hashing
         properties.sort_by(|a, b| a.name.cmp(&b.name));
         let shape_id = self.intern_object_shape(ObjectShape {
+            flags,
             properties,
             string_index: None,
             number_index: None,
@@ -1550,7 +1567,7 @@ impl TypeInterner {
         self.intern(TypeKey::Object(shape_id))
     }
 
-    /// Intern an object type with index signatures
+    /// Intern an object type with index signatures.
     pub fn object_with_index(&self, mut shape: ObjectShape) -> TypeId {
         // Sort properties by name for consistent hashing
         shape.properties.sort_by(|a, b| a.name.cmp(&b.name));

@@ -940,6 +940,7 @@ impl<'a> TypeLowering<'a> {
                     return TypeId::ERROR;
                 }
                 return self.interner.object_with_index(ObjectShape {
+                    flags: ObjectFlags::empty(),
                     properties,
                     string_index,
                     number_index,
@@ -1112,6 +1113,7 @@ impl<'a> TypeLowering<'a> {
                 return TypeId::ERROR;
             }
             return self.interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,

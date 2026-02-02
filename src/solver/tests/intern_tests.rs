@@ -25,6 +25,27 @@ fn test_interner_deduplication() {
 }
 
 #[test]
+fn test_interner_fresh_object_distinct_from_non_fresh() {
+    let interner = TypeInterner::new();
+    let prop = PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    };
+
+    let fresh = interner.object_fresh(vec![prop.clone()]);
+    let non_fresh = interner.object(vec![prop]);
+
+    assert_ne!(fresh, non_fresh);
+    assert!(is_fresh_object_type(&interner, fresh));
+    assert!(!is_fresh_object_type(&interner, non_fresh));
+    assert_eq!(widen_freshness(&interner, fresh), non_fresh);
+}
+
+#[test]
 fn test_interner_bigint_literal() {
     let interner = TypeInterner::new();
 

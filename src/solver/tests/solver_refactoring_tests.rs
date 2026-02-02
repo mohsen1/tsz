@@ -15,9 +15,8 @@ use crate::solver::judge::{
     CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PrimitiveFlags, PropertyResult,
     TruthinessKind,
 };
-use crate::solver::sound::{
-    SoundDiagnostic, SoundDiagnosticCode, SoundLawyer, SoundModeConfig, StickyFreshnessTracker,
-};
+use crate::checker::sound_checker::StickyFreshnessTracker;
+use crate::solver::sound::{SoundDiagnostic, SoundDiagnosticCode, SoundLawyer, SoundModeConfig};
 use crate::solver::subtype::{SubtypeChecker, SubtypeResult, TypeEnvironment};
 use crate::solver::types::*;
 

@@ -832,6 +832,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         let merged_type =
                             if merged_string_index.is_some() || merged_number_index.is_some() {
                                 self.interner.object_with_index(ObjectShape {
+                                    flags: ObjectFlags::empty(),
                                     properties: merged_properties,
                                     string_index: merged_string_index,
                                     number_index: merged_number_index,

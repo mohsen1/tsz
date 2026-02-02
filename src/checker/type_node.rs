@@ -520,7 +520,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
         use crate::solver::{
-            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, PropertyInfo,
+            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
+            PropertyInfo,
         };
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -677,6 +678,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         if string_index.is_some() || number_index.is_some() {
             return self.ctx.types.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties,
                 string_index,
                 number_index,

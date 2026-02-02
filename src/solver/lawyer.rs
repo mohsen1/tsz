@@ -25,9 +25,9 @@
 //! ### C. Freshness (Excess Property Checking)
 //! Object literals are "fresh" and trigger excess property checking.
 //! Once assigned to a variable, they lose freshness and allow width subtyping.
-//! Freshness is determined syntactically by the Checker (expression-level),
-//! not tracked by TypeId in the Solver. See `StickyFreshnessTracker` in
-//! `sound.rs` for Sound Mode's binding-level freshness tracking.
+//! Freshness is tracked on the TypeId via ObjectFlags, with object literals
+//! interning to fresh shapes and widening removing the fresh flag. Sound Mode's
+//! binding-level tracking lives in the Checker.
 //!
 //! ### D. The Void Exception
 //! TypeScript allows `() => void` to match `() => T` for any T, because
