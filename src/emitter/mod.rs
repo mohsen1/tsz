@@ -585,10 +585,23 @@ impl<'a> Printer<'a> {
                 is_default,
                 inner,
             } => {
-                let export_name = names.first().copied();
-                self.emit_commonjs_export(names.as_ref(), is_default, |this| {
-                    this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                });
+                // For exported variable declarations with no initializers (e.g.,
+                // `export var x: number;`), skip entirely. The preamble
+                // `exports.x = void 0;` already handles the forward declaration.
+                let skip = node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    && self
+                        .arena
+                        .get_variable(node)
+                        .map_or(false, |var_data| {
+                            self.all_declarations_lack_initializer(&var_data.declarations)
+                        });
+
+                if !skip {
+                    let export_name = names.first().copied();
+                    self.emit_commonjs_export(names.as_ref(), is_default, |this| {
+                        this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                    });
+                }
             }
 
             EmitDirective::CommonJSExportDefaultExpr => {
