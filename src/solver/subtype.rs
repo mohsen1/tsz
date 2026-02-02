@@ -49,6 +49,25 @@ impl SubtypeResult {
     }
 }
 
+/// Controls how `any` is treated during subtype checks.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum AnyPropagationMode {
+    /// `any` is treated as top/bottom everywhere (TypeScript default).
+    All,
+    /// `any` is treated as top/bottom only at the top-level comparison.
+    TopLevelOnly,
+}
+
+impl AnyPropagationMode {
+    #[inline]
+    fn allows_any_at_depth(self, depth: u32) -> bool {
+        match self {
+            AnyPropagationMode::All => true,
+            AnyPropagationMode::TopLevelOnly => depth == 0,
+        }
+    }
+}
+
 /// Trait for resolving type references to their structural types.
 /// This allows the SubtypeChecker to lazily resolve Ref types
 /// without being tightly coupled to the binder/checker.
@@ -360,6 +379,8 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Optional callback to check if a symbol is a class (for nominal subtyping).
     /// Returns true if the symbol has the CLASS flag set.
     pub is_class_symbol: Option<&'a dyn Fn(SymbolRef) -> bool>,
+    /// Controls how `any` is treated during subtype checks.
+    pub any_propagation: AnyPropagationMode,
 }
 
 /// Maximum total subtype checks allowed per SubtypeChecker instance.
@@ -389,6 +410,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             disable_method_bivariance: false,
             inheritance_graph: None,
             is_class_symbol: None,
+            any_propagation: AnyPropagationMode::All,
         }
     }
 }
@@ -415,6 +437,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             disable_method_bivariance: false,
             inheritance_graph: None,
             is_class_symbol: None,
+            any_propagation: AnyPropagationMode::All,
         }
     }
 
@@ -430,6 +453,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Set the callback to check if a symbol is a class.
     pub fn with_class_check(mut self, check: &'a dyn Fn(SymbolRef) -> bool) -> Self {
         self.is_class_symbol = Some(check);
+        self
+    }
+
+    /// Configure how `any` is treated during subtype checks.
+    pub fn with_any_propagation_mode(mut self, mode: AnyPropagationMode) -> Self {
+        self.any_propagation = mode;
         self
     }
 
@@ -514,18 +543,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Fast paths (no cycle tracking needed)
         // =========================================================================
 
+        let allow_any = self.any_propagation.allows_any_at_depth(self.depth);
+        let mut source = source;
+        let mut target = target;
+        if !allow_any {
+            if source == TypeId::ANY {
+                source = TypeId::UNKNOWN;
+            }
+            if target == TypeId::ANY {
+                target = TypeId::UNKNOWN;
+            }
+        }
+
         // Same type is always a subtype of itself
         if source == target {
             return SubtypeResult::True;
         }
 
-        // Any is assignable to anything
-        if source == TypeId::ANY {
+        // Any is assignable to anything (when allowed)
+        if allow_any && source == TypeId::ANY {
             return SubtypeResult::True;
         }
 
-        // Everything is assignable to any
-        if target == TypeId::ANY {
+        // Everything is assignable to any (when allowed)
+        if allow_any && target == TypeId::ANY {
             return SubtypeResult::True;
         }
 
