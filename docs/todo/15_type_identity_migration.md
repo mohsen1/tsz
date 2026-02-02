@@ -1,0 +1,185 @@
+# Complete Type Identity Migration (SymbolRef → DefId)
+
+**Reference**: Architectural Review Summary - Issue #9  
+**Severity**: 🟠 High  
+**Status**: TODO  
+**Priority**: High - Correctness and consistency
+
+---
+
+## Problem
+
+Half-migrated state between `SymbolRef` (Binder-owned) and `DefId` (Solver-owned). `TypeKey::Ref(SymbolRef)` and `TypeKey::Lazy(DefId)` both exist. `TypeInterner` treats them as different types even if they refer to same symbol.
+
+**Impact**: Breaks O(1) equality promise. Valid subtypes fail checks because different handles used for same symbol.
+
+**Locations**: 
+- `src/solver/types.rs`
+- `src/checker/state_type_resolution.rs`
+- `src/solver/lower.rs`
+
+---
+
+## Goal
+
+Establish `DefId` as the single source of truth for nominal type identity in the Solver, removing `SymbolRef` and `TypeKey::Ref`. This ensures O(1) type equality, fixes "split identity" bugs, and decouples the Solver from the Binder.
+
+---
+
+## Analysis of Current Usage
+
+| Feature | Current Implementation | Problem |
+|---------|------------------------|---------|
+| **Type Representation** | `TypeKey::Ref(SymbolRef)` AND `TypeKey::Lazy(DefId)` | `intern(Ref(1))` ≠ `intern(Lazy(1))` even if they refer to the same type. |
+| **Type Lowering** | `src/solver/lower.rs` produces `TypeKey::Ref` by default. | New code paths produce `Lazy`, old produce `Ref`. |
+| **Symbol Resolution** | `CheckerState` resolves to `SymbolId`, then wraps in `Ref`. | Solver has to call back to Checker to resolve `Ref`. |
+| **Type Environment** | Stores both `SymbolRef -> TypeId` and `DefId -> TypeId`. | Redundant storage; potential for sync issues. |
+| **Cycle Detection** | `SubtypeChecker` tracks `seen_refs` (SymbolRef pairs). | Needs to track `DefId` pairs instead. |
+
+**Conclusion**: The existence of two keys for the same logical type breaks the interner's O(1) equality guarantee. We must migrate fully to `DefId`.
+
+---
+
+## Selected Identity System: `DefId`
+
+We will standardize on **`DefId`** (Solver-owned Definition ID).
+
+- **Definition**: `pub struct DefId(pub u32)` in `src/solver/def.rs`.
+- **Storage**: `DefinitionStore` maps `DefId` -> `DefinitionInfo` (metadata, body TypeId).
+- **Mapping**: Checker maintains `SymbolId <-> DefId` mapping.
+- **TypeKey**: `TypeKey::Ref(SymbolRef)` will be removed. `TypeKey::Lazy(DefId)` will be renamed to `TypeKey::Ref(DefId)`.
+
+---
+
+## Migration Phases
+
+### Phase 1: Infrastructure Bridge (The "Mapper")
+
+Ensure `TypeLowering` can translate `SymbolId` to `DefId` without direct access to the Binder.
+
+1. **Update `TypeLowering` Context**:
+   - Modify `TypeLowering` struct in `src/solver/lower.rs`.
+   - Replace `type_resolver: Fn(NodeIndex) -> Option<u32>` (returns SymbolId) with a `def_id_resolver: Fn(NodeIndex) -> Option<DefId>`.
+2. **Update Checker Bridge**:
+   - In `src/checker/state_type_resolution.rs`, update the closure passed to `TypeLowering`.
+   - The closure should call `ctx.get_or_create_def_id(symbol_id)` immediately upon resolving a symbol.
+
+### Phase 2: Switch Producers (Lowering)
+
+Stop producing `TypeKey::Ref(SymbolRef)`.
+
+1. **Refactor `lower_type_reference` (`src/solver/lower.rs`)**:
+   - When resolving an identifier/qualified name, use the `def_id_resolver`.
+   - Emit `TypeKey::Lazy(def_id)` instead of `TypeKey::Ref`.
+2. **Refactor `lower_type_query`**:
+   - Resolve value symbols to `DefId`s (requires `DefinitionInfo` to support value definitions or a separate ValueDefId).
+   - *Interim*: Keep `TypeQuery` using `SymbolRef` if `DefId` is strictly for types, OR extend `DefKind` to include Values.
+   - *Decision*: For this plan, focus on **Type** identity. `TypeQuery` can remain `SymbolRef` temporarily or be migrated in a sub-phase.
+
+### Phase 3: Switch Consumers (Solver Logic)
+
+Update the Solver to understand and resolve `DefId`s exclusively.
+
+1. **Update `TypeResolver` Trait (`src/solver/subtype.rs`)**:
+   - Promote `resolve_lazy` to the primary resolution method.
+   - Deprecate `resolve_ref`.
+2. **Update `SubtypeChecker`**:
+   - Update `check_ref_ref_subtype` to compare `DefId`s.
+   - Use `DefId` for cycle detection (`seen_defs` instead of `seen_refs`).
+3. **Update `TypeEvaluator` (`src/solver/evaluate.rs`)**:
+   - Ensure `evaluate_type` handles `TypeKey::Lazy` by resolving via `TypeEnvironment::get_def`.
+
+### Phase 4: Cleanup & Unification
+
+Remove the old system.
+
+1. **Modify `TypeKey` (`src/solver/types.rs`)**:
+   - Remove `Ref(SymbolRef)`.
+   - Rename `Lazy(DefId)` to `Ref(DefId)`.
+2. **Clean `TypeEnvironment`**:
+   - Remove `types` (SymbolRef map).
+   - Rename `def_types` to `types`.
+3. **Clean `CheckerState`**:
+   - Remove `symbol_types` cache (or key it by `DefId`).
+
+---
+
+## Update Checklist (Files & References)
+
+| File | Change |
+|------|--------|
+| `src/solver/types.rs` | Remove `TypeKey::Ref(SymbolRef)`. Rename `Lazy(DefId)` → `Ref(DefId)`. |
+| `src/solver/lower.rs` | Update `lower_type_reference`, `lower_qualified_name_type` to produce `DefId` refs. |
+| `src/checker/context.rs` | Ensure `get_or_create_def_id` is robust and used everywhere. |
+| `src/checker/state_type_resolution.rs` | Update `get_type_from_type_reference` to use DefId resolver. |
+| `src/solver/subtype.rs` | Remove `resolve_ref`. Update `check_ref_ref_subtype` to use `DefId`. |
+| `src/solver/evaluate.rs` | Update `evaluate_type` to handle new `Ref(DefId)`. |
+| `src/solver/format.rs` | Update `TypeFormatter` to look up names via `DefId` (needs access to `DefinitionStore`). |
+| `src/solver/intern.rs` | Update `intern` method to handle new keys. |
+
+---
+
+## Testing Strategy
+
+### Identity Verification (The "O(1)" Test)
+
+Create a test case that defines a type and references it in two ways that previously diverged.
+
+```rust
+#[test]
+fn test_def_id_identity_convergence() {
+    let code = "
+        type A = number;
+        type B = A; // Ref 1
+        type C = A; // Ref 2
+    ";
+    // ... parse and check ...
+    
+    // Get TypeId for B's body (Ref to A)
+    let type_b_body = ...; 
+    // Get TypeId for C's body (Ref to A)
+    let type_c_body = ...;
+
+    // Assert they are the EXACT same TypeId (u32 equality)
+    assert_eq!(type_b_body, type_c_body, "Type references to same symbol must intern to same TypeId");
+}
+```
+
+### Recursion & Cycle Detection
+
+Verify that `DefId` based cycle detection works for recursive types.
+
+```rust
+#[test]
+fn test_recursive_type_alias_def_id() {
+    let code = "type List<T> = { next: List<T> }";
+    // Should not stack overflow
+    // Should resolve to a TypeId that refers to itself via DefId
+}
+```
+
+### Conformance
+
+Run the full conformance suite. The migration should be purely internal refactoring; no observable behavior change in diagnostics (except potentially fixing bugs related to split identity).
+
+### Performance
+
+Measure memory usage. `DefId` migration should slightly reduce memory by deduplicating `Ref` and `Lazy` variants of the same type.
+
+---
+
+## Immediate Next Step
+
+Execute **Phase 1**: Modify `TypeLowering` to accept a `DefId` resolver and start producing `TypeKey::Lazy` (to be renamed later) for all type references.
+
+---
+
+## Acceptance Criteria
+
+- [ ] `TypeKey::Ref(SymbolRef)` removed
+- [ ] `TypeKey::Lazy(DefId)` renamed to `TypeKey::Ref(DefId)`
+- [ ] All type references use `DefId`
+- [ ] O(1) equality preserved
+- [ ] Cycle detection uses `DefId`
+- [ ] Conformance tests pass with no regressions
+- [ ] Memory usage reduced (deduplication)
