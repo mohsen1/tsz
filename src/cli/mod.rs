@@ -1,6 +1,7 @@
 //! Native CLI support for the tsz binary.
 
 pub mod args;
+pub mod build;
 pub mod config;
 pub mod driver;
 pub mod driver_resolution;
