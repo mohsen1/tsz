@@ -1765,16 +1765,33 @@ fn collect_diagnostics(
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = crate::solver::QueryCache::new(&program.type_interner);
 
-    for (file_idx, file) in program.files.iter().enumerate() {
+    // --- SMART INVALIDATION: Work Queue Algorithm ---
+    // Only type-check files that have changed or depend on files with changed export signatures
+
+    let mut work_queue: VecDeque<usize> = VecDeque::new();
+    let mut checked_files: HashSet<usize> = HashSet::new();
+
+    // Mark all files as used for cache cleanup
+    for (idx, file) in program.files.iter().enumerate() {
         let file_path = PathBuf::from(&file.file_name);
         used_paths.insert(file_path.clone());
-        if let Some(cached) = cache
-            .as_deref()
-            .and_then(|cache| cache.diagnostics.get(&file_path))
-        {
-            diagnostics.extend(cached.clone());
-            continue;
+
+        // Check if file has cached type information
+        // If no cache or cache miss, file needs to be checked
+        let needs_check = cache.as_deref()
+            .map(|c| !c.type_caches.contains_key(&file_path))
+            .unwrap_or(true); // No cache at all -> check everything
+
+        if needs_check {
+            work_queue.push_back(idx);
+            checked_files.insert(idx);
         }
+    }
+
+    // Process files in the work queue
+    while let Some(file_idx) = work_queue.pop_front() {
+        let file = &program.files[file_idx];
+        let file_path = PathBuf::from(&file.file_name);
 
         let mut binder = create_binder_from_bound_file(file, program, file_idx);
         let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
@@ -1883,16 +1900,48 @@ fn collect_diagnostics(
             checker.check_source_file(file.source_file);
             file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
         }
-        diagnostics.extend(file_diagnostics.clone());
 
-        // Update the cache with results from this file
+        // Update the cache and check for export hash changes
         if let Some(c) = cache.as_deref_mut() {
-            let export_hash = compute_export_hash(program, file, file_idx, &mut checker);
-            c.type_caches
-                .insert(file_path.clone(), checker.extract_cache());
-            c.diagnostics
-                .insert(file_path.clone(), file_diagnostics);
-            c.export_hashes.insert(file_path, export_hash);
+            let new_hash = compute_export_hash(program, file, file_idx, &mut checker);
+            let old_hash = c.export_hashes.get(&file_path).copied();
+
+            // Always update cache with new results
+            c.type_caches.insert(file_path.clone(), checker.extract_cache());
+            c.diagnostics.insert(file_path.clone(), file_diagnostics.clone());
+            c.export_hashes.insert(file_path.clone(), new_hash);
+
+            // If export hash changed (or was missing), invalidate dependents
+            if old_hash != Some(new_hash) {
+                // Find all files that depend on this file and queue them for checking
+                if let Some(dependents) = c.reverse_dependencies.get(&file_path) {
+                    for dep_path in dependents {
+                        if let Some(&dep_idx) = canonical_to_file_idx.get(dep_path) {
+                            // Only add if not already checked (prevent infinite loops)
+                            if checked_files.insert(dep_idx) {
+                                work_queue.push_back(dep_idx);
+                                // Remove stale cache entries for the dependent
+                                c.type_caches.remove(dep_path);
+                                c.diagnostics.remove(dep_path);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // No cache available, collect diagnostics directly
+            diagnostics.extend(file_diagnostics);
+        }
+    }
+
+    // Collect diagnostics from cache for all files
+    // This includes both checked files (now in cache) and unchecked files (cached from previous run)
+    if let Some(c) = cache.as_deref() {
+        for file in &program.files {
+            let file_path = PathBuf::from(&file.file_name);
+            if let Some(cached_diags) = c.diagnostics.get(&file_path) {
+                diagnostics.extend(cached_diags.clone());
+            }
         }
     }
 
