@@ -2,7 +2,7 @@
 
 **Date**: February 2, 2025
 **Issue**: #11 - Visitor Pattern Enforcement
-**Status**: ✅ 3 OF 4 FILES COMPLETE
+**Status**: ✅ 3 FILES COMPLETE, 1 FILE IN PROGRESS
 
 ---
 
@@ -74,9 +74,48 @@ Refactored completely to use visitor pattern:
 
 ---
 
+## Work In Progress
+
+### 4. src/solver/contextual.rs (PARTIAL) 🔄
+**Commit**: `29ee333cd`
+**Status**: 2 of 11 methods refactored
+
+**Created Visitor Structs:**
+- `ThisTypeExtractor` - Extracts this types from callable types
+- `ReturnTypeExtractor` - Extracts return types from callable types
+
+**Refactored Methods:**
+- `get_this_type` - Now uses ThisTypeExtractor
+- `get_return_type` - Now uses ReturnTypeExtractor
+
+**Remaining Methods:**
+- `get_parameter_type` - Lines 60-105
+- `get_parameter_type_for_call` - Lines 108-151
+- `get_array_element_type` - Lines 237-254
+- `get_tuple_element_type` - Lines 257-275
+- `get_property_type` - Lines 283-317
+- `get_generator_yield_type` - Lines 551-585
+- `get_generator_return_type` - Lines 590-624
+- `get_generator_next_type` - Lines 630-664
+- GeneratorContextualType methods - Lines 785-959
+
+**Pattern Proven:**
+- Explicit Union handling (collects results from all members)
+- Explicit Application handling (unwraps to base type)
+- Multi-signature support (unions results from all overload signatures)
+- All tests passing (7826)
+
+**Next Steps:**
+- Continue with remaining methods using same pattern
+- Create ParameterExtractor visitor for get_parameter_type*
+- Create PropertyExtractor visitor for get_property_type
+- Handle generator methods with specialized visitors
+
+---
+
 ## Remaining Work
 
-### 4. src/solver/contextual.rs (55 TypeKey refs) 🔄
+### src/solver/contextual.rs (completion)
 **Complexity:** HIGH
 **Reason for deferral:** Large file (1034 lines) with complex recursive patterns
 
@@ -274,8 +313,14 @@ fn visit_union(&mut self, list_id: u32) -> Self::Output {
 - [x] index_signatures.rs - COMPLETE (Commit: 83ca43479)
 - [x] binary_ops.rs - COMPLETE (Commit: 8239e483c)
 - [x] compat.rs - COMPLETE (Commit: 915d2c3bb)
-- [ ] contextual.rs - PENDING (55 TypeKey refs, high complexity)
+- [~] contextual.rs - IN PROGRESS (Commit: 29ee333cd, 2 of 11 methods done)
 - [ ] Any other files with TypeKey violations - PENDING
+
+**Progress Summary:**
+- 3 files completely refactored
+- 1 file partially refactored (contextual.rs: 18% complete, 2/11 methods)
+- Total TypeKey refs eliminated: ~104 out of ~159 (65%)
+- All 7826 tests passing throughout
 
 ---
 
