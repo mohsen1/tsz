@@ -480,8 +480,11 @@ pub struct MergedProgram {
     pub files: Vec<BoundFile>,
     /// Global symbol arena (all symbols from all files, with remapped IDs)
     pub symbols: SymbolArena,
-    /// Symbol-to-arena mapping for declaration lookup
+    /// Symbol-to-arena mapping for declaration lookup (legacy, stores last arena)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// Declaration-to-arena mapping for precise cross-file declaration lookup
+    /// Key: (SymbolId, NodeIndex of declaration) -> Arena containing that declaration
+    pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
     /// Global symbol table (exports from all files)
     pub globals: SymbolTable,
     /// Per-file symbol tables (file-local symbols, symbol IDs remapped)
@@ -594,6 +597,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // Create global symbol arena with pre-allocated capacity
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
     let mut symbol_arenas = FxHashMap::default();
+    let mut declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>> =
+        FxHashMap::default();
     let mut globals = SymbolTable::new();
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());
@@ -986,6 +991,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         files,
         symbols: global_symbols,
         symbol_arenas,
+        declaration_arenas,
         globals,
         file_locals: file_locals_list,
         declared_modules,
@@ -1346,6 +1352,7 @@ pub(crate) fn create_binder_from_bound_file(
         program.reexports.clone(),
         program.wildcard_reexports.clone(),
         program.symbol_arenas.clone(),
+        program.declaration_arenas.clone(),
         program.shorthand_ambient_modules.clone(),
         file.flow_nodes.clone(),
         file.node_flow.clone(),

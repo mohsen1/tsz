@@ -1695,48 +1695,79 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
                 // Get the symbol's declaration(s)
                 if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
-                    // When lib binders are merged, symbol_arenas maps symbols to their
-                    // original arenas. The lib_ctx.arena might only be the first lib file's
-                    // arena, so declarations from other files won't be found.
-                    // Check symbol_arenas first, fall back to lib_ctx.arena.
-                    let arena_ref: &NodeArena = lib_ctx
+                    // Get the fallback arena (for symbols without declaration_arenas tracking)
+                    let fallback_arena: &NodeArena = lib_ctx
                         .binder
                         .symbol_arenas
                         .get(&sym_id)
                         .map(|arc| arc.as_ref())
                         .unwrap_or_else(|| lib_ctx.arena.as_ref());
 
+                    // Build declaration -> arena pairs using declaration_arenas
+                    // This is critical for merged interfaces like Array which have
+                    // declarations in es5.d.ts, es2015.d.ts, etc.
+                    let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
+                        .declarations
+                        .iter()
+                        .map(|&decl_idx| {
+                            let arena = lib_ctx
+                                .binder
+                                .declaration_arenas
+                                .get(&(sym_id, decl_idx))
+                                .map(|arc| arc.as_ref())
+                                .unwrap_or(fallback_arena);
+                            (decl_idx, arena)
+                        })
+                        .collect();
+
+                    // Create resolver that can look up names across all lib contexts
                     let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                        // Get the identifier name from the node
-                        let ident_name = arena_ref.get_identifier_text(node_idx)?;
+                        // For merged declarations, we need to check the arena for this specific node
+                        // Try to find the identifier text from each arena in decls_with_arenas
+                        for (_, arena) in &decls_with_arenas {
+                            if let Some(ident_name) = arena.get_identifier_text(node_idx) {
+                                // Skip built-in types that have special handling in TypeLowering
+                                if is_compiler_managed_type(ident_name) {
+                                    return None;
+                                }
 
-                        // Skip built-in types that have special handling in TypeLowering
-                        if is_compiler_managed_type(ident_name) {
-                            return None;
+                                // Look up the symbol in all lib contexts' file_locals
+                                for ctx in &lib_contexts {
+                                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                                        return Some(found_sym.0);
+                                    }
+                                }
+                                break;
+                            }
                         }
-
-                        // Look up the symbol in all lib contexts' file_locals
-                        for ctx in &lib_contexts {
-                            if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-                                return Some(found_sym.0);
+                        // Also try fallback arena
+                        if let Some(ident_name) = fallback_arena.get_identifier_text(node_idx) {
+                            if is_compiler_managed_type(ident_name) {
+                                return None;
+                            }
+                            for ctx in &lib_contexts {
+                                if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                                    return Some(found_sym.0);
+                                }
                             }
                         }
                         None
                     };
 
-                    // Lower the type from the correct arena with the resolver
+                    // Create base lowering with the fallback arena and resolver
                     let lowering = TypeLowering::with_resolver(
-                        arena_ref,
+                        fallback_arena,
                         self.ctx.types,
                         &resolver,
                     );
-                    
+
                     // Try to lower as interface first (handles declaration merging)
                     if !symbol.declarations.is_empty() {
+                        // Use lower_merged_interface_declarations for proper multi-arena support
                         let (ty, params) =
-                            lowering.lower_interface_declarations_with_params(&symbol.declarations);
+                            lowering.lower_merged_interface_declarations(&decls_with_arenas);
 
-                        // If lower_interface_declarations succeeded (not ERROR), use the result
+                        // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
                             // For the first definition, record canonical type parameter TypeIds
                             if !first_params_set && !params.is_empty() {
@@ -1767,14 +1798,15 @@ impl<'a> CheckerState<'a> {
                             }
                             continue;
                         }
-                        
+
                         // Interface lowering returned ERROR - try as type alias
                         // Type aliases like Partial<T>, Pick<T,K>, Record<K,T> have their
                         // declaration in symbol.declarations but are not interface nodes
-                        for &decl_idx in &symbol.declarations {
-                            if let Some(node) = arena_ref.get(decl_idx) {
-                                if let Some(alias) = arena_ref.get_type_alias(node) {
-                                    let ty = lowering.lower_type_alias_declaration(alias);
+                        for (decl_idx, decl_arena) in &decls_with_arenas {
+                            if let Some(node) = decl_arena.get(*decl_idx) {
+                                if let Some(alias) = decl_arena.get_type_alias(node) {
+                                    let alias_lowering = lowering.with_arena(decl_arena);
+                                    let ty = alias_lowering.lower_type_alias_declaration(alias);
                                     if ty != TypeId::ERROR {
                                         lib_types.push(ty);
                                         // Type aliases don't merge across files, take the first one
@@ -1787,11 +1819,19 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                     }
-                    
+
                     // For value declarations (vars, consts, functions)
                     let decl_idx = symbol.value_declaration;
                     if decl_idx.0 != u32::MAX {
-                        lib_types.push(lowering.lower_type(decl_idx));
+                        // Get the correct arena for the value declaration
+                        let value_arena = lib_ctx
+                            .binder
+                            .declaration_arenas
+                            .get(&(sym_id, decl_idx))
+                            .map(|arc| arc.as_ref())
+                            .unwrap_or(fallback_arena);
+                        let value_lowering = lowering.with_arena(value_arena);
+                        lib_types.push(value_lowering.lower_type(decl_idx));
                         break;
                     }
                 }

@@ -2055,6 +2055,7 @@ fn create_binder_from_bound_file(
         program.reexports.clone(),
         program.wildcard_reexports.clone(),
         program.symbol_arenas.clone(),
+        program.declaration_arenas.clone(),
         program.shorthand_ambient_modules.clone(),
         file.flow_nodes.clone(),
         file.node_flow.clone(),

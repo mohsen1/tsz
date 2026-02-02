@@ -3195,7 +3195,8 @@ impl Server {
     ) -> Vec<wasm::checker::types::diagnostics::Diagnostic> {
         let options = CheckOptions::default();
 
-        // Use unified lib loading for proper cross-lib symbol resolution
+        // Use unified lib loading for proper cross-lib symbol resolution.
+        // The unified binder has declaration_arenas tracking each declaration's source arena.
         let lib_files = match if options.no_lib {
             Ok(vec![])
         } else {
@@ -3288,7 +3289,8 @@ impl Server {
         files: HashMap<String, String>,
         options: CheckOptions,
     ) -> Result<Vec<i32>> {
-        // Use unified lib loading for proper cross-lib symbol resolution
+        // Use unified lib loading for proper cross-lib symbol resolution.
+        // The unified binder has declaration_arenas tracking each declaration's source arena.
         let lib_files = if options.no_lib {
             vec![]
         } else {

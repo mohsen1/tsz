@@ -55,8 +55,12 @@ pub struct BinderState {
     pub(crate) current_scope_idx: usize,
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
-    /// Symbol-to-arena mapping for cross-file declaration lookup
+    /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// Declaration-to-arena mapping for precise cross-file declaration lookup
+    /// Key: (SymbolId, NodeIndex of declaration) -> Arena containing that declaration
+    /// This is needed when a symbol (like Array) is declared across multiple lib files
+    pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     /// Used by the checker for control flow analysis (type narrowing)
     pub node_flow: FxHashMap<u32, FlowNodeId>,
@@ -185,6 +189,7 @@ impl BinderState {
             current_scope_idx: 0,
             node_symbols: FxHashMap::default(),
             symbol_arenas: FxHashMap::default(),
+            declaration_arenas: FxHashMap::default(),
             node_flow: FxHashMap::default(),
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
@@ -224,6 +229,7 @@ impl BinderState {
         self.current_scope_idx = 0;
         self.node_symbols.clear();
         self.symbol_arenas.clear();
+        self.declaration_arenas.clear();
         self.node_flow.clear();
         self.top_level_flow.clear();
         self.switch_clause_to_switch.clear();
@@ -260,6 +266,29 @@ impl BinderState {
         self.debugger.get_summary()
     }
 
+    /// Get the arena for a specific declaration of a symbol.
+    ///
+    /// For symbols that are declared across multiple lib files (e.g., `Array` which is
+    /// declared in es5.d.ts, es2015.core.d.ts, etc.), each declaration may be in a
+    /// different arena. This method returns the correct arena for a specific declaration.
+    ///
+    /// Falls back to `symbol_arenas` (which stores the last arena for the symbol) if
+    /// no specific declaration arena is found.
+    ///
+    /// Returns `None` if no arena is found for this symbol/declaration.
+    pub fn get_arena_for_declaration(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+    ) -> Option<&Arc<NodeArena>> {
+        // First try the precise declaration-to-arena mapping
+        if let Some(arena) = self.declaration_arenas.get(&(sym_id, decl_idx)) {
+            return Some(arena);
+        }
+        // Fall back to symbol-level arena (for backwards compatibility and non-merged symbols)
+        self.symbol_arenas.get(&sym_id)
+    }
+
     /// Create a BinderState from pre-parsed lib data.
     ///
     /// This is used for loading pre-parsed lib files where we only have
@@ -294,6 +323,7 @@ impl BinderState {
             current_scope_idx: 0,
             node_symbols,
             symbol_arenas: FxHashMap::default(),
+            declaration_arenas: FxHashMap::default(),
             node_flow: FxHashMap::default(),
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
@@ -333,14 +363,15 @@ impl BinderState {
             node_symbols,
             scopes,
             node_scope_ids,
-            FxHashMap::default(),
-            FxHashMap::default(),
-            FxHashMap::default(),
-            FxHashMap::default(),
-            FxHashMap::default(),
-            FxHashSet::default(),
+            FxHashMap::default(), // global_augmentations
+            FxHashMap::default(), // module_exports
+            FxHashMap::default(), // reexports
+            FxHashMap::default(), // wildcard_reexports
+            FxHashMap::default(), // symbol_arenas
+            FxHashMap::default(), // declaration_arenas
+            FxHashSet::default(), // shorthand_ambient_modules
             FlowNodeArena::new(),
-            FxHashMap::default(),
+            FxHashMap::default(), // node_flow
         )
     }
 
@@ -360,6 +391,7 @@ impl BinderState {
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
         wildcard_reexports: FxHashMap<String, Vec<String>>,
         symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+        declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
         shorthand_ambient_modules: FxHashSet<String>,
         flow_nodes: FlowNodeArena,
         node_flow: FxHashMap<u32, FlowNodeId>,
@@ -384,6 +416,7 @@ impl BinderState {
             current_scope_idx: 0,
             node_symbols,
             symbol_arenas,
+            declaration_arenas,
             node_flow,
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
@@ -908,9 +941,12 @@ impl BinderState {
                             // Merge: reuse existing symbol ID, merge declarations
                             if let Some(existing_mut) = self.symbols.get_mut(existing_id) {
                                 existing_mut.flags |= lib_sym.flags;
-                                for decl in &lib_sym.declarations {
-                                    if !existing_mut.declarations.contains(decl) {
-                                        existing_mut.declarations.push(*decl);
+                                for &decl in &lib_sym.declarations {
+                                    if !existing_mut.declarations.contains(&decl) {
+                                        existing_mut.declarations.push(decl);
+                                        // Track which arena this specific declaration belongs to
+                                        self.declaration_arenas
+                                            .insert((existing_id, decl), Arc::clone(&lib_ctx.arena));
                                     }
                                 }
                                 // Update value_declaration if not set
@@ -925,25 +961,40 @@ impl BinderState {
                             // Cannot merge - allocate new (shadowing)
                             let new_id = self.symbols.alloc_from(lib_sym);
                             merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
+                            // Track declaration arenas for new symbol
+                            for &decl in &lib_sym.declarations {
+                                self.declaration_arenas
+                                    .insert((new_id, decl), Arc::clone(&lib_ctx.arena));
+                            }
                             new_id
                         }
                     } else {
                         // Shouldn't happen - allocate new
                         let new_id = self.symbols.alloc_from(lib_sym);
                         merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
+                        // Track declaration arenas for new symbol
+                        for &decl in &lib_sym.declarations {
+                            self.declaration_arenas
+                                .insert((new_id, decl), Arc::clone(&lib_ctx.arena));
+                        }
                         new_id
                     }
                 } else {
                     // New symbol - allocate in local arena
                     let new_id = self.symbols.alloc_from(lib_sym);
                     merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
+                    // Track declaration arenas for new symbol
+                    for &decl in &lib_sym.declarations {
+                        self.declaration_arenas
+                            .insert((new_id, decl), Arc::clone(&lib_ctx.arena));
+                    }
                     new_id
                 };
 
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), new_id);
 
-                // Track which arena contains this symbol's declarations
+                // Track which arena contains this symbol's declarations (legacy - stores last arena)
                 self.symbol_arenas
                     .insert(new_id, Arc::clone(&lib_ctx.arena));
             }
