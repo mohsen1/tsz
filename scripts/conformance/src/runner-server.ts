@@ -253,9 +253,9 @@ async function withTimeout<T>(
   }
 }
 
-// Dynamic timeout: starts at 500ms, adapts to 10x average test time
-const INITIAL_TIMEOUT_MS = 200;   // Start with 200ms - most tests complete in <20ms
-const MIN_TIMEOUT_MS = 200;       // Never go below 200ms
+// Dynamic timeout: starts at 400ms, adapts to 10x average test time
+const INITIAL_TIMEOUT_MS = 400;   // Start with 400ms - account for cold worker cache rebuilds
+const MIN_TIMEOUT_MS = 400;       // Never go below 400ms
 const MAX_TIMEOUT_MS = 60000;
 const TIMEOUT_MULTIPLIER = 10;
 
