@@ -3530,12 +3530,12 @@ fn test_two_phase_emission_es5_for_of_statement() {
 
     let output = printer.get_output();
     assert!(
-        output.contains("_i < _a.length"),
+        output.contains("_i < arr_1.length"),
         "ES5 output should downlevel for-of with array indexing: {}",
         output
     );
     assert!(
-        output.contains("var v = _a[_i]"),
+        output.contains("var v = arr_1[_i]"),
         "ES5 output should bind loop variable from array: {}",
         output
     );
