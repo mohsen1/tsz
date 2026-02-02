@@ -107,6 +107,9 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     checker: &'a mut C,
     defaulted_placeholders: FxHashSet<TypeId>,
     force_bivariant_callbacks: bool,
+    /// Contextual type for the call expression's expected result
+    /// Used for contextual type inference in generic functions
+    contextual_type: Option<TypeId>,
     /// Current recursion depth for constrain_types to prevent infinite loops
     constraint_recursion_depth: RefCell<usize>,
     /// Visited (source, target) pairs during constraint collection.
@@ -120,9 +123,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             checker,
             defaulted_placeholders: FxHashSet::default(),
             force_bivariant_callbacks: false,
+            contextual_type: None,
             constraint_recursion_depth: RefCell::new(0),
             constraint_pairs: RefCell::new(FxHashSet::default()),
         }
+    }
+
+    /// Set the contextual type for this call evaluation.
+    /// This is used for contextual type inference when the expected return type
+    /// can help constrain generic type parameters.
+    /// Example: `let x: string = id(42)` should infer `T = string` from the context.
+    pub fn set_contextual_type(&mut self, ctx_type: Option<TypeId>) {
+        self.contextual_type = ctx_type;
     }
 
     pub fn set_force_bivariant_callbacks(&mut self, enabled: bool) {
@@ -552,6 +564,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
             self.constrain_types(&mut infer_ctx, &var_map, tuple_type, target_type);
+        }
+
+        // 3.5. Apply contextual type constraint to return type
+        // This enables inference from the expected type: `let x: string = id(...)` should infer T = string
+        if let Some(ctx_type) = self.contextual_type {
+            let return_type_with_placeholders = instantiate_type(self.interner, func.return_type, &substitution);
+            // ctx_type <: return_type (expected type constrains the return type)
+            // This allows inference variables in the return type to be constrained by the context
+            self.constrain_types(&mut infer_ctx, &var_map, ctx_type, return_type_with_placeholders);
         }
 
         // 4. Resolve inference variables
