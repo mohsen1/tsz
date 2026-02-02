@@ -3327,15 +3327,6 @@ impl Server {
             parse_errors: Vec<i32>,
         }
 
-        // Convert lib_contexts to binder::LibContext once for all files
-        let binder_lib_contexts: Vec<wasm::binder::LibContext> = lib_contexts
-            .iter()
-            .map(|lc| wasm::binder::LibContext {
-                arena: lc.arena.clone(),
-                binder: lc.binder.clone(),
-            })
-            .collect();
-
         // CRITICAL PERFORMANCE FIX: Reuse unified binder's lib symbols ONCE
         // instead of merging thousands of symbols for every file in the loop.
         // The unified lib binder already has all lib symbols merged - we copy its
@@ -3471,16 +3462,6 @@ impl Server {
         Ok(all_codes)
     }
 
-    fn load_libs(&mut self, options: &CheckOptions) -> Result<Vec<Arc<LibFile>>> {
-        let lib_names = self.determine_libs(options);
-        let mut result = Vec::new();
-        let mut loaded = rustc_hash::FxHashSet::default();
-        for lib_name in lib_names {
-            self.load_lib_recursive(&lib_name, &mut result, &mut loaded)?;
-        }
-        Ok(result)
-    }
-
     /// Load libs with unified symbol merging.
     ///
     /// This method implements **cumulative binding** to solve cross-lib symbol resolution:
@@ -3550,54 +3531,6 @@ impl Server {
         self.unified_lib_cache = Some((lib_names, unified_lib.clone()));
 
         Ok(vec![unified_lib])
-    }
-
-    /// Recursively collect lib files in dependency order (parse only, no binding).
-    fn collect_lib_files_recursive(
-        &mut self,
-        lib_name: &str,
-        result: &mut Vec<(String, wasm::parser::ParserState, wasm::parser::NodeIndex)>,
-        loaded: &mut rustc_hash::FxHashSet<String>,
-    ) -> Result<()> {
-        let aliased = Self::normalize_lib_alias(lib_name);
-        let normalized = aliased.trim().to_lowercase();
-        if loaded.contains(&normalized) {
-            return Ok(());
-        }
-        loaded.insert(normalized.clone());
-
-        let candidates = [
-            self.lib_dir.join(format!("{}.d.ts", normalized)),
-            self.lib_dir.join(format!("lib.{}.d.ts", normalized)),
-            self.tests_lib_dir.join(format!("{}.d.ts", normalized)),
-        ];
-
-        for candidate in &candidates {
-            if candidate.exists() {
-                let content = std::fs::read_to_string(candidate)
-                    .with_context(|| format!("failed to read lib file: {}", candidate.display()))?;
-
-                // First, recursively load dependencies
-                let references = Self::parse_lib_references(&content);
-                for ref_lib in &references {
-                    self.collect_lib_files_recursive(ref_lib, result, loaded)?;
-                }
-
-                // Parse this lib file (don't bind yet)
-                let file_name = candidate
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| format!("lib.{}.d.ts", normalized));
-                let mut parser = wasm::parser::ParserState::new(file_name.clone(), content);
-                let root_idx = parser.parse_source_file();
-
-                // Add to result in dependency order
-                result.push((file_name, parser, root_idx));
-                return Ok(());
-            }
-        }
-
-        Ok(())
     }
 
     /// Normalize lib name aliases to their canonical form.
