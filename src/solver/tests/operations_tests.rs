@@ -4441,7 +4441,6 @@ fn test_infer_generic_number_index_from_numeric_property() {
 }
 
 #[test]
-#[ignore = "Generic number index ignoring noncanonical numeric properties not fully implemented"]
 fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -4492,7 +4491,6 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
 }
 
 #[test]
-#[ignore = "Generic number index ignoring negative zero property not fully implemented"]
 fn test_infer_generic_number_index_ignores_negative_zero_property() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
