@@ -2,7 +2,7 @@
 
 **Date**: February 2, 2025
 **Issue**: #11 - Visitor Pattern Enforcement
-**Status**: ✅ 2 OF 4 FILES COMPLETE
+**Status**: ✅ 3 OF 4 FILES COMPLETE
 
 ---
 
@@ -48,11 +48,35 @@ Refactored completely to use visitor pattern:
 
 **Test Results:** All 7826 tests passing (no regressions)
 
+### 3. src/solver/compat.rs ✅
+**Commit**: `915d2c3bb`
+
+Refactored completely to use visitor pattern:
+
+**Created Visitor Structs:**
+- `ShapeExtractor` - Extracts object shape ID from Object/ObjectWithIndex types
+
+**Refactored Functions:**
+- `violates_weak_type` - Weak type violation checking
+- `violates_weak_union` - Weak union violation checking
+- `violates_weak_type_with_target_props` - Helper for weak type checking
+- `source_lacks_union_common_property` - Union property overlap checking
+- `get_private_brand` - Private brand extraction
+- `is_assignable_to_empty_object` - Empty object assignability
+
+**Impact:**
+- Replaced 124 lines of manual TypeKey matches with visitor pattern
+- All weak type checking now uses type-safe visitor dispatch
+- Preserved explicit Union/TypeParameter/Callable handling before visitor
+- ShapeExtractor visitor is reusable across multiple functions
+
+**Test Results:** All 7826 tests passing (no regressions)
+
 ---
 
 ## Remaining Work
 
-### 3. src/solver/contextual.rs (55 TypeKey refs) 🔄
+### 4. src/solver/contextual.rs (55 TypeKey refs) 🔄
 **Complexity:** HIGH
 **Reason for deferral:** Large file (1034 lines) with complex recursive patterns
 
@@ -211,7 +235,7 @@ fn visit_union(&mut self, list_id: u32) -> Self::Output {
 
 ### Immediate Next Steps
 
-1. **Continue with compat.rs**: Next simplest file with 16 TypeKey refs (medium complexity)
+1. **Tackle contextual.rs**: Last remaining file with 55 TypeKey refs (high complexity)
 2. **Create incremental PRs**: One file at a time with thorough testing
 3. **Document patterns**: Use this file as reference for future refactorings
 
@@ -249,7 +273,7 @@ fn visit_union(&mut self, list_id: u32) -> Self::Output {
 
 - [x] index_signatures.rs - COMPLETE (Commit: 83ca43479)
 - [x] binary_ops.rs - COMPLETE (Commit: 8239e483c)
-- [ ] compat.rs - PENDING (16 TypeKey refs, medium complexity)
+- [x] compat.rs - COMPLETE (Commit: 915d2c3bb)
 - [ ] contextual.rs - PENDING (55 TypeKey refs, high complexity)
 - [ ] Any other files with TypeKey violations - PENDING
 
