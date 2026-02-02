@@ -19,6 +19,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tracing::{Level, debug, span};
 
+const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
+
 /// Lib file context for global type resolution.
 /// This mirrors the definition in checker::context to avoid circular dependencies.
 #[derive(Clone)]
@@ -539,6 +541,167 @@ impl BinderState {
         );
 
         None
+    }
+
+    /// Resolve an identifier by walking scopes and invoking a filter callback on candidates.
+    ///
+    /// This keeps scope traversal in the binder while allowing callers (checker) to
+    /// apply contextual filtering (e.g., value-only vs type-only, class member filtering).
+    pub fn resolve_identifier_with_filter<F>(
+        &self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        lib_binders: &[Arc<BinderState>],
+        mut accept: F,
+    ) -> Option<SymbolId>
+    where
+        F: FnMut(SymbolId) -> bool,
+    {
+        let node = arena.get(node_idx)?;
+        let name = if let Some(ident) = arena.get_identifier(node) {
+            ident.escaped_text.as_str()
+        } else {
+            return None;
+        };
+
+        let mut consider = |sym_id: SymbolId| -> Option<SymbolId> {
+            if accept(sym_id) {
+                Some(sym_id)
+            } else {
+                None
+            }
+        };
+
+        if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
+            let mut iterations = 0;
+            while !scope_id.is_none() {
+                iterations += 1;
+                if iterations > MAX_SCOPE_WALK_ITERATIONS {
+                    break;
+                }
+                let Some(scope) = self.scopes.get(scope_id.0 as usize) else {
+                    break;
+                };
+
+                if let Some(sym_id) = scope.table.get(name) {
+                    if let Some(found) = consider(sym_id) {
+                        return Some(found);
+                    }
+                }
+
+                if scope.kind == ContainerKind::Module {
+                    if let Some(container_sym_id) = self.get_node_symbol(scope.container_node) {
+                        if let Some(container_symbol) =
+                            self.get_symbol_with_libs(container_sym_id, lib_binders)
+                        {
+                            if let Some(exports) = container_symbol.exports.as_ref() {
+                                if let Some(member_id) = exports.get(name) {
+                                    if let Some(found) = consider(member_id) {
+                                        return Some(found);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                scope_id = scope.parent;
+            }
+        }
+
+        if let Some(sym_id) = self.file_locals.get(name) {
+            if let Some(found) = consider(sym_id) {
+                return Some(found);
+            }
+        }
+
+        if !self.lib_symbols_merged {
+            for lib_binder in lib_binders {
+                if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                    if let Some(found) = consider(sym_id) {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Collect visible symbol names for diagnostics and suggestions.
+    pub fn collect_visible_symbol_names(
+        &self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> Vec<String> {
+        let mut names = FxHashSet::default();
+
+        if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
+            let mut iterations = 0;
+            while !scope_id.is_none() {
+                iterations += 1;
+                if iterations > MAX_SCOPE_WALK_ITERATIONS {
+                    break;
+                }
+                let Some(scope) = self.scopes.get(scope_id.0 as usize) else {
+                    break;
+                };
+                for (symbol_name, _) in scope.table.iter() {
+                    names.insert(symbol_name.clone());
+                }
+                scope_id = scope.parent;
+            }
+        }
+
+        for (symbol_name, _) in self.file_locals.iter() {
+            names.insert(symbol_name.clone());
+        }
+
+        names.into_iter().collect()
+    }
+
+    /// Resolve private identifiers (#foo) across class scopes.
+    ///
+    /// Returns (symbols_found, saw_class_scope).
+    pub fn resolve_private_identifier_symbols(
+        &self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> (Vec<SymbolId>, bool) {
+        let node = match arena.get(node_idx) {
+            Some(node) => node,
+            None => return (Vec::new(), false),
+        };
+        let name = match arena.get_identifier(node) {
+            Some(ident) => ident.escaped_text.as_str(),
+            None => return (Vec::new(), false),
+        };
+
+        let mut symbols = Vec::new();
+        let mut saw_class_scope = false;
+        let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) else {
+            return (symbols, saw_class_scope);
+        };
+
+        let mut iterations = 0;
+        while !scope_id.is_none() {
+            iterations += 1;
+            if iterations > MAX_SCOPE_WALK_ITERATIONS {
+                break;
+            }
+            let Some(scope) = self.scopes.get(scope_id.0 as usize) else {
+                break;
+            };
+            if scope.kind == ContainerKind::Class {
+                saw_class_scope = true;
+            }
+            if let Some(sym_id) = scope.table.get(name) {
+                symbols.push(sym_id);
+            }
+            scope_id = scope.parent;
+        }
+
+        (symbols, saw_class_scope)
     }
 
     pub(crate) fn resolve_parameter_fallback(

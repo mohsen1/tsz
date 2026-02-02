@@ -995,50 +995,17 @@ impl<'a> CheckerState<'a> {
     ) -> Option<Vec<String>> {
         let mut suggestions = Vec::new();
 
-        // Collect all visible symbols in the current scope chain
-        if let Some(scope_id) = self.find_enclosing_scope(idx) {
-            let mut current_scope = scope_id;
-            let mut visited_scopes = std::collections::HashSet::new();
-
-            while !current_scope.is_none() {
-                if visited_scopes.contains(&current_scope) {
-                    break; // Prevent infinite loops
-                }
-                visited_scopes.insert(current_scope);
-
-                if let Some(scope) = self.ctx.binder.scopes.get(current_scope.0 as usize) {
-                    // Check all symbols in this scope
-                    for (symbol_name, _sym_id) in scope.table.iter() {
-                        if symbol_name != name {
-                            let similarity = self.calculate_string_similarity(name, symbol_name);
-                            // Use a high threshold (0.85) to match TypeScript's conservative suggestions
-                            // TypeScript only suggests names that are very similar (case changes, typos)
-                            if similarity > 0.85 {
-                                suggestions.push((symbol_name.clone(), similarity));
-                            }
-                        }
-                    }
-                }
-
-                // Move to parent scope
-                if let Some(scope) = self.ctx.binder.scopes.get(current_scope.0 as usize) {
-                    current_scope = scope.parent;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // Also check file-level symbols
-        for (symbol_name, _sym_id) in self.ctx.binder.file_locals.iter() {
+        let visible_names = self
+            .ctx
+            .binder
+            .collect_visible_symbol_names(self.ctx.arena, idx);
+        for symbol_name in visible_names {
             if symbol_name != name {
-                let similarity = self.calculate_string_similarity(name, symbol_name);
+                let similarity = self.calculate_string_similarity(name, &symbol_name);
                 // Use a high threshold (0.85) to match TypeScript's conservative suggestions
+                // TypeScript only suggests names that are very similar (case changes, typos)
                 if similarity > 0.85 {
-                    // Avoid duplicates
-                    if !suggestions.iter().any(|(n, _)| n == symbol_name) {
-                        suggestions.push((symbol_name.clone(), similarity));
-                    }
+                    suggestions.push((symbol_name, similarity));
                 }
             }
         }

@@ -22,14 +22,13 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::binder::symbol_flags::CLASS;
-use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
+use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 use std::sync::Arc;
-use tracing::trace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypeSymbolResolution {
@@ -266,38 +265,6 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Find the enclosing scope for a node by walking up the parent chain.
-    /// Returns the first scope ID found in the binder's node_scope_ids map.
-    pub(crate) fn find_enclosing_scope(&self, node_idx: NodeIndex) -> Option<ScopeId> {
-        let mut current = node_idx;
-        let mut iterations = 0;
-        while !current.is_none() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                // Safety limit reached - break to prevent infinite loop
-                break;
-            }
-            if let Some(&scope_id) = self.ctx.binder.node_scope_ids.get(&current.0) {
-                return Some(scope_id);
-            }
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                current = ext.parent;
-            } else {
-                break;
-            }
-        }
-
-        // Fall back to ScopeId(0) if it's the global/file scope.
-        // Both SourceFile (non-module scripts) and Module (files with imports/exports)
-        // are valid root scopes for name resolution fallback.
-        if let Some(scope) = self.ctx.binder.scopes.first() {
-            if scope.kind == ContainerKind::Module || scope.kind == ContainerKind::SourceFile {
-                return Some(ScopeId(0));
-            }
-        }
-        None
-    }
-
     /// Resolve an identifier node to its symbol ID.
     ///
     /// This function walks the scope chain from the identifier's location upward,
@@ -317,483 +284,34 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_identifier_symbol_inner(&self, idx: NodeIndex) -> Option<SymbolId> {
-        let node = self.ctx.arena.get(idx)?;
-        let name = self.ctx.arena.get_identifier(node)?.escaped_text.as_str();
-
         let ignore_libs = !self.ctx.has_lib_loaded();
-        // Collect lib binders for cross-arena symbol lookup
         let lib_binders = if ignore_libs {
             Vec::new()
         } else {
             self.get_lib_binders()
         };
-        let should_skip_lib_symbol =
-            |sym_id: SymbolId| ignore_libs && self.ctx.symbol_is_from_lib(sym_id);
+        let is_from_lib = |sym_id: SymbolId| self.ctx.symbol_is_from_lib(sym_id);
+        let should_skip_lib_symbol = |sym_id: SymbolId| ignore_libs && is_from_lib(sym_id);
 
-        let debug = std::env::var("BIND_DEBUG").is_ok();
-
-        // === PHASE 0: Check type parameter scope (HIGHEST PRIORITY) ===
-        // Type parameters should be resolved before checking any other scope.
-        // This is critical for generic functions, classes, and type aliases.
-        if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
-            // Create a synthetic symbol ID for the type parameter
-            // Type parameters don't have SymbolId, so we use a special encoding
-            // The caller should handle this by using type_id directly
-            // For now, we skip this phase and let the caller handle type parameters via lookup_type_parameter
-            if debug {
-                trace!(
-                    name = %name,
-                    type_id = ?type_id,
-                    "[BIND_RESOLVE] Found in type_parameter_scope"
-                );
-            }
-            // NOTE: Type parameters are handled separately via lookup_type_parameter
-            // We don't return a SymbolId here because type parameters don't have them
-            // Fall through to check regular scopes
-        }
-
-        // === PHASE 1: Initial logging ===
-        if debug {
-            trace!("\n[BIND_RESOLVE] ========================================");
-            trace!(name = %name, idx = ?idx, "[BIND_RESOLVE] Looking up identifier");
-            trace!(
-                lib_contexts = self.ctx.lib_contexts.len(),
-                "[BIND_RESOLVE] Lib contexts available"
-            );
-            trace!(
-                lib_binders = lib_binders.len(),
-                "[BIND_RESOLVE] Lib binders collected"
-            );
-            trace!(
-                scopes = self.ctx.binder.scopes.len(),
-                "[BIND_RESOLVE] Total scopes in binder"
-            );
-            trace!(
-                file_locals = self.ctx.binder.file_locals.len(),
-                "[BIND_RESOLVE] file_locals size"
-            );
-        }
-
-        // === PHASE 2: Scope chain traversal (local -> parent -> ... -> module) ===
-        if let Some(mut scope_id) = self.find_enclosing_scope(idx) {
-            if debug {
-                trace!(scope_id = ?scope_id, "[BIND_RESOLVE] Starting scope chain");
-            }
-            let require_export = false;
-            let mut scope_depth = 0;
-            while !scope_id.is_none() {
-                scope_depth += 1;
-                // Safety limit to prevent infinite loops in malformed scope chains
-                if scope_depth > MAX_TREE_WALK_ITERATIONS {
-                    break;
+        self.ctx.binder.resolve_identifier_with_filter(
+            self.ctx.arena,
+            idx,
+            &lib_binders,
+            |sym_id| {
+                if should_skip_lib_symbol(sym_id) {
+                    return false;
                 }
-                if let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) {
-                    if debug {
-                        trace!(
-                            scope_depth,
-                            id = ?scope_id,
-                            kind = ?scope.kind,
-                            parent = ?scope.parent,
-                            table_size = scope.table.len(),
-                            "[BIND_RESOLVE] Scope"
-                        );
-                    }
-
-                    // Check scope's local symbol table
-                    if let Some(sym_id) = scope.table.get(name) {
-                        if should_skip_lib_symbol(sym_id) {
-                            if debug {
-                                trace!(
-                                    name = %name,
-                                    sym_id = ?sym_id,
-                                    "[BIND_RESOLVE] SKIPPED: lib symbol with noLib"
-                                );
-                            }
-                        } else {
-                            if debug {
-                                trace!(
-                                    name = %name,
-                                    sym_id = ?sym_id,
-                                    "[BIND_RESOLVE] Found in scope table"
-                                );
-                            }
-                            // Use get_symbol_with_libs to check lib binders
-                            if let Some(symbol) =
-                                self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                            {
-                                // Defensive: Ensure symbol fields are accessible before accessing flags
-                                let export_ok = !require_export
-                                    || scope.kind != ContainerKind::Module
-                                    || symbol.is_exported
-                                    || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
-                                let is_class_member = Self::is_class_member_symbol(symbol.flags);
-                                if debug {
-                                    trace!(
-                                        flags = format_args!("0x{:x}", symbol.flags),
-                                        "[BIND_RESOLVE] Symbol flags"
-                                    );
-                                    trace!(
-                                        is_exported = symbol.is_exported,
-                                        export_ok, is_class_member, "[BIND_RESOLVE] Symbol status"
-                                    );
-                                }
-                                if export_ok && !is_class_member {
-                                    if debug {
-                                        trace!(
-                                            sym_id = ?sym_id,
-                                            scope_id = ?scope_id,
-                                            "[BIND_RESOLVE] SUCCESS: Returning from scope"
-                                        );
-                                    }
-                                    return Some(sym_id);
-                                } else if debug {
-                                    trace!(
-                                        export_ok,
-                                        is_class_member,
-                                        "[BIND_RESOLVE] SKIPPED: export_ok or class_member"
-                                    );
-                                }
-                            } else if !require_export || scope.kind != ContainerKind::Module {
-                                if debug {
-                                    trace!(
-                                        name = %name,
-                                        scope_id = ?scope_id,
-                                        "[BIND_RESOLVE] SUCCESS: Found in scope (no symbol data)"
-                                    );
-                                }
-                                return Some(sym_id);
-                            } else if debug {
-                                trace!(
-                                    "[BIND_RESOLVE] SKIPPED: No symbol data and require_export or module scope"
-                                );
-                            }
-                        }
-                    }
-
-                    // Check module exports
-                    if scope.kind == ContainerKind::Module {
-                        if debug {
-                            trace!(
-                                container_node = ?scope.container_node,
-                                "[BIND_RESOLVE] Checking module exports"
-                            );
-                        }
-                        if let Some(container_sym_id) =
-                            self.ctx.binder.get_node_symbol(scope.container_node)
-                        {
-                            if debug {
-                                trace!(
-                                    container_sym_id = ?container_sym_id,
-                                    "[BIND_RESOLVE] Container symbol"
-                                );
-                            }
-                            if let Some(container_symbol) = self
-                                .ctx
-                                .binder
-                                .get_symbol_with_libs(container_sym_id, &lib_binders)
-                            {
-                                if let Some(exports) = container_symbol.exports.as_ref() {
-                                    if debug {
-                                        trace!(
-                                            exports_count = exports.len(),
-                                            "[BIND_RESOLVE] Module exports count"
-                                        );
-                                    }
-                                    if let Some(member_id) = exports.get(name) {
-                                        if should_skip_lib_symbol(member_id) {
-                                            if debug {
-                                                trace!(
-                                                    name = %name,
-                                                    member_id = ?member_id,
-                                                    "[BIND_RESOLVE] SKIPPED: lib symbol with noLib"
-                                                );
-                                            }
-                                        } else {
-                                            if debug {
-                                                trace!(
-                                                    name = %name,
-                                                    member_id = ?member_id,
-                                                    "[BIND_RESOLVE] Found in exports"
-                                                );
-                                            }
-                                            if let Some(member_symbol) = self
-                                                .ctx
-                                                .binder
-                                                .get_symbol_with_libs(member_id, &lib_binders)
-                                            {
-                                                // Defensive: Validate symbol before accessing flags
-                                                let is_class_member = Self::is_class_member_symbol(
-                                                    member_symbol.flags,
-                                                );
-                                                if debug {
-                                                    trace!(
-                                                        flags = format_args!(
-                                                            "0x{:x}",
-                                                            member_symbol.flags
-                                                        ),
-                                                        is_class_member,
-                                                        "[BIND_RESOLVE] Member flags"
-                                                    );
-                                                }
-                                                if !is_class_member {
-                                                    if debug {
-                                                        trace!(
-                                                            member_id = ?member_id,
-                                                            "[BIND_RESOLVE] SUCCESS: Returning from module exports"
-                                                        );
-                                                    }
-                                                    return Some(member_id);
-                                                }
-                                            } else {
-                                                if debug {
-                                                    trace!(
-                                                        name = %name,
-                                                        "[BIND_RESOLVE] SUCCESS: Found in module exports (no symbol data)"
-                                                    );
-                                                }
-                                                return Some(member_id);
-                                            }
-                                        }
-                                    }
-                                } else if debug {
-                                    trace!("[BIND_RESOLVE] Container has no exports");
-                                }
-                            } else if debug {
-                                trace!("[BIND_RESOLVE] Could not get container symbol data");
-                            }
-                        } else if debug {
-                            trace!("[BIND_RESOLVE] No container symbol for module");
-                        }
-                    }
-
-                    let parent_id = scope.parent;
-                    // Nested namespaces can reference non-exported parent members (TSC behavior).
-                    scope_id = parent_id;
-                } else {
-                    if debug {
-                        trace!(
-                            scope_depth,
-                            scope_id = ?scope_id,
-                            "[BIND_RESOLVE] INVALID scope_id - breaking"
-                        );
-                    }
-                    break;
-                }
-            }
-            if debug {
-                trace!(scope_depth, "[BIND_RESOLVE] Exhausted scope chain");
-            }
-        } else if debug {
-            trace!(idx = ?idx, "[BIND_RESOLVE] No enclosing scope found for node");
-        }
-
-        // === PHASE 3: Check file_locals (global scope from lib.d.ts) ===
-        if debug {
-            trace!(
-                file_locals_count = self.ctx.binder.file_locals.len(),
-                "[BIND_RESOLVE] Checking file_locals"
-            );
-        }
-
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-            if should_skip_lib_symbol(sym_id) {
-                if debug {
-                    trace!(
-                        name = %name,
-                        sym_id = ?sym_id,
-                        "[BIND_RESOLVE] SKIPPED: lib symbol with noLib"
-                    );
-                }
-            } else {
-                if debug {
-                    trace!(
-                        name = %name,
-                        sym_id = ?sym_id,
-                        "[BIND_RESOLVE] Found in file_locals"
-                    );
-                }
-                // Use get_symbol_with_libs to check lib binders
-                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                {
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
-                    if debug {
-                        trace!(
-                            flags = format_args!("0x{:x}", symbol.flags),
-                            is_class_member, "[BIND_RESOLVE] Symbol flags"
-                        );
-                    }
-                    if !is_class_member {
-                        if debug {
-                            trace!(
-                                sym_id = ?sym_id,
-                                "[BIND_RESOLVE] SUCCESS: Returning from file_locals"
-                            );
-                        }
-                        return Some(sym_id);
-                    } else if debug {
-                        trace!("[BIND_RESOLVE] SKIPPED: is_class_member");
-                    }
-                } else {
-                    if debug {
-                        trace!(
-                            name = %name,
-                            "[BIND_RESOLVE] SUCCESS: Found in file_locals (no symbol data)"
-                        );
-                    }
-                    return Some(sym_id);
-                }
-            }
-        }
-
-        // === PHASE 4: Check lib binders' file_locals directly ===
-        // Skip this phase if lib symbols are merged - they're all in file_locals already
-        // with unique remapped IDs (no collision risk).
-        let skip_lib_binder_scan = self.ctx.binder.lib_symbols_are_merged();
-        if debug {
-            trace!(
-                lib_binders_count = lib_binders.len(),
-                skip_lib_binder_scan, "[BIND_RESOLVE] Checking lib binders' file_locals"
-            );
-        }
-        if !skip_lib_binder_scan {
-            for (i, lib_binder) in lib_binders.iter().enumerate() {
-                if debug {
-                    trace!(
-                        lib_index = i,
-                        file_locals_size = lib_binder.file_locals.len(),
-                        "[BIND_RESOLVE] Lib binder file_locals"
-                    );
-                }
-                if let Some(sym_id) = lib_binder.file_locals.get(name) {
-                    if should_skip_lib_symbol(sym_id) {
-                        if debug {
-                            trace!(
-                                name = %name,
-                                lib_index = i,
-                                sym_id = ?sym_id,
-                                "[BIND_RESOLVE] SKIPPED: lib symbol with noLib"
-                            );
-                        }
-                        continue;
-                    }
-                    if debug {
-                        trace!(
-                            name = %name,
-                            lib_index = i,
-                            sym_id = ?sym_id,
-                            "[BIND_RESOLVE] Found in lib binder"
-                        );
-                    }
-
-                    // Try to get symbol data with cross-arena resolution
-                    // This handles cases where lib symbols reference other arenas
-                    let symbol_opt = lib_binder.get_symbol_with_libs(sym_id, &lib_binders);
-
-                    if let Some(symbol) = symbol_opt {
-                        let is_class_member = Self::is_class_member_symbol(symbol.flags);
-                        if debug {
-                            trace!(
-                                flags = format_args!("0x{:x}", symbol.flags),
-                                is_class_member, "[BIND_RESOLVE] Symbol flags"
-                            );
-                        }
-                        // For lib binders, be more permissive with class members
-                        // Intrinsic types (Object, Array, etc.) may have class member flags
-                        // but should still be accessible as global values
-                        if !is_class_member || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
-                            if debug {
-                                trace!(
-                                    sym_id = ?sym_id,
-                                    lib_index = i,
-                                    "[BIND_RESOLVE] SUCCESS: Returning from lib binder"
-                                );
-                            }
-                            return Some(sym_id);
-                        } else if debug {
-                            trace!("[BIND_RESOLVE] SKIPPED: is_class_member without EXPORT_VALUE");
-                        }
-                    } else {
-                        // No symbol data available - return sym_id anyway
-                        // This handles cross-arena references and ambient declarations
-                        if debug {
-                            trace!(
-                                name = %name,
-                                lib_index = i,
-                                "[BIND_RESOLVE] SUCCESS: Found in lib binder (no symbol data)"
-                            );
-                        }
-                        return Some(sym_id);
+                    if is_class_member {
+                        return is_from_lib(sym_id)
+                            && (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
                     }
                 }
-            }
-        } // end if !skip_lib_binder_scan
-
-        // === PHASE 5: Symbol not found - diagnostic dump ===
-        if debug {
-            trace!(
-                name = %name,
-                "[BIND_RESOLVE] FAILED: NOT FOUND in any location"
-            );
-            trace!("[BIND_RESOLVE] Diagnostic dump");
-            trace!(
-                scope_chain_levels = self.find_enclosing_scope(idx).map_or(0, |s| {
-                    let mut count = 0;
-                    let mut sid = s;
-                    while !sid.is_none() {
-                        if let Some(scope) = self.ctx.binder.scopes.get(sid.0 as usize) {
-                            count += 1;
-                            sid = scope.parent;
-                        } else {
-                            break;
-                        }
-                    }
-                    count
-                }),
-                "[BIND_RESOLVE] Searched scope chain levels"
-            );
-            trace!(
-                file_locals_entries = self.ctx.binder.file_locals.len(),
-                "[BIND_RESOLVE] Searched file_locals"
-            );
-            trace!(
-                lib_binders_count = lib_binders.len(),
-                "[BIND_RESOLVE] Searched lib binders"
-            );
-
-            // Dump file_locals for debugging (if not too large)
-            if self.ctx.binder.file_locals.len() < 50 {
-                trace!("[BIND_RESOLVE] Main binder file_locals:");
-                for (n, id) in self.ctx.binder.file_locals.iter() {
-                    trace!(name = %n, id = ?id, "[BIND_RESOLVE] file_local");
-                }
-            } else {
-                trace!(
-                    file_locals_count = self.ctx.binder.file_locals.len(),
-                    "[BIND_RESOLVE] file_locals too large to dump"
-                );
-            }
-
-            // Sample lib binder file_locals
-            for (i, lib_binder) in lib_binders.iter().enumerate() {
-                if lib_binder.file_locals.len() < 30 {
-                    trace!(lib_index = i, "[BIND_RESOLVE] Lib binder file_locals");
-                    for (n, id) in lib_binder.file_locals.iter() {
-                        trace!(name = %n, id = ?id, "[BIND_RESOLVE] file_local");
-                    }
-                } else {
-                    trace!(
-                        lib_index = i,
-                        count = lib_binder.file_locals.len(),
-                        "[BIND_RESOLVE] Lib binder has many file_locals (sampling first 10)"
-                    );
-                    for (n, id) in lib_binder.file_locals.iter().take(10) {
-                        trace!(name = %n, id = ?id, "[BIND_RESOLVE] file_local");
-                    }
-                }
-            }
-            trace!("[BIND_RESOLVE] ========================================\n");
-        }
-
-        None
+                true
+            },
+        )
     }
 
     /// Resolve an identifier symbol for type positions, skipping value-only symbols.
@@ -816,10 +334,9 @@ impl<'a> CheckerState<'a> {
             Some(node) => node,
             None => return TypeSymbolResolution::NotFound,
         };
-        let name = match self.ctx.arena.get_identifier(node) {
-            Some(ident) => ident.escaped_text.as_str(),
-            None => return TypeSymbolResolution::NotFound,
-        };
+        if self.ctx.arena.get_identifier(node).is_none() {
+            return TypeSymbolResolution::NotFound;
+        }
 
         let ignore_libs = !self.ctx.has_lib_loaded();
         // Collect lib binders for cross-arena symbol lookup
@@ -833,9 +350,6 @@ impl<'a> CheckerState<'a> {
         let mut value_only_candidate = None;
 
         let mut accept_type_symbol = |sym_id: SymbolId| -> bool {
-            if should_skip_lib_symbol(sym_id) {
-                return false;
-            }
             // Get symbol flags to check for special cases
             let flags = self
                 .ctx
@@ -885,101 +399,27 @@ impl<'a> CheckerState<'a> {
             true
         };
 
-        // === PHASE 1: Scope chain traversal (local -> parent -> ... -> module) ===
-        if let Some(mut scope_id) = self.find_enclosing_scope(idx) {
-            let require_export = false;
-            let mut scope_depth = 0;
-            while !scope_id.is_none() {
-                scope_depth += 1;
-                if scope_depth > MAX_TREE_WALK_ITERATIONS {
-                    break;
+        let resolved = self.ctx.binder.resolve_identifier_with_filter(
+            self.ctx.arena,
+            idx,
+            &lib_binders,
+            |sym_id| {
+                if should_skip_lib_symbol(sym_id) {
+                    return false;
                 }
-                if let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) {
-                    // Check scope's local symbol table
-                    if let Some(sym_id) = scope.table.get(name) {
-                        if let Some(symbol) =
-                            self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        {
-                            let export_ok = !require_export
-                                || scope.kind != ContainerKind::Module
-                                || symbol.is_exported
-                                || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
-                            let is_class_member = Self::is_class_member_symbol(symbol.flags);
-                            if export_ok && !is_class_member && accept_type_symbol(sym_id) {
-                                return TypeSymbolResolution::Type(sym_id);
-                            }
-                        } else if !require_export || scope.kind != ContainerKind::Module {
-                            return TypeSymbolResolution::Type(sym_id);
-                        }
-                    }
-
-                    // Check module exports
-                    if scope.kind == ContainerKind::Module {
-                        if let Some(container_sym_id) =
-                            self.ctx.binder.get_node_symbol(scope.container_node)
-                        {
-                            if let Some(container_symbol) = self
-                                .ctx
-                                .binder
-                                .get_symbol_with_libs(container_sym_id, &lib_binders)
-                            {
-                                if let Some(exports) = container_symbol.exports.as_ref() {
-                                    if let Some(member_id) = exports.get(name) {
-                                        if let Some(member_symbol) = self
-                                            .ctx
-                                            .binder
-                                            .get_symbol_with_libs(member_id, &lib_binders)
-                                        {
-                                            let is_class_member =
-                                                Self::is_class_member_symbol(member_symbol.flags);
-                                            if !is_class_member && accept_type_symbol(member_id) {
-                                                return TypeSymbolResolution::Type(member_id);
-                                            }
-                                        } else {
-                                            return TypeSymbolResolution::Type(member_id);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    scope_id = scope.parent;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // === PHASE 2: Check file_locals (global scope from lib.d.ts) ===
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-            if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
-                let is_class_member = Self::is_class_member_symbol(symbol.flags);
-                if !is_class_member && accept_type_symbol(sym_id) {
-                    return TypeSymbolResolution::Type(sym_id);
-                }
-            }
-        }
-
-        // === PHASE 3: Check lib binders' file_locals directly ===
-        // Skip this phase if lib symbols are merged - they're all in file_locals already
-        // with unique remapped IDs (no collision risk).
-        if !self.ctx.binder.lib_symbols_are_merged() {
-            for lib_binder in &lib_binders {
-                if let Some(sym_id) = lib_binder.file_locals.get(name) {
-                    let symbol_opt = lib_binder.get_symbol_with_libs(sym_id, &lib_binders);
-                    if let Some(symbol) = symbol_opt {
-                        let is_class_member = Self::is_class_member_symbol(symbol.flags);
-                        if !is_class_member || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
-                            if accept_type_symbol(sym_id) {
-                                return TypeSymbolResolution::Type(sym_id);
-                            }
-                        }
-                    } else {
-                        return TypeSymbolResolution::Type(sym_id);
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                {
+                    let is_class_member = Self::is_class_member_symbol(symbol.flags);
+                    if is_class_member {
+                        return false;
                     }
                 }
-            }
+                accept_type_symbol(sym_id)
+            },
+        );
+
+        if let Some(sym_id) = resolved {
+            return TypeSymbolResolution::Type(sym_id);
         }
 
         if let Some(value_only) = value_only_candidate {
@@ -1002,40 +442,9 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
     ) -> (Vec<SymbolId>, bool) {
-        let node = match self.ctx.arena.get(idx) {
-            Some(node) => node,
-            None => return (Vec::new(), false),
-        };
-        let name = match self.ctx.arena.get_identifier(node) {
-            Some(ident) => ident.escaped_text.as_str(),
-            None => return (Vec::new(), false),
-        };
-
-        let mut symbols = Vec::new();
-        let mut saw_class_scope = false;
-        let Some(mut scope_id) = self.find_enclosing_scope(idx) else {
-            return (symbols, saw_class_scope);
-        };
-
-        let mut iterations = 0;
-        while !scope_id.is_none() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                break;
-            }
-            let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
-                break;
-            };
-            if scope.kind == ContainerKind::Class {
-                saw_class_scope = true;
-            }
-            if let Some(sym_id) = scope.table.get(name) {
-                symbols.push(sym_id);
-            }
-            scope_id = scope.parent;
-        }
-
-        (symbols, saw_class_scope)
+        self.ctx
+            .binder
+            .resolve_private_identifier_symbols(self.ctx.arena, idx)
     }
 
     /// Resolve a qualified name or identifier to a symbol ID.

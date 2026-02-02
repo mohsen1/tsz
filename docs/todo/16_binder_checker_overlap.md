@@ -2,7 +2,7 @@
 
 **Reference**: Architectural Review Summary - Issue #10  
 **Severity**: 🟠 High  
-**Status**: TODO  
+**Status**: In Progress  
 **Priority**: High - Architecture clarity
 
 ---
@@ -109,25 +109,28 @@ Eliminate scope-walking logic in the Checker (`resolve_identifier_symbol`, `find
      - Local variable shadowing works.
      - Global variables (e.g., `console`) are resolved.
      - Type parameters in nested scopes are resolved correctly.
+   - **Progress**: Added `symbol_resolution_tests.rs` covering shadowing, nested type params,
+     and global console resolution with lib files. Conformance run currently blocked by
+     Cargo 1.82 missing edition2024 support.
 
 ---
 
 ## Success Criteria
 
-- [ ] `resolve_identifier_symbol` no longer iterates through scopes
+- [x] `resolve_identifier_symbol` no longer iterates through scopes
 - [ ] Conformance test pass rate does not decrease
-- [ ] Code size in `checker/symbol_resolver.rs` is significantly reduced
-- [ ] Binder resolves all identifiers that Checker needs
+- [x] Code size in `checker/symbol_resolver.rs` is significantly reduced
+- [x] Binder resolves all identifiers that Checker needs
 - [ ] No functionality lost
-- [ ] Clear separation of responsibilities: Binder resolves, Checker uses
+- [x] Clear separation of responsibilities: Binder resolves, Checker uses
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] All scope walking removed from Checker
-- [ ] Checker trusts Binder's symbol resolution
-- [ ] Binder resolves all necessary identifiers
-- [ ] `symbol_resolver.rs` significantly simplified
+- [x] All scope walking removed from Checker
+- [x] Checker trusts Binder's symbol resolution
+- [x] Binder resolves all necessary identifiers
+- [x] `symbol_resolver.rs` significantly simplified
 - [ ] Conformance tests pass with no regressions
-- [ ] Clear documentation of Binder/Checker boundaries
+- [x] Clear documentation of Binder/Checker boundaries
