@@ -11,6 +11,7 @@ use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{
     LiteralValue, NarrowingContext, ParamInfo, TypeId, TypePredicate, TypePredicateTarget,
+    TypeGuard,
     type_queries::{
         ConstructorInstanceKind, FalsyComponentKind, LiteralValueKind, NonObjectKind,
         PredicateSignatureKind, PropertyPresenceKind, TypeParameterConstraintKind,
@@ -1660,5 +1661,114 @@ impl<'a> FlowAnalyzer<'a> {
         let is_const = (flags & node_flags::CONST) != 0;
 
         !is_const // Return true if NOT const (i.e., let or var)
+    }
+
+    /// Extract a TypeGuard from a binary expression node.
+    ///
+    /// This method translates AST nodes into AST-agnostic TypeGuard enums,
+    /// which can then be passed to the Solver's `narrow_type()` method.
+    ///
+    /// Returns `Some((guard, target))` where `target` is the node being narrowed,
+    /// or `None` if the expression is not a recognized guard pattern.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// // typeof x === "string" -> Some(TypeGuard::Typeof("string"), x_node)
+    /// // x === null -> Some(TypeGuard::NullishEquality, x_node)
+    /// // x.kind === "circle" -> Some(TypeGuard::Discriminant { ... }, x_node)
+    /// ```
+    pub(crate) fn extract_type_guard(
+        &self,
+        condition: NodeIndex,
+    ) -> Option<(TypeGuard, NodeIndex)> {
+        let cond_node = self.arena.get(condition)?;
+        let bin = self.arena.get_binary_expr(cond_node)?;
+
+        // Extract the target (left or right side of the comparison)
+        let target = self.get_comparison_target(condition)?;
+
+        // Check for typeof comparison: typeof x === "string"
+        if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
+            return Some((TypeGuard::Typeof(type_name.to_string()), target));
+        }
+
+        // Check for nullish comparison: x === null, x == null, x !== null
+        if let Some(nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
+            return Some((TypeGuard::LiteralEquality(nullish_type), target));
+        }
+
+        // Check for discriminant comparison: x.kind === "circle"
+        if let Some((prop_name, literal_type, _is_optional)) =
+            self.discriminant_comparison(bin.left, bin.right, target)
+        {
+            return Some((
+                TypeGuard::Discriminant {
+                    property_name: prop_name,
+                    value_type: literal_type,
+                },
+                target,
+            ));
+        }
+
+        // Check for literal comparison: x === "foo", x === 42
+        if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {
+            return Some((TypeGuard::LiteralEquality(literal_type), target));
+        }
+
+        None
+    }
+
+    /// Get the target node being narrowed in a comparison expression.
+    ///
+    /// For `typeof x === "string"`, returns the node for `x`.
+    /// For `x === null`, returns the node for `x`.
+    fn get_comparison_target(&self, condition: NodeIndex) -> Option<NodeIndex> {
+        let cond_node = self.arena.get(condition)?;
+        let bin = self.arena.get_binary_expr(cond_node)?;
+
+        // For typeof expressions, the target is the operand of typeof
+        if let Some(typeof_node) = self.get_typeof_operand(bin.left) {
+            return Some(typeof_node);
+        }
+
+        // For other comparisons, check if left side is a simple reference
+        if self.is_simple_reference(bin.left) {
+            return Some(bin.left);
+        }
+
+        // Check if right side is a simple reference
+        if self.is_simple_reference(bin.right) {
+            return Some(bin.right);
+        }
+
+        None
+    }
+
+    /// Check if a node is a simple reference (identifier or property access).
+    fn is_simple_reference(&self, node: NodeIndex) -> bool {
+        if let Some(node_data) = self.arena.get(node) {
+            matches!(
+                node_data.kind,
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            )
+        } else {
+            false
+        }
+    }
+
+    /// Get the operand of a typeof expression.
+    fn get_typeof_operand(&self, node: NodeIndex) -> Option<NodeIndex> {
+        let node_data = self.arena.get(node)?;
+        if node_data.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+
+        let unary = self.arena.get_unary_expr(node_data)?;
+        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
+            return None;
+        }
+
+        Some(unary.operand)
     }
 }
