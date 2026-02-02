@@ -999,6 +999,17 @@ mod function_variance_tests {
 mod lawyer_strict_mode_tests {
     use super::*;
 
+    fn object_with_property(interner: &TypeInterner, name: &str, type_id: TypeId) -> TypeId {
+        interner.object(vec![PropertyInfo {
+            name: interner.intern_string(name),
+            type_id,
+            write_type: type_id,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        }])
+    }
+
     #[test]
     fn test_strict_mode_any_does_not_suppress_errors() {
         let interner = TypeInterner::new();
@@ -1008,24 +1019,10 @@ mod lawyer_strict_mode_tests {
         checker.set_strict_any_propagation(true);
 
         // Create object with 'any' property
-        let obj_with_any = interner.object(vec![PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::ANY,
-            write_type: TypeId::ANY,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        }]);
+        let obj_with_any = object_with_property(&interner, "value", TypeId::ANY);
 
         // Create object with 'number' property
-        let obj_with_number = interner.object(vec![PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        }]);
+        let obj_with_number = object_with_property(&interner, "value", TypeId::NUMBER);
 
         // In strict mode, 'any' should NOT silence structural mismatches
         // obj_with_any should NOT be assignable to obj_with_number
@@ -1041,24 +1038,10 @@ mod lawyer_strict_mode_tests {
         checker.set_strict_any_propagation(false);
 
         // Create object with 'any' property
-        let obj_with_any = interner.object(vec![PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::ANY,
-            write_type: TypeId::ANY,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        }]);
+        let obj_with_any = object_with_property(&interner, "value", TypeId::ANY);
 
         // Create object with 'number' property
-        let obj_with_number = interner.object(vec![PropertyInfo {
-            name: interner.intern_string("value"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        }]);
+        let obj_with_number = object_with_property(&interner, "value", TypeId::NUMBER);
 
         // In non-strict mode, 'any' should silence errors
         // obj_with_any SHOULD be assignable to obj_with_number
@@ -1121,6 +1104,228 @@ mod lawyer_strict_mode_tests {
 
         // In strict mode, tuple with 'any' should NOT match tuple with 'number'
         assert!(!checker.is_assignable(tuple_with_any, tuple_number));
+    }
+
+    #[test]
+    fn test_any_in_tuple_non_strict_mode_allows_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(false);
+
+        let tuple_with_any = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::ANY,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        let tuple_number = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        assert!(checker.is_assignable(tuple_with_any, tuple_number));
+    }
+
+    #[test]
+    fn test_any_in_array_element_strict_mode_blocks_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(true);
+
+        let array_any = interner.array(TypeId::ANY);
+        let array_number = interner.array(TypeId::NUMBER);
+
+        assert!(!checker.is_assignable(array_any, array_number));
+    }
+
+    #[test]
+    fn test_any_in_array_element_non_strict_mode_allows_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(false);
+
+        let array_any = interner.array(TypeId::ANY);
+        let array_number = interner.array(TypeId::NUMBER);
+
+        assert!(checker.is_assignable(array_any, array_number));
+    }
+
+    #[test]
+    fn test_any_in_nested_object_property_strict_mode_blocks_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(true);
+
+        let inner_any = object_with_property(&interner, "inner", TypeId::ANY);
+        let outer_any = object_with_property(&interner, "value", inner_any);
+
+        let inner_number = object_with_property(&interner, "inner", TypeId::NUMBER);
+        let outer_number = object_with_property(&interner, "value", inner_number);
+
+        assert!(!checker.is_assignable(outer_any, outer_number));
+    }
+
+    #[test]
+    fn test_any_in_nested_object_property_non_strict_allows_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(false);
+
+        let inner_any = object_with_property(&interner, "inner", TypeId::ANY);
+        let outer_any = object_with_property(&interner, "value", inner_any);
+
+        let inner_number = object_with_property(&interner, "inner", TypeId::NUMBER);
+        let outer_number = object_with_property(&interner, "value", inner_number);
+
+        assert!(checker.is_assignable(outer_any, outer_number));
+    }
+
+    #[test]
+    fn test_any_in_return_type_strict_mode_blocks_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(true);
+
+        let fn_any_return = interner.function(FunctionShape {
+            type_params: Vec::new(),
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::ANY,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let fn_number_return = interner.function(FunctionShape {
+            type_params: Vec::new(),
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        assert!(!checker.is_assignable(fn_any_return, fn_number_return));
+    }
+
+    #[test]
+    fn test_any_in_return_type_non_strict_mode_allows_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(false);
+
+        let fn_any_return = interner.function(FunctionShape {
+            type_params: Vec::new(),
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::ANY,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let fn_number_return = interner.function(FunctionShape {
+            type_params: Vec::new(),
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        assert!(checker.is_assignable(fn_any_return, fn_number_return));
+    }
+
+    #[test]
+    fn test_any_in_string_index_signature_strict_mode_blocks_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(true);
+
+        let string_index_any = IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+        };
+        let string_index_number = IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        };
+
+        let obj_any = interner.object_with_index(ObjectShape {
+            properties: Vec::new(),
+            string_index: Some(string_index_any),
+            number_index: None,
+        });
+        let obj_number = interner.object_with_index(ObjectShape {
+            properties: Vec::new(),
+            string_index: Some(string_index_number),
+            number_index: None,
+        });
+
+        assert!(!checker.is_assignable(obj_any, obj_number));
+    }
+
+    #[test]
+    fn test_any_in_string_index_signature_non_strict_allows_assignment() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        checker.set_strict_any_propagation(false);
+
+        let string_index_any = IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+        };
+        let string_index_number = IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        };
+
+        let obj_any = interner.object_with_index(ObjectShape {
+            properties: Vec::new(),
+            string_index: Some(string_index_any),
+            number_index: None,
+        });
+        let obj_number = interner.object_with_index(ObjectShape {
+            properties: Vec::new(),
+            string_index: Some(string_index_number),
+            number_index: None,
+        });
+
+        assert!(checker.is_assignable(obj_any, obj_number));
     }
 }
 
