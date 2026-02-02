@@ -292,7 +292,9 @@ impl<'a> CheckerState<'a> {
                 match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
                     TypeSymbolResolution::Type(sym_id) => {
                         // TS2314: Check if this generic type requires type arguments
-                        let required_count = self.count_required_type_params(sym_id);
+                        let type_params = self.get_type_params_for_symbol(sym_id);
+                        let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
+
                         if required_count > 0 {
                             self.error_generic_type_requires_type_arguments_at(
                                 name,
@@ -300,6 +302,29 @@ impl<'a> CheckerState<'a> {
                                 idx,
                             );
                             // Continue to resolve - we still want type inference to work
+                        }
+
+                        // Apply default type arguments if no explicit args were provided
+                        // This handles cases like: type Box<T = string> = ...; let x: Box;
+                        if type_ref.type_arguments.as_ref().map_or(true, |args| args.nodes.is_empty()) {
+                            // No explicit type arguments provided
+                            let has_defaults = type_params.iter().any(|p| p.default.is_some());
+
+                            if has_defaults {
+                                // Collect default type arguments
+                                let default_args: Vec<TypeId> = type_params
+                                    .iter()
+                                    .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
+                                    .collect();
+
+                                // Create a Ref to the symbol directly - this ensures proper type parameter substitution
+                                let base_type_id = self.ctx.types.intern(crate::solver::TypeKey::Ref(
+                                    crate::solver::SymbolRef(sym_id.0)
+                                ));
+
+                                // Create TypeApplication with defaults
+                                return self.ctx.types.application(base_type_id, default_args);
+                            }
                         }
                     }
                     TypeSymbolResolution::ValueOnly(_) => {
