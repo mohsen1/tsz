@@ -3195,10 +3195,11 @@ impl Server {
     ) -> Vec<wasm::checker::types::diagnostics::Diagnostic> {
         let options = CheckOptions::default();
 
+        // Use unified lib loading for proper cross-lib symbol resolution
         let lib_files = match if options.no_lib {
             Ok(vec![])
         } else {
-            self.load_libs(&options)
+            self.load_libs_unified(&options)
         } {
             Ok(libs) => libs,
             Err(_) => return Vec::new(),
@@ -3287,10 +3288,11 @@ impl Server {
         files: HashMap<String, String>,
         options: CheckOptions,
     ) -> Result<Vec<i32>> {
+        // Use unified lib loading for proper cross-lib symbol resolution
         let lib_files = if options.no_lib {
             vec![]
         } else {
-            self.load_libs(&options)?
+            self.load_libs_unified(&options)?
         };
 
         let checker_options = self.build_checker_options(&options);
@@ -3428,11 +3430,11 @@ impl Server {
             // Set the count of actual lib files (not user files) for has_lib_loaded()
             checker.ctx.set_actual_lib_file_count(lib_files.len());
 
-            // NOTE: Keep report_unresolved_imports = false for now.
-            // While lib aliasing and symbol merging are fixed for common cases,
-            // enabling full error reporting causes extra TS2318 errors from type
-            // references within lib files themselves (incomplete cross-lib type resolution).
-            // This can be enabled once cross-lib type merging is fully implemented.
+            // NOTE: Keep report_unresolved_imports = false for conformance testing.
+            // While cross-lib type merging is now implemented via unified binder,
+            // enabling full error reporting causes extra TS2304/TS2307 errors for
+            // multi-file tests that reference symbols from other files.
+            // Single-file conformance mode doesn't have full module resolution context.
 
             checker.ctx.set_all_arenas(all_arenas.clone());
             checker.ctx.set_all_binders(all_binders.clone());
@@ -3461,6 +3463,111 @@ impl Server {
             self.load_lib_recursive(&lib_name, &mut result, &mut loaded)?;
         }
         Ok(result)
+    }
+
+    /// Load libs with unified symbol merging.
+    ///
+    /// This method implements **cumulative binding** to solve cross-lib symbol resolution:
+    /// 1. Loads libs in dependency order using the old method (each with its own binder)
+    /// 2. Creates a unified merged binder from all lib binders
+    /// 3. Returns a single LibFile with the merged binder
+    ///
+    /// This allows proper cross-lib type resolution (e.g., `Array` from es5 visible in dom).
+    fn load_libs_unified(&mut self, options: &CheckOptions) -> Result<Vec<Arc<LibFile>>> {
+        let lib_names = self.determine_libs(options);
+        if lib_names.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Phase 1: Load all libs normally (each with its own binder)
+        let mut lib_files = Vec::new();
+        let mut loaded = rustc_hash::FxHashSet::default();
+        for lib_name in &lib_names {
+            self.load_lib_recursive(lib_name, &mut lib_files, &mut loaded)?;
+        }
+
+        if lib_files.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Phase 2: Create LibContexts from all loaded libs
+        // Use binder::LibContext for merge_lib_contexts_into_binder
+        use wasm::binder::LibContext as BinderLibContext;
+        let lib_contexts: Vec<BinderLibContext> = lib_files
+            .iter()
+            .map(|lib| BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+
+        // Phase 3: Create a unified binder by merging ALL lib binders
+        // This is the key fix - we merge symbols from all libs into a single binder
+        // so cross-lib references (e.g., Array in dom.d.ts from es5.d.ts) are resolved
+        let mut unified_binder = BinderState::new();
+        unified_binder.merge_lib_contexts_into_binder(&lib_contexts);
+
+        // Phase 4: Create a unified LibFile
+        // Use the first arena as representative (the unified binder tracks symbol_arenas)
+        let unified_arena = lib_files.first()
+            .map(|lib| Arc::clone(&lib.arena))
+            .unwrap_or_else(|| Arc::new(wasm::parser::node::NodeArena::new()));
+
+        let unified_lib = Arc::new(LibFile::new(
+            "unified-libs".to_string(),
+            unified_arena,
+            Arc::new(unified_binder),
+        ));
+
+        Ok(vec![unified_lib])
+    }
+
+    /// Recursively collect lib files in dependency order (parse only, no binding).
+    fn collect_lib_files_recursive(
+        &mut self,
+        lib_name: &str,
+        result: &mut Vec<(String, wasm::parser::ParserState, wasm::parser::NodeIndex)>,
+        loaded: &mut rustc_hash::FxHashSet<String>,
+    ) -> Result<()> {
+        let aliased = Self::normalize_lib_alias(lib_name);
+        let normalized = aliased.trim().to_lowercase();
+        if loaded.contains(&normalized) {
+            return Ok(());
+        }
+        loaded.insert(normalized.clone());
+
+        let candidates = [
+            self.lib_dir.join(format!("{}.d.ts", normalized)),
+            self.lib_dir.join(format!("lib.{}.d.ts", normalized)),
+            self.tests_lib_dir.join(format!("{}.d.ts", normalized)),
+        ];
+
+        for candidate in &candidates {
+            if candidate.exists() {
+                let content = std::fs::read_to_string(candidate)
+                    .with_context(|| format!("failed to read lib file: {}", candidate.display()))?;
+                
+                // First, recursively load dependencies
+                let references = Self::parse_lib_references(&content);
+                for ref_lib in &references {
+                    self.collect_lib_files_recursive(ref_lib, result, loaded)?;
+                }
+
+                // Parse this lib file (don't bind yet)
+                let file_name = candidate
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| format!("lib.{}.d.ts", normalized));
+                let mut parser = wasm::parser::ParserState::new(file_name.clone(), content);
+                let root_idx = parser.parse_source_file();
+                
+                // Add to result in dependency order
+                result.push((file_name, parser, root_idx));
+                return Ok(());
+            }
+        }
+
+        Ok(())
     }
 
     /// Normalize lib name aliases to their canonical form.
