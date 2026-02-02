@@ -9,6 +9,10 @@
 
 use crate::binder::SymbolId;
 use crate::solver::types::*;
+use crate::solver::visitor::{
+    application_id, index_access_parts, keyof_inner_type, literal_value, object_shape_id,
+    object_with_index_shape_id, ref_symbol, type_param_info, union_list_id,
+};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -322,11 +326,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let app = self.interner.type_application(app_id);
 
-        // Look up the base type key
-        let base_key = self.interner.lookup(app.base)?;
-
         // If the base is a Ref, try to resolve and instantiate
-        if let TypeKey::Ref(symbol) = base_key {
+        if let Some(symbol) = ref_symbol(self.interner, app.base) {
             // Get type parameters for this symbol
             let type_params = self.resolver.get_type_params(symbol)?;
 
@@ -335,8 +336,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Skip expansion if the resolved type is just this Application
             // (prevents infinite recursion on self-referential types)
-            let resolved_key = self.interner.lookup(resolved);
-            if let Some(TypeKey::Application(resolved_app_id)) = resolved_key
+            if let Some(resolved_app_id) = application_id(self.interner, resolved)
                 && resolved_app_id == app_id
             {
                 return None;
@@ -369,38 +369,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
-        // Check if this is a homomorphic mapped type (template is T[K])
-        let is_homomorphic = match self.interner.lookup(mapped.template) {
-            Some(TypeKey::IndexAccess(_obj, idx)) => match self.interner.lookup(idx) {
-                Some(TypeKey::TypeParameter(param)) => param.name == mapped.type_param.name,
-                _ => false,
-            },
-            _ => false,
-        };
-
-        // Extract source object type for homomorphic mapped types
-        let source_object = if is_homomorphic {
-            match self.interner.lookup(mapped.template) {
-                Some(TypeKey::IndexAccess(obj, _idx)) => Some(obj),
-                _ => None,
-            }
-        } else {
-            None
-        };
+        let (source_object, is_homomorphic) =
+            match index_access_parts(self.interner, mapped.template) {
+                Some((obj, idx)) => {
+                    let is_homomorphic = type_param_info(self.interner, idx)
+                        .map(|param| param.name == mapped.type_param.name)
+                        .unwrap_or(false);
+                    let source_object = if is_homomorphic { Some(obj) } else { None };
+                    (source_object, is_homomorphic)
+                }
+                None => (None, false),
+            };
 
         // Helper to get original property modifiers
         let get_original_modifiers = |key_name: crate::interner::Atom| -> (bool, bool) {
             if let Some(source_obj) = source_object {
-                if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(source_obj) {
-                    let shape = self.interner.object_shape(shape_id);
-                    for prop in &shape.properties {
-                        if prop.name == key_name {
-                            return (prop.optional, prop.readonly);
-                        }
-                    }
-                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) =
-                    self.interner.lookup(source_obj)
-                {
+                let shape_id = object_shape_id(self.interner, source_obj)
+                    .or_else(|| object_with_index_shape_id(self.interner, source_obj));
+                if let Some(shape_id) = shape_id {
                     let shape = self.interner.object_shape(shape_id);
                     for prop in &shape.properties {
                         if prop.name == key_name {
@@ -471,51 +457,50 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<Vec<crate::interner::Atom>> {
         use crate::solver::LiteralValue;
 
-        let key = self.interner.lookup(constraint)?;
-
-        match key {
-            TypeKey::KeyOf(operand) => {
-                // Try to resolve the operand to get concrete keys
-                self.try_get_keyof_keys(operand)
-            }
-            TypeKey::Literal(LiteralValue::String(name)) => Some(vec![name]),
-            TypeKey::Union(list_id) => {
-                let members = self.interner.type_list(list_id);
-                let mut keys = Vec::new();
-                for &member in members.iter() {
-                    if let Some(TypeKey::Literal(LiteralValue::String(name))) =
-                        self.interner.lookup(member)
-                    {
-                        keys.push(name);
-                    }
-                }
-                if keys.is_empty() { None } else { Some(keys) }
-            }
-            _ => None,
+        if let Some(operand) = keyof_inner_type(self.interner, constraint) {
+            // Try to resolve the operand to get concrete keys
+            return self.try_get_keyof_keys(operand);
         }
+
+        if let Some(LiteralValue::String(name)) = literal_value(self.interner, constraint) {
+            return Some(vec![name]);
+        }
+
+        if let Some(list_id) = union_list_id(self.interner, constraint) {
+            let members = self.interner.type_list(list_id);
+            let mut keys = Vec::new();
+            for &member in members.iter() {
+                if let Some(LiteralValue::String(name)) = literal_value(self.interner, member) {
+                    keys.push(name);
+                }
+            }
+            return if keys.is_empty() { None } else { Some(keys) };
+        }
+
+        None
     }
 
     /// Try to get keys from keyof an operand type.
     pub(crate) fn try_get_keyof_keys(&self, operand: TypeId) -> Option<Vec<crate::interner::Atom>> {
-        let key = self.interner.lookup(operand)?;
-
-        match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                if shape.properties.is_empty() {
-                    return None;
-                }
-                Some(shape.properties.iter().map(|p| p.name).collect())
+        let shape_id = object_shape_id(self.interner, operand)
+            .or_else(|| object_with_index_shape_id(self.interner, operand));
+        if let Some(shape_id) = shape_id {
+            let shape = self.interner.object_shape(shape_id);
+            if shape.properties.is_empty() {
+                return None;
             }
-            TypeKey::Ref(symbol) => {
-                // Try to resolve the ref and get keys from the resolved type
-                let resolved = self.resolver.resolve_ref(symbol, self.interner)?;
-                if resolved == operand {
-                    return None; // Avoid infinite recursion
-                }
-                self.try_get_keyof_keys(resolved)
-            }
-            _ => None,
+            return Some(shape.properties.iter().map(|p| p.name).collect());
         }
+
+        if let Some(symbol) = ref_symbol(self.interner, operand) {
+            // Try to resolve the ref and get keys from the resolved type
+            let resolved = self.resolver.resolve_ref(symbol, self.interner)?;
+            if resolved == operand {
+                return None; // Avoid infinite recursion
+            }
+            return self.try_get_keyof_keys(resolved);
+        }
+
+        None
     }
 }

@@ -7,6 +7,10 @@
 //! - Type parameter compatibility in union/intersection contexts
 
 use crate::solver::types::*;
+use crate::solver::visitor::{
+    intersection_list_id, keyof_inner_type, literal_value, object_shape_id,
+    object_with_index_shape_id, type_param_info, union_list_id,
+};
 
 use super::super::{SubtypeChecker, SubtypeFailureReason, SubtypeResult, TypeResolver};
 
@@ -31,11 +35,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         members: TypeListId,
         target: TypeId,
-        target_key: &TypeKey,
     ) -> SubtypeResult {
         // Distributivity: (A | B) & C distributes to (A & C) | (B & C)
-        if let TypeKey::Intersection(inter_members) = target_key {
-            let inter_members = self.interner.type_list(*inter_members);
+        if let Some(inter_members) = intersection_list_id(self.interner, target) {
+            let inter_members = self.interner.type_list(inter_members);
             let union_members = self.interner.type_list(members);
 
             // Check: (A | B) <: (C & D)
@@ -56,8 +59,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Special handling for object targets with all optional properties
         // This enables union literal widening: {a: 'x'} | {b: 'y'} <: {a?: string, b?: string}
-        if let TypeKey::Object(t_shape_id) | TypeKey::ObjectWithIndex(t_shape_id) = target_key {
-            let t_shape = self.interner.object_shape(*t_shape_id);
+        if let Some(t_shape_id) = object_shape_id(self.interner, target) {
+            let t_shape = self.interner.object_shape(t_shape_id);
+            let all_optional = t_shape.properties.iter().all(|p| p.optional);
+            let has_index = t_shape.string_index.is_some() || t_shape.number_index.is_some();
+            if all_optional && !has_index && !t_shape.properties.is_empty() {
+                return self.check_union_to_all_optional_object(members, &t_shape.properties);
+            }
+        } else if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
+            let t_shape = self.interner.object_shape(t_shape_id);
 
             // Check if all target properties are optional
             let all_optional = t_shape.properties.iter().all(|p| p.optional);
@@ -106,10 +116,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_union_target_subtype(
         &mut self,
         source: TypeId,
-        source_key: &TypeKey,
         members: TypeListId,
     ) -> SubtypeResult {
-        if matches!(source_key, TypeKey::KeyOf(_)) && self.union_includes_keyof_primitives(members)
+        if keyof_inner_type(self.interner, source).is_some()
+            && self.union_includes_keyof_primitives(members)
         {
             return SubtypeResult::True;
         }
@@ -120,7 +130,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             // Optimization: For literal sources, check if the primitive type is in the union
             // This helps reduce false positives when a literal should match a union containing its primitive
-            if let TypeKey::Literal(literal) = source_key {
+            if let Some(literal) = literal_value(self.interner, source) {
                 let primitive_type = match literal {
                     LiteralValue::String(_) => TypeId::STRING,
                     LiteralValue::Number(_) => TypeId::NUMBER,
@@ -133,7 +143,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // For literal-to-literal unions (e.g., "a" <: "a" | "b"), check if the literal
                 // is directly in the union. This is more precise than the full subtype check.
-                if matches!(self.interner.lookup(member), Some(TypeKey::Literal(_))) {
+                if literal_value(self.interner, member).is_some() {
                     if self.check_subtype(source, member).is_true() {
                         return SubtypeResult::True;
                     }
@@ -141,8 +151,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             // Optimization: For union sources, check if any member matches directly
             // This can help reduce false positives when checking (A | B) <: (A | B | C)
-            if let TypeKey::Union(source_members) = source_key {
-                let source_members_list = self.interner.type_list(*source_members);
+            if let Some(source_members) = union_list_id(self.interner, source) {
+                let source_members_list = self.interner.type_list(source_members);
                 if source_members_list.contains(&member) {
                     return SubtypeResult::True;
                 }
@@ -192,8 +202,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // For type parameters in intersections, try narrowing the constraint
         for &member in members.iter() {
-            if let Some(TypeKey::TypeParameter(param_info)) | Some(TypeKey::Infer(param_info)) =
-                self.interner.lookup(member)
+            if let Some(param_info) = type_param_info(self.interner, member)
                 && let Some(constraint) = param_info.constraint
             {
                 let other_members: Vec<TypeId> =
@@ -309,32 +318,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         union_members: TypeListId,
         target_props: &[crate::solver::types::PropertyInfo],
     ) -> SubtypeResult {
-        use crate::solver::types::TypeKey;
-
         let union_members = self.interner.type_list(union_members);
 
         // Each union member must satisfy the properties it has
         for &union_member in union_members.iter() {
-            let union_key = match self.interner.lookup(union_member) {
-                Some(key) => key,
-                None => return SubtypeResult::False,
-            };
-
             // Get properties from the union member
-            let union_props = match union_key {
-                TypeKey::Object(shape_id) => {
-                    let shape = self.interner.object_shape(shape_id);
-                    shape.properties.clone()
-                }
-                TypeKey::ObjectWithIndex(shape_id) => {
-                    let shape = self.interner.object_shape(shape_id);
-                    shape.properties.clone()
-                }
-                // For non-object types, use the normal check
-                _ => {
-                    let target_type = self.interner.object(target_props.to_vec());
-                    return self.check_subtype(union_member, target_type);
-                }
+            let union_props = if let Some(shape_id) = object_shape_id(self.interner, union_member)
+            {
+                let shape = self.interner.object_shape(shape_id);
+                shape.properties.clone()
+            } else if let Some(shape_id) =
+                object_with_index_shape_id(self.interner, union_member)
+            {
+                let shape = self.interner.object_shape(shape_id);
+                shape.properties.clone()
+            } else {
+                let target_type = self.interner.object(target_props.to_vec());
+                return self.check_subtype(union_member, target_type);
             };
 
             // Check each property in the union member
@@ -421,34 +421,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         s_info: &TypeParamInfo,
         target: TypeId,
-        target_key: &TypeKey,
     ) -> SubtypeResult {
         // Type parameter vs type parameter
-        if let TypeKey::TypeParameter(t_info) | TypeKey::Infer(t_info) = target_key {
-            // Same type parameter by name - reflexive
+        if let Some(t_info) = type_param_info(self.interner, target) {
             if s_info.name == t_info.name {
                 return SubtypeResult::True;
             }
-
-            // Different type parameters - check if source's constraint implies compatibility
-            // TypeScript soundness: T <: U only if:
-            // 1. Constraint(T) is exactly U (e.g., U extends T, checking U <: T)
-            // 2. Constraint(T) extends U's constraint transitively
             if let Some(s_constraint) = s_info.constraint {
-                // Check if source's constraint IS the target type parameter itself
                 if s_constraint == target {
                     return SubtypeResult::True;
                 }
-                // Check if source's constraint is a subtype of the target type parameter
-                // (handles transitive constraints like T extends U, U extends V, checking T <: V)
                 if self.check_subtype(s_constraint, target).is_true() {
                     return SubtypeResult::True;
                 }
             }
-            // Two different type parameters are NOT interchangeable even if they have
-            // the same or compatible constraints. T extends string and U extends string
-            // are distinct types - only identity or explicit constraint relationships
-            // can make them subtypes.
             return SubtypeResult::False;
         }
 
