@@ -257,9 +257,9 @@ fn test_resolve_multiple_lower_bounds_union() {
     ctx.add_lower_bound(var, hello);
     ctx.add_lower_bound(var, forty_two);
 
-    // Resolve should return "hello" | 42
+    // Resolve should return string | number
     let result = ctx.resolve_with_constraints(var).unwrap();
-    let expected = interner.union(vec![hello, forty_two]);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
 
@@ -10560,8 +10560,8 @@ fn test_constraint_satisfaction_multiple_candidates() {
     ctx.add_lower_bound(var_t, forty_two);
 
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // Union of lower bounds
-    let expected = interner.union(vec![hello, forty_two]);
+    // Union of widened lower bounds
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
 

@@ -30,7 +30,7 @@ pub use crate::solver::binary_ops::{BinaryOpEvaluator, BinaryOpResult, Primitive
 
 use crate::interner::Atom;
 use crate::solver::diagnostics::PendingDiagnostic;
-use crate::solver::infer::InferenceContext;
+use crate::solver::infer::{InferenceContext, InferencePriority};
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -1191,7 +1191,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // If target is an inference placeholder, add lower bound: source <: var
         if let Some(&var) = var_map.get(&target) {
-            ctx.add_lower_bound(var, source);
+            ctx.add_candidate(var, source, InferencePriority::Argument);
             return;
         }
 
