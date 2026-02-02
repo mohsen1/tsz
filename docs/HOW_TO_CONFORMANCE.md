@@ -48,7 +48,13 @@ This shows:
 
 **Goal**: Fully understand what tsz produces vs what tsc expects before writing any code.
 
-## Step 3: Research with Gemini
+## Step 3: Add Failing Unit Test
+
+Once you have confirmed what is not working, add a failing unit test that reproduces the issue. This ensures you have a clear, isolated test case to work with.
+
+Then, work towards fixing both the unit test and the failing conformance test.
+
+## Step 4: Research with Gemini
 
 Ask targeted questions using the appropriate preset. Run queries in parallel for faster iteration:
 
@@ -68,7 +74,7 @@ Ask targeted questions using the appropriate preset. Run queries in parallel for
 - Ask from multiple angles to triangulate the issue
 - Run 2-3 questions in parallel to explore faster
 
-## Step 4: Create a Fix Plan
+## Step 5: Create a Fix Plan
 
 Once you understand the problem, ask Gemini for a concrete fix:
 
@@ -81,7 +87,7 @@ Once you understand the problem, ask Gemini for a concrete fix:
 
 Always use `--include` to ensure relevant files are in context.
 
-## Step 5: Apply and Verify
+## Step 6: Apply and Verify
 
 After implementing the fix:
 
@@ -109,6 +115,8 @@ After implementing the fix:
 
 1. **Filter** → Find failing tests by error code or pattern
 2. **Understand** → Use `--print-test` to see expected vs actual
-3. **Research** → Ask Gemini targeted questions (in parallel)
-4. **Plan** → Get a concrete fix plan with relevant files included
-5. **Verify** → Run full conformance (no `--max`) to measure real improvement
+3. **Add Unit Test** → Create a failing unit test reproducing the issue
+4. **Research** → Ask Gemini targeted questions (in parallel)
+5. **Plan** → Get a concrete fix plan with relevant files included
+6. **Verify** → Run full conformance (no `--max`) to measure real improvement
+7. **Commit** → Ensure all warnings, lint, cargo fmt, and unit tests pass before committing
