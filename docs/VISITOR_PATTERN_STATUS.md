@@ -1,8 +1,8 @@
 # Visitor Pattern Enforcement - Status Report
 
-**Date**: February 2, 2025
+**Date**: February 2, 2026
 **Issue**: #11 - Visitor Pattern Enforcement
-**Status**: ✅ 4 FILES COMPLETE
+**Status**: ✅ 4 FILES COMPLETE + index_access.rs PARTIALLY COMPLETE
 
 ---
 
@@ -133,16 +133,68 @@ Refactored completely to use visitor pattern:
 - contextual.rs is ~1550 lines with 11 visitor structs
 - Consider moving visitors to separate module for better organization (future cleanup)
 
+### 5. src/solver/evaluate_rules/index_access.rs ✅ PARTIALLY COMPLETE
+**Commits**: `7d37293e3`, `69bdc12a9`
+**Status**: ✅ ArrayKeyVisitor COMPLETE, ✅ TupleKeyVisitor COMPLETE
+
+**Created Visitor Structs (2 total):**
+- `ArrayKeyVisitor` - Handles array index access with Union distribution, intrinsic types, and literal handling
+- `TupleKeyVisitor` - Handles tuple index access with rest elements, optional elements, and recursive traversal
+
+**Refactored Methods (2 total):**
+- `evaluate_array_index` ✅ - Uses ArrayKeyVisitor
+- `evaluate_tuple_index` ✅ - Uses TupleKeyVisitor
+
+**Key Design Patterns:**
+- **Option<TypeId> fallback pattern** - Visitor returns Some(result) for specific cases, None for default fallback
+- **Helper method extraction** - Extracted make_apparent_method_type to standalone function for visitor use
+- **Cached array member types** - Avoid repeated allocations of method types
+- **Recursive rest handling** - TupleKeyVisitor creates new visitors for nested rest elements
+
+**Benefits:**
+- Consistent with ArrayKeyVisitor design
+- Type-safe visitor dispatch for all index type variants
+- Clear separation of concerns (visitor handles indexing, caller adds undefined)
+
+**Test Results:** All 3385 solver tests passing
+
+**Remaining Work in this file:**
+- `evaluate_object_with_index` - More complex, handles property lookups and index signatures
+- `evaluate_object_index` - Similar complexity, may benefit from visitor pattern but requires careful design
+
 ---
 
 ## Remaining Work
 
-### Original Phase 1: src/solver/evaluate_rules/index_access.rs
+### Original Phase 1: src/solver/evaluate_rules/index_access.rs ✅ IN PROGRESS
 **Complexity**: MEDIUM
 **Reason for deferral**: Part of original plan, focused on evaluate_rules
+**Status**: ✅ ArrayKeyVisitor COMPLETE, ✅ TupleKeyVisitor COMPLETE
 
-**Methods that need refactoring:**
-- `evaluate_index_access` - Index access evaluation with TypeKey matches
+**Completed Visitor Implementations:**
+- ✅ **ArrayKeyVisitor** - Handles `Array[K]` index access
+  - Commit: 7d37293e3 (with fixes), 69bdc12a9 (TupleKeyVisitor)
+  - Union distribution via visit_union
+  - Intrinsic types (Number/String) handling
+  - Literal number/string/boolean/bigint handling
+  - Array member types (length, methods) via get_array_member_kind helper
+  - Uses Option<TypeId> fallback pattern
+
+- ✅ **TupleKeyVisitor** - Handles `Tuple[K]` index access
+  - Commit: 69bdc12a9
+  - Union distribution via visit_union
+  - Intrinsic types (STRING/NUMBER) handling
+  - Literal number/string indexing with rest element support
+  - Recursive tuple traversal for nested rest elements
+  - Helper methods: tuple_element_type, rest_element_type, tuple_index_literal
+  - Array member types via get_array_member_kind helper
+  - Uses Option<TypeId> fallback pattern
+
+**Remaining:**
+- `evaluate_object_with_index` - Could potentially use visitor pattern
+- `evaluate_object_index` - Could potentially use visitor pattern
+
+**Note:** The main evaluate_index_access already uses IndexAccessVisitor. The remaining methods (evaluate_object_with_index, evaluate_object_index) are more complex as they handle property lookups, index signatures, and multiple fallback cases. They may benefit from visitor pattern but require careful design.
 
 ### Original Phase 2: src/solver/narrowing.rs
 **Complexity**: MEDIUM
