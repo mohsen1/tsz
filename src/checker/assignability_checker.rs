@@ -357,7 +357,7 @@ impl<'a> CheckerState<'a> {
         _source_idx: NodeIndex,
     ) -> bool {
         use crate::solver::freshness;
-        use crate::solver::type_queries::{classify_for_excess_properties, ExcessPropertiesKind};
+        use crate::solver::type_queries::{ExcessPropertiesKind, classify_for_excess_properties};
 
         // Only fresh object literals trigger excess property checking.
         if !freshness::is_fresh_object_type(self.ctx.types, source) {

@@ -199,11 +199,7 @@ pub struct SoundLawyer<'a> {
 impl<'a> SoundLawyer<'a> {
     /// Create a new Sound Lawyer.
     pub fn new(db: &'a dyn TypeDatabase, env: &'a TypeEnvironment, config: JudgeConfig) -> Self {
-        SoundLawyer {
-            db,
-            env,
-            config,
-        }
+        SoundLawyer { db, env, config }
     }
 
     /// Check if source is assignable to target under sound typing rules.

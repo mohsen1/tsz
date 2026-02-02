@@ -1087,7 +1087,9 @@ impl<'a> InferenceContext<'a> {
 
     fn resolve_from_candidates(&self, candidates: &[InferenceCandidate]) -> TypeId {
         // Check if we have circular candidates
-        let has_circular = candidates.iter().any(|c| c.priority == InferencePriority::Circular);
+        let has_circular = candidates
+            .iter()
+            .any(|c| c.priority == InferencePriority::Circular);
 
         let filtered = if has_circular {
             // When we have circular candidates, don't filter by priority
@@ -2887,8 +2889,8 @@ impl<'a> InferenceContext<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/infer_tests.rs"]
-mod tests;
-#[cfg(test)]
 #[path = "tests/inference_candidates_tests.rs"]
 mod inference_candidates_tests;
+#[cfg(test)]
+#[path = "tests/infer_tests.rs"]
+mod tests;

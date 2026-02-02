@@ -18,7 +18,10 @@ fn test_any_propagation_rules_strict() {
 
     // Strict: allow suppression is false
     assert!(!rules.allow_any_suppression);
-    assert_eq!(rules.any_propagation_mode(), AnyPropagationMode::TopLevelOnly);
+    assert_eq!(
+        rules.any_propagation_mode(),
+        AnyPropagationMode::TopLevelOnly
+    );
 }
 
 #[test]
@@ -32,7 +35,10 @@ fn test_set_allow_any_suppression() {
     // Set to false
     rules.set_allow_any_suppression(false);
     assert!(!rules.allow_any_suppression);
-    assert_eq!(rules.any_propagation_mode(), AnyPropagationMode::TopLevelOnly);
+    assert_eq!(
+        rules.any_propagation_mode(),
+        AnyPropagationMode::TopLevelOnly
+    );
 
     // Set back to true
     rules.set_allow_any_suppression(true);

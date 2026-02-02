@@ -118,11 +118,11 @@ mod stability_validation_tests;
 #[path = "tests/string_literal_arithmetic_tests.rs"]
 mod string_literal_arithmetic_tests;
 #[cfg(test)]
-#[path = "tests/symbol_resolver_stability_tests.rs"]
-mod symbol_resolver_stability_tests;
-#[cfg(test)]
 #[path = "tests/symbol_resolution_tests.rs"]
 mod symbol_resolution_tests;
+#[cfg(test)]
+#[path = "tests/symbol_resolver_stability_tests.rs"]
+mod symbol_resolver_stability_tests;
 #[cfg(test)]
 #[path = "tests/ts2304_tests.rs"]
 mod ts2304_tests;

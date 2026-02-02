@@ -7,6 +7,7 @@
 //! - Phase 4: Sound Mode and sticky freshness
 
 use crate::binder::SymbolId;
+use crate::checker::sound_checker::StickyFreshnessTracker;
 use crate::solver::TypeInterner;
 use crate::solver::def::{
     ContentAddressedDefIds, DefId, DefKind, DefinitionInfo, DefinitionStore, EnumMemberValue,
@@ -15,7 +16,6 @@ use crate::solver::judge::{
     CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PrimitiveFlags, PropertyResult,
     TruthinessKind,
 };
-use crate::checker::sound_checker::StickyFreshnessTracker;
 use crate::solver::sound::{SoundDiagnostic, SoundDiagnosticCode, SoundLawyer, SoundModeConfig};
 use crate::solver::subtype::{SubtypeChecker, SubtypeResult, TypeEnvironment};
 use crate::solver::types::*;

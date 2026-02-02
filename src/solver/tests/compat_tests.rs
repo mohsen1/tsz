@@ -1885,7 +1885,7 @@ fn test_no_unchecked_indexed_access_toggle() {
     let mut checker = CompatChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -1945,7 +1945,7 @@ fn test_no_unchecked_object_index_signature_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -2783,7 +2783,7 @@ fn test_apparent_string_number_index_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let target = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -2802,7 +2802,7 @@ fn test_apparent_string_rejects_string_index_signature() {
     let mut checker = CompatChecker::new(&interner);
 
     let target = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -2883,7 +2883,7 @@ fn test_optional_property_rejects_string_index_signature() {
     }]);
 
     let target = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -2940,7 +2940,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
     }]);
 
     let target = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -3310,7 +3310,7 @@ fn test_keyof_union_index_signature_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let string_index = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -3320,7 +3320,7 @@ fn test_keyof_union_index_signature_assignable() {
         number_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -3512,7 +3512,7 @@ fn test_weak_type_with_index_signature_not_weak() {
 
     // Target with optional property + index signature - NOT weak
     let target = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: a,
             type_id: TypeId::STRING,
@@ -4436,7 +4436,7 @@ fn test_compiler_options_independent_toggles() {
 
     // Toggle no_unchecked_indexed_access
     let indexed = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,

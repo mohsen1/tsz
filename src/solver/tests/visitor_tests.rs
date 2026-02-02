@@ -498,7 +498,7 @@ fn test_object_shape_extractors() {
     assert!(object_with_index_shape_id(&interner, obj).is_none());
 
     let obj_with_index = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+        flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("y"),
             type_id: TypeId::STRING,
@@ -551,7 +551,10 @@ fn test_collection_extractors() {
 fn test_literal_and_intrinsic_extractors() {
     let interner = TypeInterner::new();
 
-    assert_eq!(intrinsic_kind(&interner, TypeId::STRING), Some(IntrinsicKind::String));
+    assert_eq!(
+        intrinsic_kind(&interner, TypeId::STRING),
+        Some(IntrinsicKind::String)
+    );
 
     let hello = interner.literal_string("hello");
     let forty_two = interner.literal_number(42.0);
@@ -560,7 +563,10 @@ fn test_literal_and_intrinsic_extractors() {
         literal_value(&interner, hello),
         Some(LiteralValue::String(interner.intern_string("hello")))
     );
-    assert_eq!(literal_string(&interner, hello), Some(interner.intern_string("hello")));
+    assert_eq!(
+        literal_string(&interner, hello),
+        Some(interner.intern_string("hello"))
+    );
     assert!(literal_number(&interner, hello).is_none());
 
     assert!(literal_string(&interner, forty_two).is_none());
@@ -657,7 +663,10 @@ fn test_keyof_readonly_query_and_unique_symbol_extractors() {
     assert_eq!(keyof_inner_type(&interner, keyof_type), Some(obj));
 
     let readonly_type = interner.readonly_type(TypeId::STRING);
-    assert_eq!(readonly_inner_type(&interner, readonly_type), Some(TypeId::STRING));
+    assert_eq!(
+        readonly_inner_type(&interner, readonly_type),
+        Some(TypeId::STRING)
+    );
 
     let symbol = SymbolRef(99);
     let query = interner.intern(TypeKey::TypeQuery(symbol));
@@ -698,8 +707,7 @@ fn test_function_and_callable_extractors() {
         string_index: None,
         number_index: None,
     });
-    let callable_id =
-        callable_shape_id(&interner, callable).expect("expected callable shape id");
+    let callable_id = callable_shape_id(&interner, callable).expect("expected callable shape id");
     let callable_shape = interner.callable_shape(callable_id);
     assert_eq!(callable_shape.call_signatures.len(), 1);
 }

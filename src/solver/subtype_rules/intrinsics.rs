@@ -7,13 +7,13 @@
 //! - Apparent primitive shapes (for object-like operations on primitives)
 
 use crate::solver::types::*;
-use crate::solver::{ApparentMemberKind, apparent_primitive_members};
 use crate::solver::visitor::{
-    application_id, array_element_type, callable_shape_id, function_shape_id,
-    intersection_list_id, intrinsic_kind, is_this_type, literal_value, mapped_type_id,
-    object_shape_id, object_with_index_shape_id, readonly_inner_type, ref_symbol,
-    template_literal_id, tuple_list_id, type_param_info, union_list_id,
+    application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
+    intrinsic_kind, is_this_type, literal_value, mapped_type_id, object_shape_id,
+    object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
+    tuple_list_id, type_param_info, union_list_id,
 };
+use crate::solver::{ApparentMemberKind, apparent_primitive_members};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 

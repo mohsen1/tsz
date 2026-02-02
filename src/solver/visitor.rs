@@ -1424,10 +1424,7 @@ pub enum ObjectTypeKind {
 ///
 /// This is used by the freshness tracking system to determine if a type
 /// is a fresh object literal that needs special handling.
-pub fn classify_object_type(
-    types: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> ObjectTypeKind {
+pub fn classify_object_type(types: &dyn TypeDatabase, type_id: TypeId) -> ObjectTypeKind {
     match types.lookup(type_id) {
         Some(TypeKey::Object(shape_id)) => ObjectTypeKind::Object(shape_id),
         Some(TypeKey::ObjectWithIndex(shape_id)) => ObjectTypeKind::ObjectWithIndex(shape_id),

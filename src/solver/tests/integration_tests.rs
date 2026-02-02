@@ -1283,13 +1283,13 @@ mod lawyer_strict_mode_tests {
         };
 
         let obj_any = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+            flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(string_index_any),
             number_index: None,
         });
         let obj_number = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+            flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(string_index_number),
             number_index: None,
@@ -1317,13 +1317,13 @@ mod lawyer_strict_mode_tests {
         };
 
         let obj_any = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+            flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(string_index_any),
             number_index: None,
         });
         let obj_number = interner.object_with_index(ObjectShape {
-                flags: ObjectFlags::empty(),
+            flags: ObjectFlags::empty(),
             properties: Vec::new(),
             string_index: Some(string_index_number),
             number_index: None,
