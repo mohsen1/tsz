@@ -38,6 +38,20 @@ use std::path::{Path, PathBuf};
 /// ```
 pub const CANNOT_FIND_MODULE: u32 = 2307;
 
+/// TS2792: Cannot find module. Did you mean to set the 'moduleResolution' option to 'nodenext'?
+///
+/// This error code is emitted when a module specifier cannot be resolved under the current
+/// module resolution mode, but the package.json has an 'exports' field that would likely
+/// resolve correctly under Node16/NodeNext/Bundler mode.
+pub const MODULE_RESOLUTION_MODE_MISMATCH: u32 = 2792;
+
+/// TS2834: Relative import paths need explicit file extensions in EcmaScript imports
+///
+/// This error code is emitted when a relative import in an ESM context under Node16/NodeNext
+/// resolution mode does not include an explicit file extension. ESM requires explicit extensions.
+/// Example: `import { foo } from './utils'` should be `import { foo } from './utils.js'`
+pub const IMPORT_PATH_NEEDS_EXTENSION: u32 = 2834;
+
 /// Result of module resolution
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedModule {
@@ -209,6 +223,28 @@ pub enum ResolutionFailure {
         /// Span of the module specifier in source
         span: Span,
     },
+    /// TS2834: Relative import paths need explicit file extensions in EcmaScript imports
+    /// when '--moduleResolution' is 'node16' or 'nodenext'.
+    ImportPathNeedsExtension {
+        /// Module specifier that was used without an extension
+        specifier: String,
+        /// Suggested extension to add (e.g., ".js")
+        suggested_extension: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
+    /// TS2792: Cannot find module. Did you mean to set the 'moduleResolution' option to 'nodenext'?
+    /// Emitted when package.json has 'exports' but resolution mode doesn't support it.
+    ModuleResolutionModeMismatch {
+        /// Module specifier that could not be resolved
+        specifier: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
 }
 
 impl ResolutionFailure {
@@ -286,6 +322,33 @@ impl ResolutionFailure {
                 ),
                 CANNOT_FIND_MODULE,
             ),
+            ResolutionFailure::ImportPathNeedsExtension {
+                specifier,
+                suggested_extension,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!(
+                    "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{}{}'?",
+                    specifier, suggested_extension
+                ),
+                IMPORT_PATH_NEEDS_EXTENSION,
+            ),
+            ResolutionFailure::ModuleResolutionModeMismatch {
+                specifier,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!(
+                    "Cannot find module '{}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?",
+                    specifier
+                ),
+                MODULE_RESOLUTION_MODE_MISMATCH,
+            ),
         }
     }
 
@@ -306,6 +369,12 @@ impl ResolutionFailure {
             }
             | ResolutionFailure::PathMappingFailed {
                 containing_file, ..
+            }
+            | ResolutionFailure::ImportPathNeedsExtension {
+                containing_file, ..
+            }
+            | ResolutionFailure::ModuleResolutionModeMismatch {
+                containing_file, ..
             } => containing_file,
         }
     }
@@ -317,7 +386,9 @@ impl ResolutionFailure {
             | ResolutionFailure::InvalidSpecifier { span, .. }
             | ResolutionFailure::PackageJsonError { span, .. }
             | ResolutionFailure::CircularResolution { span, .. }
-            | ResolutionFailure::PathMappingFailed { span, .. } => *span,
+            | ResolutionFailure::PathMappingFailed { span, .. }
+            | ResolutionFailure::ImportPathNeedsExtension { span, .. }
+            | ResolutionFailure::ModuleResolutionModeMismatch { span, .. } => *span,
         }
     }
 
@@ -578,6 +649,7 @@ impl ModuleResolver {
                 containing_dir,
                 containing_file,
                 specifier_span,
+                importing_module_kind,
             );
         }
 
@@ -851,8 +923,47 @@ impl ModuleResolver {
         containing_dir: &Path,
         containing_file: &str,
         specifier_span: Span,
+        importing_module_kind: ImportingModuleKind,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let candidate = containing_dir.join(specifier);
+
+        // Check if specifier has an explicit extension
+        let specifier_has_extension = Path::new(specifier)
+            .extension()
+            .map(|ext| !ext.is_empty())
+            .unwrap_or(false);
+
+        // TS2834 Check: In Node16/NodeNext + ESM context, relative imports must have explicit extensions
+        if matches!(
+            self.resolution_kind,
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+        ) && importing_module_kind == ImportingModuleKind::Esm
+            && !specifier_has_extension
+        {
+            // Try to resolve to determine what extension to suggest
+            if let Some(resolved) = self.try_file_or_directory(&candidate) {
+                // Resolution succeeded implicitly - this is an error in ESM mode
+                let resolved_ext = ModuleExtension::from_path(&resolved);
+                // Suggest the .js extension (TypeScript convention: import .js, compile from .ts)
+                let suggested_ext = match resolved_ext {
+                    ModuleExtension::Ts | ModuleExtension::Tsx | ModuleExtension::Js | ModuleExtension::Jsx => ".js",
+                    ModuleExtension::Mts | ModuleExtension::Mjs => ".mjs",
+                    ModuleExtension::Cts | ModuleExtension::Cjs => ".cjs",
+                    ModuleExtension::Dts => ".js",
+                    ModuleExtension::DmTs => ".mjs",
+                    ModuleExtension::DCts => ".cjs",
+                    ModuleExtension::Json => ".json",
+                    ModuleExtension::Unknown => ".js",
+                };
+                return Err(ResolutionFailure::ImportPathNeedsExtension {
+                    specifier: specifier.to_string(),
+                    suggested_extension: suggested_ext.to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                });
+            }
+            // If resolution fails, fall through to NotFound
+        }
 
         if let Some(resolved) = self.try_file_or_directory(&candidate) {
             return Ok(ResolvedModule {
@@ -921,6 +1032,10 @@ impl ModuleResolver {
             return Ok(resolved);
         }
 
+        // Track if we found a package with exports but couldn't resolve it
+        // (for TS2792 hint when not in Node16/NodeNext/Bundler mode)
+        let mut found_package_with_exports = false;
+
         // Walk up directory tree looking for node_modules
         let mut current = containing_dir.to_path_buf();
         loop {
@@ -930,14 +1045,33 @@ impl ModuleResolver {
                 let package_dir = node_modules.join(&package_name);
 
                 if package_dir.is_dir() {
-                    return self.resolve_package(
+                    match self.resolve_package(
                         &package_dir,
                         subpath.as_deref(),
                         specifier,
                         containing_file,
                         specifier_span,
                         &conditions,
-                    );
+                    ) {
+                        Ok(resolved) => return Ok(resolved),
+                        Err(_) => {
+                            // Check if package has exports field - relevant for TS2792
+                            if !matches!(
+                                self.resolution_kind,
+                                ModuleResolutionKind::Node16
+                                    | ModuleResolutionKind::NodeNext
+                                    | ModuleResolutionKind::Bundler
+                            ) {
+                                let package_json_path = package_dir.join("package.json");
+                                if let Ok(pj) = self.read_package_json(&package_json_path) {
+                                    if pj.exports.is_some() {
+                                        found_package_with_exports = true;
+                                    }
+                                }
+                            }
+                            // Continue searching in parent directories
+                        }
+                    }
                 }
             }
 
@@ -964,6 +1098,16 @@ impl ModuleResolver {
             {
                 return Ok(resolved);
             }
+        }
+
+        // TS2792: If we found a package with exports but couldn't resolve it,
+        // and we're not in a mode that supports exports, suggest switching modes
+        if found_package_with_exports {
+            return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                specifier: specifier.to_string(),
+                containing_file: containing_file.to_string(),
+                span: specifier_span,
+            });
         }
 
         Err(ResolutionFailure::NotFound {
@@ -2186,5 +2330,142 @@ mod tests {
         // Verify all have TS2307 code
         let codes: Vec<_> = diagnostics.errors().map(|d| d.code).collect();
         assert!(codes.iter().all(|&c| c == CANNOT_FIND_MODULE));
+    }
+
+    // =========================================================================
+    // TS2834 (Import Path Needs Extension) Tests
+    // =========================================================================
+
+    #[test]
+    fn test_ts2834_error_code_constant() {
+        assert_eq!(IMPORT_PATH_NEEDS_EXTENSION, 2834);
+    }
+
+    #[test]
+    fn test_import_path_needs_extension_produces_ts2834() {
+        let failure = ResolutionFailure::ImportPathNeedsExtension {
+            specifier: "./utils".to_string(),
+            suggested_extension: ".js".to_string(),
+            containing_file: "/src/index.mts".to_string(),
+            span: Span::new(20, 30),
+        };
+
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert_eq!(diagnostic.file_name, "/src/index.mts");
+        assert!(diagnostic.message.contains("Relative import paths need explicit file extensions"));
+        assert!(diagnostic.message.contains("node16"));
+        assert!(diagnostic.message.contains("nodenext"));
+        assert!(diagnostic.message.contains("./utils.js"));
+    }
+
+    #[test]
+    fn test_import_path_needs_extension_suggests_mjs() {
+        let failure = ResolutionFailure::ImportPathNeedsExtension {
+            specifier: "./esm-module".to_string(),
+            suggested_extension: ".mjs".to_string(),
+            containing_file: "/src/app.mts".to_string(),
+            span: Span::new(10, 25),
+        };
+
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert!(diagnostic.message.contains("./esm-module.mjs"));
+    }
+
+    #[test]
+    fn test_import_path_needs_extension_suggests_cjs() {
+        let failure = ResolutionFailure::ImportPathNeedsExtension {
+            specifier: "./cjs-module".to_string(),
+            suggested_extension: ".cjs".to_string(),
+            containing_file: "/src/legacy.cts".to_string(),
+            span: Span::new(5, 20),
+        };
+
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert!(diagnostic.message.contains("./cjs-module.cjs"));
+    }
+
+    // =========================================================================
+    // TS2792 (Module Resolution Mode Mismatch) Tests
+    // =========================================================================
+
+    #[test]
+    fn test_ts2792_error_code_constant() {
+        assert_eq!(MODULE_RESOLUTION_MODE_MISMATCH, 2792);
+    }
+
+    #[test]
+    fn test_module_resolution_mode_mismatch_produces_ts2792() {
+        let failure = ResolutionFailure::ModuleResolutionModeMismatch {
+            specifier: "modern-esm-package".to_string(),
+            containing_file: "/src/index.ts".to_string(),
+            span: Span::new(15, 35),
+        };
+
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, MODULE_RESOLUTION_MODE_MISMATCH);
+        assert_eq!(diagnostic.file_name, "/src/index.ts");
+        assert!(diagnostic.message.contains("Cannot find module 'modern-esm-package'"));
+        assert!(diagnostic.message.contains("moduleResolution"));
+        assert!(diagnostic.message.contains("nodenext"));
+        assert!(diagnostic.message.contains("paths"));
+    }
+
+    #[test]
+    fn test_module_resolution_mode_mismatch_accessors() {
+        let failure = ResolutionFailure::ModuleResolutionModeMismatch {
+            specifier: "pkg".to_string(),
+            containing_file: "/test.ts".to_string(),
+            span: Span::new(100, 110),
+        };
+
+        assert_eq!(failure.containing_file(), "/test.ts");
+        assert_eq!(failure.span().start, 100);
+        assert_eq!(failure.span().end, 110);
+    }
+
+    #[test]
+    fn test_import_path_needs_extension_accessors() {
+        let failure = ResolutionFailure::ImportPathNeedsExtension {
+            specifier: "./foo".to_string(),
+            suggested_extension: ".js".to_string(),
+            containing_file: "/bar.mts".to_string(),
+            span: Span::new(50, 60),
+        };
+
+        assert_eq!(failure.containing_file(), "/bar.mts");
+        assert_eq!(failure.span().start, 50);
+        assert_eq!(failure.span().end, 60);
+    }
+
+    #[test]
+    fn test_new_error_codes_emit_correctly() {
+        let mut diagnostics = DiagnosticBag::new();
+        let resolver = ModuleResolver::node_resolver();
+
+        // Test TS2834
+        let failure_2834 = ResolutionFailure::ImportPathNeedsExtension {
+            specifier: "./utils".to_string(),
+            suggested_extension: ".js".to_string(),
+            containing_file: "/src/app.mts".to_string(),
+            span: Span::new(0, 10),
+        };
+        resolver.emit_resolution_error(&mut diagnostics, &failure_2834);
+
+        // Test TS2792
+        let failure_2792 = ResolutionFailure::ModuleResolutionModeMismatch {
+            specifier: "esm-pkg".to_string(),
+            containing_file: "/src/index.ts".to_string(),
+            span: Span::new(5, 15),
+        };
+        resolver.emit_resolution_error(&mut diagnostics, &failure_2792);
+
+        assert_eq!(diagnostics.len(), 2);
+
+        let errors: Vec<_> = diagnostics.errors().collect();
+        assert_eq!(errors[0].code, IMPORT_PATH_NEEDS_EXTENSION);
+        assert_eq!(errors[1].code, MODULE_RESOLUTION_MODE_MISMATCH);
     }
 }
