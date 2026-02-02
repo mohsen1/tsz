@@ -191,7 +191,7 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
 /// by examining their .tsbuildinfo files and output timestamps.
 fn are_referenced_projects_uptodate(
     project: &ResolvedProject,
-    _build_info: &BuildInfo,
+    build_info: &BuildInfo,
     args: &CliArgs,
 ) -> bool {
     // For each referenced project
@@ -213,9 +213,36 @@ fn are_referenced_projects_uptodate(
         }
 
         match BuildInfo::load(&ref_build_info_path) {
-            Ok(Some(_ref_build_info)) => {
-                // TODO: Check latestChangedDtsFile field (Phase 3)
-                // For now, skip the timestamp check
+            Ok(Some(ref_build_info)) => {
+                // Check if the referenced project's latest .d.ts file is newer
+                // than our build time, which would mean we need to rebuild
+                if let Some(ref latest_dts) = ref_build_info.latest_changed_dts_file {
+                    // Convert relative path to absolute path
+                    let dts_absolute_path = project_dir.join(latest_dts);
+
+                    // Get the modification time of the .d.ts file
+                    if let Ok(metadata) = std::fs::metadata(&dts_absolute_path) {
+                        if let Ok(dts_modified) = metadata.modified() {
+                            // Convert the .d.ts modification time to seconds since epoch
+                            if let Ok(dts_secs) = dts_modified.duration_since(std::time::UNIX_EPOCH) {
+                                let dts_timestamp = dts_secs.as_secs();
+
+                                // Compare with our build time
+                                if dts_timestamp > build_info.build_time {
+                                    if args.build_verbose {
+                                        let project_name = reference.config_path
+                                            .file_stem()
+                                            .and_then(|s| s.to_str())
+                                            .unwrap_or("unknown");
+                                        info!("Referenced project's .d.ts is newer: {} ({} > {})",
+                                            project_name, dts_timestamp, build_info.build_time);
+                                    }
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Ok(None) => {
                 if args.build_verbose {
