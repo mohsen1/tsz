@@ -480,6 +480,129 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
     }
 }
 
+/// Visitor to extract the yield type from Generator<Y, R, N> applications.
+struct GeneratorYieldExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> GeneratorYieldExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for GeneratorYieldExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+        // Generator<Y, R, N> has Y as the first type argument
+        if !app.args.is_empty() {
+            Some(app.args[0])
+        } else {
+            None
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+/// Visitor to extract the return type from Generator<Y, R, N> applications.
+struct GeneratorReturnExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> GeneratorReturnExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for GeneratorReturnExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+        // Generator<Y, R, N> has R as the second type argument
+        if app.args.len() >= 2 {
+            Some(app.args[1])
+        } else {
+            None
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+/// Visitor to extract the next type from Generator<Y, R, N> applications.
+struct GeneratorNextExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> GeneratorNextExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for GeneratorNextExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+        // Generator<Y, R, N> has N as the third type argument
+        if app.args.len() >= 3 {
+            Some(app.args[2])
+        } else {
+            None
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 /// Context for contextual typing.
 /// Holds the expected type and provides methods to extract type information.
 pub struct ContextualTypeContext<'a> {
@@ -952,38 +1075,30 @@ impl<'a> ContextualTypeContext<'a> {
     /// ```
     pub fn get_generator_yield_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
 
-        match key {
-            TypeKey::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                // Generator<Y, R, N> has Y as the first type argument
-                if !app.args.is_empty() {
-                    Some(app.args[0])
-                } else {
-                    None
-                }
-            }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let yield_types: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&m| {
-                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_generator_yield_type()
-                    })
-                    .collect();
+        // Handle Union explicitly - collect yield types from all members
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let yield_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_generator_yield_type()
+                })
+                .collect();
 
-                if yield_types.is_empty() {
-                    None
-                } else if yield_types.len() == 1 {
-                    Some(yield_types[0])
-                } else {
-                    Some(self.interner.union(yield_types))
-                }
-            }
-            _ => None,
+            return if yield_types.is_empty() {
+                None
+            } else if yield_types.len() == 1 {
+                Some(yield_types[0])
+            } else {
+                Some(self.interner.union(yield_types))
+            };
         }
+
+        // Use visitor for Generator types
+        let mut extractor = GeneratorYieldExtractor::new(self.interner);
+        extractor.extract(expected)
     }
 
     /// Get the contextual return type for a generator function (TReturn from Generator<Y, TReturn, N>).
@@ -991,38 +1106,30 @@ impl<'a> ContextualTypeContext<'a> {
     /// This is used to contextually type return statements in generators.
     pub fn get_generator_return_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
 
-        match key {
-            TypeKey::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                // Generator<Y, R, N> has R as the second type argument
-                if app.args.len() >= 2 {
-                    Some(app.args[1])
-                } else {
-                    None
-                }
-            }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let return_types: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&m| {
-                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_generator_return_type()
-                    })
-                    .collect();
+        // Handle Union explicitly - collect return types from all members
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let return_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_generator_return_type()
+                })
+                .collect();
 
-                if return_types.is_empty() {
-                    None
-                } else if return_types.len() == 1 {
-                    Some(return_types[0])
-                } else {
-                    Some(self.interner.union(return_types))
-                }
-            }
-            _ => None,
+            return if return_types.is_empty() {
+                None
+            } else if return_types.len() == 1 {
+                Some(return_types[0])
+            } else {
+                Some(self.interner.union(return_types))
+            };
         }
+
+        // Use visitor for Generator types
+        let mut extractor = GeneratorReturnExtractor::new(self.interner);
+        extractor.extract(expected)
     }
 
     /// Get the contextual next type for a generator function (TNext from Generator<Y, R, TNext>).
@@ -1031,38 +1138,30 @@ impl<'a> ContextualTypeContext<'a> {
     /// the type of the yield expression result.
     pub fn get_generator_next_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
 
-        match key {
-            TypeKey::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                // Generator<Y, R, N> has N as the third type argument
-                if app.args.len() >= 3 {
-                    Some(app.args[2])
-                } else {
-                    None
-                }
-            }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let next_types: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&m| {
-                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_generator_next_type()
-                    })
-                    .collect();
+        // Handle Union explicitly - collect next types from all members
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let next_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_generator_next_type()
+                })
+                .collect();
 
-                if next_types.is_empty() {
-                    None
-                } else if next_types.len() == 1 {
-                    Some(next_types[0])
-                } else {
-                    Some(self.interner.union(next_types))
-                }
-            }
-            _ => None,
+            return if next_types.is_empty() {
+                None
+            } else if next_types.len() == 1 {
+                Some(next_types[0])
+            } else {
+                Some(self.interner.union(next_types))
+            };
         }
+
+        // Use visitor for Generator types
+        let mut extractor = GeneratorNextExtractor::new(self.interner);
+        extractor.extract(expected)
     }
 
     /// Create a child context for a yield expression in a generator.
