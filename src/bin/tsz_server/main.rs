@@ -4132,14 +4132,9 @@ fn write_content_length_message(stdout: &mut std::io::Stdout, message: &str) -> 
 // =============================================================================
 
 fn main() -> Result<()> {
-    // Initialize tracing (stderr so it doesn't interfere with protocol)
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::WARN.into()),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    // Initialize tracing (always stderr so it doesn't interfere with protocol).
+    // Supports TSZ_LOG_FORMAT=tree|json|text (see src/tracing_config.rs).
+    wasm::tracing_config::init_tracing();
 
     let args = ServerArgs::parse();
     let mut server = Server::new(&args).context("failed to initialize server")?;
