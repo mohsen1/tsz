@@ -81,7 +81,7 @@ impl<'a> Printer<'a> {
                 }
                 c if (c as u32) < 0x20 || c == '\x7F' => {
                     let mut buf = String::new();
-                    write!(buf, "\\x{:02X}", c as u32).unwrap();
+                    write!(buf, "\\u{:04X}", c as u32).unwrap();
                     self.write(&buf);
                 }
                 c => self.write_char(c),

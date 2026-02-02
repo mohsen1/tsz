@@ -275,6 +275,9 @@ pub fn collect_export_names_categorized(
         }
     }
 
+    // TypeScript emits void 0 initialization in reverse declaration order
+    other_exports.reverse();
+
     (func_exports, other_exports)
 }
 

@@ -49,8 +49,11 @@ impl<'a> CommonJsTransformContext<'a> {
         result.push(IRNode::EsesModuleMarker);
 
         // Collect export names for initialization
-        let exports =
+        let mut exports =
             crate::transforms::module_commonjs::collect_export_names(self.arena, statements);
+
+        // TypeScript emits void 0 initialization in reverse declaration order
+        exports.reverse();
 
         // Initialize exports
         if !exports.is_empty() {
