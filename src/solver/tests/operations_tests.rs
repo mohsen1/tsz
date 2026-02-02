@@ -1207,7 +1207,6 @@ fn make_array_test_env(
 }
 
 #[test]
-#[ignore = "TODO: solver needs work"]
 fn test_property_access_readonly_array() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
@@ -1224,7 +1223,6 @@ fn test_property_access_readonly_array() {
 }
 
 #[test]
-#[ignore = "TODO: solver needs work"]
 fn test_property_access_tuple_length() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
@@ -1253,7 +1251,6 @@ fn test_property_access_tuple_length() {
 }
 
 #[test]
-#[ignore = "TODO: solver needs work"]
 fn test_property_access_array_map_signature() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
@@ -1291,7 +1288,6 @@ fn test_property_access_array_map_signature() {
 }
 
 #[test]
-#[ignore = "TODO: solver needs work"]
 fn test_property_access_array_at_returns_optional_element() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
@@ -1313,7 +1309,6 @@ fn test_property_access_array_at_returns_optional_element() {
 }
 
 #[test]
-#[ignore = "TODO: solver needs work"]
 fn test_property_access_array_entries_returns_tuple_array() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);
@@ -1343,7 +1338,6 @@ fn test_property_access_array_entries_returns_tuple_array() {
 }
 
 #[test]
-#[ignore = "TODO: solver needs work"]
 fn test_property_access_array_reduce_callable() {
     let interner = TypeInterner::new();
     let (env, _) = make_array_test_env(&interner);

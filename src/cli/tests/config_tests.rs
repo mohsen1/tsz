@@ -290,7 +290,6 @@ fn resolve_compiler_options_resolves_lib_files() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn resolve_compiler_options_rejects_unknown_lib() {
     let config = parse_tsconfig(
         r#"{
