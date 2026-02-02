@@ -7,7 +7,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
-use wasm::solver::{TypeId, TypeInterner};
+use wasm::solver::{ObjectFlags, TypeId, TypeInterner};
 
 /// Benchmark type interning under concurrent load
 fn bench_concurrent_interning(c: &mut Criterion) {
@@ -199,6 +199,7 @@ fn bench_property_lookup(c: &mut Criterion) {
             .collect::<Vec<_>>();
 
         let shape = ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: props,
             string_index: None,
             number_index: None,
@@ -227,6 +228,7 @@ fn bench_property_lookup(c: &mut Criterion) {
             .collect::<Vec<_>>();
 
         let shape = ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: props,
             string_index: None,
             number_index: None,

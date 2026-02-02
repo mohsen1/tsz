@@ -179,6 +179,7 @@ fn test_template_literal_number_index_subtyping() {
     ]);
 
     let target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -188,6 +189,7 @@ fn test_template_literal_number_index_subtyping() {
         }),
     });
     let mismatch = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -319,6 +321,7 @@ fn test_apparent_string_number_index_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -328,6 +331,7 @@ fn test_apparent_string_number_index_subtyping() {
         }),
     });
     let mismatch = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -1108,6 +1112,7 @@ fn test_no_unchecked_object_index_signature_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -1134,6 +1139,7 @@ fn test_no_unchecked_indexed_access_string_index_signature() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -1160,6 +1166,7 @@ fn test_no_unchecked_indexed_access_union_index_signature() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -2613,6 +2620,7 @@ fn test_number_index_signature_numeric_property() {
 
     // { [x: number]: string }
     let target_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -2646,6 +2654,7 @@ fn test_number_index_signature_type_mismatch() {
 
     // { [x: number]: string }
     let target_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -2717,6 +2726,7 @@ fn test_number_index_signature_method_bivariant_property() {
     }]);
 
     let target_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -2788,6 +2798,7 @@ fn test_string_index_signature_method_bivariant_property() {
     }]);
 
     let target_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -2839,6 +2850,7 @@ fn test_number_index_signature_multiple_numeric_props() {
 
     // { [x: number]: string }
     let target_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -2882,6 +2894,7 @@ fn test_number_and_string_index_signatures() {
 
     // { [x: number]: string; [y: string]: string }
     let target_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -2906,6 +2919,7 @@ fn test_index_signature_consistency_number_vs_string_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -2920,6 +2934,7 @@ fn test_index_signature_consistency_number_vs_string_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -2942,6 +2957,7 @@ fn test_readonly_index_signature_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let readonly_source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -2952,6 +2968,7 @@ fn test_readonly_index_signature_subtyping() {
     });
 
     let mutable_target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -2962,6 +2979,7 @@ fn test_readonly_index_signature_subtyping() {
     });
 
     let readonly_target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -2990,6 +3008,7 @@ fn test_readonly_property_with_mutable_index_signature() {
     }]);
 
     let mutable_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -3000,6 +3019,7 @@ fn test_readonly_property_with_mutable_index_signature() {
     });
 
     let readonly_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -3019,6 +3039,7 @@ fn test_object_with_index_properties_match_target_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![
             PropertyInfo {
                 name: interner.intern_string("0"),
@@ -3050,6 +3071,7 @@ fn test_object_with_index_properties_match_target_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -3072,6 +3094,7 @@ fn test_object_with_index_property_mismatch_string_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("name"),
             type_id: TypeId::STRING,
@@ -3089,6 +3112,7 @@ fn test_object_with_index_property_mismatch_string_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -3107,6 +3131,7 @@ fn test_object_with_index_property_mismatch_number_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("0"),
             type_id: TypeId::STRING,
@@ -3124,6 +3149,7 @@ fn test_object_with_index_property_mismatch_number_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -3142,6 +3168,7 @@ fn test_object_with_index_satisfies_named_property_string_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -3169,6 +3196,7 @@ fn test_object_with_index_named_property_mismatch_string_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -3205,6 +3233,7 @@ fn test_object_to_indexed_property_mismatch_string_index() {
     }]);
 
     let target = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -3223,6 +3252,7 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -3250,6 +3280,7 @@ fn test_object_with_index_noncanonical_numeric_property_fails() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
@@ -3277,6 +3308,7 @@ fn test_object_with_index_readonly_index_to_mutable_property_fails() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
         string_index: Some(IndexSignature {
@@ -5468,6 +5500,7 @@ fn test_keyof_union_index_signature_contravariant() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let string_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -5477,6 +5510,7 @@ fn test_keyof_union_index_signature_contravariant() {
         number_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -5499,6 +5533,7 @@ fn test_keyof_union_string_index_and_literal_narrows() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let string_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -5894,6 +5929,7 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
     });
 
     let number_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -5903,6 +5939,7 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
         }),
     });
     let mismatch = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -11983,6 +12020,7 @@ fn test_index_signature_string_basic() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_number = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -11993,6 +12031,7 @@ fn test_index_signature_string_basic() {
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12016,6 +12055,7 @@ fn test_index_signature_covariant_value() {
     let hello = interner.literal_string("hello");
 
     let indexed_literal = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12026,6 +12066,7 @@ fn test_index_signature_covariant_value() {
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12048,6 +12089,7 @@ fn test_index_signature_with_known_property() {
     let a_name = interner.intern_string("a");
 
     let indexed_with_prop = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: a_name,
             type_id: TypeId::STRING,
@@ -12065,6 +12107,7 @@ fn test_index_signature_with_known_property() {
     });
 
     let indexed_only = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12085,6 +12128,7 @@ fn test_index_signature_number_index() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let number_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -12095,6 +12139,7 @@ fn test_index_signature_number_index() {
     });
 
     let string_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12118,6 +12163,7 @@ fn test_index_signature_union_value() {
     let union_value = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     let indexed_union = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12128,6 +12174,7 @@ fn test_index_signature_union_value() {
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12171,6 +12218,7 @@ fn test_index_signature_object_to_indexed() {
     ]);
 
     let indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -16256,6 +16304,7 @@ fn test_interface_vs_type_alias_index_signature() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let interface_i = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(crate::solver::types::IndexSignature {
             key_type: TypeId::STRING,
@@ -16266,6 +16315,7 @@ fn test_interface_vs_type_alias_index_signature() {
     });
 
     let type_t = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(crate::solver::types::IndexSignature {
             key_type: TypeId::STRING,
@@ -17691,6 +17741,7 @@ fn test_index_signature_string_to_string() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_a = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17701,6 +17752,7 @@ fn test_index_signature_string_to_string() {
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17720,6 +17772,7 @@ fn test_index_signature_number_to_number() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_a = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -17730,6 +17783,7 @@ fn test_index_signature_number_to_number() {
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -17754,6 +17808,7 @@ fn test_index_signature_covariant_value_type() {
     ]);
 
     let obj_specific = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17764,6 +17819,7 @@ fn test_index_signature_covariant_value_type() {
     });
 
     let obj_general = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17784,6 +17840,7 @@ fn test_index_signature_both_string_and_number() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_both = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17798,6 +17855,7 @@ fn test_index_signature_both_string_and_number() {
     });
 
     let obj_string_only = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17819,6 +17877,7 @@ fn test_index_signature_number_subtype_of_string() {
     let _checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17843,6 +17902,7 @@ fn test_index_signature_intersection_combines() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_a = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17853,6 +17913,7 @@ fn test_index_signature_intersection_combines() {
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17878,6 +17939,7 @@ fn test_index_signature_with_properties() {
     let union_type = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("x"),
             type_id: TypeId::NUMBER,
@@ -17906,6 +17968,7 @@ fn test_index_signature_property_must_match_index() {
     let _checker = SubtypeChecker::new(&interner);
 
     let obj_valid = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("x"),
             type_id: TypeId::STRING,
@@ -17932,6 +17995,7 @@ fn test_index_signature_readonly_to_mutable() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_readonly = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17942,6 +18006,7 @@ fn test_index_signature_readonly_to_mutable() {
     });
 
     let obj_mutable = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17962,6 +18027,7 @@ fn test_index_signature_mutable_to_readonly() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let obj_mutable = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17972,6 +18038,7 @@ fn test_index_signature_mutable_to_readonly() {
     });
 
     let obj_readonly = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -17994,6 +18061,7 @@ fn test_index_signature_union_value_subtyping() {
     let union_value = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18004,6 +18072,7 @@ fn test_index_signature_union_value_subtyping() {
     });
 
     let obj_string = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18044,6 +18113,7 @@ fn test_index_signature_intersection_value() {
     let intersection_value = interner.intersection(vec![obj_a, obj_b]);
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18066,6 +18136,7 @@ fn test_index_signature_empty_object_to_indexed() {
     let empty_obj = interner.object(vec![]);
 
     let indexed_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18109,6 +18180,7 @@ fn test_index_signature_object_with_extra_props() {
 
     let union_value = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
     let indexed_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18147,6 +18219,7 @@ fn test_index_signature_numeric_string_key() {
     ]);
 
     let number_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -18167,6 +18240,7 @@ fn test_index_signature_any_value() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_any = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18195,6 +18269,7 @@ fn test_index_signature_unknown_value() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_unknown = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18205,6 +18280,7 @@ fn test_index_signature_unknown_value() {
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18225,6 +18301,7 @@ fn test_index_signature_never_value() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_never = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18258,6 +18335,7 @@ fn test_index_signature_function_value() {
     });
 
     let indexed_fn = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18279,6 +18357,7 @@ fn test_index_signature_array_value() {
     let array_type = interner.array(TypeId::NUMBER);
 
     let indexed_array = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18313,6 +18392,7 @@ fn test_index_signature_tuple_value() {
     ]);
 
     let indexed_tuple = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -18341,6 +18421,7 @@ fn test_index_signature_nested_object_value() {
     }]);
 
     let indexed_nested = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -18360,6 +18441,7 @@ fn test_index_signature_intersection_objects() {
     let _checker = SubtypeChecker::new(&interner);
 
     let indexed_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -21606,6 +21688,7 @@ fn test_intersection_index_signature_with_properties() {
     let x_name = interner.intern_string("x");
 
     let index_sig = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -21642,6 +21725,7 @@ fn test_intersection_two_index_signatures() {
     let one_or_two = interner.union(vec![one, two]);
 
     let index_number = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -21652,6 +21736,7 @@ fn test_intersection_two_index_signatures() {
     });
 
     let index_literal = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -22491,6 +22576,7 @@ fn test_keyof_with_index_signature_includes_string() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -22513,6 +22599,7 @@ fn test_keyof_with_number_index_signature() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let indexed_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -24786,6 +24873,7 @@ fn test_readonly_index_signature() {
     let interner = TypeInterner::new();
 
     let readonly_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -24805,6 +24893,7 @@ fn test_readonly_index_vs_mutable() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let readonly_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -24815,6 +24904,7 @@ fn test_readonly_index_vs_mutable() {
     });
 
     let mutable_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -25012,6 +25102,7 @@ fn test_readonly_with_number_index() {
     let interner = TypeInterner::new();
 
     let readonly_number_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {

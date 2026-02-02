@@ -1,4 +1,5 @@
 use super::*;
+use crate::solver::freshness::{is_fresh_object_type, widen_freshness};
 use crate::solver::intern::PROPERTY_MAP_THRESHOLD;
 
 #[test]

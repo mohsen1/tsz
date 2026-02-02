@@ -11,7 +11,7 @@ fn test_string_index_to_string_index() {
 
     // { [key: string]: number } <: { [key: string]: number }
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -22,7 +22,7 @@ fn test_string_index_to_string_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -43,7 +43,7 @@ fn test_string_index_covariant_value() {
     let hello = interner.literal_string("hello");
 
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -54,7 +54,7 @@ fn test_string_index_covariant_value() {
     });
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -73,7 +73,7 @@ fn test_string_index_not_subtype_incompatible_value() {
 
     // { [key: string]: string } NOT <: { [key: string]: number }
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -84,7 +84,7 @@ fn test_string_index_not_subtype_incompatible_value() {
     });
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -122,7 +122,7 @@ fn test_object_with_props_to_index_signature() {
     ]);
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -160,7 +160,7 @@ fn test_object_with_incompatible_props_not_subtype() {
     ]);
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -179,7 +179,7 @@ fn test_index_with_props_to_simple_object() {
 
     // { [key: string]: number, foo: number } <: { foo: number }
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("foo"),
             type_id: TypeId::NUMBER,
@@ -214,7 +214,7 @@ fn test_number_index_to_number_index() {
 
     // { [key: number]: string } <: { [key: number]: string }
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -225,7 +225,7 @@ fn test_number_index_to_number_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -245,7 +245,7 @@ fn test_string_and_number_index() {
     // { [key: string]: number, [key: number]: number } <: { [key: string]: number }
     // Number index must be subtype of string index
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -260,7 +260,7 @@ fn test_string_and_number_index() {
     });
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -279,7 +279,7 @@ fn test_index_signature_with_named_property() {
 
     // { [key: string]: number, length: number } <: { [key: string]: number, length: number }
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("length"),
             type_id: TypeId::NUMBER,
@@ -297,7 +297,7 @@ fn test_index_signature_with_named_property() {
     });
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("length"),
             type_id: TypeId::NUMBER,
@@ -323,7 +323,7 @@ fn test_index_signature_source_property_mismatch() {
 
     // { [key: string]: string, foo: number } NOT <: { [key: string]: string }
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("foo"),
             type_id: TypeId::NUMBER,
@@ -341,7 +341,7 @@ fn test_index_signature_source_property_mismatch() {
     });
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -360,7 +360,7 @@ fn test_number_index_signature_source_property_mismatch() {
 
     // { [key: number]: number, "0": string } NOT <: { [key: number]: number }
     let source = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("0"),
             type_id: TypeId::STRING,
@@ -378,7 +378,7 @@ fn test_number_index_signature_source_property_mismatch() {
     });
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -399,7 +399,7 @@ fn test_empty_object_to_index_signature() {
     let source = interner.object(vec![]);
 
     let target = interner.object_with_index(ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,

@@ -209,7 +209,7 @@ fn test_concurrent_property_map_building() {
         .collect();
 
     let shape = ObjectShape {
-        flags: ObjectFlags::empty(),
+                flags: ObjectFlags::empty(),
         properties: props,
         string_index: None,
         number_index: None,

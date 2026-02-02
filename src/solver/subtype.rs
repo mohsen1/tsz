@@ -837,6 +837,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let merged_type =
                         if merged_string_index.is_some() || merged_number_index.is_some() {
                             self.interner.object_with_index(ObjectShape {
+                                flags: ObjectFlags::empty(),
                                 properties: merged_properties,
                                 string_index: merged_string_index,
                                 number_index: merged_number_index,
@@ -1060,15 +1061,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             ref_symbol(self.interner, source),
             ref_symbol(self.interner, target),
         ) {
-            return self.check_ref_ref_subtype(source, target, s_sym, t_sym);
+            return self.check_ref_ref_subtype(source, target, &s_sym, &t_sym);
         }
 
         if let Some(s_sym) = ref_symbol(self.interner, source) {
-            return self.check_ref_subtype(source, target, s_sym);
+            return self.check_ref_subtype(source, target, &s_sym);
         }
 
         if let Some(t_sym) = ref_symbol(self.interner, target) {
-            return self.check_to_ref_subtype(source, target, t_sym);
+            return self.check_to_ref_subtype(source, target, &t_sym);
         }
 
         if let (Some(s_def), Some(t_def)) = (
@@ -1122,15 +1123,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             type_query_symbol(self.interner, source),
             type_query_symbol(self.interner, target),
         ) {
-            return self.check_typequery_typequery_subtype(source, target, s_sym, t_sym);
+            return self.check_typequery_typequery_subtype(source, target, &s_sym, &t_sym);
         }
 
         if let Some(s_sym) = type_query_symbol(self.interner, source) {
-            return self.check_typequery_subtype(source, target, s_sym);
+            return self.check_typequery_subtype(source, target, &s_sym);
         }
 
         if let Some(t_sym) = type_query_symbol(self.interner, target) {
-            return self.check_to_typequery_subtype(source, target, t_sym);
+            return self.check_to_typequery_subtype(source, target, &t_sym);
         }
 
         if let (Some(s_inner), Some(t_inner)) = (
