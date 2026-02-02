@@ -167,6 +167,38 @@ impl TypeId {
     pub fn is_never(self) -> bool {
         self == Self::NEVER
     }
+
+    // =========================================================================
+    // Local/Global Partitioning (for ScopedTypeInterner GC)
+    // =========================================================================
+
+    /// Mask for the local bit (MSB of u32).
+    ///
+    /// Local IDs have MSB=1 (0x80000000+), Global IDs have MSB=0 (0x7FFFFFFF-).
+    /// This partitioning allows ScopedTypeInterner to create ephemeral types
+    /// that don't pollute the global TypeId space.
+    pub const LOCAL_MASK: u32 = 0x80000000;
+
+    /// Check if this TypeId is a local (ephemeral) type.
+    ///
+    /// Local types are created by ScopedTypeInterner and are only valid
+    /// for the current operation/request. They are automatically freed
+    /// when the ScopedTypeInterner is dropped.
+    ///
+    /// Returns `true` if MSB is set (0x80000000+).
+    pub fn is_local(self) -> bool {
+        (self.0 & Self::LOCAL_MASK) != 0
+    }
+
+    /// Check if this TypeId is a global (persistent) type.
+    ///
+    /// Global types are managed by TypeInterner and persist for the lifetime
+    /// of the project/server. These include declarations and intrinsics.
+    ///
+    /// Returns `true` if MSB is clear (0x7FFFFFFF-).
+    pub fn is_global(self) -> bool {
+        !self.is_local()
+    }
 }
 
 /// Interned list of TypeId values (e.g., unions/intersections).
