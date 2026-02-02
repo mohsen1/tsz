@@ -703,7 +703,6 @@ fn compile_resolves_node_modules_types_versions_best_match() {
 }
 
 #[test]
-#[ignore = "TODO: driver needs work"]
 fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
