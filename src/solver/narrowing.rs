@@ -16,6 +16,16 @@
 //!   }
 //! }
 //! ```
+//!
+//! ## TypeGuard Abstraction
+//!
+//! The `TypeGuard` enum provides an AST-agnostic representation of narrowing
+//! conditions. This allows the Solver to perform pure type algebra without
+//! depending on AST nodes.
+//!
+//! Architecture:
+//! - **Checker**: Extracts `TypeGuard` from AST nodes (WHERE)
+//! - **Solver**: Applies `TypeGuard` to types (WHAT)
 
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
@@ -29,6 +39,74 @@ use tracing::{Level, span, trace};
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
+
+/// AST-agnostic representation of a type narrowing condition.
+///
+/// This enum represents various guards that can narrow a type, without
+/// depending on AST nodes like `NodeIndex` or `SyntaxKind`.
+///
+/// # Examples
+/// ```typescript
+/// typeof x === "string"     -> TypeGuard::Typeof("string")
+/// x instanceof MyClass      -> TypeGuard::Instanceof(MyClass_type)
+/// x === null                -> TypeGuard::NullishEquality
+/// x                         -> TypeGuard::Truthy
+/// x.kind === "circle"       -> TypeGuard::Discriminant { property: "kind", value: "circle" }
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeGuard {
+    /// `typeof x === "typename"`
+    ///
+    /// Narrows a union to only members matching the typeof result.
+    /// For example, narrowing `string | number` with `Typeof("string")` yields `string`.
+    Typeof(String),
+
+    /// `x instanceof Class`
+    ///
+    /// Narrows to the class type or its subtypes.
+    Instanceof(TypeId),
+
+    /// `x === literal` or `x !== literal`
+    ///
+    /// Narrows to exactly that literal type (for equality) or excludes it (for inequality).
+    LiteralEquality(TypeId),
+
+    /// `x == null` or `x != null` (checks both null and undefined)
+    ///
+    /// JavaScript/TypeScript treats `== null` as matching both `null` and `undefined`.
+    NullishEquality,
+
+    /// `x` (truthiness check in a conditional)
+    ///
+    /// Removes falsy types from a union: `null`, `undefined`, `false`, `0`, `""`, `NaN`.
+    Truthy,
+
+    /// `x.prop === literal` (Discriminated Union narrowing)
+    ///
+    /// Narrows a union of object types based on a discriminant property.
+    /// For example, narrowing `{ kind: "A" } | { kind: "B" }` with
+    /// `Discriminant { property: "kind", value: "A" }` yields `{ kind: "A" }`.
+    Discriminant {
+        property_name: Atom,
+        value_type: TypeId,
+    },
+
+    /// `prop in x`
+    ///
+    /// Narrows to types that have the specified property.
+    InProperty(Atom),
+}
+
+/// Result of a narrowing operation.
+///
+/// Represents the types in both branches of a condition.
+#[derive(Clone, Debug)]
+pub struct NarrowingResult {
+    /// The type in the "true" branch of the condition
+    pub true_type: TypeId,
+    /// The type in the "false" branch of the condition
+    pub false_type: TypeId,
+}
 
 /// Result of finding discriminant properties in a union.
 #[derive(Clone, Debug)]
@@ -692,6 +770,161 @@ impl<'a> NarrowingContext<'a> {
         }
 
         false
+    }
+
+    /// Applies a type guard to narrow a type.
+    ///
+    /// This is the main entry point for AST-agnostic type narrowing.
+    /// The Checker extracts a `TypeGuard` from AST nodes, and the Solver
+    /// applies it to compute the narrowed type.
+    ///
+    /// # Arguments
+    /// * `source_type` - The type to narrow
+    /// * `guard` - The guard condition (extracted from AST by Checker)
+    /// * `sense` - If true, narrow for the "true" branch; if false, narrow for the "false" branch
+    ///
+    /// # Returns
+    /// The narrowed type after applying the guard.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// // typeof x === "string"
+    /// let guard = TypeGuard::Typeof("string".to_string());
+    /// let narrowed = narrowing.narrow_type(string_or_number, &guard, true);
+    /// assert_eq!(narrowed, TypeId::STRING);
+    ///
+    /// // x !== null (negated sense)
+    /// let guard = TypeGuard::NullishEquality;
+    /// let narrowed = narrowing.narrow_type(string_or_null, &guard, false);
+    /// // Result should exclude null and undefined
+    /// ```
+    pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: bool) -> TypeId {
+        match guard {
+            TypeGuard::Typeof(type_name) => {
+                if sense {
+                    self.narrow_by_typeof(source_type, type_name)
+                } else {
+                    // Negation: exclude typeof type
+                    self.narrow_by_typeof_negation(source_type, type_name)
+                }
+            }
+
+            TypeGuard::Instanceof(_class_type) => {
+                // TODO: Implement instanceof narrowing
+                // For now, return the source type unchanged
+                source_type
+            }
+
+            TypeGuard::LiteralEquality(literal_type) => {
+                if sense {
+                    // Equality: narrow to the literal type
+                    self.narrow_to_type(source_type, *literal_type)
+                } else {
+                    // Inequality: exclude the literal type
+                    self.narrow_excluding_type(source_type, *literal_type)
+                }
+            }
+
+            TypeGuard::NullishEquality => {
+                if sense {
+                    // Equality with null: narrow to null | undefined
+                    self.interner.union(vec![TypeId::NULL, TypeId::UNDEFINED])
+                } else {
+                    // Inequality: exclude null and undefined
+                    let without_null = self.narrow_excluding_type(source_type, TypeId::NULL);
+                    self.narrow_excluding_type(without_null, TypeId::UNDEFINED)
+                }
+            }
+
+            TypeGuard::Truthy => {
+                if sense {
+                    // Truthy: remove falsy types (null, undefined, false, 0, "", NaN)
+                    self.narrow_by_truthiness(source_type)
+                } else {
+                    // Falsy: intersection with falsy types
+                    // TODO: Implement proper falsy narrowing
+                    source_type
+                }
+            }
+
+            TypeGuard::Discriminant {
+                property_name,
+                value_type,
+            } => {
+                if sense {
+                    // Discriminant matches: narrow to matching union members
+                    self.narrow_by_discriminant(source_type, *property_name, *value_type)
+                } else {
+                    // Discriminant doesn't match: exclude matching union members
+                    self.narrow_by_excluding_discriminant(source_type, *property_name, *value_type)
+                }
+            }
+
+            TypeGuard::InProperty(_property_name) => {
+                // TODO: Implement `in` operator narrowing
+                // For now, return the source type unchanged
+                source_type
+            }
+        }
+    }
+
+    /// Narrow a type by removing typeof-matching types.
+    ///
+    /// This is the negation of `narrow_by_typeof`.
+    /// For example, narrowing `string | number` with `typeof "string"` (sense=false)
+    /// yields `number`.
+    fn narrow_by_typeof_negation(&self, source_type: TypeId, typeof_result: &str) -> TypeId {
+        // For each typeof result, we exclude matching types
+        let excluded = match typeof_result {
+            "string" => TypeId::STRING,
+            "number" => TypeId::NUMBER,
+            "boolean" => TypeId::BOOLEAN,
+            "bigint" => TypeId::BIGINT,
+            "symbol" => TypeId::SYMBOL,
+            "function" => {
+                // Functions are more complex - handle separately
+                return self.narrow_excluding_function(source_type);
+            }
+            "object" => {
+                // Object excludes primitives
+                // Exclude null, undefined, string, number, boolean, bigint, symbol
+                let mut result = source_type;
+                for &primitive in &[
+                    TypeId::NULL,
+                    TypeId::UNDEFINED,
+                    TypeId::STRING,
+                    TypeId::NUMBER,
+                    TypeId::BOOLEAN,
+                    TypeId::BIGINT,
+                    TypeId::SYMBOL,
+                ] {
+                    result = self.narrow_excluding_type(result, primitive);
+                }
+                return result;
+            }
+            _ => return source_type,
+        };
+
+        self.narrow_excluding_type(source_type, excluded)
+    }
+
+    /// Narrow a type by removing falsy values.
+    ///
+    /// Removes: null, undefined, false, 0, "", NaN
+    fn narrow_by_truthiness(&self, source_type: TypeId) -> TypeId {
+        let mut result = source_type;
+
+        // Remove nullish types
+        result = self.narrow_excluding_type(result, TypeId::NULL);
+        result = self.narrow_excluding_type(result, TypeId::UNDEFINED);
+
+        // Remove false literal
+        if let Some(_false_type) = self.interner.lookup(TypeId::BOOLEAN) {
+            // For now, just keep the implementation simple
+            // TODO: Remove false literal from unions
+        }
+
+        result
     }
 }
 

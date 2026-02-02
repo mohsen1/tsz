@@ -1190,3 +1190,206 @@ fn test_narrow_to_interface_type() {
     // Should be narrowed to Cat
     assert_eq!(narrowed, cat_type);
 }
+
+// =============================================================================
+// TypeGuard and narrow_type() Tests
+// =============================================================================
+
+use crate::solver::narrowing::{TypeGuard, NarrowingContext};
+
+#[test]
+fn test_type_guard_typeof_string() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    // typeof x === "string"
+    let guard = TypeGuard::Typeof("string".to_string());
+    let narrowed = ctx.narrow_type(union, &guard, true);
+
+    // Should narrow to string
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_type_guard_typeof_string_negated() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    // typeof x !== "string" (sense=false)
+    let guard = TypeGuard::Typeof("string".to_string());
+    let narrowed = ctx.narrow_type(union, &guard, false);
+
+    // Should narrow to number (exclude string)
+    assert_eq!(narrowed, TypeId::NUMBER);
+}
+
+#[test]
+fn test_type_guard_literal_equality() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // "foo" | "bar"
+    let foo = interner.literal_string("foo");
+    let bar = interner.literal_string("bar");
+    let union = interner.union(vec![foo, bar]);
+
+    // x === "foo"
+    let guard = TypeGuard::LiteralEquality(foo);
+    let narrowed = ctx.narrow_type(union, &guard, true);
+
+    // Should narrow to "foo"
+    assert_eq!(narrowed, foo);
+}
+
+#[test]
+fn test_type_guard_literal_equality_negated() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // "foo" | "bar"
+    let foo = interner.literal_string("foo");
+    let bar = interner.literal_string("bar");
+    let union = interner.union(vec![foo, bar]);
+
+    // x !== "foo" (sense=false)
+    let guard = TypeGuard::LiteralEquality(foo);
+    let narrowed = ctx.narrow_type(union, &guard, false);
+
+    // Should narrow to "bar" (exclude "foo")
+    assert_eq!(narrowed, bar);
+}
+
+#[test]
+fn test_type_guard_nullish_equality() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+
+    // x == null
+    let guard = TypeGuard::NullishEquality;
+    let narrowed = ctx.narrow_type(union, &guard, true);
+
+    // Should narrow to null | undefined
+    let nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+    assert_eq!(narrowed, nullish);
+}
+
+#[test]
+fn test_type_guard_nullish_equality_negated() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+
+    // x != null (sense=false)
+    let guard = TypeGuard::NullishEquality;
+    let narrowed = ctx.narrow_type(union, &guard, false);
+
+    // Should narrow to string (exclude null and undefined)
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_type_guard_discriminant() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+    let kind_name = interner.intern_string("kind");
+
+    // { kind: "a" } | { kind: "b" }
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member1 = interner.object(vec![PropertyInfo {
+        name: kind_name,
+        type_id: kind_a,
+        write_type: kind_a,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let member2 = interner.object(vec![PropertyInfo {
+        name: kind_name,
+        type_id: kind_b,
+        write_type: kind_b,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let union = interner.union(vec![member1, member2]);
+
+    // x.kind === "a"
+    let guard = TypeGuard::Discriminant {
+        property_name: kind_name,
+        value_type: kind_a,
+    };
+    let narrowed = ctx.narrow_type(union, &guard, true);
+
+    // Should narrow to { kind: "a" }
+    assert_eq!(narrowed, member1);
+}
+
+#[test]
+fn test_type_guard_discriminant_negated() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+    let kind_name = interner.intern_string("kind");
+
+    // { kind: "a" } | { kind: "b" }
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member1 = interner.object(vec![PropertyInfo {
+        name: kind_name,
+        type_id: kind_a,
+        write_type: kind_a,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let member2 = interner.object(vec![PropertyInfo {
+        name: kind_name,
+        type_id: kind_b,
+        write_type: kind_b,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let union = interner.union(vec![member1, member2]);
+
+    // x.kind !== "a" (sense=false)
+    let guard = TypeGuard::Discriminant {
+        property_name: kind_name,
+        value_type: kind_a,
+    };
+    let narrowed = ctx.narrow_type(union, &guard, false);
+
+    // Should narrow to { kind: "b" }
+    assert_eq!(narrowed, member2);
+}
+
+#[test]
+fn test_type_guard_truthy() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+
+    // if (x) { ... }  (truthy check)
+    let guard = TypeGuard::Truthy;
+    let narrowed = ctx.narrow_type(union, &guard, true);
+
+    // Should narrow to string (exclude null and undefined)
+    assert_eq!(narrowed, TypeId::STRING);
+}
