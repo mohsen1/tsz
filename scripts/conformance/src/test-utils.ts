@@ -800,10 +800,9 @@ export function directivesToCheckOptions(
     options.lib = [getFullLibNameForTarget(firstTarget)];
   }
 
-  // Strict mode flags
-  if (directives.strict !== undefined) {
-    options.strict = Boolean(directives.strict);
-  }
+  // Strict mode flags - ALWAYS set explicitly to ensure tsz-server gets the right default
+  // When @strict is not specified, default to false (matching TSC's default behavior)
+  options.strict = directives.strict !== undefined ? Boolean(directives.strict) : false;
   if (directives.strictnullchecks !== undefined) {
     options.strictNullChecks = Boolean(directives.strictnullchecks);
   }
