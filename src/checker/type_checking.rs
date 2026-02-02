@@ -2683,10 +2683,11 @@ impl<'a> CheckerState<'a> {
                     // For simplicity, we check if any syntax that would need them exists
                     self.should_check_for_feature_type(type_name)
                 }
-                // Awaited is checked when using await type operator or async functions
+                // Awaited is checked when using await type operator, async functions, or Promise-like types
                 "Awaited" => {
-                    // Only check if async/await is actually used, not just because noLib is set
-                    self.ctx.async_depth > 0
+                    // TSC emits TS2318 for Awaited when Promise-like types are used, even without explicit await
+                    // Check if async/await is used OR if noLib is true (TSC checks it in that case)
+                    self.ctx.async_depth > 0 || self.ctx.no_lib()
                 }
                 // CallableFunction/NewableFunction are needed for strict checks
                 "CallableFunction" | "NewableFunction" => {

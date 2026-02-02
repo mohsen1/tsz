@@ -101,7 +101,20 @@ impl<'a> CheckerState<'a> {
             return; // Declared module exists
         }
 
-        // Module not found - emit TS2307
+        // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
+        let module_key = module_name.to_string();
+        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+            // Extract error values before mutable borrow
+            let error_code = error.code;
+            let error_message = error.message.clone();
+            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                self.ctx.modules_with_ts2307_emitted.insert(module_key.clone());
+                self.error_at_node(arg_idx, &error_message, error_code);
+            }
+            return;
+        }
+
+        // Fallback: Module not found - emit TS2307
         // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
         let module_key = module_name.to_string();
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
