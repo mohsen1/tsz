@@ -10,6 +10,7 @@ import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseLibOption } from './test-utils.js';
+import { normalizeLibName } from './lib-manifest.js';
 
 // ============================================================================
 // Types
@@ -56,7 +57,8 @@ export function parseLibReferences(source: string): string[] {
 }
 
 export function resolveLibFilePath(libName: string, libDir: string): string | null {
-  const normalized = libName.trim().toLowerCase();
+  // Apply lib name aliasing (es6 -> es2015, etc.)
+  const normalized = normalizeLibName(libName);
   const cacheKey = `${libDir}:${normalized}`;
   if (libPathCache.has(cacheKey)) return libPathCache.get(cacheKey)!;
   if (!libDir || !fs.existsSync(path.join(libDir, 'es5.d.ts'))) return null;
@@ -76,7 +78,8 @@ export function resolveLibFilePath(libName: string, libDir: string): string | nu
 }
 
 export function readLibContent(libName: string, libDir: string): string | null {
-  const normalized = libName.trim().toLowerCase();
+  // Apply lib name aliasing (es6 -> es2015, etc.)
+  const normalized = normalizeLibName(libName);
   const cacheKey = `${libDir}:${normalized}`;
   if (libContentCache.has(cacheKey)) return libContentCache.get(cacheKey)!;
   const libFilePath = resolveLibFilePath(normalized, libDir);
@@ -92,7 +95,8 @@ function loadLibRecursive(
   out: Map<string, string>,
   seen: Set<string>
 ): void {
-  const normalized = libName.trim().toLowerCase();
+  // Apply lib name aliasing (es6 -> es2015, etc.)
+  const normalized = normalizeLibName(libName);
   if (seen.has(normalized)) return;
   seen.add(normalized);
 
@@ -408,15 +412,14 @@ function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
   if (opts.nolib !== undefined) options.noLib = toBool(opts.nolib);
 
   // Lib - tell TypeScript which lib files to include in the program.
-  // Without this, TypeScript only discovers libs through getDefaultLibFileName()
-  // and its /// <reference> chain, missing explicitly specified libs like
-  // es2015.promise when the target is ES5.
-  if (opts.lib !== undefined) {
-    const libNames = parseLibOption(opts.lib);
-    if (libNames.length > 0) {
-      options.lib = libNames.map(name => `lib.${name}.d.ts`);
-    }
-  }
+  // IMPORTANT: Do NOT set options.lib here!
+  // When using a virtual filesystem, setting compilerOptions.lib causes TSC to
+  // look for lib files at absolute paths in the TypeScript installation directory,
+  // bypassing our virtual file system entirely. Instead, we:
+  // 1. Load lib files into sourceFiles via collectLibFiles()
+  // 2. Return the correct lib from getDefaultLibFileName()
+  // 3. Let TSC follow /// <reference lib="..." /> directives from there
+  // See LIB_LOADING.md for details.
 
   // Additional checks
   if (opts.nopropertyaccessfromindexsignature !== undefined) {
@@ -822,12 +825,24 @@ export function runTsc(
   host.realpath = (name) => name;
 
   host.getDefaultLibFileName = () => {
-    // Return the correct default lib file for the target.
-    // TypeScript uses getDefaultLibFileName as the root of the library
+    // CRITICAL: TypeScript uses getDefaultLibFileName as the ROOT of the library
     // dependency graph - it only loads libs reachable via /// <reference>
-    // from this file. If we always return lib.es5.d.ts, ES2015+ libs
-    // (like lib.es2015.iterable.d.ts) are never discovered, causing
-    // false TS2488 and other errors.
+    // from this file. If we return lib.es5.d.ts but the test uses @lib: es6,
+    // TSC won't load es2015 libs because es5.d.ts doesn't reference them.
+    //
+    // Fix: When explicit @lib is specified, use the first lib as the default.
+    // This ensures TSC starts from that lib and follows its references correctly.
+    if (libNames.length > 0) {
+      // Use the first explicitly requested lib as the default lib file.
+      // The lib has already been normalized (es6 -> es2015) by collectLibFiles.
+      const firstLib = libNames[0];
+      const firstLibFile = `lib.${normalizeLibName(firstLib)}.d.ts`;
+      if (sourceFiles.has(firstLibFile)) {
+        return firstLibFile;
+      }
+    }
+    
+    // Fallback to target-based lib selection (for tests without explicit @lib)
     const target = compilerOptions.target ?? ts.ScriptTarget.ES2020;
     const targetLibMap: Record<number, string> = {
       [ts.ScriptTarget.ES3]: 'lib.es5.d.ts',
@@ -843,7 +858,7 @@ export function runTsc(
     };
     const defaultLib = targetLibMap[target] ?? 'lib.esnext.d.ts';
     if (sourceFiles.has(defaultLib)) return defaultLib;
-    // Fallback: if the target-specific lib isn't loaded, use es5
+    // Final fallback: use es5
     if (sourceFiles.has('lib.es5.d.ts')) return 'lib.es5.d.ts';
     return 'lib.d.ts';
   };
