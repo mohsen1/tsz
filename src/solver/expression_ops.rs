@@ -93,6 +93,59 @@ pub fn compute_template_expression_type(
     TypeId::STRING
 }
 
+/// Computes the best common type (BCT) of a set of types.
+///
+/// This is used for array literal type inference and other contexts
+/// where a single type must be inferred from multiple candidates.
+///
+/// # Arguments
+/// * `interner` - The type database/interner
+/// * `types` - Slice of type IDs to find the best common type of
+///
+/// # Returns
+/// * Empty slice: Returns `TypeId::NEVER`
+/// * Single type: Returns that type
+/// * All same type: Returns that type
+/// * Otherwise: Returns union of all types (Phase 1 behavior)
+///
+/// # Note
+/// Phase 1 implements a simplified BCT that always falls back to union.
+/// Future phases will implement the full TypeScript algorithm:
+/// - Find the first candidate that is a supertype of all others
+/// - Handle literal widening (1 | 2 -> number)
+/// - Handle base class relationships
+pub fn compute_best_common_type(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+) -> TypeId {
+    // Handle empty cases
+    if types.is_empty() {
+        return TypeId::NEVER;
+    }
+
+    // Propagate errors
+    for &ty in types {
+        if ty == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+    }
+
+    // Single type: return it directly
+    if types.len() == 1 {
+        return types[0];
+    }
+
+    // If all types are the same, no need for union
+    let first = types[0];
+    if types.iter().all(|&ty| ty == first) {
+        return first;
+    }
+
+    // Phase 1: Default to union of all types
+    // Future phases will implement supertype checking
+    interner.union(types.to_vec())
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
