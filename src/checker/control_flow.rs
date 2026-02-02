@@ -233,6 +233,46 @@ impl<'a> FlowAnalyzer<'a> {
                 continue;
             };
 
+            // Check if this is a merge point that needs all antecedents processed first
+            let is_switch_fallthrough =
+                flow.has_any_flags(flow_flags::SWITCH_CLAUSE) && flow.antecedent.len() > 1;
+            let is_merge_point = flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
+                || is_switch_fallthrough;
+
+            if is_merge_point && !flow.antecedent.is_empty() {
+                // For merge points, check if all required antecedents are processed
+                // For SWITCH_CLAUSE, we check fallthrough antecedents (index 1+)
+                // For BRANCH/LOOP, we check all antecedents
+                let antecedents_to_check: Vec<FlowNodeId> = if is_switch_fallthrough {
+                    flow.antecedent.iter().skip(1).copied().collect()
+                } else {
+                    flow.antecedent.clone()
+                };
+
+                let all_ready = antecedents_to_check
+                    .iter()
+                    .all(|&ant| visited.contains(&ant) || results.contains_key(&ant));
+
+                if !all_ready {
+                    // Schedule unprocessed antecedents to be processed FIRST (push_front)
+                    for &ant in &antecedents_to_check {
+                        if !visited.contains(&ant)
+                            && !results.contains_key(&ant)
+                            && !in_worklist.contains(&ant)
+                        {
+                            worklist.push_front((ant, current_type));
+                            in_worklist.insert(ant);
+                        }
+                    }
+                    // Re-add self to the END of worklist to process after antecedents
+                    if !in_worklist.contains(&current_flow) {
+                        worklist.push_back((current_flow, current_type));
+                        in_worklist.insert(current_flow);
+                    }
+                    continue;
+                }
+            }
+
             // Process this flow node based on its flags
             let result_type = if flow.has_any_flags(flow_flags::BRANCH_LABEL) {
                 // Branch label - union types from all antecedents
@@ -394,42 +434,44 @@ impl<'a> FlowAnalyzer<'a> {
                 true
             };
 
-            results.insert(current_flow, result_type);
-
-            // Only mark as visited if we won't need to revisit
-            // For BRANCH_LABEL and LOOP_LABEL, we may need multiple passes
-            if !flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL) {
-                visited.insert(current_flow);
-            }
-
-            // If this is a branch/loop point and we've now processed all antecedents,
-            // we can finalize the result by unioning
-            if flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL) {
-                // Check if all antecedents have been processed
-                let all_processed = flow
+            // For merge points (BRANCH_LABEL, LOOP_LABEL, SWITCH with fallthrough),
+            // we union with antecedent types. For SWITCH_CLAUSE, union clause_type with fallthrough.
+            let final_type = if is_switch_fallthrough {
+                // Union clause_type (result_type) with fallthrough types (antecedent index 1+)
+                let mut types = vec![result_type];
+                for &ant in flow.antecedent.iter().skip(1) {
+                    if let Some(&t) = results.get(&ant) {
+                        types.push(t);
+                    }
+                }
+                if types.len() == 1 {
+                    types[0]
+                } else {
+                    self.interner.union(types)
+                }
+            } else if flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
+                && !flow.antecedent.is_empty()
+            {
+                // Union all antecedent types for branch/loop
+                let ant_types: Vec<TypeId> = flow
                     .antecedent
                     .iter()
-                    .all(|&ant| visited.contains(&ant) || results.contains_key(&ant));
-                if all_processed {
-                    // Union all antecedent types
-                    let ant_types: Vec<TypeId> = flow
-                        .antecedent
-                        .iter()
-                        .filter_map(|&ant| results.get(&ant).copied())
-                        .collect();
+                    .filter_map(|&ant| results.get(&ant).copied())
+                    .collect();
 
-                    let unioned = if ant_types.len() == 1 {
-                        ant_types[0]
-                    } else if !ant_types.is_empty() {
-                        self.interner.union(ant_types)
-                    } else {
-                        current_type
-                    };
-
-                    results.insert(current_flow, unioned);
-                    visited.insert(current_flow);
+                if ant_types.len() == 1 {
+                    ant_types[0]
+                } else if !ant_types.is_empty() {
+                    self.interner.union(ant_types)
+                } else {
+                    result_type
                 }
-            }
+            } else {
+                result_type
+            };
+
+            results.insert(current_flow, final_type);
+            visited.insert(current_flow);
         }
 
         // Return the result for the initial flow_id

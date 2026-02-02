@@ -96,7 +96,6 @@ fn get_block_expression(arena: &NodeArena, block_idx: NodeIndex, stmt_index: usi
 /// SWITCH_CLAUSE handler in `check_flow` doesn't correctly union types from
 /// fallthrough paths.
 #[test]
-#[ignore = "Switch fallthrough narrowing not fully implemented"]
 fn test_switch_fallthrough_and_default_narrowing() {
     let source = r#"
 let x: "a" | "b" | "c";
