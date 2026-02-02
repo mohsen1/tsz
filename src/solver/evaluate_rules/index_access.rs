@@ -314,6 +314,228 @@ impl<'a> TypeVisitor for ArrayKeyVisitor<'a> {
     }
 }
 
+/// Visitor to handle tuple index access: `Tuple[K]`
+///
+/// Evaluates what type is returned when indexing a tuple with various key types.
+/// Uses Option<TypeId> to signal "use default fallback" via None.
+struct TupleKeyVisitor<'a> {
+    db: &'a dyn TypeDatabase,
+    elements: &'a [TupleElement],
+    array_member_types_cache: Option<Vec<TypeId>>,
+}
+
+impl<'a> TupleKeyVisitor<'a> {
+    fn new(db: &'a dyn TypeDatabase, elements: &'a [TupleElement]) -> Self {
+        Self {
+            db,
+            elements,
+            array_member_types_cache: None,
+        }
+    }
+
+    /// Driver method that handles the fallback logic
+    fn evaluate(&mut self, index_type: TypeId) -> TypeId {
+        let result = self.visit_type(self.db, index_type);
+        result.unwrap_or(TypeId::UNDEFINED)
+    }
+
+    /// Get the type of a tuple element, handling optional and rest elements
+    fn tuple_element_type(&self, element: &TupleElement) -> TypeId {
+        let mut type_id = if element.rest {
+            self.rest_element_type(element.type_id)
+        } else {
+            element.type_id
+        };
+
+        if element.optional {
+            type_id = self.db.union2(type_id, TypeId::UNDEFINED);
+        }
+
+        type_id
+    }
+
+    /// Get the element type of a rest element (handles nested rest and array types)
+    fn rest_element_type(&self, type_id: TypeId) -> TypeId {
+        if let Some(elem) = array_element_type(self.db, type_id) {
+            return elem;
+        }
+        if let Some(elements) = tuple_list_id(self.db, type_id) {
+            let elements = self.db.tuple_list(elements);
+            let types: Vec<TypeId> = elements
+                .iter()
+                .map(|e| self.tuple_element_type(e))
+                .collect();
+            if types.is_empty() {
+                TypeId::NEVER
+            } else {
+                self.db.union(types)
+            }
+        } else {
+            type_id
+        }
+    }
+
+    /// Get the type at a specific literal index, handling rest elements
+    fn tuple_index_literal(&self, idx: usize) -> Option<TypeId> {
+        for (logical_idx, element) in self.elements.iter().enumerate() {
+            if element.rest {
+                if let Some(rest_elements) = tuple_list_id(self.db, element.type_id) {
+                    let rest_elements = self.db.tuple_list(rest_elements);
+                    let inner_idx = idx.saturating_sub(logical_idx);
+                    // Recursively search in rest elements
+                    let inner_visitor = TupleKeyVisitor::new(self.db, &rest_elements);
+                    return inner_visitor.tuple_index_literal(inner_idx);
+                }
+                return Some(self.tuple_element_type(element));
+            }
+
+            if logical_idx == idx {
+                return Some(self.tuple_element_type(element));
+            }
+        }
+
+        None
+    }
+
+    /// Get all tuple element types as a union
+    fn get_all_element_types(&self) -> Vec<TypeId> {
+        self.elements
+            .iter()
+            .map(|e| self.tuple_element_type(e))
+            .collect()
+    }
+
+    /// Get array member types (cached)
+    fn get_array_member_types(&mut self) -> Vec<TypeId> {
+        self.array_member_types_cache.get_or_insert_with(|| {
+            vec![
+                TypeId::NUMBER,
+                make_apparent_method_type(self.db, TypeId::ANY),
+                make_apparent_method_type(self.db, TypeId::BOOLEAN),
+                make_apparent_method_type(self.db, TypeId::NUMBER),
+                make_apparent_method_type(self.db, TypeId::VOID),
+                make_apparent_method_type(self.db, TypeId::STRING),
+            ]
+        })
+        .clone()
+    }
+
+    /// Check for known array members (length, methods)
+    fn get_array_member_kind(&self, name: &str) -> Option<ApparentMemberKind> {
+        if name == "length" {
+            return Some(ApparentMemberKind::Value(TypeId::NUMBER));
+        }
+        if is_member(name, ARRAY_METHODS_RETURN_ANY) {
+            return Some(ApparentMemberKind::Method(TypeId::ANY));
+        }
+        if is_member(name, ARRAY_METHODS_RETURN_BOOLEAN) {
+            return Some(ApparentMemberKind::Method(TypeId::BOOLEAN));
+        }
+        if is_member(name, ARRAY_METHODS_RETURN_NUMBER) {
+            return Some(ApparentMemberKind::Method(TypeId::NUMBER));
+        }
+        if is_member(name, ARRAY_METHODS_RETURN_VOID) {
+            return Some(ApparentMemberKind::Method(TypeId::VOID));
+        }
+        if is_member(name, ARRAY_METHODS_RETURN_STRING) {
+            return Some(ApparentMemberKind::Method(TypeId::STRING));
+        }
+        None
+    }
+}
+
+impl<'a> TypeVisitor for TupleKeyVisitor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        let mut results = Vec::new();
+        for &member in members.iter() {
+            let result = self.evaluate(member);
+            if result != TypeId::UNDEFINED {
+                results.push(result);
+            }
+        }
+        if results.is_empty() {
+            Some(TypeId::UNDEFINED)
+        } else {
+            Some(self.db.union(results))
+        }
+    }
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        match kind {
+            IntrinsicKind::String => {
+                // Return union of all element types + array member types
+                let mut types = self.get_all_element_types();
+                types.extend(self.get_array_member_types());
+                if types.is_empty() {
+                    Some(TypeId::NEVER)
+                } else {
+                    Some(self.db.union(types))
+                }
+            }
+            IntrinsicKind::Number => {
+                // Return union of all element types
+                let all_types = self.get_all_element_types();
+                if all_types.is_empty() {
+                    Some(TypeId::NEVER)
+                } else {
+                    Some(self.db.union(all_types))
+                }
+            }
+            _ => Some(TypeId::UNDEFINED),
+        }
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        match value {
+            LiteralValue::Number(n) => {
+                let value = n.0;
+                if !value.is_finite() || value.fract() != 0.0 || value < 0.0 {
+                    return Some(TypeId::UNDEFINED);
+                }
+                let idx = value as usize;
+                self.tuple_index_literal(idx)
+                    .or(Some(TypeId::UNDEFINED))
+            }
+            LiteralValue::String(atom) => {
+                // Check if it's a numeric property name (e.g., "0", "1", "42")
+                if utils::is_numeric_property_name(self.db, *atom) {
+                    let name = self.db.resolve_atom_ref(*atom);
+                    if let Ok(idx) = name.as_ref().parse::<i64>()
+                        && let Ok(idx) = usize::try_from(idx)
+                    {
+                        return self.tuple_index_literal(idx)
+                            .or(Some(TypeId::UNDEFINED));
+                    }
+                    return Some(TypeId::UNDEFINED);
+                }
+
+                // Check for known array members
+                let name = self.db.resolve_atom_ref(*atom);
+                if let Some(member) = self.get_array_member_kind(name.as_ref()) {
+                    return match member {
+                        ApparentMemberKind::Value(type_id) => Some(type_id),
+                        ApparentMemberKind::Method(return_type) => {
+                            Some(make_apparent_method_type(self.db, return_type))
+                        }
+                    };
+                }
+
+                Some(TypeId::UNDEFINED)
+            }
+            // Explicitly handle other literals to avoid incorrect fallback
+            LiteralValue::Boolean(_) | LiteralValue::BigInt(_) => Some(TypeId::UNDEFINED),
+        }
+    }
+
+    /// Signal "use the default fallback" for unhandled type variants
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Helper to recursively evaluate an index access while respecting depth limits.
     /// Creates an IndexAccess type and evaluates it through the main evaluate() method.
@@ -567,119 +789,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         type_id
     }
 
-    fn tuple_index_literal(&self, elements: &[TupleElement], idx: usize) -> Option<TypeId> {
-        for (logical_idx, element) in elements.iter().enumerate() {
-            if element.rest {
-                if let Some(rest_elements) = tuple_list_id(self.interner(), element.type_id) {
-                    let rest_elements = self.interner().tuple_list(rest_elements);
-                    let inner_idx = idx.saturating_sub(logical_idx);
-                    return self.tuple_index_literal(&rest_elements, inner_idx);
-                }
-                return Some(self.tuple_element_type(element));
-            }
-
-            if logical_idx == idx {
-                return Some(self.tuple_element_type(element));
-            }
-        }
-
-        None
-    }
-
     /// Evaluate index access on a tuple type
     pub(crate) fn evaluate_tuple_index(
         &self,
         elements: &[TupleElement],
         index_type: TypeId,
     ) -> TypeId {
-        if let Some(members) = union_list_id(self.interner(), index_type) {
-            let members = self.interner().type_list(members);
-            let mut results = Vec::new();
-            for &member in members.iter() {
-                let result = self.evaluate_tuple_index(elements, member);
-                if result != TypeId::UNDEFINED || self.no_unchecked_indexed_access() {
-                    results.push(result);
-                }
-            }
-            if results.is_empty() {
-                return TypeId::UNDEFINED;
-            }
-            return self.interner().union(results);
-        }
+        // Use TupleKeyVisitor to handle the index type
+        // The visitor handles Union distribution internally via visit_union
+        let mut visitor = TupleKeyVisitor::new(self.interner(), elements);
+        let result = visitor.evaluate(index_type);
 
-        // If index is a literal number, return the specific element
-        if let Some(n) = literal_number(self.interner(), index_type) {
-            let value = n.0;
-            if !value.is_finite() || value.fract() != 0.0 || value < 0.0 {
-                return TypeId::UNDEFINED;
-            }
-            let idx = value as usize;
-            return self
-                .tuple_index_literal(elements, idx)
-                .unwrap_or(TypeId::UNDEFINED);
-        }
-
-        if index_type == TypeId::STRING {
-            let mut types: Vec<TypeId> = elements
-                .iter()
-                .map(|e| self.tuple_element_type(e))
-                .collect();
-            types.extend(self.array_member_types());
-            if types.is_empty() {
-                return TypeId::NEVER;
-            }
-            let union = self.interner().union(types);
-            return self.add_undefined_if_unchecked(union);
-        }
-
-        if let Some(name) = literal_string(self.interner(), index_type) {
-            if utils::is_numeric_property_name(self.interner(), name) {
-                let name_str = self.interner().resolve_atom_ref(name);
-                if let Ok(idx) = name_str.as_ref().parse::<i64>()
-                    && let Ok(idx) = usize::try_from(idx)
-                {
-                    return self
-                        .tuple_index_literal(elements, idx)
-                        .unwrap_or(TypeId::UNDEFINED);
-                }
-                return TypeId::UNDEFINED;
-            }
-
-            let name_str = self.interner().resolve_atom_ref(name);
-            if let Some(member) = self.array_member_kind(name_str.as_ref()) {
-                return match member {
-                    ApparentMemberKind::Value(type_id) => type_id,
-                    ApparentMemberKind::Method(return_type) => {
-                        self.apparent_method_type(return_type)
-                    }
-                };
-            }
-
-            return TypeId::UNDEFINED;
-        }
-
-        // If index is number, return union of all element types
-        if index_type == TypeId::NUMBER {
-            let all_types: Vec<TypeId> = elements
-                .iter()
-                .map(|e| self.tuple_element_type(e))
-                .collect();
-            if all_types.is_empty() {
-                return TypeId::NEVER;
-            }
-            let union = self.interner().union(all_types);
-            return self.add_undefined_if_unchecked(union);
-        }
-
-        TypeId::UNDEFINED
-    }
-
-    /// Check if a type is number-like (number or numeric literal)
-    pub(crate) fn is_number_like(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::NUMBER {
-            return true;
-        }
-        literal_number(self.interner(), type_id).is_some()
+        // Add undefined if unchecked indexed access is allowed
+        self.add_undefined_if_unchecked(result)
     }
 
     pub(crate) fn evaluate_array_index(&self, elem: TypeId, index_type: TypeId) -> TypeId {
@@ -690,38 +812,5 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Add undefined if unchecked indexed access is allowed
         self.add_undefined_if_unchecked(result)
-    }
-
-    pub(crate) fn array_member_types(&self) -> Vec<TypeId> {
-        vec![
-            TypeId::NUMBER,
-            self.apparent_method_type(TypeId::ANY),
-            self.apparent_method_type(TypeId::BOOLEAN),
-            self.apparent_method_type(TypeId::NUMBER),
-            self.apparent_method_type(TypeId::UNDEFINED),
-            self.apparent_method_type(TypeId::STRING),
-        ]
-    }
-
-    pub(crate) fn array_member_kind(&self, name: &str) -> Option<ApparentMemberKind> {
-        if name == "length" {
-            return Some(ApparentMemberKind::Value(TypeId::NUMBER));
-        }
-        if is_member(name, ARRAY_METHODS_RETURN_ANY) {
-            return Some(ApparentMemberKind::Method(TypeId::ANY));
-        }
-        if is_member(name, ARRAY_METHODS_RETURN_BOOLEAN) {
-            return Some(ApparentMemberKind::Method(TypeId::BOOLEAN));
-        }
-        if is_member(name, ARRAY_METHODS_RETURN_NUMBER) {
-            return Some(ApparentMemberKind::Method(TypeId::NUMBER));
-        }
-        if is_member(name, ARRAY_METHODS_RETURN_VOID) {
-            return Some(ApparentMemberKind::Method(TypeId::VOID));
-        }
-        if is_member(name, ARRAY_METHODS_RETURN_STRING) {
-            return Some(ApparentMemberKind::Method(TypeId::STRING));
-        }
-        None
     }
 }
