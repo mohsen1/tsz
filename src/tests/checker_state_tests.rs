@@ -11341,7 +11341,7 @@ type B = A;
 #[test]
 fn test_index_signature_at_solver_level() {
     use crate::solver::{
-        IndexSignature, ObjectShape, PropertyAccessEvaluator, PropertyAccessResult,
+        IndexSignature, ObjectFlags, ObjectShape, PropertyAccessEvaluator, PropertyAccessResult,
     };
 
     // Test that index signature resolution is tracked at solver level
@@ -11349,6 +11349,7 @@ fn test_index_signature_at_solver_level() {
 
     // Create object type with only index signature
     let shape = ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,

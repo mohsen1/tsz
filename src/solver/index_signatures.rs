@@ -278,7 +278,7 @@ impl<'a> IndexSignatureResolver<'a> {
 mod tests {
     use super::*;
     use crate::solver::intern::TypeInterner;
-    use crate::solver::types::ObjectShape;
+    use crate::solver::types::{ObjectFlags, ObjectShape};
 
     #[test]
     fn test_resolve_string_index() {
@@ -286,6 +286,7 @@ mod tests {
 
         // Object with string index
         let obj = db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: vec![],
             string_index: Some(IndexSignature {
                 key_type: TypeId::STRING,
@@ -306,6 +307,7 @@ mod tests {
 
         // Object with number index
         let obj = db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: vec![],
             string_index: None,
             number_index: Some(IndexSignature {
@@ -326,6 +328,7 @@ mod tests {
 
         // Readonly string index
         let obj1 = db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: vec![],
             string_index: Some(IndexSignature {
                 key_type: TypeId::STRING,
@@ -337,6 +340,7 @@ mod tests {
 
         // Mutable string index
         let obj2 = db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: vec![],
             string_index: Some(IndexSignature {
                 key_type: TypeId::STRING,

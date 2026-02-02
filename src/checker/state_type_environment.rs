@@ -19,7 +19,7 @@ impl<'a> CheckerState<'a> {
     // Note: enum_symbol_from_type and enum_symbol_from_value_type are defined in type_checking.rs
 
     pub(crate) fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
-        use crate::solver::{IndexSignature, ObjectShape, PropertyInfo};
+        use crate::solver::{IndexSignature, ObjectFlags, ObjectShape, PropertyInfo};
         use rustc_hash::FxHashMap;
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -79,6 +79,7 @@ impl<'a> CheckerState<'a> {
                 readonly: true,
             });
             return Some(self.ctx.types.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties,
                 string_index: None,
                 number_index,

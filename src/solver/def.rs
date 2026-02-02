@@ -23,7 +23,7 @@
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
 
 use crate::interner::Atom;
-use crate::solver::types::{ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
+use crate::solver::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -184,6 +184,7 @@ impl DefinitionInfo {
         properties: Vec<PropertyInfo>,
     ) -> Self {
         let shape = ObjectShape {
+            flags: ObjectFlags::empty(),
             properties,
             string_index: None,
             number_index: None,
@@ -212,11 +213,13 @@ impl DefinitionInfo {
         static_properties: Vec<PropertyInfo>,
     ) -> Self {
         let instance_shape = ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: instance_properties,
             string_index: None,
             number_index: None,
         };
         let static_shape = ObjectShape {
+            flags: ObjectFlags::empty(),
             properties: static_properties,
             string_index: None,
             number_index: None,

@@ -59,8 +59,8 @@ impl<'a> CheckerState<'a> {
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
         use crate::solver::{
-            CallSignature as SolverCallSignature, CallableShape, IndexSignature, ObjectShape,
-            PropertyInfo,
+            CallSignature as SolverCallSignature, CallableShape, IndexSignature, ObjectFlags,
+            ObjectShape, PropertyInfo,
         };
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -222,6 +222,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.callable(shape)
         } else if string_index.is_some() || number_index.is_some() {
             self.ctx.types.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties,
                 string_index,
                 number_index,
@@ -441,7 +442,7 @@ impl<'a> CheckerState<'a> {
     /// The merged TypeId
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
         use crate::solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
-        use crate::solver::{CallableShape, ObjectShape};
+        use crate::solver::{CallableShape, ObjectFlags, ObjectShape};
 
         if derived == base {
             return derived;
@@ -572,6 +573,7 @@ impl<'a> CheckerState<'a> {
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
                 self.ctx.types.object_with_index(ObjectShape {
+                    flags: ObjectFlags::empty(),
                     properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
@@ -586,6 +588,7 @@ impl<'a> CheckerState<'a> {
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
                 self.ctx.types.object_with_index(ObjectShape {
+                    flags: ObjectFlags::empty(),
                     properties,
                     string_index: derived_shape.string_index.clone(),
                     number_index: derived_shape.number_index.clone(),
@@ -600,6 +603,7 @@ impl<'a> CheckerState<'a> {
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
                 self.ctx.types.object_with_index(ObjectShape {
+                    flags: ObjectFlags::empty(),
                     properties,
                     string_index: derived_shape
                         .string_index
@@ -790,7 +794,7 @@ impl<'a> CheckerState<'a> {
         base_type: crate::solver::TypeId,
     ) -> crate::solver::TypeId {
         use crate::solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
-        use crate::solver::{CallableShape, ObjectShape};
+        use crate::solver::{CallableShape, ObjectFlags, ObjectShape};
 
         let augmentation_members =
             self.get_module_augmentation_members(module_spec, interface_name);
@@ -812,6 +816,7 @@ impl<'a> CheckerState<'a> {
                 let merged_properties =
                     Self::merge_properties(&augmentation_members, &base_shape.properties);
                 self.ctx.types.object_with_index(ObjectShape {
+                    flags: ObjectFlags::empty(),
                     properties: merged_properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),

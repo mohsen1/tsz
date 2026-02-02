@@ -349,19 +349,18 @@ impl<'a> CheckerState<'a> {
 
     /// Check if source object literal has properties that don't exist in target.
     ///
-    /// Uses syntactic freshness checking - the source_idx must be provided to determine
-    /// if the expression is a fresh object literal (not a variable reference).
+    /// Uses TypeId-based freshness tracking (fresh object literals only).
     pub(crate) fn object_literal_has_excess_properties(
         &mut self,
         source: TypeId,
         target: TypeId,
-        source_idx: NodeIndex,
+        _source_idx: NodeIndex,
     ) -> bool {
-        use crate::solver::type_queries::{ExcessPropertiesKind, classify_for_excess_properties};
+        use crate::solver::freshness;
+        use crate::solver::type_queries::{classify_for_excess_properties, ExcessPropertiesKind};
 
-        // Check syntactic freshness - only object literals directly in the source
-        // should trigger excess property checking, not variables
-        if !self.is_syntactically_fresh(source_idx) {
+        // Only fresh object literals trigger excess property checking.
+        if !freshness::is_fresh_object_type(self.ctx.types, source) {
             return false;
         }
 

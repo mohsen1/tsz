@@ -9,7 +9,7 @@
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
 use crate::solver::contextual::ContextualTypeContext;
-use crate::solver::types::{PropertyInfo, TypeId, TypeKey};
+use crate::solver::types::{ObjectFlags, PropertyInfo, TypeId, TypeKey};
 use rustc_hash::FxHashMap;
 
 /// Builder for constructing object literal types.
@@ -31,7 +31,7 @@ impl<'a> ObjectLiteralBuilder<'a> {
     /// This creates a fresh object type with the given properties.
     /// The properties are sorted by name for consistent hashing.
     pub fn build_object_type(&self, properties: Vec<PropertyInfo>) -> TypeId {
-        self.db.object(properties)
+        self.db.object_fresh(properties)
     }
 
     /// Build object type with index signature.
@@ -46,6 +46,7 @@ impl<'a> ObjectLiteralBuilder<'a> {
     ) -> TypeId {
         use crate::solver::types::ObjectShape;
         self.db.object_with_index(ObjectShape {
+            flags: ObjectFlags::FRESH_LITERAL,
             properties,
             string_index,
             number_index,
