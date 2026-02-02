@@ -539,10 +539,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // Error types are NOT compatible with other types (except themselves)
-        // This prevents "error poisoning" where unresolved types mask real errors
+        // Error types are compatible with everything (except checking for identity)
+        // This SUPPRESSES cascading errors when a symbol can't be resolved.
+        // TypeScript behavior: error types don't produce additional type errors.
+        // Example: if `foo` is unresolved, `let x: string = foo` should only emit
+        // "Cannot find name 'foo'" (TS2304), not also "Type 'error' is not assignable" (TS2322).
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return SubtypeResult::False;
+            return SubtypeResult::True;
         }
 
         // =========================================================================
