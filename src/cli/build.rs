@@ -16,7 +16,7 @@ use crate::cli::project_refs::{ProjectReferenceGraph, ResolvedProject};
 /// 2. Determines build order via topological sort
 /// 3. Checks up-to-date status for each project
 /// 4. Compiles dirty projects in dependency order
-pub fn build_solution(args: &CliArgs, cwd: &Path, root_names: &[String]) -> Result<bool> {
+pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Result<bool> {
     // Determine root tsconfig path
     let root_config = if let Some(project) = args.project.as_deref() {
         cwd.join(project)
@@ -102,6 +102,9 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, root_names: &[String]) -> Resu
 /// Check if a project is up-to-date by examining its .tsbuildinfo file
 /// and the outputs of its referenced projects.
 pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool {
+    use crate::cli::incremental::ChangeTracker;
+    use crate::cli::fs::{discover_ts_files, FileDiscoveryOptions};
+
     // Load BuildInfo for this project
     let build_info_path = match get_build_info_path(project) {
         Some(path) => path,
@@ -109,6 +112,9 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
     };
 
     if !build_info_path.exists() {
+        if args.build_verbose {
+            info!("No .tsbuildinfo found at {}", build_info_path.display());
+        }
         return false;
     }
 
@@ -116,7 +122,9 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
     let build_info = match BuildInfo::load(&build_info_path) {
         Ok(Some(info)) => info,
         Ok(None) => {
-            // Version mismatch - need to rebuild
+            if args.build_verbose {
+                info!("BuildInfo version mismatch, needs rebuild");
+            }
             return false;
         }
         Err(e) => {
@@ -127,14 +135,54 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
         }
     };
 
+    // Check if source files have changed using ChangeTracker
+    let root_dir = &project.root_dir;
+
+    // Discover all TypeScript source files in the project
+    let discovery_options = FileDiscoveryOptions {
+        base_dir: root_dir.clone(),
+        files: Vec::new(),
+        include: None,
+        exclude: None,
+        out_dir: None,
+        follow_links: false,
+    };
+
+    let current_files = match discover_ts_files(&discovery_options) {
+        Ok(files) => files,
+        Err(e) => {
+            if args.build_verbose {
+                warn!("Failed to discover source files in {}: {}", root_dir.display(), e);
+            }
+            // If we can't scan files, assume we need to rebuild
+            return false;
+        }
+    };
+
+    // Use ChangeTracker to detect modifications
+    let mut tracker = ChangeTracker::new();
+    if let Err(e) = tracker.compute_changes(&build_info, &current_files) {
+        if args.build_verbose {
+            warn!("Failed to compute changes: {}", e);
+        }
+        return false;
+    }
+
+    if tracker.has_changes() {
+        if args.build_verbose {
+            info!("Project has changes: {} changed, {} new, {} deleted",
+                tracker.changed_files().len(),
+                tracker.new_files().len(),
+                tracker.deleted_files().len()
+            );
+        }
+        return false;
+    }
+
     // Check if referenced projects' outputs are still valid
     if !are_referenced_projects_uptodate(project, &build_info, args) {
         return false;
     }
-
-    // TODO: Check if source files have changed
-    // This requires ChangeTracker logic from incremental.rs
-    // For now, we'll rely on the timestamp check below
 
     true
 }
