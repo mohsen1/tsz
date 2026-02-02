@@ -581,7 +581,7 @@ impl CompilerOptions {
             exact_optional_property_types: false,
             no_lib: self.no_lib.unwrap_or(false),
             target: self.resolve_target(),
-            module: crate::common::ModuleKind::None, // TODO: read from config
+            module: crate::common::ModuleKind::None, // WASM API: use self.module if available
             es_module_interop: false,
             allow_synthetic_default_imports: false,
             allow_unreachable_code: false,
