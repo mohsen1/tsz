@@ -3746,7 +3746,30 @@ impl Server {
             isolated_modules: options.isolated_modules,
             no_lib: options.no_lib,
             target: checker_target,
-            module: wasm::ModuleKind::None, // TODO: read from options.module
+            module: if let Some(module_str) = &options.module {
+                // Parse module kind from string (inline version of parse_module_kind)
+                match module_str.to_lowercase().as_str() {
+                    "none" => wasm::ModuleKind::None,
+                    "commonjs" => wasm::ModuleKind::CommonJS,
+                    "amd" => wasm::ModuleKind::AMD,
+                    "umd" => wasm::ModuleKind::UMD,
+                    "system" => wasm::ModuleKind::System,
+                    "es2015" => wasm::ModuleKind::ES2015,
+                    "es2020" => wasm::ModuleKind::ES2020,
+                    "es2022" => wasm::ModuleKind::ES2022,
+                    "esnext" => wasm::ModuleKind::ESNext,
+                    "node16" => wasm::ModuleKind::Node16,
+                    "nodenext" => wasm::ModuleKind::NodeNext,
+                    _ => wasm::ModuleKind::None, // Fallback
+                }
+            } else {
+                // Default based on target when not specified
+                if checker_target.supports_es2015() {
+                    wasm::ModuleKind::ES2015
+                } else {
+                    wasm::ModuleKind::CommonJS
+                }
+            },
             es_module_interop: options.es_module_interop,
             allow_synthetic_default_imports: options
                 .allow_synthetic_default_imports

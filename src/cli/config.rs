@@ -243,7 +243,19 @@ pub fn resolve_compiler_options(
     resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
 
     if let Some(module) = options.module.as_deref() {
-        resolved.printer.module = parse_module_kind(module)?;
+        let kind = parse_module_kind(module)?;
+        resolved.printer.module = kind;
+        resolved.checker.module = kind;
+    } else {
+        // Default module kind based on target (matches tsc behavior)
+        // ES2015+ target defaults to ES2015 modules, otherwise CommonJS
+        let default_kind = if resolved.printer.target.supports_es2015() {
+            ModuleKind::ES2015
+        } else {
+            ModuleKind::CommonJS
+        };
+        resolved.printer.module = default_kind;
+        resolved.checker.module = default_kind;
     }
 
     if let Some(module_resolution) = options.module_resolution.as_deref() {
