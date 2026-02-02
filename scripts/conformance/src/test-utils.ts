@@ -736,18 +736,43 @@ export interface CheckOptions {
   strictNullChecks?: boolean;
   strictFunctionTypes?: boolean;
   strictPropertyInitialization?: boolean;
+  strictBindCallApply?: boolean;
   noImplicitAny?: boolean;
   noImplicitThis?: boolean;
   noImplicitReturns?: boolean;
+  noImplicitOverride?: boolean;
+  useUnknownInCatchVariables?: boolean;
+  alwaysStrict?: boolean;
   module?: string;
   moduleResolution?: string;
+  moduleDetection?: string;
   jsx?: string;
+  jsxFactory?: string;
+  jsxFragmentFactory?: string;
+  jsxImportSource?: string;
   allowJs?: boolean;
   checkJs?: boolean;
   declaration?: boolean;
+  declarationMap?: boolean;
+  emitDeclarationOnly?: boolean;
+  declarationDir?: string;
   isolatedModules?: boolean;
   experimentalDecorators?: boolean;
   emitDecoratorMetadata?: boolean;
+  useDefineForClassFields?: boolean;
+  // Module resolution
+  baseUrl?: string;
+  paths?: Record<string, string[]>;
+  rootDirs?: string[];
+  typeRoots?: string[];
+  types?: string[];
+  resolveJsonModule?: boolean;
+  // Module interop
+  esModuleInterop?: boolean;
+  allowSyntheticDefaultImports?: boolean;
+  preserveSymlinks?: boolean;
+  allowUmdGlobalAccess?: boolean;
+  verbatimModuleSyntax?: boolean;
   // Additional checks
   noPropertyAccessFromIndexSignature?: boolean;
   noUncheckedIndexedAccess?: boolean;
@@ -757,6 +782,16 @@ export interface CheckOptions {
   noUnusedParameters?: boolean;
   allowUnusedLabels?: boolean;
   allowUnreachableCode?: boolean;
+  // Other
+  forceConsistentCasingInFileNames?: boolean;
+  skipLibCheck?: boolean;
+  noResolve?: boolean;
+  noEmit?: boolean;
+  outFile?: string;
+  outDir?: string;
+  rootDir?: string;
+  importHelpers?: boolean;
+  downlevelIteration?: boolean;
   // Allow any other properties
   [key: string]: unknown;
 }
@@ -885,6 +920,116 @@ export function directivesToCheckOptions(
   }
   if (directives.allowunreachablecode !== undefined) {
     options.allowUnreachableCode = Boolean(directives.allowunreachablecode);
+  }
+
+  // Additional strictness flags
+  if (directives.strictbindcallapply !== undefined) {
+    options.strictBindCallApply = Boolean(directives.strictbindcallapply);
+  }
+  if (directives.useunknownincatchvariables !== undefined) {
+    options.useUnknownInCatchVariables = Boolean(directives.useunknownincatchvariables);
+  }
+  if (directives.alwaysstrict !== undefined) {
+    options.alwaysStrict = Boolean(directives.alwaysstrict);
+  }
+  if (directives.noimplicitoverride !== undefined) {
+    options.noImplicitOverride = Boolean(directives.noimplicitoverride);
+  }
+
+  // Module resolution options
+  if (directives.baseurl !== undefined) {
+    options.baseUrl = String(directives.baseurl);
+  }
+  if (directives.paths !== undefined) {
+    options.paths = directives.paths as Record<string, string[]>;
+  }
+  if (directives.rootdirs !== undefined) {
+    options.rootDirs = directives.rootdirs as string[];
+  }
+  if (directives.typeroots !== undefined) {
+    options.typeRoots = directives.typeroots as string[];
+  }
+  if (directives.types !== undefined) {
+    options.types = directives.types as string[];
+  }
+  if (directives.resolvejsonmodule !== undefined) {
+    options.resolveJsonModule = Boolean(directives.resolvejsonmodule);
+  }
+  if (directives.moduledetection !== undefined) {
+    options.moduleDetection = String(directives.moduledetection);
+  }
+
+  // Module interop options
+  if (directives.esmoduleinterop !== undefined) {
+    options.esModuleInterop = Boolean(directives.esmoduleinterop);
+  }
+  if (directives.allowsyntheticdefaultimports !== undefined) {
+    options.allowSyntheticDefaultImports = Boolean(directives.allowsyntheticdefaultimports);
+  }
+  if (directives.preservesymlinks !== undefined) {
+    options.preserveSymlinks = Boolean(directives.preservesymlinks);
+  }
+  if (directives.allowumdglobalaccess !== undefined) {
+    options.allowUmdGlobalAccess = Boolean(directives.allowumdglobalaccess);
+  }
+  if (directives.verbatimmodulesyntax !== undefined) {
+    options.verbatimModuleSyntax = Boolean(directives.verbatimmodulesyntax);
+  }
+
+  // JSX options
+  if (directives.jsxfactory !== undefined) {
+    options.jsxFactory = String(directives.jsxfactory);
+  }
+  if (directives.jsxfragmentfactory !== undefined) {
+    options.jsxFragmentFactory = String(directives.jsxfragmentfactory);
+  }
+  if (directives.jsximportsource !== undefined) {
+    options.jsxImportSource = String(directives.jsximportsource);
+  }
+
+  // Class features
+  if (directives.usedefineforclassfields !== undefined) {
+    options.useDefineForClassFields = Boolean(directives.usedefineforclassfields);
+  }
+
+  // Other options
+  if (directives.forceconsistentcasinginfilenames !== undefined) {
+    options.forceConsistentCasingInFileNames = Boolean(directives.forceconsistentcasinginfilenames);
+  }
+  if (directives.skiplibcheck !== undefined) {
+    options.skipLibCheck = Boolean(directives.skiplibcheck);
+  }
+  if (directives.noresolve !== undefined) {
+    options.noResolve = Boolean(directives.noresolve);
+  }
+
+  // Emit options (may be relevant for declaration checks)
+  if (directives.noemit !== undefined) {
+    options.noEmit = Boolean(directives.noemit);
+  }
+  if (directives.declarationmap !== undefined) {
+    options.declarationMap = Boolean(directives.declarationmap);
+  }
+  if (directives.emitdeclarationonly !== undefined) {
+    options.emitDeclarationOnly = Boolean(directives.emitdeclarationonly);
+  }
+  if (directives.outfile !== undefined) {
+    options.outFile = String(directives.outfile);
+  }
+  if (directives.outdir !== undefined) {
+    options.outDir = String(directives.outdir);
+  }
+  if (directives.rootdir !== undefined) {
+    options.rootDir = String(directives.rootdir);
+  }
+  if (directives.declarationdir !== undefined) {
+    options.declarationDir = String(directives.declarationdir);
+  }
+  if (directives.importhelpers !== undefined) {
+    options.importHelpers = Boolean(directives.importhelpers);
+  }
+  if (directives.downleveliteration !== undefined) {
+    options.downlevelIteration = Boolean(directives.downleveliteration);
   }
 
   return options;

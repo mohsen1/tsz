@@ -167,48 +167,49 @@ function normalizeTargetName(target: unknown): string {
   return String(target ?? 'es2020').toLowerCase();
 }
 
-function defaultCoreLibNameForTarget(targetName: string): string {
-  // Return core lib name WITHOUT DOM (.full suffix includes DOM which is 1.8MB)
-  // Use ES5 as default for tests without explicit target - it's minimal (220KB)
-  // Tests needing newer features should specify @target
+function defaultFullLibNameForTarget(targetName: string): string {
+  // Return .full lib name WITH DOM to match TSC's default behavior
+  // This ensures WASM mode produces the same results as server mode and TSC baseline
+  // The .full libs include DOM, ScriptHost, etc. via /// <reference lib="..." /> directives
   switch (targetName) {
     case 'es3':
     case 'es5':
-      return 'es5';
+      return 'es5.full';
     case 'es6':
     case 'es2015':
-      return 'es2015';
+      return 'es2015.full';
     case 'es2016':
-      return 'es2016';
+      return 'es2016.full';
     case 'es2017':
-      return 'es2017';
+      return 'es2017.full';
     case 'es2018':
-      return 'es2018';
+      return 'es2018.full';
     case 'es2019':
-      return 'es2019';
+      return 'es2019.full';
     case 'es2020':
-      return 'es2020';
+      return 'es2020.full';
     case 'es2021':
-      return 'es2021';
+      return 'es2021.full';
     case 'es2022':
-      return 'es2022';
+      return 'es2022.full';
     case 'es2023':
-      return 'es2023';
+      return 'es2023.full';
     case 'es2024':
-      return 'es2024';
+      return 'es2024.full';
     case 'esnext':
-      return 'esnext';
+      return 'esnext.full';
     default:
-      // Default to ES5 for unknown/unspecified targets - minimal lib
-      return 'es5';
+      // Default to ES5.full for unknown/unspecified targets (matches TSC)
+      return 'es5.full';
   }
 }
 
 function defaultLibNamesForTarget(targetName: string): string[] {
-  // Use core lib (without DOM) for better WASM memory usage
-  const coreLibName = defaultCoreLibNameForTarget(targetName);
-  // Return just the core lib name - collectLibFiles will recursively resolve dependencies
-  return [coreLibName];
+  // Use .full lib (with DOM) to match TSC's default behavior
+  // This is critical for conformance - TSC baseline uses .full libs
+  const fullLibName = defaultFullLibNameForTarget(targetName);
+  // Return just the full lib name - collectLibFiles will recursively resolve dependencies
+  return [fullLibName];
 }
 
 function getLibNamesForTestCase(
