@@ -104,7 +104,9 @@ if [ "$RUN_CONFORMANCE" = true ]; then
 
     if echo "$OUTPUT" | grep -q "Pass Rate:"; then
         # Strip ANSI color codes before parsing
-        PASS_LINE=$(echo "$OUTPUT" | grep "Pass Rate:" | tail -1 | sed 's/\x1b\[[0-9;]*m//g')
+        # Use head -1 to get the first "Pass Rate:" line which has format: "Pass Rate: X% (passed/total)"
+        # (The Summary section has a different format without passed/total in parentheses)
+        PASS_LINE=$(echo "$OUTPUT" | grep "Pass Rate:" | head -1 | sed 's/\x1b\[[0-9;]*m//g')
         CONF_PASS_RATE=$(echo "$PASS_LINE" | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
         CONF_PASSED=$(echo "$PASS_LINE" | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\1/' | tr -d ',')
         CONF_TOTAL=$(echo "$PASS_LINE" | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\2/' | tr -d ',')
