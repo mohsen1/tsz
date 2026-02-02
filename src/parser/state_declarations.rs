@@ -115,13 +115,15 @@ impl ParserState {
         let start_pos = self.token_pos();
 
         // Handle invalid access modifiers (private/protected/public) on type members.
+        // But NOT if the keyword is being used as a property name (e.g., "public: Type")
         if matches!(
             self.token(),
             SyntaxKind::PrivateKeyword
                 | SyntaxKind::ProtectedKeyword
                 | SyntaxKind::PublicKeyword
                 | SyntaxKind::AccessorKeyword
-        ) {
+        ) && !self.look_ahead_is_property_name_after_keyword()
+        {
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Modifiers cannot appear here.",
