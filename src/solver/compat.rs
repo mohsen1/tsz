@@ -4,12 +4,56 @@ use crate::solver::db::QueryDatabase;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::solver::types::{PropertyInfo, TypeId, TypeKey};
-use crate::solver::visitor::is_empty_object_type_db;
+use crate::solver::visitor::{is_empty_object_type_db, TypeVisitor};
 use crate::solver::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
+
+// =============================================================================
+// Visitor Pattern Implementations
+// =============================================================================
+
+/// Visitor to extract object shape ID from types.
+struct ShapeExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> ShapeExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    /// Extract shape from a type, returning None if not an object type.
+    fn extract(&mut self, type_id: TypeId) -> Option<u32> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for ShapeExtractor<'a> {
+    type Output = Option<u32>;
+
+    fn visit_intrinsic(&mut self, _kind: crate::solver::types::IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &crate::solver::LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        Some(shape_id)
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        Some(shape_id)
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
 
 /// Trait for providing checker-specific assignability overrides.
 ///
@@ -400,22 +444,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
-        let target_key = match self.interner.lookup(target) {
-            Some(key) => key,
+        let mut extractor = ShapeExtractor::new(self.interner);
+
+        let target_shape_id = match extractor.extract(target) {
+            Some(id) => id,
             None => return false,
         };
 
-        let target_shape = match &target_key {
-            TypeKey::Object(shape_id) => self.interner.object_shape(*shape_id),
-            TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(*shape_id);
-                if shape.string_index.is_some() || shape.number_index.is_some() {
-                    return false;
-                }
-                shape
+        let target_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(target_shape_id));
+
+        // ObjectWithIndex with index signatures is not a weak type
+        if let Some(TypeKey::ObjectWithIndex(_)) = self.interner.lookup(target) {
+            if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+                return false;
             }
-            _ => return false,
-        };
+        }
 
         let target_props = target_shape.properties.as_slice();
         if target_props.is_empty() || target_props.iter().any(|prop| !prop.optional) {
@@ -437,27 +480,26 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
+        let mut extractor = ShapeExtractor::new(self.interner);
         let mut has_weak_member = false;
+
         for member in members.iter() {
             let resolved_member = self.resolve_weak_type_ref(*member);
-            let Some(member_key) = self.interner.lookup(resolved_member) else {
-                continue;
-            };
-            let shape = match member_key {
-                TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                    self.interner.object_shape(shape_id)
-                }
-                _ => continue,
+            let member_shape_id = match extractor.extract(resolved_member) {
+                Some(id) => id,
+                None => continue,
             };
 
-            if shape.properties.is_empty()
-                || shape.string_index.is_some()
-                || shape.number_index.is_some()
+            let member_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(member_shape_id));
+
+            if member_shape.properties.is_empty()
+                || member_shape.string_index.is_some()
+                || member_shape.number_index.is_some()
             {
                 return false;
             }
 
-            if shape.properties.iter().all(|prop| prop.optional) {
+            if member_shape.properties.iter().all(|prop| prop.optional) {
                 has_weak_member = true;
             }
         }
@@ -478,36 +520,26 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         target_props: &[PropertyInfo],
     ) -> bool {
-        let source_key = match self.interner.lookup(source) {
-            Some(key) => key,
+        // Handle Union types explicitly before visitor
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(source) {
+            let members = self.interner.type_list(members);
+            return members
+                .iter()
+                .all(|member| self.violates_weak_type_with_target_props(*member, target_props));
+        }
+
+        let mut extractor = ShapeExtractor::new(self.interner);
+        let source_shape_id = match extractor.extract(source) {
+            Some(id) => id,
             None => return false,
         };
 
-        match &source_key {
-            TypeKey::Object(shape_id) => {
-                let shape = self.interner.object_shape(*shape_id);
-                // Empty objects are assignable to weak types (all optional properties).
-                // Only trigger weak type violation if source has properties that don't overlap.
-                let source_props = shape.properties.as_slice();
-                !source_props.is_empty() && !self.has_common_property(source_props, target_props)
-            }
-            TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(*shape_id);
-                // Empty objects are assignable to weak types (all optional properties).
-                // Only trigger weak type violation if source has properties that don't overlap.
-                let source_props = shape.properties.as_slice();
-                !source_props.is_empty() && !self.has_common_property(source_props, target_props)
-            }
-            TypeKey::Union(members) => {
-                // For unions, only fail if ALL members violate weak type rules.
-                // If at least one member is compatible, the union should be assignable.
-                let members = self.interner.type_list(*members);
-                members
-                    .iter()
-                    .all(|member| self.violates_weak_type_with_target_props(*member, target_props))
-            }
-            _ => false,
-        }
+        let source_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(source_shape_id));
+        let source_props = source_shape.properties.as_slice();
+
+        // Empty objects are assignable to weak types (all optional properties).
+        // Only trigger weak type violation if source has properties that don't overlap.
+        !source_props.is_empty() && !self.has_common_property(source_props, target_props)
     }
 
     fn source_lacks_union_common_property(
@@ -516,61 +548,58 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         target_members: &[TypeId],
     ) -> bool {
         let source = self.resolve_weak_type_ref(source);
-        let source_key = match self.interner.lookup(source) {
-            Some(key) => key,
+
+        // Handle Union explicitly
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(source) {
+            let members = self.interner.type_list(members);
+            return members
+                .iter()
+                .all(|member| self.source_lacks_union_common_property(*member, target_members));
+        }
+
+        // Handle TypeParameter explicitly
+        if let Some(TypeKey::TypeParameter(param)) = self.interner.lookup(source) {
+            return match param.constraint {
+                Some(constraint) => self.source_lacks_union_common_property(constraint, target_members),
+                None => false,
+            };
+        }
+
+        // Use visitor for Object types
+        let mut extractor = ShapeExtractor::new(self.interner);
+        let source_shape_id = match extractor.extract(source) {
+            Some(id) => id,
             None => return false,
         };
 
-        match &source_key {
-            TypeKey::Union(members) => {
-                // When source is a union, ALL members must lack common property for the union to lack it.
-                // If ANY member has a common property with the target, the union overall has some overlap.
-                let members = self.interner.type_list(*members);
-                members
-                    .iter()
-                    .all(|member| self.source_lacks_union_common_property(*member, target_members))
-            }
-            TypeKey::TypeParameter(param) => match param.constraint {
-                Some(constraint) => {
-                    self.source_lacks_union_common_property(constraint, target_members)
-                }
-                None => false,
-            },
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(*shape_id);
-                if shape.string_index.is_some() || shape.number_index.is_some() {
-                    return false;
-                }
-                let source_props = shape.properties.as_slice();
-                if source_props.is_empty() {
-                    return false;
-                }
-
-                let mut has_common = false;
-                for member in target_members {
-                    let resolved_member = self.resolve_weak_type_ref(*member);
-                    let Some(member_key) = self.interner.lookup(resolved_member) else {
-                        continue;
-                    };
-                    let shape = match member_key {
-                        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                            self.interner.object_shape(shape_id)
-                        }
-                        _ => continue,
-                    };
-                    if shape.string_index.is_some() || shape.number_index.is_some() {
-                        return false;
-                    }
-                    if self.has_common_property(source_props, shape.properties.as_slice()) {
-                        has_common = true;
-                        break;
-                    }
-                }
-
-                !has_common
-            }
-            _ => false,
+        let source_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(source_shape_id));
+        if source_shape.string_index.is_some() || source_shape.number_index.is_some() {
+            return false;
         }
+        let source_props = source_shape.properties.as_slice();
+        if source_props.is_empty() {
+            return false;
+        }
+
+        let mut has_common = false;
+        for member in target_members {
+            let resolved_member = self.resolve_weak_type_ref(*member);
+            let member_shape_id = match extractor.extract(resolved_member) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let member_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(member_shape_id));
+            if member_shape.string_index.is_some() || member_shape.number_index.is_some() {
+                return false;
+            }
+            if self.has_common_property(source_props, member_shape.properties.as_slice()) {
+                has_common = true;
+                break;
+            }
+        }
+
+        !has_common
     }
 
     fn has_common_property(
@@ -631,15 +660,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             None => return false,
         };
 
-        match &key {
+        match key {
             TypeKey::Union(members) => {
-                let members = self.interner.type_list(*members);
+                let members = self.interner.type_list(members);
                 members
                     .iter()
                     .all(|member| self.is_assignable_to_empty_object(*member))
             }
             TypeKey::Intersection(members) => {
-                let members = self.interner.type_list(*members);
+                let members = self.interner.type_list(members);
                 members
                     .iter()
                     .any(|member| self.is_assignable_to_empty_object(*member))
@@ -742,31 +771,30 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Extract the private brand property name from a type if it has one.
     /// Returns `Some(brand_name)` if the type has a private brand, `None` otherwise.
     fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
-        let key = self.interner.lookup(type_id)?;
-        match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
-                    let name = self.interner.resolve_atom(prop.name);
-                    if name.starts_with("__private_brand_") {
-                        return Some(name);
-                    }
+        // Handle Callable explicitly
+        if let Some(TypeKey::Callable(callable_id)) = self.interner.lookup(type_id) {
+            let callable = self.interner.callable_shape(callable_id);
+            for prop in callable.properties.iter() {
+                let name = self.interner.resolve_atom(prop.name);
+                if name.starts_with("__private_brand_") {
+                    return Some(name);
                 }
-                None
             }
-            TypeKey::Callable(callable_id) => {
-                // Constructor types (Callable) can also have private brands for static members
-                let callable = self.interner.callable_shape(callable_id);
-                for prop in callable.properties.iter() {
-                    let name = self.interner.resolve_atom(prop.name);
-                    if name.starts_with("__private_brand_") {
-                        return Some(name);
-                    }
-                }
-                None
-            }
-            _ => None,
+            return None;
         }
+
+        // Use visitor for Object types
+        let mut extractor = ShapeExtractor::new(self.interner);
+        let shape_id = extractor.extract(type_id)?;
+        let shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(shape_id));
+
+        for prop in shape.properties.iter() {
+            let name = self.interner.resolve_atom(prop.name);
+            if name.starts_with("__private_brand_") {
+                return Some(name);
+            }
+        }
+        None
     }
 }
 
