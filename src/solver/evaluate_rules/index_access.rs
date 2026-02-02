@@ -303,8 +303,8 @@ impl<'a> TypeVisitor for ArrayKeyVisitor<'a> {
                 }
                 Some(TypeId::UNDEFINED)
             }
-            // For other literals, signal "use default fallback"
-            _ => None,
+            // Explicitly handle other literals to avoid incorrect fallback
+            LiteralValue::Boolean(_) | LiteralValue::BigInt(_) => Some(TypeId::UNDEFINED),
         }
     }
 
@@ -683,23 +683,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     pub(crate) fn evaluate_array_index(&self, elem: TypeId, index_type: TypeId) -> TypeId {
-        // Handle Union explicitly (distributes over union members)
-        if let Some(members) = union_list_id(self.interner(), index_type) {
-            let members = self.interner().type_list(members);
-            let mut results = Vec::new();
-            for &member in members.iter() {
-                let result = self.evaluate_array_index(elem, member);
-                if result != TypeId::UNDEFINED || self.no_unchecked_indexed_access() {
-                    results.push(result);
-                }
-            }
-            if results.is_empty() {
-                return TypeId::UNDEFINED;
-            }
-            return self.interner().union(results);
-        }
-
         // Use ArrayKeyVisitor to handle the index type
+        // The visitor handles Union distribution internally via visit_union
         let mut visitor = ArrayKeyVisitor::new(self.interner(), elem);
         let result = visitor.evaluate(index_type);
 
