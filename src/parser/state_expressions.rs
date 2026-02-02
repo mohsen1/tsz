@@ -761,7 +761,7 @@ impl ParserState {
                     // Outside async context or in other contexts, check if await is used as a bare expression
                     // If followed by tokens that can't start an expression, report "Expression expected"
                     // Examples where await is a reserved identifier but invalid as expression:
-                    //   await;  // Error: Expression expected (in static blocks)
+                    //   await;  // Error: TS1359 in static blocks (reserved word)
                     //   await (1);  // Error: Expression expected (in static blocks)
                     //   async (a = await => x) => {}  // Error: Expression expected (before arrow)
 
@@ -770,7 +770,17 @@ impl ParserState {
                     let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
 
                     if !has_following_expression && !is_computed_property_context {
-                        self.error_expression_expected();
+                        // In static blocks, 'await' used as a bare identifier should emit TS1359
+                        // (reserved word cannot be used here) to match TSC behavior
+                        if self.in_static_block_context() {
+                            use crate::checker::types::diagnostics::diagnostic_codes;
+                            self.parse_error_at_current_token(
+                                "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                                diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+                            );
+                        } else {
+                            self.error_expression_expected();
+                        }
                     }
 
                     // Fall through to parse as identifier/postfix expression
