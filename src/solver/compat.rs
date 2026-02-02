@@ -677,6 +677,11 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
     fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_assignable_strict(source, target)
     }
+
+    fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
+        // Bypass the cache and perform a one-off check with non-strict function variance.
+        self.is_assignable_impl(source, target, false)
+    }
 }
 
 // =============================================================================

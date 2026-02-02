@@ -539,13 +539,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // Error types are compatible with everything (except checking for identity)
-        // This SUPPRESSES cascading errors when a symbol can't be resolved.
-        // TypeScript behavior: error types don't produce additional type errors.
-        // Example: if `foo` is unresolved, `let x: string = foo` should only emit
-        // "Cannot find name 'foo'" (TS2304), not also "Type 'error' is not assignable" (TS2322).
+        // Error types are only compatible with themselves.
+        // Error suppression belongs in the compatibility layer (CompatChecker),
+        // not in the strict subtype engine.
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return SubtypeResult::True;
+            return SubtypeResult::False;
         }
 
         // =========================================================================
@@ -2248,6 +2246,17 @@ pub fn is_subtype_of(interner: &dyn TypeDatabase, source: TypeId, target: TypeId
 impl<'a, R: TypeResolver> AssignabilityChecker for SubtypeChecker<'a, R> {
     fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         SubtypeChecker::is_assignable_to(self, source, target)
+    }
+
+    fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
+        let prev_strict = self.strict_function_types;
+        let prev_param_count = self.allow_bivariant_param_count;
+        self.strict_function_types = false;
+        self.allow_bivariant_param_count = true;
+        let result = SubtypeChecker::is_assignable_to(self, source, target);
+        self.allow_bivariant_param_count = prev_param_count;
+        self.strict_function_types = prev_strict;
+        result
     }
 }
 

@@ -1046,7 +1046,8 @@ impl<'a> TypeLowering<'a> {
                     }
                     k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                         if let Some(name) = self.lower_signature_name(sig.name) {
-                            let signature = self.lower_call_signature(sig);
+                            let mut signature = self.lower_call_signature(sig);
+                            signature.is_method = true;
                             let readonly = self.has_readonly_modifier(&sig.modifiers);
                             parts.merge_method(name, signature, sig.question_token, readonly);
                         }
