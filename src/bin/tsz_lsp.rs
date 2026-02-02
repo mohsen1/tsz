@@ -809,6 +809,9 @@ impl LspServer {
 }
 
 fn main() -> Result<()> {
+    // Initialize tracing (always stderr — stdout carries LSP JSON-RPC).
+    wasm::tracing_config::init_tracing();
+
     let args = Args::parse();
 
     eprintln!("tsz-lsp: Starting Language Server Protocol server");

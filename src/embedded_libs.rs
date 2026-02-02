@@ -17,7 +17,7 @@
 //! # Auto-Generated
 //!
 //! Generated from TypeScript npm version: 6.0.0-dev.20260116
-//! Generated at: 2026-02-01T15:03:51.440Z
+//! Generated at: 2026-02-02T00:52:26.425Z
 //!
 //! DO NOT EDIT - regenerate with: node scripts/generate-lib-assets.mjs
 
