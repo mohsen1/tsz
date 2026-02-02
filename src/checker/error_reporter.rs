@@ -2395,7 +2395,7 @@ impl<'a> CheckerState<'a> {
 /// Check if a name is a known DOM or ScriptHost global that requires the 'dom' lib.
 /// These names are well-known browser/runtime APIs that tsc suggests including
 /// the 'dom' lib for when they can't be resolved (TS2584).
-fn is_known_dom_global(name: &str) -> bool {
+pub fn is_known_dom_global(name: &str) -> bool {
     match name {
         // Console
         "console"
