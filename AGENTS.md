@@ -8,8 +8,7 @@ Before making changes, read these docs:
 
 | Document | What It Covers |
 |----------|----------------|
-| [docs/architecture/NORTH_STAR.md](docs/architecture/NORTH_STAR.md) | Target architecture, component responsibilities, type system rules |
-| [docs/architecture/MIGRATION_ROADMAP.md](docs/architecture/MIGRATION_ROADMAP.md) | Current state, migration phases, extraction patterns |
+| [docs/architecture/NORTH_STAR.md](docs/architecture/NORTH_STAR.md) | Target architecture, component 
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, building, testing |
 
 ## Core Rules
@@ -129,8 +128,6 @@ Available presets: `--solver`, `--checker`, `--binder`, `--parser`, `--emitter`,
 | Diagnostic guidelines | [docs/specs/DIAGNOSTICS.md](docs/specs/DIAGNOSTICS.md) |
 | Performance benchmarks | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
 
-
-## CRITICAL: HOW TO GET THINGS DONE:
 
 Use the following sequence to get things done:
 

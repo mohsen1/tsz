@@ -211,7 +211,8 @@ function runTszWithFullOutput(
 
 // Memory configuration
 const MEMORY_USAGE_PERCENT = 0.80; // Use 80% of available memory
-const MEMORY_CHECK_INTERVAL_MS = 500;
+const MEMORY_CHECK_INTERVAL_MS = 1000; // Check every 1s (was 500ms - too aggressive)
+const MAX_CONSECUTIVE_VIOLATIONS = 3; // Require 3 consecutive violations before killing
 const MIN_MEMORY_PER_WORKER_MB = 256; // Minimum 256MB per worker
 const MAX_MEMORY_PER_WORKER_MB = 4096; // Maximum 4GB per worker
 
@@ -519,6 +520,7 @@ export class TszServerClient {
   private libDir: string;
   private memoryLimitMB: number;
   private memoryCheckTimer: NodeJS.Timeout | null = null;
+  private consecutiveViolations = 0; // Track consecutive memory limit violations
   private oomKilled = false;
   private checksCompleted = 0;
 
@@ -551,6 +553,7 @@ export class TszServerClient {
 
     this.oomKilled = false;
     this.checksCompleted = 0;
+    this.consecutiveViolations = 0;
 
     this.readyPromise = new Promise((resolve, reject) => {
       const env = {
@@ -634,6 +637,8 @@ export class TszServerClient {
 
   /**
    * Start monitoring memory usage.
+   * Uses a "strike" system: requires 3 consecutive violations before killing
+   * to avoid false positives from transient memory spikes.
    */
   private startMemoryMonitor(): void {
     this.memoryCheckTimer = setInterval(() => {
@@ -641,8 +646,16 @@ export class TszServerClient {
 
       const memoryMB = getProcessMemoryMB(this.proc.pid);
       if (memoryMB > this.memoryLimitMB) {
-        this.oomKilled = true;
-        this.killProcess();
+        this.consecutiveViolations++;
+        // Only kill after multiple consecutive violations to avoid false positives
+        // from transient spikes (e.g., during lib merging or batch parsing)
+        if (this.consecutiveViolations >= MAX_CONSECUTIVE_VIOLATIONS) {
+          this.oomKilled = true;
+          this.killProcess();
+        }
+      } else {
+        // Reset counter if memory is back under limit
+        this.consecutiveViolations = 0;
       }
     }, MEMORY_CHECK_INTERVAL_MS);
   }
@@ -680,6 +693,7 @@ export class TszServerClient {
       clearInterval(this.memoryCheckTimer);
       this.memoryCheckTimer = null;
     }
+    this.consecutiveViolations = 0;
     this.proc = null;
     this.readline = null;
     this.ready = false;
