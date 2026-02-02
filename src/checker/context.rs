@@ -15,6 +15,7 @@ use crate::checker::types::diagnostics::Diagnostic;
 use crate::common::ModuleKind;
 use crate::parser::NodeIndex;
 use crate::solver::def::{DefId, DefinitionStore};
+use crate::solver::types::SymbolRef;
 use crate::solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId};
 
 /// Compiler options for type checking.
@@ -1000,6 +1001,27 @@ impl<'a> CheckerContext<'a> {
 
         let def_id = self.get_or_create_def_id(sym_id);
         self.types.intern(TypeKey::Lazy(def_id))
+    }
+
+    /// Convert TypeKey::Ref to TypeKey::Lazy(DefId) if needed (Phase 1 migration).
+    ///
+    /// This post-processes a TypeId created by TypeLowering. If the type is
+    /// TypeKey::Ref(SymbolRef), this creates a corresponding TypeKey::Lazy(DefId)
+    /// for the same symbol. This enables gradual migration from SymbolRef to DefId.
+    ///
+    /// **Pattern:** TypeLowering creates Ref → post-process → returns Lazy
+    ///
+    /// This avoids the Fn/FnMut problem with resolver closures by creating
+    /// DefIds after TypeLowering completes (when &mut self is available).
+    pub fn maybe_create_lazy_from_resolved(&mut self, type_id: TypeId) -> TypeId {
+        use crate::solver::TypeKey;
+
+        if let Some(TypeKey::Ref(SymbolRef(sym_ref))) = self.types.lookup(type_id) {
+            let sym_id = SymbolId(sym_ref);
+            let def_id = self.get_or_create_def_id(sym_id);
+            return self.types.intern(TypeKey::Lazy(def_id));
+        }
+        type_id
     }
 
     /// Look up the SymbolId for a DefId (reverse mapping).
