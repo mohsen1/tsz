@@ -100,7 +100,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(func) = self.arena.get_function(node) {
                     let body_range = self.get_line_range(func.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     self.collect_from_node(func.body, ranges);
                 }
@@ -111,7 +116,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(class) = self.arena.get_class(node) {
                     // Find the opening brace in the source text for the body span
                     if let Some(body_range) = self.find_brace_range(node) {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     for &member in &class.members.nodes {
                         self.collect_from_node(member, ranges);
@@ -121,7 +131,12 @@ impl<'a> FoldingRangeProvider<'a> {
             k if k == syntax_kind_ext::BLOCK => {
                 let block_range = self.get_line_range(node_idx);
                 if block_range.0 < block_range.1 {
-                    ranges.push(FoldingRange::new(block_range.0, block_range.1, block_range.2, block_range.3));
+                    ranges.push(FoldingRange::new(
+                        block_range.0,
+                        block_range.1,
+                        block_range.2,
+                        block_range.3,
+                    ));
                 }
                 if let Some(block) = self.arena.get_block(node) {
                     for &stmt in &block.statements.nodes {
@@ -138,7 +153,12 @@ impl<'a> FoldingRangeProvider<'a> {
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                 if let Some(iface) = self.arena.get_interface(node) {
                     if let Some(body_range) = self.find_brace_range(node) {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     for &member in &iface.members.nodes {
                         self.collect_from_node(member, ranges);
@@ -149,16 +169,24 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(_alias) = self.arena.get_type_alias(node) {
                     let alias_range = self.get_line_range(node_idx);
                     if alias_range.0 < alias_range.1 {
-                        ranges.push(
-                            FoldingRange::new(alias_range.0, alias_range.1, alias_range.2, alias_range.3),
-                        );
+                        ranges.push(FoldingRange::new(
+                            alias_range.0,
+                            alias_range.1,
+                            alias_range.2,
+                            alias_range.3,
+                        ));
                     }
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = self.arena.get_enum(node) {
                     if let Some(body_range) = self.find_brace_range(node) {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     for &member in &enum_decl.members.nodes {
                         self.collect_from_node(member, ranges);
@@ -168,7 +196,12 @@ impl<'a> FoldingRangeProvider<'a> {
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
                     if let Some(body_range) = self.find_brace_range(node) {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     self.collect_from_node(module.body, ranges);
                 }
@@ -177,7 +210,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(method) = self.arena.get_method_decl(node) {
                     let body_range = self.get_line_range(method.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     self.collect_from_node(method.body, ranges);
                 }
@@ -191,7 +229,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(ctor) = self.arena.get_constructor(node) {
                     let body_range = self.get_line_range(ctor.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     self.collect_from_node(ctor.body, ranges);
                 }
@@ -200,7 +243,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(accessor) = self.arena.get_accessor(node) {
                     let body_range = self.get_line_range(accessor.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     self.collect_from_node(accessor.body, ranges);
                 }
@@ -209,7 +257,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(accessor) = self.arena.get_accessor(node) {
                     let body_range = self.get_line_range(accessor.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     self.collect_from_node(accessor.body, ranges);
                 }
@@ -223,7 +276,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(func) = self.arena.get_function(node) {
                     let body_range = self.get_line_range(func.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     self.collect_from_node(func.body, ranges);
                 }
@@ -232,7 +290,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 if let Some(func) = self.arena.get_function(node) {
                     let body_range = self.get_line_range(func.body);
                     if body_range.0 < body_range.1 {
-                        ranges.push(FoldingRange::new(body_range.0, body_range.1, body_range.2, body_range.3));
+                        ranges.push(FoldingRange::new(
+                            body_range.0,
+                            body_range.1,
+                            body_range.2,
+                            body_range.3,
+                        ));
                     }
                     self.collect_from_node(func.body, ranges);
                 }
@@ -242,7 +305,12 @@ impl<'a> FoldingRangeProvider<'a> {
                     // Fold the case block
                     let case_block_range = self.get_line_range(switch.case_block);
                     if case_block_range.0 < case_block_range.1 {
-                        ranges.push(FoldingRange::new(case_block_range.0, case_block_range.1, case_block_range.2, case_block_range.3));
+                        ranges.push(FoldingRange::new(
+                            case_block_range.0,
+                            case_block_range.1,
+                            case_block_range.2,
+                            case_block_range.3,
+                        ));
                     }
                     self.collect_from_node(switch.case_block, ranges);
                 }
@@ -260,7 +328,12 @@ impl<'a> FoldingRangeProvider<'a> {
                     // Fold the clause body
                     let clause_range = self.get_line_range(node_idx);
                     if clause_range.0 < clause_range.1 {
-                        ranges.push(FoldingRange::new(clause_range.0, clause_range.1, clause_range.2, clause_range.3));
+                        ranges.push(FoldingRange::new(
+                            clause_range.0,
+                            clause_range.1,
+                            clause_range.2,
+                            clause_range.3,
+                        ));
                     }
                     // Walk children for nested blocks
                     for &stmt in &clause.statements.nodes {
@@ -271,7 +344,12 @@ impl<'a> FoldingRangeProvider<'a> {
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 let paren_range = self.get_line_range(node_idx);
                 if paren_range.0 < paren_range.1 {
-                    ranges.push(FoldingRange::new(paren_range.0, paren_range.1, paren_range.2, paren_range.3));
+                    ranges.push(FoldingRange::new(
+                        paren_range.0,
+                        paren_range.1,
+                        paren_range.2,
+                        paren_range.3,
+                    ));
                 }
                 for child in self.arena.get_children(node_idx) {
                     self.collect_from_node(child, ranges);
@@ -360,8 +438,12 @@ impl<'a> FoldingRangeProvider<'a> {
                 // Skip empty templates (just ``)
                 if node.end.saturating_sub(node.pos) > 2 {
                     ranges.push(FoldingRange::new(
-                        self.line_map.offset_to_position(node.pos, self.source_text).line,
-                        self.line_map.offset_to_position(node.end.saturating_sub(1), self.source_text).line,
+                        self.line_map
+                            .offset_to_position(node.pos, self.source_text)
+                            .line,
+                        self.line_map
+                            .offset_to_position(node.end.saturating_sub(1), self.source_text)
+                            .line,
                         node.pos,
                         node.end,
                     ));
@@ -394,13 +476,8 @@ impl<'a> FoldingRangeProvider<'a> {
                 let end_range = self.get_line_range(statements[last_import]);
                 if end_range.1 > start_range.0 {
                     ranges.push(
-                        FoldingRange::new(
-                            start_range.0,
-                            end_range.1,
-                            start_range.2,
-                            end_range.3,
-                        )
-                        .with_kind("imports"),
+                        FoldingRange::new(start_range.0, end_range.1, start_range.2, end_range.3)
+                            .with_kind("imports"),
                     );
                 }
             }
@@ -436,9 +513,8 @@ impl<'a> FoldingRangeProvider<'a> {
                 if end_line > start_line {
                     let so = self.line_start_offset(start_line);
                     let eo = self.line_end_offset(end_line);
-                    ranges.push(
-                        FoldingRange::new(start_line, end_line, so, eo).with_kind("comment"),
-                    );
+                    ranges
+                        .push(FoldingRange::new(start_line, end_line, so, eo).with_kind("comment"));
                 }
                 i = end_line as usize + 1;
                 continue;
@@ -467,9 +543,8 @@ impl<'a> FoldingRangeProvider<'a> {
                 if end_line > start_line {
                     let so = self.line_start_offset(start_line);
                     let eo = self.line_end_offset(end_line);
-                    ranges.push(
-                        FoldingRange::new(start_line, end_line, so, eo).with_kind("comment"),
-                    );
+                    ranges
+                        .push(FoldingRange::new(start_line, end_line, so, eo).with_kind("comment"));
                 }
                 i = j;
                 continue;
@@ -560,7 +635,9 @@ impl<'a> FoldingRangeProvider<'a> {
         }
 
         let span_end = node.end;
-        let start_pos = self.line_map.offset_to_position(span_start, self.source_text);
+        let start_pos = self
+            .line_map
+            .offset_to_position(span_start, self.source_text);
         let end_pos = self
             .line_map
             .offset_to_position(span_end.saturating_sub(1), self.source_text);
@@ -658,7 +735,9 @@ mod folding_tests {
         let source = "\nclass MyClass {\n    method1() {\n        return 1;\n    }\n\n    method2() {\n        return 2;\n    }\n}\n";
         let ranges = get_ranges(source);
         assert!(!ranges.is_empty(), "Should find folding ranges for class");
-        let class_range = ranges.iter().find(|r| r.kind.is_none() && r.start_line == 1);
+        let class_range = ranges
+            .iter()
+            .find(|r| r.kind.is_none() && r.start_line == 1);
         assert!(
             class_range.is_some(),
             "Should find class body folding range"

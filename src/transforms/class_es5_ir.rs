@@ -2061,7 +2061,9 @@ impl<'a> AstToIr<'a> {
             let params = self.convert_parameters(&func.parameters);
             // Capture body source range for single-line detection
             let body_source_range = if !func.body.is_none() {
-                self.arena.get(func.body).map(|body_node| (body_node.pos as u32, body_node.end as u32))
+                self.arena
+                    .get(func.body)
+                    .map(|body_node| (body_node.pos as u32, body_node.end as u32))
             } else {
                 None
             };

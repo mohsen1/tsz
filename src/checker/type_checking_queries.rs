@@ -5,9 +5,9 @@
 
 use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MemberAccessLevel};
-use crate::parser::{NodeArena, NodeIndex};
 use crate::parser::node::NodeAccess;
 use crate::parser::syntax_kind_ext;
+use crate::parser::{NodeArena, NodeIndex};
 use crate::scanner::SyntaxKind;
 use crate::solver::types::TypeParamInfo;
 use crate::solver::{TypeId, TypePredicateTarget};
@@ -935,8 +935,10 @@ impl<'a> CheckerState<'a> {
                 }
             });
 
-            let message =
-                format_message(diagnostic_messages::VALUE_CANNOT_BE_USED_HERE, &[value_name]);
+            let message = format_message(
+                diagnostic_messages::VALUE_CANNOT_BE_USED_HERE,
+                &[value_name],
+            );
             self.error_at_node(idx, &message, diagnostic_codes::VALUE_CANNOT_BE_USED_HERE);
             return;
         }
@@ -1674,7 +1676,9 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use crate::parser::node::NodeAccess;
         use crate::solver::types::TypeKey;
-        use crate::solver::{TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type};
+        use crate::solver::{
+            TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type,
+        };
 
         let mut lib_type_id: Option<TypeId> = None;
 
@@ -1733,7 +1737,8 @@ impl<'a> CheckerState<'a> {
 
                                 // Look up the symbol in all lib contexts' file_locals
                                 for ctx in &lib_contexts {
-                                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name)
+                                    {
                                         return Some(found_sym.0);
                                     }
                                 }
@@ -1755,11 +1760,8 @@ impl<'a> CheckerState<'a> {
                     };
 
                     // Create base lowering with the fallback arena and resolver
-                    let lowering = TypeLowering::with_resolver(
-                        fallback_arena,
-                        self.ctx.types,
-                        &resolver,
-                    );
+                    let lowering =
+                        TypeLowering::with_resolver(fallback_arena, self.ctx.types, &resolver);
 
                     // Try to lower as interface first (handles declaration merging)
                     if !symbol.declarations.is_empty() {
@@ -1774,7 +1776,9 @@ impl<'a> CheckerState<'a> {
                                 first_params_set = true;
                                 canonical_param_type_ids = params
                                     .iter()
-                                    .map(|p| self.ctx.types.intern(TypeKey::TypeParameter(p.clone())))
+                                    .map(|p| {
+                                        self.ctx.types.intern(TypeKey::TypeParameter(p.clone()))
+                                    })
                                     .collect();
                                 lib_types.push(ty);
                             } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
@@ -1905,7 +1909,9 @@ impl<'a> CheckerState<'a> {
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use crate::parser::node::NodeAccess;
         use crate::solver::types::TypeKey;
-        use crate::solver::{TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type};
+        use crate::solver::{
+            TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type,
+        };
 
         let lib_contexts = self.ctx.lib_contexts.clone();
 
@@ -1951,7 +1957,8 @@ impl<'a> CheckerState<'a> {
                                     return None;
                                 }
                                 for ctx in &lib_contexts {
-                                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
+                                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name)
+                                    {
                                         return Some(found_sym.0);
                                     }
                                 }
@@ -1971,11 +1978,8 @@ impl<'a> CheckerState<'a> {
                         None
                     };
 
-                    let lowering = TypeLowering::with_resolver(
-                        fallback_arena,
-                        self.ctx.types,
-                        &resolver,
-                    );
+                    let lowering =
+                        TypeLowering::with_resolver(fallback_arena, self.ctx.types, &resolver);
 
                     if !symbol.declarations.is_empty() {
                         // Use lower_merged_interface_declarations for proper multi-arena support
@@ -1990,7 +1994,9 @@ impl<'a> CheckerState<'a> {
                                 // Compute TypeIds for these canonical params
                                 canonical_param_type_ids = params
                                     .iter()
-                                    .map(|p| self.ctx.types.intern(TypeKey::TypeParameter(p.clone())))
+                                    .map(|p| {
+                                        self.ctx.types.intern(TypeKey::TypeParameter(p.clone()))
+                                    })
                                     .collect();
                                 lib_types.push(ty);
                             } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {

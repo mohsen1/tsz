@@ -1346,9 +1346,7 @@ pub fn classify_for_instance_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ins
             constraint: info.constraint,
         },
         // Symbol references (class names, typeof expressions) need resolution to instance type
-        TypeKey::Ref(sym_ref) | TypeKey::TypeQuery(sym_ref) => {
-            InstanceTypeKind::SymbolRef(sym_ref)
-        }
+        TypeKey::Ref(sym_ref) | TypeKey::TypeQuery(sym_ref) => InstanceTypeKind::SymbolRef(sym_ref),
         TypeKey::Conditional(_)
         | TypeKey::Mapped(_)
         | TypeKey::IndexAccess(_, _)
