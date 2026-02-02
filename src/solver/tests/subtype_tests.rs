@@ -8190,7 +8190,6 @@ fn test_template_literal_pattern_prefix() {
 }
 
 #[test]
-#[ignore = "Template literal pattern subtyping with suffix not fully implemented"]
 fn test_template_literal_pattern_suffix() {
     // `${string}-suffix` pattern
     let interner = TypeInterner::new();
@@ -8245,7 +8244,6 @@ fn test_template_literal_pattern_with_union() {
 }
 
 #[test]
-#[ignore = "Template literal pattern subtyping with multiple parts not fully implemented"]
 fn test_template_literal_pattern_multiple_parts() {
     // `${string}-${number}` pattern
     let interner = TypeInterner::new();
