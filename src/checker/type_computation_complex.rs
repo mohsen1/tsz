@@ -1579,23 +1579,34 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
-                // Lib files are loaded but global was not found - this shouldn't happen
-                // for standard globals. When lib files ARE loaded, return ANY for any
-                // name that starts with an uppercase letter (likely a type/constructor global)
-                // or is a known value global, to prevent cascading errors from incomplete
-                // lib resolution.
+                // Lib files are loaded but global was not found.
+                // For DOM globals (console, window, etc.), emit TS2584 - they require the 'dom' lib.
+                // For core ES globals (Math, Array, etc.), return ANY for graceful degradation
+                // due to incomplete cross-lib symbol merging.
                 {
-                    let first_char = name.chars().next().unwrap_or('a');
-                    if first_char.is_uppercase() || self.is_known_global_value_name(name) {
-                        // Likely a global type/value that should be available from lib files
-                        // Return ANY to prevent cascading TS2304/TS2339/TS2322 errors
-                        return TypeId::ANY;
-                    }
-                    // For lowercase names, check if it's an ES2015+ type
+                    use crate::checker::error_reporter::is_known_dom_global;
                     use crate::lib_loader;
+
+                    // DOM globals require the 'dom' lib - emit TS2584
+                    if is_known_dom_global(name) {
+                        self.error_cannot_find_name_at(name, idx);
+                        return TypeId::ERROR;
+                    }
+
+                    // ES2015+ types - emit TS2583 with library suggestion
                     if lib_loader::is_es2015_plus_type(name) {
                         self.error_cannot_find_global_type(name, idx);
-                    } else if self.ctx.is_known_global_type(name) {
+                        return TypeId::ERROR;
+                    }
+
+                    // Core ES globals (Math, Array, etc.) - return ANY for graceful degradation
+                    let first_char = name.chars().next().unwrap_or('a');
+                    if first_char.is_uppercase() || self.is_known_global_value_name(name) {
+                        return TypeId::ANY;
+                    }
+
+                    // Other unknown globals
+                    if self.ctx.is_known_global_type(name) {
                         self.error_cannot_find_global_type(name, idx);
                     } else {
                         self.error_cannot_find_name_at(name, idx);
@@ -1630,15 +1641,26 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // === Check if this is a known global that should be available ===
-                // When lib files are loaded, return ANY for known globals to prevent cascading errors.
+                // DOM globals require the 'dom' lib - emit TS2584.
+                // Core ES globals - return ANY for graceful degradation when lib is loaded.
                 // When lib files are NOT loaded, emit appropriate errors.
                 if self.is_known_global_value_name(name) {
+                    use crate::checker::error_reporter::is_known_dom_global;
+                    use crate::lib_loader;
+
+                    // DOM globals (console, window, etc.) require the 'dom' lib
+                    if is_known_dom_global(name) {
+                        // Emit TS2584 regardless of whether other libs are loaded
+                        self.error_cannot_find_name_at(name, idx);
+                        return TypeId::ERROR;
+                    }
+
                     if self.ctx.has_lib_loaded() {
-                        // Lib files loaded but global not found - use ANY for graceful degradation
+                        // Core ES globals - lib files loaded but global not found
+                        // Return ANY for graceful degradation
                         return TypeId::ANY;
                     } else {
                         // No lib files loaded - emit appropriate error
-                        use crate::lib_loader;
                         if lib_loader::is_es2015_plus_type(name) {
                             // ES2015+ type - emit TS2583 with library suggestion
                             self.error_cannot_find_name_change_lib(name, idx);
