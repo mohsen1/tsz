@@ -9,7 +9,7 @@ use crate::binder::{SymbolId, SymbolTable, symbol_flags};
 use crate::checker::TypeCache;
 use crate::checker::context::LibContext;
 use crate::checker::state::CheckerState;
-use crate::checker::types::diagnostics::{Diagnostic, DiagnosticCategory, diagnostic_codes};
+use crate::checker::types::diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes};
 use crate::cli::args::CliArgs;
 use crate::cli::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
@@ -293,7 +293,7 @@ fn compilation_cache_to_build_info(
     base_dir: &Path,
     options: &ResolvedCompilerOptions,
 ) -> BuildInfo {
-    use crate::cli::incremental::{BuildInfoOptions, EmitSignature, FileInfo as IncrementalFileInfo};
+    use crate::cli::incremental::{BuildInfoOptions, EmitSignature, FileInfo as IncrementalFileInfo, CachedDiagnostic, CachedRelatedInformation};
     use std::collections::BTreeMap;
 
     let mut file_infos = BTreeMap::new();
@@ -341,6 +341,53 @@ fn compilation_cache_to_build_info(
         });
     }
 
+    // Convert diagnostics to cached format
+    let mut semantic_diagnostics_per_file = BTreeMap::new();
+    for (path, diagnostics) in &cache.diagnostics {
+        let relative_path = path
+            .strip_prefix(base_dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let cached_diagnostics: Vec<CachedDiagnostic> = diagnostics.iter().map(|d| {
+            let file_path = Path::new(&d.file);
+            CachedDiagnostic {
+                file: file_path
+                    .strip_prefix(base_dir)
+                    .unwrap_or(file_path)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .to_string(),
+                start: d.start,
+                length: d.length,
+                message_text: d.message_text.clone(),
+                category: d.category as u8,
+                code: d.code,
+                related_information: d.related_information.iter().map(|r| {
+                    let rel_file_path = Path::new(&r.file);
+                    CachedRelatedInformation {
+                        file: rel_file_path
+                            .strip_prefix(base_dir)
+                            .unwrap_or(rel_file_path)
+                            .to_string_lossy()
+                            .replace('\\', "/")
+                            .to_string(),
+                        start: r.start,
+                        length: r.length,
+                        message_text: r.message_text.clone(),
+                        category: r.category as u8,
+                        code: r.code,
+                    }
+                }).collect(),
+            }
+        }).collect();
+
+        if !cached_diagnostics.is_empty() {
+            semantic_diagnostics_per_file.insert(relative_path, cached_diagnostics);
+        }
+    }
+
     // Convert root files to relative paths
     let root_files_str: Vec<String> = root_files
         .iter()
@@ -368,7 +415,7 @@ fn compilation_cache_to_build_info(
         root_files: root_files_str,
         file_infos,
         dependencies,
-        semantic_diagnostics_per_file: BTreeMap::new(), // TODO: implement if needed
+        semantic_diagnostics_per_file,
         emit_signatures,
         options: build_options,
         build_time: std::time::SystemTime::now()
@@ -406,6 +453,46 @@ fn build_info_to_compilation_cache(
                 dep_paths.insert(dep_path);
             }
             cache.dependencies.insert(full_path, dep_paths);
+        }
+    }
+
+    // Load diagnostics from BuildInfo
+    for (path_str, cached_diagnostics) in &build_info.semantic_diagnostics_per_file {
+        let full_path = base_dir.join(path_str);
+
+        let diagnostics: Vec<Diagnostic> = cached_diagnostics.iter().map(|cd| {
+            Diagnostic {
+                file: full_path.to_string_lossy().into_owned(),
+                start: cd.start,
+                length: cd.length,
+                message_text: cd.message_text.clone(),
+                category: match cd.category {
+                    0 => DiagnosticCategory::Warning,
+                    1 => DiagnosticCategory::Error,
+                    2 => DiagnosticCategory::Suggestion,
+                    _ => DiagnosticCategory::Message,
+                },
+                code: cd.code,
+                related_information: cd.related_information.iter().map(|r| {
+                    DiagnosticRelatedInformation {
+                        file: base_dir.join(&r.file).to_string_lossy().into_owned(),
+                        start: r.start,
+                        length: r.length,
+                        message_text: r.message_text.clone(),
+                        category: match r.category {
+                            0 => DiagnosticCategory::Warning,
+                            1 => DiagnosticCategory::Error,
+                            2 => DiagnosticCategory::Suggestion,
+                            _ => DiagnosticCategory::Message,
+                        },
+                        code: r.code,
+                    }
+                }).collect(),
+            }
+        }).collect();
+
+        if !diagnostics.is_empty() {
+            cache.diagnostics.insert(full_path, diagnostics);
         }
     }
 
@@ -560,10 +647,16 @@ fn compile_inner(
         if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir) {
             if build_info_path.exists() {
                 match BuildInfo::load(&build_info_path) {
-                    Ok(build_info) => {
+                    Ok(Some(build_info)) => {
                         // Create a local cache from BuildInfo
                         local_cache = Some(build_info_to_compilation_cache(&build_info, &base_dir));
                         tracing::info!("Loaded BuildInfo from: {}", build_info_path.display());
+                    }
+                    Ok(None) => {
+                        tracing::info!(
+                            "BuildInfo at {} is outdated or incompatible, starting fresh",
+                            build_info_path.display()
+                        );
                     }
                     Err(e) => {
                         tracing::warn!("Failed to load BuildInfo from {}: {}, starting fresh", build_info_path.display(), e);

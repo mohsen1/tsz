@@ -15,7 +15,7 @@ This document outlines the plan to complete tsz's incremental compilation featur
 **Remaining (Phase 3):**
 - Semantic diagnostics caching (requires storing Diagnostic objects in BuildInfo)
 - Compression optimizations (fileIdsList, referencedMap)
-- Composite project support (latestChangedDtsFile)
+- Composite project support (latestChangedDtsFile) -- requires project references and declaration emit
 
 ## Current Status
 
