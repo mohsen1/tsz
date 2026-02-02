@@ -257,6 +257,10 @@ mod test_harness;
 #[path = "tests/isolated_test_runner.rs"]
 mod isolated_test_runner;
 
+// Tracing configuration (text / tree / JSON output for debugging)
+#[cfg(not(target_arch = "wasm32"))]
+pub mod tracing_config;
+
 // Native CLI (non-wasm targets only)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
