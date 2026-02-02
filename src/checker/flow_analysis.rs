@@ -1378,23 +1378,23 @@ impl<'a> CheckerState<'a> {
         self.ctx.inside_closure_depth > 0
     }
 
-    /// Check if a binding is mutable (let/var) vs immutable (const).
+    /// Check if a symbol is a mutable binding (let or var) vs immutable (const).
     ///
-    /// This determines whether Rule #42 applies: mutable bindings lose narrowing
-    /// in closures, while const bindings maintain narrowing.
+    /// This is used to implement TypeScript's Rule #42 for type narrowing in closures:
+    /// - const variables preserve narrowing through closures (immutable)
+    /// - let/var variables lose narrowing when accessed from closures (mutable)
     ///
-    /// ## Detection Strategy:
-    ///
-    /// 1. Get the value declaration for the symbol
+    /// Implementation checks:
+    /// 1. Get the symbol's value declaration
     /// 2. Check if it's a VariableDeclaration
-    /// 3. Look at the parent VariableStatement's modifiers
-    /// 4. If ConstKeyword is present → const (immutable)
-    /// 5. If LetKeyword or no const modifier → let/var (mutable)
+    /// 3. Look at the parent VariableDeclarationList's NodeFlags
+    /// 4. If CONST flag is set → const (immutable)
+    /// 5. Otherwise → let/var (mutable)
     ///
     /// Returns true for let/var (mutable), false for const (immutable).
     fn is_mutable_binding(&self, sym_id: SymbolId) -> bool {
         use crate::parser::syntax_kind_ext;
-        use crate::scanner::SyntaxKind;
+        use crate::parser::node_flags;
 
         let symbol = match self.ctx.binder.get_symbol(sym_id) {
             Some(sym) => sym,
@@ -1412,53 +1412,25 @@ impl<'a> CheckerState<'a> {
             None => return true,
         };
 
-        // Check if this is a VariableDeclaration
-        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            // Not a variable declaration (e.g., parameter, import)
-            // Parameters are effectively mutable for narrowing purposes
-            return true;
-        }
-
-        // Check the parent VariableStatement for the ConstKeyword modifier
-        let parent = match self.ctx.arena.get_extended(decl_idx) {
-            Some(ext) => ext.parent,
-            None => return true,
-        };
-
-        if parent.is_none() {
-            return true;
-        }
-
-        let parent_node = match self.ctx.arena.get(parent) {
-            Some(node) => node,
-            None => return true,
-        };
-
-        // Check if the parent is a VariableStatement
-        if parent_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-            // Could be a FOR_OF, FOR_IN, etc. - assume mutable
-            return true;
-        }
-
-        // Check the modifiers on the VariableStatement
-        let var_stmt = match self.ctx.arena.get_variable(parent_node) {
-            Some(stmt) => stmt,
-            None => return true,
-        };
-
-        if let Some(ref modifiers) = var_stmt.modifiers {
-            // Check if any modifier is ConstKeyword
-            for &mod_idx in &modifiers.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::ConstKeyword as u16 {
-                        return false; // const - immutable
+        // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
+        // The value_declaration points to VARIABLE_DECLARATION, we need to check its parent's flags
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
+            if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+                if !ext.parent.is_none() {
+                    if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                        let flags = parent_node.flags as u32;
+                        let is_const = (flags & node_flags::CONST) != 0;
+                        return !is_const; // Return true if NOT const (i.e., let or var)
                     }
                 }
             }
         }
 
-        // No const modifier found - it's let or var (mutable)
-        true
+        // For other node types, check the node's own flags
+        let flags = decl_node.flags as u32;
+        let is_const = (flags & node_flags::CONST) != 0;
+        !is_const // Return true if NOT const (i.e., let or var)
     }
 
     /// Check flow-aware usage of a variable (definite assignment + type narrowing).
