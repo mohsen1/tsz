@@ -236,7 +236,8 @@ impl<'a> FlowAnalyzer<'a> {
             // Check if this is a merge point that needs all antecedents processed first
             let is_switch_fallthrough =
                 flow.has_any_flags(flow_flags::SWITCH_CLAUSE) && flow.antecedent.len() > 1;
-            let is_merge_point = flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
+            let is_merge_point = flow
+                .has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
                 || is_switch_fallthrough;
 
             if is_merge_point && !flow.antecedent.is_empty() {

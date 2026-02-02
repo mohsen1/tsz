@@ -408,9 +408,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return self.resolve_generic_call(func, arg_types);
         }
 
-        if let Some(result) =
-            self.check_argument_types(&func.params, arg_types, func.is_method)
-        {
+        if let Some(result) = self.check_argument_types(&func.params, arg_types, func.is_method) {
             return result;
         }
 
@@ -636,12 +634,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: arg_types.len(),
             };
         }
-        if let Some(result) = self.check_argument_types_with(
-            &instantiated_params,
-            arg_types,
-            true,
-            func.is_method,
-        )
+        if let Some(result) =
+            self.check_argument_types_with(&instantiated_params, arg_types, true, func.is_method)
         {
             return result;
         }

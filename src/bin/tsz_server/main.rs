@@ -3340,7 +3340,7 @@ impl Server {
 
         let mut bound_files: Vec<BoundFile> = Vec::with_capacity(files.len());
         let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
-        
+
         // Use into_iter() to consume source strings immediately
         for (file_name, content) in files {
             // Skip non-TypeScript/JavaScript files (e.g. .json, .txt).
@@ -3371,7 +3371,9 @@ impl Server {
             // instead of merging thousands of symbols (expensive) for every file.
             // bind_source_file preserves lib symbols that were in file_locals beforehand.
             let mut binder = BinderState::new();
-            if let (Some(lib_symbols), Some(lib_binder)) = (lib_file_locals, unified_lib_binder.as_ref()) {
+            if let (Some(lib_symbols), Some(lib_binder)) =
+                (lib_file_locals, unified_lib_binder.as_ref())
+            {
                 // Copy lib symbols into binder's file_locals - this is O(M) but only a HashMap clone
                 // vs O(M*N) if we merged for every file
                 binder.file_locals = lib_symbols.clone();
@@ -3391,8 +3393,10 @@ impl Server {
 
         // PHASE 3: Build cross-file resolution context
         // Wrap in Arc to avoid expensive cloning in the loop below
-        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(bound_files.iter().map(|f| f.arena.clone()).collect());
-        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(bound_files.iter().map(|f| f.binder.clone()).collect());
+        let all_arenas: Arc<Vec<Arc<NodeArena>>> =
+            Arc::new(bound_files.iter().map(|f| f.arena.clone()).collect());
+        let all_binders: Arc<Vec<Arc<BinderState>>> =
+            Arc::new(bound_files.iter().map(|f| f.binder.clone()).collect());
         let user_file_contexts: Vec<LibContext> = bound_files
             .iter()
             .map(|f| LibContext {
@@ -3409,7 +3413,8 @@ impl Server {
         let file_names: Vec<String> = bound_files.iter().map(|f| f.name.clone()).collect();
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         // Wrap in Arc to avoid cloning HashMap/HashSet for every file
-        let resolved_module_paths_arc: Arc<FxHashMap<(usize, String), usize>> = Arc::new(resolved_module_paths);
+        let resolved_module_paths_arc: Arc<FxHashMap<(usize, String), usize>> =
+            Arc::new(resolved_module_paths);
         use std::collections::HashSet;
         let resolved_modules_arc: Arc<HashSet<String>> = Arc::new(resolved_modules);
 
@@ -3447,8 +3452,12 @@ impl Server {
 
             checker.ctx.set_all_arenas((*all_arenas).clone());
             checker.ctx.set_all_binders((*all_binders).clone());
-            checker.ctx.set_resolved_module_paths((*resolved_module_paths_arc).clone());
-            checker.ctx.set_resolved_modules((*resolved_modules_arc).clone());
+            checker
+                .ctx
+                .set_resolved_module_paths((*resolved_module_paths_arc).clone());
+            checker
+                .ctx
+                .set_resolved_modules((*resolved_modules_arc).clone());
             checker.ctx.set_current_file_idx(file_idx);
             checker.check_source_file(bound.root);
 
