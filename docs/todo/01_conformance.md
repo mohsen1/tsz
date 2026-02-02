@@ -946,3 +946,66 @@ TypeScript emits TS18050 instead of TS2362/TS2363.
 - `arithmeticOperatorWithUndefinedValueAndValidOperands.ts` - PASS
 - `arithmeticOperatorWithNullValueAndInvalidOperands.ts` - PASS
 - `arithmeticOperatorWithUndefinedValueAndInvalidOperands.ts` - PASS
+
+---
+
+## Ignored Unit Tests Analysis (Feb 2, 2026)
+
+Deep analysis of ~175 ignored unit tests across the codebase. These represent specific TypeScript behaviors that need to be implemented.
+
+### Summary by Category
+
+| Category | Count | Key Issues |
+|----------|-------|------------|
+| Control Flow Narrowing | ~10 | Switch fallthrough, loop back edges, closure capture |
+| Subtype Relationships | ~14 | Optional params, variance, intersections |
+| Solver Inference | ~6 | Conditional type variance, generic constraints |
+| Checker Tests | ~100+ | Namespace merging, module resolution, TS2304 |
+
+### Tier 1: High Impact, Medium Complexity
+
+1. **Fix `FlowFacts::merge` in `flow_analysis.rs`**
+   - Current: Requires exact type match to preserve narrowing
+   - Needed: Union types from different paths
+   - Enables: Switch fallthrough + loop narrowing tests
+   - Files: `src/solver/flow_analysis.rs`
+
+2. **Fix closure capture for `const` variables**
+   - Current: Flow analysis doesn't traverse START node antecedents
+   - Needed: Traverse outer scope for `const` bindings (TypeScript Rule #42)
+   - Enables: 7+ closure narrowing tests
+   - Files: Binder + `src/checker/control_flow.rs`
+
+3. **Fix function optional parameter subtyping**
+   - Current: Arity check may be too strict
+   - Needed: Proper handling of optional→required direction
+   - Enables: 4+ function subtype tests
+   - Files: `src/solver/subtype_rules/functions.rs`
+
+### Tier 2: High Impact, Higher Complexity
+
+4. **Fix namespace merging**
+   - Current: `merge_namespace_exports_into_constructor/function` has bugs
+   - Enables: ~12 namespace merging tests
+   - Files: `src/checker/namespace_checker.rs`
+
+5. **Fix array intersection reduction**
+   - Current: `string[] & number[]` not reducing to `never`
+   - Enables: 2+ intersection tests
+   - Files: `src/solver/intern.rs`
+
+### Key Test Files by Category
+
+**Control Flow:**
+- `src/checker/tests/control_flow_tests.rs` - 10 ignored closure/switch/loop tests
+
+**Subtyping:**
+- `src/solver/tests/subtype_tests.rs` - 14 ignored (optional params, variance, intersections)
+
+**Checker:**
+- `src/tests/checker_state_tests.rs` - 100+ ignored (namespace, module, TS2304)
+
+### Quick Wins Completed (Feb 2, 2026)
+
+1. ✅ `compile_resolves_node_modules_types_versions_prefers_specific_range` - Unignored (was passing)
+2. ✅ `test_missing_rules_count` - Updated expectation (all rules now implemented)
