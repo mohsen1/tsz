@@ -94,14 +94,14 @@ MODULES=$(echo "$CHANGED_RS" | sed -n 's|^src/\([^/]*\)/.*\.rs$|\1|p' | sort -u 
 
 if [ -n "$MODULES" ]; then
     echo "   Modules: ${MODULES//|/, }"
-    if ! ./scripts/test.sh --no-sandbox --quick "$MODULES" 2>&1 | tail -15; then
-        echo "❌ Tests failed. Run './scripts/test.sh' for details."
+    if ! cargo nextest run --profile precommit -E "test(/($MODULES)/)" 2>&1 | tail -15; then
+        echo "❌ Tests failed. Run 'cargo nextest run' for details."
         exit 1
     fi
 else
-    # Non-module changes - quick sanity check with timeout
+    # Non-module changes - quick sanity check
     echo "   Quick sanity check..."
-    if ! ./scripts/test.sh --no-sandbox --quick --timeout=30 2>&1 | tail -10; then
+    if ! cargo nextest run --profile precommit 2>&1 | tail -10; then
         echo "❌ Tests failed"
         exit 1
     fi

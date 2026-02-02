@@ -1,45 +1,53 @@
 # nextest configuration for tsz
 # Run tests with: cargo nextest run
 # Install with: cargo install cargo-nextest
+#
+# Protection against hangs, OOM, and timeouts:
+# - slow-timeout: Warns about slow tests, terminate-after kills after N periods
+# - leak-timeout: Detects tests that don't terminate (infinite loops)
+# - Each test runs in its own process, so one crash doesn't affect others
 
 [profile.default]
-# Default timeout for all tests (30 seconds)
+# Kill tests after 60s (30s warning, then terminate)
 slow-timeout = { period = "30s", terminate-after = 2 }
-# Fail fast on first failure
+# Detect leaked handles/threads that prevent test from terminating
+leak-timeout = "5s"
+# Fail fast disabled - run all tests to see full picture
 fail-fast = false
-# Number of retries for flaky tests
+# No retries - tests should be deterministic
 retries = 0
-# Test threads - use all available cores
+# Use all available cores
 test-threads = "num-cpus"
 
 [profile.default.junit]
 path = "target/nextest/default/junit.xml"
 
-# CI profile with stricter timeouts
+# CI profile - stricter timeouts, catches hanging tests faster
 [profile.ci]
-slow-timeout = { period = "60s", terminate-after = 1 }
+slow-timeout = { period = "30s", terminate-after = 2 }
+leak-timeout = "3s"
 fail-fast = false
 retries = 0
-# Use all available CPUs for maximum parallelism
 test-threads = "num-cpus"
 
 # Quick profile for fast feedback during development
 [profile.quick]
 slow-timeout = { period = "10s", terminate-after = 1 }
+leak-timeout = "2s"
 fail-fast = true
-# Use all CPUs for maximum speed
 test-threads = "num-cpus"
 
-# Pre-commit profile - ultra fast, fail immediately
+# Pre-commit profile - ultra fast, fail immediately on any issue
 [profile.precommit]
 slow-timeout = { period = "5s", terminate-after = 1 }
+leak-timeout = "1s"
 fail-fast = true
 test-threads = "num-cpus"
-# Minimal output for speed
 status-level = "fail"
 
 # Long-running tests profile (for conformance tests)
 [profile.conformance]
 slow-timeout = { period = "120s", terminate-after = 2 }
+leak-timeout = "10s"
 fail-fast = false
 retries = 1

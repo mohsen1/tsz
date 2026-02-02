@@ -51,8 +51,11 @@ match self.types.lookup(type_id) {
 # Build
 cargo build
 
-# Unit tests
-./scripts/test.sh
+# Unit tests (uses nextest for timeout/hang protection)
+cargo nextest run
+
+# Quick test (fail-fast, 10s timeout)
+cargo nextest run --profile quick
 
 # Conformance tests (fast iteration)
 ./scripts/conformance/run.sh --server --max=1000
@@ -87,7 +90,7 @@ Installed automatically on first `cargo build`. Run:
 ### Reducing Ignored Test Count
 - The project has a large backlog of `#[ignore]` tests (~1000+). Actively reduce this count
 - When you touch a file with ignored tests, try to unignore and fix at least a few
-- Run ignored tests with `cargo test -- --ignored` to find ones that already pass and can be unignored immediately
+- Run ignored tests with `cargo nextest run --run-ignored all` to find ones that already pass and can be unignored immediately
 
 ### Test Quality Standards
 - Tests must be deterministic — no flaky tests
