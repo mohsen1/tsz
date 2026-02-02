@@ -882,26 +882,15 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_missing_rules_count() {
         let audit = UnsoundnessAudit::new();
         let missing = audit.missing_rules();
-        // We expect some rules to be missing
-        assert!(!missing.is_empty(), "Should have missing rules");
-        // But not too many critical Phase 1/2 rules
-        let critical_missing = missing
-            .iter()
-            .filter(|r| {
-                matches!(
-                    r.phase,
-                    ImplementationPhase::Phase1 | ImplementationPhase::Phase2
-                )
-            })
-            .count();
+        // All rules should now be implemented
         assert!(
-            critical_missing <= 2,
-            "Should not have many critical missing rules, found {}",
-            critical_missing
+            missing.is_empty(),
+            "All rules should be implemented, but found {} missing: {:?}",
+            missing.len(),
+            missing.iter().map(|r| &r.rule_number).collect::<Vec<_>>()
         );
     }
 
