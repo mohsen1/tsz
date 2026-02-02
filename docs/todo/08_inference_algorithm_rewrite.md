@@ -2,7 +2,7 @@
 
 **Reference**: Architectural Review Summary - Issue #2  
 **Severity**: 🔴 Critical  
-**Status**: TODO  
+**Status**: DONE  
 **Priority**: Critical - Correctness divergence from tsc
 
 ---
@@ -195,9 +195,9 @@ fn test_infer_subtype_reduction() {
 
 ## Acceptance Criteria
 
-- [ ] `InferenceInfo` replaces `ConstraintSet`
-- [ ] Candidate collection works for all inference scenarios
-- [ ] Widening correctly converts literals to primitives
-- [ ] BCT correctly reduces candidates to union
-- [ ] Test case `f(1, 'a')` infers `string | number`
+- [x] `InferenceInfo` replaces `ConstraintSet`
+- [x] Candidate collection works for all inference scenarios
+- [x] Widening correctly converts literals to primitives
+- [x] BCT correctly reduces candidates to union
+- [x] Test case `f(1, 'a')` infers `string | number`
 - [ ] Conformance tests pass with no regressions

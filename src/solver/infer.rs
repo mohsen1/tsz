@@ -14,6 +14,7 @@ use crate::interner::Atom;
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
 use crate::solver::utils;
+use crate::solver::visitor::is_literal_type;
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::FxHashSet;
 
@@ -25,12 +26,43 @@ use crate::solver::TypeInterner;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InferenceVar(pub u32);
 
-/// Wrapper for TypeId to implement UnifyValue (avoiding orphan rule)
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct InferenceValue(pub Option<TypeId>);
+/// Priority of an inference candidate (matches TypeScript).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InferencePriority {
+    /// Inferred from a return type (lowest).
+    ReturnType,
+    /// Inferred from a circular dependency.
+    Circular,
+    /// Inferred from an argument (standard).
+    Argument,
+    /// Inferred from a literal type (highest, subject to widening).
+    Literal,
+}
+
+/// A candidate type for an inference variable.
+#[derive(Clone, Debug)]
+pub struct InferenceCandidate {
+    pub type_id: TypeId,
+    pub priority: InferencePriority,
+    pub is_fresh_literal: bool,
+}
+
+/// Value stored for each inference variable root.
+#[derive(Clone, Debug, Default)]
+pub struct InferenceInfo {
+    pub candidates: Vec<InferenceCandidate>,
+    pub upper_bounds: Vec<TypeId>,
+    pub resolved: Option<TypeId>,
+}
+
+impl InferenceInfo {
+    pub fn is_empty(&self) -> bool {
+        self.candidates.is_empty() && self.upper_bounds.is_empty()
+    }
+}
 
 impl UnifyKey for InferenceVar {
-    type Value = InferenceValue;
+    type Value = InferenceInfo;
 
     fn index(&self) -> u32 {
         self.0
@@ -45,17 +77,17 @@ impl UnifyKey for InferenceVar {
     }
 }
 
-impl UnifyValue for InferenceValue {
+impl UnifyValue for InferenceInfo {
     type Error = NoError;
 
     fn unify_values(a: &Self, b: &Self) -> Result<Self, Self::Error> {
-        match (a.0, b.0) {
-            (None, None) => Ok(InferenceValue(None)),
-            (Some(t), None) | (None, Some(t)) => Ok(InferenceValue(Some(t))),
-            (Some(a), Some(b)) if a == b => Ok(InferenceValue(Some(a))),
-            // When types conflict, prefer the first (or could return error)
-            (Some(a), Some(_)) => Ok(InferenceValue(Some(a))),
+        let mut merged = a.clone();
+        merged.candidates.extend(b.candidates.iter().cloned());
+        merged.upper_bounds.extend(b.upper_bounds.iter().copied());
+        if merged.resolved.is_none() {
+            merged.resolved = b.resolved;
         }
+        Ok(merged)
     }
 }
 
@@ -99,6 +131,30 @@ impl ConstraintSet {
         ConstraintSet {
             lower_bounds: Vec::new(),
             upper_bounds: Vec::new(),
+        }
+    }
+
+    pub fn from_info(info: &InferenceInfo) -> Self {
+        let mut lower_bounds = Vec::new();
+        let mut upper_bounds = Vec::new();
+        let mut seen_lower = FxHashSet::default();
+        let mut seen_upper = FxHashSet::default();
+
+        for candidate in info.candidates.iter() {
+            if seen_lower.insert(candidate.type_id) {
+                lower_bounds.push(candidate.type_id);
+            }
+        }
+
+        for &upper in info.upper_bounds.iter() {
+            if seen_upper.insert(upper) {
+                upper_bounds.push(upper);
+            }
+        }
+
+        ConstraintSet {
+            lower_bounds,
+            upper_bounds,
         }
     }
 
@@ -236,8 +292,6 @@ pub struct InferenceContext<'a> {
     table: InPlaceUnificationTable<InferenceVar>,
     /// Map from type parameter names to inference variables
     type_params: Vec<(Atom, InferenceVar)>,
-    /// Constraints for each inference variable
-    constraints: Vec<ConstraintSet>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -246,17 +300,12 @@ impl<'a> InferenceContext<'a> {
             interner,
             table: InPlaceUnificationTable::new(),
             type_params: Vec::new(),
-            constraints: Vec::new(),
         }
     }
 
     /// Create a fresh inference variable
     pub fn fresh_var(&mut self) -> InferenceVar {
-        let var = self.table.new_key(InferenceValue(None));
-        let idx = var.0 as usize;
-        debug_assert_eq!(idx, self.constraints.len());
-        self.constraints.push(ConstraintSet::new());
-        var
+        self.table.new_key(InferenceInfo::default())
     }
 
     /// Create an inference variable for a type parameter
@@ -284,7 +333,7 @@ impl<'a> InferenceContext<'a> {
 
     /// Probe the current value of an inference variable
     pub fn probe(&mut self, var: InferenceVar) -> Option<TypeId> {
-        self.table.probe_value(var).0
+        self.table.probe_value(var).resolved
     }
 
     /// Unify an inference variable with a concrete type
@@ -297,14 +346,18 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Check current value
-        match self.table.probe_value(root).0 {
+        match self.table.probe_value(root).resolved {
             None => {
-                // No value yet, assign it
-                self.table.union_value(root, InferenceValue(Some(ty)));
+                self.table.union_value(
+                    root,
+                    InferenceInfo {
+                        resolved: Some(ty),
+                        ..InferenceInfo::default()
+                    },
+                );
                 Ok(())
             }
             Some(existing) => {
-                // Check compatibility
                 if self.types_compatible(existing, ty) {
                     Ok(())
                 } else {
@@ -323,8 +376,8 @@ impl<'a> InferenceContext<'a> {
             return Ok(());
         }
 
-        let value_a = self.table.probe_value(root_a).0;
-        let value_b = self.table.probe_value(root_b).0;
+        let value_a = self.table.probe_value(root_a).resolved;
+        let value_b = self.table.probe_value(root_b).resolved;
         if let (Some(a_ty), Some(b_ty)) = (value_a, value_b)
             && !self.types_compatible(a_ty, b_ty)
         {
@@ -334,19 +387,6 @@ impl<'a> InferenceContext<'a> {
         self.table
             .unify_var_var(root_a, root_b)
             .map_err(|_| InferenceError::Conflict(TypeId::ERROR, TypeId::ERROR))?;
-
-        let new_root = self.table.find(root_a);
-        let root_a_idx = root_a.0 as usize;
-        let root_b_idx = root_b.0 as usize;
-        let new_root_idx = new_root.0 as usize;
-        debug_assert!(new_root_idx == root_a_idx || new_root_idx == root_b_idx);
-
-        let mut merged = ConstraintSet::new();
-        merged.merge_from(std::mem::take(&mut self.constraints[root_a_idx]));
-        if root_b_idx != root_a_idx {
-            merged.merge_from(std::mem::take(&mut self.constraints[root_b_idx]));
-        }
-        self.constraints[new_root_idx] = merged;
         Ok(())
     }
 
@@ -424,7 +464,7 @@ impl<'a> InferenceContext<'a> {
         root: InferenceVar,
         bound: TypeId,
         target_names: &[Atom],
-        lower_bounds: &mut Vec<TypeId>,
+        candidates: &mut Vec<InferenceCandidate>,
         upper_bounds: &mut Vec<TypeId>,
     ) {
         let name = match self.interner.lookup(bound) {
@@ -444,18 +484,20 @@ impl<'a> InferenceContext<'a> {
         }
 
         let bound_root = self.table.find(var);
-        let constraints = self.constraints[bound_root.0 as usize].clone();
+        let info = self.table.probe_value(bound_root);
 
-        for ty in constraints.lower_bounds {
-            if self.occurs_in(root, ty) {
+        for candidate in info.candidates {
+            if self.occurs_in(root, candidate.type_id) {
                 continue;
             }
-            if !lower_bounds.contains(&ty) {
-                lower_bounds.push(ty);
-            }
+            candidates.push(InferenceCandidate {
+                type_id: candidate.type_id,
+                priority: InferencePriority::Circular,
+                is_fresh_literal: candidate.is_fresh_literal,
+            });
         }
 
-        for ty in constraints.upper_bounds {
+        for ty in info.upper_bounds {
             if self.occurs_in(root, ty) {
                 continue;
             }
@@ -622,7 +664,7 @@ impl<'a> InferenceContext<'a> {
             return false;
         };
         let root = self.table.find(var);
-        let upper_bounds = self.constraints[root.0 as usize].upper_bounds.clone();
+        let upper_bounds = self.table.probe_value(root).upper_bounds;
 
         for bound in upper_bounds {
             for target in targets {
@@ -826,25 +868,47 @@ impl<'a> InferenceContext<'a> {
     /// Add a lower bound constraint: ty <: var
     /// This is used when an argument type flows into a type parameter.
     pub fn add_lower_bound(&mut self, var: InferenceVar, ty: TypeId) {
+        self.add_candidate(var, ty, InferencePriority::Argument);
+    }
+
+    /// Add an inference candidate for a variable.
+    pub fn add_candidate(&mut self, var: InferenceVar, ty: TypeId, priority: InferencePriority) {
         let root = self.table.find(var);
-        self.constraints[root.0 as usize].add_lower_bound(ty);
+        let candidate = InferenceCandidate {
+            type_id: ty,
+            priority,
+            is_fresh_literal: is_literal_type(self.interner, ty),
+        };
+        self.table.union_value(
+            root,
+            InferenceInfo {
+                candidates: vec![candidate],
+                ..InferenceInfo::default()
+            },
+        );
     }
 
     /// Add an upper bound constraint: var <: ty
     /// This is used for `extends` constraints on type parameters.
     pub fn add_upper_bound(&mut self, var: InferenceVar, ty: TypeId) {
         let root = self.table.find(var);
-        self.constraints[root.0 as usize].add_upper_bound(ty);
+        self.table.union_value(
+            root,
+            InferenceInfo {
+                upper_bounds: vec![ty],
+                ..InferenceInfo::default()
+            },
+        );
     }
 
     /// Get the constraints for a variable
-    pub fn get_constraints(&mut self, var: InferenceVar) -> Option<&ConstraintSet> {
+    pub fn get_constraints(&mut self, var: InferenceVar) -> Option<ConstraintSet> {
         let root = self.table.find(var);
-        let constraints = &self.constraints[root.0 as usize];
-        if constraints.is_empty() {
+        let info = self.table.probe_value(root);
+        if info.is_empty() {
             None
         } else {
-            Some(constraints)
+            Some(ConstraintSet::from_info(&info))
         }
     }
 
@@ -898,7 +962,13 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Store the result
-        self.table.union_value(root, InferenceValue(Some(result)));
+        self.table.union_value(
+            root,
+            InferenceInfo {
+                resolved: Some(result),
+                ..InferenceInfo::default()
+            },
+        );
 
         Ok(result)
     }
@@ -937,7 +1007,13 @@ impl<'a> InferenceContext<'a> {
             });
         }
 
-        self.table.union_value(root, InferenceValue(Some(result)));
+        self.table.union_value(
+            root,
+            InferenceInfo {
+                resolved: Some(result),
+                ..InferenceInfo::default()
+            },
+        );
 
         Ok(result)
     }
@@ -947,11 +1023,11 @@ impl<'a> InferenceContext<'a> {
         var: InferenceVar,
     ) -> (InferenceVar, TypeId, Vec<TypeId>) {
         let root = self.table.find(var);
-        let constraints = self.constraints[root.0 as usize].clone();
+        let info = self.table.probe_value(root);
         let target_names = self.type_param_names_for_root(root);
         let mut upper_bounds = Vec::new();
-        let mut lower_bounds = constraints.lower_bounds;
-        for bound in constraints.upper_bounds {
+        let mut candidates = info.candidates;
+        for bound in info.upper_bounds {
             if self.occurs_in(root, bound) {
                 continue;
             }
@@ -960,7 +1036,7 @@ impl<'a> InferenceContext<'a> {
                     root,
                     bound,
                     &target_names,
-                    &mut lower_bounds,
+                    &mut candidates,
                     &mut upper_bounds,
                 );
                 continue;
@@ -971,12 +1047,16 @@ impl<'a> InferenceContext<'a> {
         }
 
         if !upper_bounds.is_empty() {
-            lower_bounds.retain(|ty| !matches!(*ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+            candidates.retain(|candidate| {
+                !matches!(
+                    candidate.type_id,
+                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                )
+            });
         }
 
-        let result = if !lower_bounds.is_empty() {
-            // Best common type: union of all lower bounds
-            self.best_common_type(&lower_bounds)
+        let result = if !candidates.is_empty() {
+            self.resolve_from_candidates(&candidates)
         } else if !upper_bounds.is_empty() {
             // No lower bounds, use intersection of upper bounds
             if upper_bounds.len() == 1 {
@@ -1003,6 +1083,47 @@ impl<'a> InferenceContext<'a> {
         }
 
         Ok(results)
+    }
+
+    fn resolve_from_candidates(&self, candidates: &[InferenceCandidate]) -> TypeId {
+        let filtered = self.filter_candidates_by_priority(candidates);
+        if filtered.is_empty() {
+            return TypeId::UNKNOWN;
+        }
+        let widened = self.widen_candidate_types(&filtered);
+        self.best_common_type(&widened)
+    }
+
+    fn filter_candidates_by_priority(
+        &self,
+        candidates: &[InferenceCandidate],
+    ) -> Vec<InferenceCandidate> {
+        let Some(max_priority) = candidates.iter().map(|c| c.priority).max() else {
+            return Vec::new();
+        };
+        candidates
+            .iter()
+            .filter(|candidate| candidate.priority == max_priority)
+            .cloned()
+            .collect()
+    }
+
+    fn widen_candidate_types(&self, candidates: &[InferenceCandidate]) -> Vec<TypeId> {
+        let should_widen = candidates.len() > 1;
+        candidates
+            .iter()
+            .map(|candidate| {
+                if should_widen
+                    && candidate.is_fresh_literal
+                    && candidate.priority != InferencePriority::Literal
+                {
+                    self.get_base_type(candidate.type_id)
+                        .unwrap_or(candidate.type_id)
+                } else {
+                    candidate.type_id
+                }
+            })
+            .collect()
     }
 
     // =========================================================================
@@ -2670,15 +2791,15 @@ impl<'a> InferenceContext<'a> {
         for _ in 0..max_iterations {
             for (name, var) in type_params.iter() {
                 let root = self.table.find(*var);
-                let constraints = self.constraints[root.0 as usize].clone();
+                let info = self.table.probe_value(root);
 
                 // Propagate lower bounds to other type parameters
-                for &lower in &constraints.lower_bounds {
-                    self.propagate_lower_bound(root, lower, *name);
+                for candidate in info.candidates.iter() {
+                    self.propagate_lower_bound(root, candidate.type_id, *name);
                 }
 
                 // Propagate upper bounds to other type parameters
-                for &upper in &constraints.upper_bounds {
+                for &upper in info.upper_bounds.iter() {
                     self.propagate_upper_bound(root, upper, *name);
                 }
             }
@@ -2693,10 +2814,10 @@ impl<'a> InferenceContext<'a> {
             && let Some(lower_var) = self.find_type_param(info.name)
         {
             let lower_root = self.table.find(lower_var);
-            let lower_constraints = self.constraints[lower_root.0 as usize].clone();
+            let lower_info = self.table.probe_value(lower_root);
 
             // Add all upper bounds of the lower param as our upper bounds
-            for &upper in &lower_constraints.upper_bounds {
+            for &upper in &lower_info.upper_bounds {
                 self.add_upper_bound(var, upper);
             }
         }
@@ -2708,11 +2829,11 @@ impl<'a> InferenceContext<'a> {
             && let Some(upper_var) = self.find_type_param(info.name)
         {
             let upper_root = self.table.find(upper_var);
-            let upper_constraints = self.constraints[upper_root.0 as usize].clone();
+            let upper_info = self.table.probe_value(upper_root);
 
             // Add all lower bounds of the upper param as our lower bounds
-            for &lower in &upper_constraints.lower_bounds {
-                self.add_lower_bound(var, lower);
+            for candidate in upper_info.candidates.iter() {
+                self.add_candidate(var, candidate.type_id, InferencePriority::Circular);
             }
         }
     }
@@ -2749,3 +2870,6 @@ impl<'a> InferenceContext<'a> {
 #[cfg(test)]
 #[path = "tests/infer_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "tests/inference_candidates_tests.rs"]
+mod inference_candidates_tests;
