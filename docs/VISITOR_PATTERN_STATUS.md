@@ -77,23 +77,27 @@ Refactored completely to use visitor pattern:
 ## Work In Progress
 
 ### 4. src/solver/contextual.rs (PARTIAL) 🔄
-**Commit**: `29ee333cd`
-**Status**: 2 of 11 methods refactored
+**Commits**: `29ee333cd`, `d41a3474c`, `a8ae65cae`, `35fab866f`
+**Status**: 6 of 11 methods refactored (55% complete)
 
 **Created Visitor Structs:**
-- `ThisTypeExtractor` - Extracts this types from callable types
-- `ReturnTypeExtractor` - Extracts return types from callable types
+- `ThisTypeExtractor` - Extracts this types from callable types (handles multi-signature)
+- `ReturnTypeExtractor` - Extracts return types from callable types (handles multi-signature)
+- `ArrayElementExtractor` - Extracts array element type or union of tuple elements
+- `TupleElementExtractor` - Extracts specific tuple element by index (handles rest parameters)
+- `PropertyExtractor` - Extracts object property type by name
+- `ParameterExtractor` - Extracts function parameter type (handles rest parameters, multi-signature)
 
 **Refactored Methods:**
-- `get_this_type` - Now uses ThisTypeExtractor
-- `get_return_type` - Now uses ReturnTypeExtractor
+- `get_this_type` ✅
+- `get_return_type` ✅
+- `get_array_element_type` ✅
+- `get_tuple_element_type` ✅
+- `get_property_type` ✅
+- `get_parameter_type` ✅
 
 **Remaining Methods:**
-- `get_parameter_type` - Lines 60-105
-- `get_parameter_type_for_call` - Lines 108-151
-- `get_array_element_type` - Lines 237-254
-- `get_tuple_element_type` - Lines 257-275
-- `get_property_type` - Lines 283-317
+- `get_parameter_type_for_call` - Lines 108-151 (similar to get_parameter_type with arity)
 - `get_generator_yield_type` - Lines 551-585
 - `get_generator_return_type` - Lines 590-624
 - `get_generator_next_type` - Lines 630-664
@@ -103,13 +107,19 @@ Refactored completely to use visitor pattern:
 - Explicit Union handling (collects results from all members)
 - Explicit Application handling (unwraps to base type)
 - Multi-signature support (unions results from all overload signatures)
+- Rest parameter handling (extracts element type for any index)
 - All tests passing (7826)
 
+**Architecture Benefits:**
+- Type safety: Compiler ensures all TypeKey variants are handled
+- Maintainability: Each visitor is focused and testable
+- Consistency: All methods follow same pattern
+- Reusability: Visitors can be shared across methods
+
 **Next Steps:**
-- Continue with remaining methods using same pattern
-- Create ParameterExtractor visitor for get_parameter_type*
-- Create PropertyExtractor visitor for get_property_type
-- Handle generator methods with specialized visitors
+- Complete get_parameter_type_for_call using ParameterExtractor pattern
+- Create GeneratorTypeExtractor visitor for generator methods
+- Test incrementally after each method
 
 ---
 
@@ -313,14 +323,25 @@ fn visit_union(&mut self, list_id: u32) -> Self::Output {
 - [x] index_signatures.rs - COMPLETE (Commit: 83ca43479)
 - [x] binary_ops.rs - COMPLETE (Commit: 8239e483c)
 - [x] compat.rs - COMPLETE (Commit: 915d2c3bb)
-- [~] contextual.rs - IN PROGRESS (Commit: 29ee333cd, 2 of 11 methods done)
+- [~] contextual.rs - IN PROGRESS (Commits: 29ee333cd, d41a3474c, a8ae65cae, 35fab866f)
+  - Progress: 6 of 11 methods done (55%)
+  - Remaining: get_parameter_type_for_call + 4 generator methods
 - [ ] Any other files with TypeKey violations - PENDING
 
 **Progress Summary:**
 - 3 files completely refactored
-- 1 file partially refactored (contextual.rs: 18% complete, 2/11 methods)
-- Total TypeKey refs eliminated: ~104 out of ~159 (65%)
+- 1 file partially refactored (contextual.rs: 55% complete, 6/11 methods)
+- Total TypeKey refs eliminated: ~132 out of ~159 (83%)
 - All 7826 tests passing throughout
+- Visitor pattern proven effective for:
+  - Simple type extraction (arrays, tuples, properties)
+  - Callable type extraction (this, return, parameters)
+  - Complex scenarios (rest parameters, multi-signature, Union/Application handling)
+
+**Remaining Effort Estimate:**
+- contextual.rs completion: ~4-5 hours (5 remaining methods)
+- Most complex methods (generators) still pending
+- Pattern is established and proven
 
 ---
 
