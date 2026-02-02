@@ -606,12 +606,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
             PropertyAccessResolutionKind::Application(_) => {
-                let evaluated = self.evaluate_application_type(type_id);
-                if evaluated == type_id {
-                    type_id
-                } else {
-                    self.resolve_type_for_property_access_inner(evaluated, visited)
-                }
+                // Don't expand Application types for property access resolution
+                // This preserves nominal identity (e.g., D<string>) in error messages
+                // The property access resolver will handle it correctly
+                type_id
             }
             PropertyAccessResolutionKind::TypeParameter { constraint } => {
                 if let Some(constraint) = constraint {
