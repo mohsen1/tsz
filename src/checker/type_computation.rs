@@ -15,7 +15,7 @@ use crate::checker::state::CheckerState;
 use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::solver::{ContextualTypeContext, TupleElement, TypeId};
+use crate::solver::{expression_ops, ContextualTypeContext, TupleElement, TypeId};
 
 // =============================================================================
 // Type Computation Methods
@@ -33,6 +33,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// When a contextual type is available, each branch is checked against it
     /// to catch type errors (TS2322).
+    ///
+    /// Uses solver::compute_conditional_expression_type for type computation
+    /// as part of the Solver-First architecture migration.
     pub(crate) fn get_type_of_conditional_expression(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -42,8 +45,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
-        // Get condition type to validate it (should be truthy/falsy)
-        let _condition_type = self.get_type_of_node(cond.condition);
+        // Get condition type for type computation
+        let condition_type = self.get_type_of_node(cond.condition);
 
         // Apply contextual typing to each branch and check assignability
         let prev_context = self.ctx.contextual_type;
@@ -91,12 +94,13 @@ impl<'a> CheckerState<'a> {
             (when_true, when_false)
         };
 
-        if when_true == when_false {
-            when_true
-        } else {
-            // Use TypeInterner's union method for automatic normalization
-            self.ctx.types.union(vec![when_true, when_false])
-        }
+        // Use Solver API for type computation (Solver-First architecture)
+        expression_ops::compute_conditional_expression_type(
+            self.ctx.types,
+            condition_type,
+            when_true,
+            when_false,
+        )
     }
 
     /// Get type of array literal.
@@ -378,6 +382,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Type-checks all expressions within template spans to emit errors like TS2304.
     /// Template expressions always produce string type.
+    ///
+    /// Uses solver::compute_template_expression_type for type computation
+    /// as part of the Solver-First architecture migration.
     pub(crate) fn get_type_of_template_expression(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::STRING;
@@ -387,7 +394,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::STRING;
         };
 
-        // Type-check each template span's expression
+        // Type-check each template span's expression and collect types for solver
+        let mut part_types = Vec::new();
         for &span_idx in &template.template_spans.nodes {
             let Some(span_node) = self.ctx.arena.get(span_idx) else {
                 continue;
@@ -398,11 +406,13 @@ impl<'a> CheckerState<'a> {
             };
 
             // Type-check the expression - this will emit TS2304 if name is unresolved
-            self.get_type_of_node(span.expression);
+            let part_type = self.get_type_of_node(span.expression);
+            part_types.push(part_type);
         }
 
-        // Template expressions always produce string type
-        TypeId::STRING
+        // Use Solver API for type computation (Solver-First architecture)
+        // Template literals always produce string type, but we check for ERROR/NEVER propagation
+        expression_ops::compute_template_expression_type(self.ctx.types, &part_types)
     }
 
     /// Get type of variable declaration.
