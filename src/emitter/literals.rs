@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use super::Printer;
 use crate::parser::node::Node;
 use crate::transform_context::IdentifierId;
@@ -72,9 +74,15 @@ impl<'a> Printer<'a> {
                 '\r' => self.write("\\r"),
                 '\t' => self.write("\\t"),
                 '\\' => self.write("\\\\"),
+                '\0' => self.write("\\0"),
                 c if c == quote_char => {
                     self.write_char('\\');
                     self.write_char(c);
+                }
+                c if (c as u32) < 0x20 || c == '\x7F' => {
+                    let mut buf = String::new();
+                    write!(buf, "\\x{:02X}", c as u32).unwrap();
+                    self.write(&buf);
                 }
                 c => self.write_char(c),
             }

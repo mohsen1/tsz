@@ -132,7 +132,9 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
                         continue;
                     }
                     if export_decl.is_default_export {
-                        exports.push("default".to_string());
+                        // Skip default exports from void 0 initialization -
+                        // TypeScript doesn't emit `exports.default = void 0;`
+                        // Default exports are always assigned inline
                         continue;
                     }
 

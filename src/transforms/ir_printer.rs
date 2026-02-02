@@ -18,6 +18,8 @@
 //! // output: "function foo() {\n    return 42;\n}"
 //! ```
 
+use std::fmt::Write;
+
 use crate::parser::node::NodeArena;
 use crate::transforms::ir::*;
 
@@ -1305,6 +1307,11 @@ impl<'a> IRPrinter<'a> {
                 '\n' => self.output.push_str("\\n"),
                 '\r' => self.output.push_str("\\r"),
                 '\t' => self.output.push_str("\\t"),
+                '\0' => self.output.push_str("\\0"),
+                c if (c as u32) < 0x20 || c == '\x7F' => {
+                    // Escape control characters as \xNN
+                    write!(self.output, "\\x{:02X}", c as u32).unwrap();
+                }
                 _ => self.output.push(c),
             }
         }

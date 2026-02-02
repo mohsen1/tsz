@@ -164,10 +164,9 @@ fn test_collect_export_names_with_default_export() {
 
     let export_names = collect_export_names(&parser.arena, &source_file.statements.nodes);
 
-    assert_eq!(
-        export_names,
-        vec!["default"],
-        "Expected default export name"
+    assert!(
+        export_names.is_empty(),
+        "Default exports should not be in void 0 initialization list"
     );
 }
 
@@ -188,10 +187,9 @@ fn test_collect_export_names_with_default_class_export() {
 
     let export_names = collect_export_names(&parser.arena, &source_file.statements.nodes);
 
-    assert_eq!(
-        export_names,
-        vec!["default"],
-        "Expected default export name for class"
+    assert!(
+        export_names.is_empty(),
+        "Default class exports should not be in void 0 initialization list"
     );
 }
 
