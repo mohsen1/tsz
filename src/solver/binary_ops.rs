@@ -15,6 +15,8 @@
 //! making them pure logic that can be unit tested independently.
 
 use crate::solver::{IntrinsicKind, LiteralValue, TypeDatabase, TypeId, TypeKey};
+use crate::solver::visitor::TypeVisitor;
+use crate::solver::types::TypeListId;
 
 /// Result of a binary operation.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,6 +42,314 @@ pub enum PrimitiveClass {
     Symbol,
     Null,
     Undefined,
+}
+
+// =============================================================================
+// Visitor Pattern Implementations
+// =============================================================================
+
+/// Visitor to check if a type is number-like.
+struct NumberLikeVisitor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for NumberLikeVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        kind == IntrinsicKind::Number
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        matches!(value, LiteralValue::Number(_))
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        !members.is_empty() && members.iter().all(|&m| self.visit_type(self.db, m))
+    }
+
+    fn visit_type_parameter(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        info.constraint
+            .map(|c| self.visit_type(self.db, c))
+            .unwrap_or(false)
+    }
+
+    fn visit_infer(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        info.constraint
+            .map(|c| self.visit_type(self.db, c))
+            .unwrap_or(false)
+    }
+
+    fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
+        true // Conservative: enums might be numeric
+    }
+
+    fn default_output() -> Self::Output {
+        false
+    }
+}
+
+/// Visitor to check if a type is string-like.
+struct StringLikeVisitor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for StringLikeVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        kind == IntrinsicKind::String
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        matches!(value, LiteralValue::String(_))
+    }
+
+    fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
+        true
+    }
+
+    fn visit_type_parameter(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        info.constraint
+            .map(|c| self.visit_type(self.db, c))
+            .unwrap_or(false)
+    }
+
+    fn visit_infer(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        info.constraint
+            .map(|c| self.visit_type(self.db, c))
+            .unwrap_or(false)
+    }
+
+    fn default_output() -> Self::Output {
+        false
+    }
+}
+
+/// Visitor to check if a type is bigint-like.
+struct BigIntLikeVisitor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for BigIntLikeVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        kind == IntrinsicKind::Bigint
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        matches!(value, LiteralValue::BigInt(_))
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        !members.is_empty() && members.iter().all(|&m| self.visit_type(self.db, m))
+    }
+
+    fn visit_type_parameter(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        info.constraint
+            .map(|c| self.visit_type(self.db, c))
+            .unwrap_or(false)
+    }
+
+    fn visit_infer(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        info.constraint
+            .map(|c| self.visit_type(self.db, c))
+            .unwrap_or(false)
+    }
+
+    fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
+        true // Conservative: enums might be bigint
+    }
+
+    fn default_output() -> Self::Output {
+        false
+    }
+}
+
+/// Visitor to check if a type is boolean-like.
+struct BooleanLikeVisitor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for BooleanLikeVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        kind == IntrinsicKind::Boolean
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        matches!(value, LiteralValue::Boolean(_))
+    }
+
+    fn default_output() -> Self::Output {
+        false
+    }
+}
+
+/// Visitor to check if a type is symbol-like.
+struct SymbolLikeVisitor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for SymbolLikeVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        kind == IntrinsicKind::Symbol
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        false // Symbol types don't match literal values
+    }
+
+    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> Self::Output {
+        true
+    }
+
+    fn default_output() -> Self::Output {
+        false
+    }
+}
+
+/// Visitor to extract primitive class from a type.
+struct PrimitiveClassVisitor;
+
+impl TypeVisitor for PrimitiveClassVisitor {
+    type Output = Option<PrimitiveClass>;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
+        match kind {
+            IntrinsicKind::String => Some(PrimitiveClass::String),
+            IntrinsicKind::Number => Some(PrimitiveClass::Number),
+            IntrinsicKind::Boolean => Some(PrimitiveClass::Boolean),
+            IntrinsicKind::Bigint => Some(PrimitiveClass::Bigint),
+            IntrinsicKind::Symbol => Some(PrimitiveClass::Symbol),
+            IntrinsicKind::Null => Some(PrimitiveClass::Null),
+            IntrinsicKind::Undefined | IntrinsicKind::Void => Some(PrimitiveClass::Undefined),
+            _ => None,
+        }
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        match value {
+            LiteralValue::String(_) => Some(PrimitiveClass::String),
+            LiteralValue::Number(_) => Some(PrimitiveClass::Number),
+            LiteralValue::Boolean(_) => Some(PrimitiveClass::Boolean),
+            LiteralValue::BigInt(_) => Some(PrimitiveClass::Bigint),
+        }
+    }
+
+    fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
+        Some(PrimitiveClass::String)
+    }
+
+    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> Self::Output {
+        Some(PrimitiveClass::Symbol)
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+/// Visitor to check type overlap for comparison operations.
+struct OverlapChecker<'a> {
+    db: &'a dyn TypeDatabase,
+    left: TypeId,
+}
+
+impl<'a> OverlapChecker<'a> {
+    fn new(db: &'a dyn TypeDatabase, left: TypeId) -> Self {
+        Self { db, left }
+    }
+
+    fn check(&mut self, right: TypeId) -> bool {
+        // Fast path: same type
+        if self.left == right {
+            return true;
+        }
+
+        // Fast path: top/bottom types
+        if matches!(
+            (self.left, right),
+            (TypeId::ANY, _) | (_, TypeId::ANY) |
+            (TypeId::UNKNOWN, _) | (_, TypeId::UNKNOWN) |
+            (TypeId::ERROR, _) | (_, TypeId::ERROR)
+        ) {
+            return true;
+        }
+
+        if self.left == TypeId::NEVER || right == TypeId::NEVER {
+            return false;
+        }
+
+        // Check intersection first before visitor
+        if self.db.intersection2(self.left, right) == TypeId::NEVER {
+            return false;
+        }
+
+        // Use visitor to check overlap
+        self.visit_type(self.db, right)
+    }
+}
+
+impl<'a> TypeVisitor for OverlapChecker<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        // Intrinsics can overlap with many things, check intersection above
+        true
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        members.iter().any(|&member| self.check(member))
+    }
+
+    fn visit_type_parameter(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        // Unconstrained type parameters are handled in has_overlap before visitor
+        match info.constraint {
+            Some(constraint) => self.check(constraint),
+            None => panic!("TypeParameter without constraint should not reach visitor"),
+        }
+    }
+
+    fn visit_infer(&mut self, info: &crate::solver::types::TypeParamInfo) -> Self::Output {
+        // Unconstrained type parameters are handled in has_overlap before visitor
+        match info.constraint {
+            Some(constraint) => self.check(constraint),
+            None => panic!("Infer without constraint should not reach visitor"),
+        }
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
+        // Check if left is a literal with same value
+        match self.db.lookup(self.left) {
+            Some(TypeKey::Literal(left_lit)) => left_lit == *value,
+            Some(TypeKey::Union(members)) => {
+                // Check if left's union contains this literal
+                let members = self.db.type_list(members);
+                members.iter().any(|&m| {
+                    match self.db.lookup(m) {
+                        Some(TypeKey::Literal(lit)) => lit == *value,
+                        _ => false,
+                    }
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        // Default: check for disjoint primitive classes
+        // We conservatively return true unless we can prove they're disjoint
+        // This matches the original behavior where most types are considered to overlap
+        true
+    }
 }
 
 /// Evaluates binary operations on types.
@@ -251,31 +561,8 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
             return true;
         }
-        if let Some(key) = self.interner.lookup(type_id) {
-            match key {
-                TypeKey::Literal(LiteralValue::Number(_)) => return true,
-                TypeKey::Union(list_id) => {
-                    let members = self.interner.type_list(list_id);
-                    if members.is_empty() {
-                        return false;
-                    }
-                    return members.iter().all(|&m| self.is_number_like(m));
-                }
-                // Check type parameter constraint - T extends number should be number-like
-                TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                    if let Some(constraint) = info.constraint {
-                        return self.is_number_like(constraint);
-                    }
-                    return false;
-                }
-                // Ref types include enums and other named types.
-                // Conservatively treat refs as number-like to avoid false positives for numeric enums.
-                // TODO: Properly check if the ref is a numeric enum (requires binder access)
-                TypeKey::Ref(_) => return true,
-                _ => {}
-            }
-        }
-        false
+        let mut visitor = NumberLikeVisitor { db: self.interner };
+        visitor.visit_type(self.interner, type_id)
     }
 
     /// Check if a type is string-like (string, string literal, template literal, or any).
@@ -283,21 +570,8 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::STRING || type_id == TypeId::ANY {
             return true;
         }
-        if let Some(key) = self.interner.lookup(type_id) {
-            match key {
-                TypeKey::Literal(LiteralValue::String(_)) => return true,
-                TypeKey::TemplateLiteral(_) => return true,
-                // Check type parameter constraint - T extends string should be string-like
-                TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                    if let Some(constraint) = info.constraint {
-                        return self.is_string_like(constraint);
-                    }
-                    return false;
-                }
-                _ => {}
-            }
-        }
-        false
+        let mut visitor = StringLikeVisitor { db: self.interner };
+        visitor.visit_type(self.interner, type_id)
     }
 
     /// Check if a type is bigint-like (bigint, bigint literal, bigint enum, or any).
@@ -305,29 +579,8 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::BIGINT || type_id == TypeId::ANY {
             return true;
         }
-        if let Some(key) = self.interner.lookup(type_id) {
-            match key {
-                TypeKey::Literal(LiteralValue::BigInt(_)) => return true,
-                TypeKey::Union(list_id) => {
-                    let members = self.interner.type_list(list_id);
-                    if members.is_empty() {
-                        return false;
-                    }
-                    return members.iter().all(|&m| self.is_bigint_like(m));
-                }
-                // Check type parameter constraint - T extends bigint should be bigint-like
-                TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                    if let Some(constraint) = info.constraint {
-                        return self.is_bigint_like(constraint);
-                    }
-                    return false;
-                }
-                // Ref types include enums - conservatively treat as bigint-like
-                TypeKey::Ref(_) => return true,
-                _ => {}
-            }
-        }
-        false
+        let mut visitor = BigIntLikeVisitor { db: self.interner };
+        visitor.visit_type(self.interner, type_id)
     }
 
     /// Check if two types have any overlap (can be compared).
@@ -348,6 +601,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             return false;
         }
 
+        // Special handling for TypeParameter and Infer before visitor pattern
         if let Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) =
             self.interner.lookup(left)
         {
@@ -366,32 +620,32 @@ impl<'a> BinaryOpEvaluator<'a> {
             return true;
         }
 
+        // Handle Union types explicitly (recursively check members)
         if let Some(TypeKey::Union(members)) = self.interner.lookup(left) {
             let members = self.interner.type_list(members);
             return members
                 .iter()
                 .any(|member| self.has_overlap(*member, right));
         }
+
         if let Some(TypeKey::Union(members)) = self.interner.lookup(right) {
             let members = self.interner.type_list(members);
             return members.iter().any(|member| self.has_overlap(left, *member));
         }
 
-        if let (Some(TypeKey::Literal(left_lit)), Some(TypeKey::Literal(right_lit))) =
-            (self.interner.lookup(left), self.interner.lookup(right))
-        {
-            return left_lit == right_lit;
-        }
-
+        // Check primitive class disjointness before intersection
         if self.primitive_classes_disjoint(left, right) {
             return false;
         }
 
+        // Check intersection before visitor pattern
         if self.interner.intersection2(left, right) == TypeId::NEVER {
             return false;
         }
 
-        true
+        // Use visitor for remaining type checks
+        let mut checker = OverlapChecker::new(self.interner, left);
+        checker.check(right)
     }
 
     /// Check if two types belong to disjoint primitive classes.
@@ -404,28 +658,8 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Get the primitive class of a type (if applicable).
     fn primitive_class(&self, type_id: TypeId) -> Option<PrimitiveClass> {
-        let key = self.interner.lookup(type_id)?;
-        match key {
-            TypeKey::Intrinsic(kind) => match kind {
-                IntrinsicKind::String => Some(PrimitiveClass::String),
-                IntrinsicKind::Number => Some(PrimitiveClass::Number),
-                IntrinsicKind::Boolean => Some(PrimitiveClass::Boolean),
-                IntrinsicKind::Bigint => Some(PrimitiveClass::Bigint),
-                IntrinsicKind::Symbol => Some(PrimitiveClass::Symbol),
-                IntrinsicKind::Null => Some(PrimitiveClass::Null),
-                IntrinsicKind::Undefined | IntrinsicKind::Void => Some(PrimitiveClass::Undefined),
-                _ => None,
-            },
-            TypeKey::Literal(literal) => match literal {
-                LiteralValue::String(_) => Some(PrimitiveClass::String),
-                LiteralValue::Number(_) => Some(PrimitiveClass::Number),
-                LiteralValue::Boolean(_) => Some(PrimitiveClass::Boolean),
-                LiteralValue::BigInt(_) => Some(PrimitiveClass::Bigint),
-            },
-            TypeKey::TemplateLiteral(_) => Some(PrimitiveClass::String),
-            TypeKey::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
-            _ => None,
-        }
+        let mut visitor = PrimitiveClassVisitor;
+        visitor.visit_type(self.interner, type_id)
     }
 
     /// Check if a type is symbol-like (symbol or unique symbol).
@@ -433,14 +667,8 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::SYMBOL {
             return true;
         }
-        if let Some(key) = self.interner.lookup(type_id) {
-            matches!(
-                key,
-                TypeKey::Intrinsic(IntrinsicKind::Symbol) | TypeKey::UniqueSymbol(_)
-            )
-        } else {
-            false
-        }
+        let mut visitor = SymbolLikeVisitor { db: self.interner };
+        visitor.visit_type(self.interner, type_id)
     }
 
     /// Check if a type is boolean-like (boolean or boolean literal).
@@ -448,11 +676,8 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::BOOLEAN || type_id == TypeId::ANY {
             return true;
         }
-        if let Some(key) = self.interner.lookup(type_id) {
-            matches!(key, TypeKey::Literal(LiteralValue::Boolean(_)))
-        } else {
-            false
-        }
+        let mut visitor = BooleanLikeVisitor { db: self.interner };
+        visitor.visit_type(self.interner, type_id)
     }
 
     /// Check if a type is a valid operand for string concatenation.
