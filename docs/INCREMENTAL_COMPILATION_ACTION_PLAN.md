@@ -4,30 +4,38 @@
 
 This document outlines the plan to complete tsz's incremental compilation feature to match tsc behavior. The goal is to properly load and use `.tsbuildinfo` files to skip recompilation of unchanged files.
 
-## Implementation Status: ✅ COMPLETE (Phase 1-2)
+## Implementation Status: ✅ COMPLETE (Phase 1-2, P1-P3)
 
 **Completed:**
 - ✅ BuildInfo loading and persistence
 - ✅ Cache parameter passing to `collect_diagnostics`
 - ✅ BuildInfo population from `CompilationCache`
 - ✅ Tests for first build, second build (no changes), and third build (with changes)
+- ✅ **P3: BuildInfo version compatibility** - Graceful handling of version mismatches
+- ✅ **P2: Semantic diagnostics caching** - Diagnostics persist across builds
+- ✅ **P1: Smart invalidation via export hash comparison** - Work queue algorithm
 
-**Remaining (Phase 3):**
-- Semantic diagnostics caching (requires storing Diagnostic objects in BuildInfo)
-- Compression optimizations (fileIdsList, referencedMap)
-- Composite project support (latestChangedDtsFile) -- requires project references and declaration emit
+**Remaining (Future Work):**
+- P4: Compression optimizations (fileIdsList, referencedMap)
+- P5: Composite project support (latestChangedDtsFile) -- requires project references and declaration emit
 
 ## Current Status
 
 **Working:**
-- Basic `.tsbuildinfo` file generation after successful compilation
-- BuildInfo structure with file hashes, dependencies, and signatures
-- BuildInfo loading from disk
+- `.tsbuildinfo` file generation and persistence after successful compilation
+- BuildInfo loading with graceful version mismatch handling
+- Smart invalidation: only type-checks files that changed or depend on changed files
+- Semantic diagnostics persist across builds (no "ghost diagnostics")
+- Export hash comparison triggers cascading invalidation of dependents
+- Work queue algorithm prevents infinite loops and duplicate checks
 
-**Not Working:**
-- Loaded BuildInfo is NOT used to skip recompilation
-- Scope issues with `collect_diagnostics` accessing `local_cache`
-- bind_cache and type_caches are NOT loaded from BuildInfo (they start empty)
+**Implementation Details:**
+- `collect_diagnostics` uses work queue initialized with files not in cache
+- After checking each file, export hash is computed and compared with cached hash
+- If export signature changed, dependent files are queued for re-checking
+- `checked_files` HashSet prevents infinite loops and duplicate checks
+- Final diagnostics collected from cache for all files (checked + cached)
+- Version mismatches trigger cache miss (fresh build) instead of error
 
 ## Root Cause Analysis
 
@@ -284,20 +292,21 @@ time cargo run -- --bin tsz
 3. ✓ Loaded BuildInfo populates `export_hashes` and `dependencies`
 4. ✓ BuildInfo is updated with `CompilationCache` state after each build
 5. ✓ All tests pass, including new incremental tests
-6. ⚠️ Files with unchanged content hashes are NOT skipped (limitation: requires AST caching)
-7. ⚠️ Manual testing shows no speedup yet (expected: need to implement export hash comparison)
+6. ✓ **Files with unchanged export signatures are NOT type-checked** (P1 smart invalidation)
+7. ✓ **Semantic diagnostics persist across builds** (P2 diagnostics caching)
+8. ✓ **Version mismatches handled gracefully** (P3 version compatibility)
 
 ## Implementation Summary
 
-### What Was Done (2025-02-02)
+### What Was Done (2025-02-02 - 2025-02-03)
 
+**Phase 1: Foundation (2025-02-02)**
 1. **Fixed Scope Issue in `collect_diagnostics`**
    - Removed broken `if using_local_cache` blocks
    - Now uses unified `effective_cache` parameter
 
 2. **Implemented Unified Cache Reference**
    - Created `effective_cache` that works for both `local_cache` (from BuildInfo) and `cache` parameter
-   - Uses pattern: `let mut local_cache_ref = local_cache.as_mut(); let mut effective_cache = local_cache_ref.as_deref_mut().or(cache.as_deref_mut());`
 
 3. **BuildInfo Persistence**
    - BuildInfo is now populated from `CompilationCache` using `compilation_cache_to_build_info()`
@@ -307,6 +316,28 @@ time cargo run -- --bin tsz
    - Test now verifies: first build, second build (no changes), third build (with changes)
    - All scenarios pass successfully
 
+**Phase 2: Smart Invalidation (2025-02-03)**
+5. **P3: BuildInfo Version Compatibility**
+   - Changed `BuildInfo::load()` to return `Result<Option<Self>>`
+   - Gracefully handle version mismatches by returning `Ok(None)`
+   - Added compiler version validation alongside format version
+   - Version mismatches trigger cache miss instead of build failure
+
+6. **P2: Semantic Diagnostics Caching**
+   - Added `CachedDiagnostic` and `CachedRelatedInformation` structs
+   - Updated `BuildInfo.semantic_diagnostics_per_file` to use `CachedDiagnostic`
+   - Implemented conversion from `Diagnostic` to `CachedDiagnostic` in `compilation_cache_to_build_info`
+   - Implemented reverse conversion in `build_info_to_compilation_cache`
+   - Diagnostics now persist across builds to avoid "ghost diagnostics"
+
+7. **P1: Smart Invalidation via Export Hash Comparison**
+   - Replaced simple for loop with work queue algorithm in `collect_diagnostics`
+   - Initialize work queue with files not in cache (physically changed)
+   - After checking each file, compute export hash and compare with cached hash
+   - If export signature changed, queue all dependent files for re-checking
+   - Use `checked_files` HashSet to prevent infinite loops and duplicate checks
+   - Collect final diagnostics from cache for all files (checked + cached)
+
 ### Current Limitations
 
 **Due to architectural design decisions:**
@@ -315,23 +346,44 @@ time cargo run -- --bin tsz
    - BuildInfo does not store `bind_cache` (ASTs) or `type_caches`
    - Reason: Would be extremely large and complex to serialize
    - Impact: All files are parsed and bound on every build
+   - **Mitigation:** Type checking (the expensive part) is skipped for unchanged files
 
-2. **No Type Check Skipping**
-   - Cannot skip type checking for unchanged files
-   - Reason: Export hash comparison requires type info, which needs type checking
-   - Impact: Full type checking on every build
+2. **No Compression**
+   - `fileIdsList` and `referencedMap` are not implemented
+   - Reason: Low priority (P4) - nice-to-have optimization
+   - Impact: BuildInfo files are larger than necessary for large projects
 
-3. **No Diagnostic Caching**
-   - `semantic_diagnostics_per_file` is always empty
-   - Reason: Would require storing Diagnostic objects (complex)
-   - Impact: Errors are not replayed for unchanged files
+3. **No Composite Project Support**
+   - `latestChangedDtsFile` is not implemented
+   - Reason: Requires project references and declaration emit (P5 - strategic)
+   - Impact: Multi-project builds don't share .d.ts change tracking
 
 ### What Works
 
-1. **Change Detection**
+1. **Smart Invalidation (P1)**
+   - Work queue algorithm only type-checks files that need checking
+   - Export hash comparison detects API changes
+   - Cascading invalidation: dependents are re-checked when exports change
+   - `checked_files` HashSet prevents infinite loops
+   - Significant performance improvement for unchanged codebases
+
+2. **Semantic Diagnostics Caching (P2)**
+   - Diagnostics persist in BuildInfo across builds
+   - `CachedDiagnostic` and `CachedRelatedInformation` structs
+   - No "ghost diagnostics" - errors persist correctly
+   - Conversion between `Diagnostic` and `CachedDiagnostic` formats
+
+3. **BuildInfo Version Compatibility (P3)**
+   - Graceful handling of version mismatches
+   - Returns `Ok(None)` instead of error on mismatch
+   - Compiler version validation
+   - Automatic cache invalidation on version changes
+
+4. **Change Detection**
    - `export_hashes` are computed and stored
-   - `dependencies` are tracked
+   - `dependencies` and `reverse_dependencies` are tracked
    - BuildInfo can be loaded and used to populate CompilationCache
+   - Files are checked if not in cache or if dependencies' exports changed
 
 2. **Watch Mode Optimization**
    - Within the same process (watch mode), the in-memory `CompilationCache` provides true incremental compilation
