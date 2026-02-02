@@ -24,9 +24,19 @@ impl<'a> Printer<'a> {
         let prev_module = self.ctx.options.module;
         self.ctx.options.module = ModuleKind::None;
 
+        let before_len = self.writer.len();
         emit_inner(self);
+        let inner_emitted = self.writer.len() > before_len;
 
         self.ctx.options.module = prev_module;
+
+        // If the inner emit produced nothing (e.g., variable declaration with
+        // no initializer where only the type annotation was stripped), skip
+        // the export assignment. The preamble `exports.X = void 0;` already
+        // handles the forward declaration.
+        if !inner_emitted {
+            return;
+        }
 
         self.write_line();
         if is_default {

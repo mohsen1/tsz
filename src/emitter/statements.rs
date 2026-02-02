@@ -74,6 +74,13 @@ impl<'a> Printer<'a> {
             && !self.ctx.module_state.has_export_assignment;
         let is_default = self.has_default_modifier(&var_stmt.modifiers);
 
+        // For CommonJS exported variables with no initializers, skip the
+        // declaration entirely. The preamble `exports.X = void 0;` already
+        // handles the export, and no local `var` is needed.
+        if is_exported && self.all_declarations_lack_initializer(&var_stmt.declarations) {
+            return;
+        }
+
         // Collect declaration names for export assignment
         let export_names: Vec<String> = if is_exported {
             self.collect_variable_names(&var_stmt.declarations)
@@ -111,6 +118,31 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    /// Check if all variable declarations in a declaration list lack initializers
+    pub(super) fn all_declarations_lack_initializer(&self, declarations: &NodeList) -> bool {
+        for &decl_list_idx in &declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if !decl.initializer.is_none() {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Collect variable names from a declaration list for CommonJS export
