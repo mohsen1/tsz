@@ -1037,7 +1037,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_document_highlight_simple_variable() {
         let source = "let x = 1;\nlet y = x + 1;\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1065,7 +1064,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_document_highlight_function() {
         let source = "function foo() {\n  return 1;\n}\nfoo();\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1093,7 +1091,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_document_highlight_compound_assignment() {
         let source = "let count = 0;\ncount += 1;\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1160,7 +1157,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_document_highlight_structs() {
         let source = "let x = 1;\nconsole.log(x);\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1418,7 +1414,6 @@ mod highlighting_tests {
     // ---- NEW TESTS: AST-based write detection ----
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_write_access_via_ast() {
         // Test that variable declarations are detected as writes via the AST path
         let source = "let x = 1;\nx = 2;\nconsole.log(x);\n";
@@ -1457,7 +1452,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_function_declaration_is_write() {
         // Function name should be marked as write at declaration
         let source = "function greet() {}\ngreet();\n";
@@ -1490,7 +1484,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_parameter_is_write() {
         // Function parameter should be marked as write at declaration
         let source = "function add(a: number, b: number) {\n  return a + b;\n}\n";
@@ -1524,7 +1517,6 @@ mod highlighting_tests {
     }
 
     #[test]
-    #[ignore] // TODO: Fix this test
     fn test_highlight_multiple_reads() {
         // Variable used multiple times should have multiple read highlights
         let source = "let val = 10;\nlet a = val;\nlet b = val;\nlet c = val;\n";
