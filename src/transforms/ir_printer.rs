@@ -437,7 +437,9 @@ impl<'a> IRPrinter<'a> {
                 self.write(") ");
                 self.emit_node(then_branch);
                 if let Some(else_br) = else_branch {
-                    self.write(" else ");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("else ");
                     self.emit_node(else_br);
                 }
             }
@@ -1309,8 +1311,8 @@ impl<'a> IRPrinter<'a> {
                 '\t' => self.output.push_str("\\t"),
                 '\0' => self.output.push_str("\\0"),
                 c if (c as u32) < 0x20 || c == '\x7F' => {
-                    // Escape control characters as \xNN
-                    write!(self.output, "\\x{:02X}", c as u32).unwrap();
+                    // Escape control characters as \u00NN (matching TypeScript format)
+                    write!(self.output, "\\u{:04X}", c as u32).unwrap();
                 }
                 _ => self.output.push(c),
             }

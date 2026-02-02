@@ -283,7 +283,8 @@ impl<'a> Printer<'a> {
         self.emit(if_stmt.then_statement);
 
         if !if_stmt.else_statement.is_none() {
-            self.write(" else ");
+            self.write_line();
+            self.write("else ");
             self.emit(if_stmt.else_statement);
         }
     }
