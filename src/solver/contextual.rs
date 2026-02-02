@@ -266,6 +266,49 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     }
 }
 
+/// Visitor to extract method type from object types by name.
+/// Only returns methods (is_method = true), not regular properties.
+struct MethodExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+    name: String,
+}
+
+impl<'a> MethodExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase, name: String) -> Self {
+        Self { db, name }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for MethodExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        for prop in &shape.properties {
+            if self.db.resolve_atom_ref(prop.name).as_ref() == self.name && prop.is_method {
+                return Some(prop.type_id);
+            }
+        }
+        None
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 /// Visitor to extract parameter type from callable types.
 struct ParameterExtractor<'a> {
     db: &'a dyn TypeDatabase,
@@ -1311,22 +1354,12 @@ impl<'a> GeneratorContextualType<'a> {
     /// We look for the 'next' method's return type, which should be
     /// IteratorResult<Y, R> or Promise<IteratorResult<Y, R>>.
     fn extract_yield_type_from_generator(&self, gen_type: TypeId) -> Option<TypeId> {
-        let key = self.interner.lookup(gen_type)?;
+        // Use MethodExtractor to find the 'next' method (is_method = true)
+        let mut method_extractor = MethodExtractor::new(self.interner, "next".to_string());
+        let next_method = method_extractor.extract(gen_type)?;
 
-        match key {
-            TypeKey::Object(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                for prop in &shape.properties {
-                    let prop_name = self.interner.resolve_atom_ref(prop.name);
-                    if prop_name.as_ref() == "next" && prop.is_method {
-                        // Extract yield type from the method return type
-                        return self.extract_yield_from_next_method(prop.type_id);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
+        // Extract yield type from the method return type
+        self.extract_yield_from_next_method(next_method)
     }
 
     /// Extract yield type from next method's return type.
@@ -1335,128 +1368,81 @@ impl<'a> GeneratorContextualType<'a> {
     /// - IteratorResult<Y, R> for sync generators
     /// - Promise<IteratorResult<Y, R>> for async generators
     fn extract_yield_from_next_method(&self, method_type: TypeId) -> Option<TypeId> {
-        let key = self.interner.lookup(method_type)?;
+        // Use ReturnTypeExtractor to get the return type
+        let mut ret_extractor = ReturnTypeExtractor::new(self.interner);
+        let return_type = ret_extractor.extract(method_type)?;
 
-        if let TypeKey::Function(func_id) = key {
-            let func = self.interner.function_shape(func_id);
-            let return_type = func.return_type;
-
-            // Check if it's a Promise wrapper (async generator)
-            if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(return_type) {
-                let shape = self.interner.object_shape(shape_id);
-                for prop in &shape.properties {
-                    let prop_name = self.interner.resolve_atom_ref(prop.name);
-                    if prop_name.as_ref() == "then" {
-                        // Async generator: unwrap Promise and get IteratorResult value
-                        return self.extract_value_from_iterator_result(prop.type_id);
-                    }
-                    if prop_name.as_ref() == "value" {
-                        // Sync generator: directly get value
-                        return Some(prop.type_id);
-                    }
-                }
-            }
-
-            // Check for union type (IteratorResult = {value: Y, done: false} | {value: R, done: true})
-            if let Some(TypeKey::Union(_)) = self.interner.lookup(return_type) {
-                return self.extract_value_from_iterator_result(return_type);
-            }
+        // Check if it's a Promise wrapper (async generator) - look for 'then' method
+        let mut then_extractor = MethodExtractor::new(self.interner, "then".to_string());
+        if let Some(then_type) = then_extractor.extract(return_type) {
+            // Async generator: unwrap Promise and get IteratorResult value
+            return self.extract_value_from_iterator_result(then_type);
         }
-        None
+
+        // Check for union type (IteratorResult = {value: Y, done: false} | {value: R, done: true})
+        if let Some(TypeKey::Union(_)) = self.interner.lookup(return_type) {
+            return self.extract_value_from_iterator_result(return_type);
+        }
+
+        // Sync generator: try to extract 'value' property directly
+        self.extract_value_property(return_type)
     }
 
     /// Extract the 'value' property from an IteratorResult<Y, R> type.
     fn extract_value_from_iterator_result(&self, result_type: TypeId) -> Option<TypeId> {
-        let key = self.interner.lookup(result_type)?;
-
-        match key {
-            TypeKey::Union(list_id) => {
-                // Get first member (yield result) and extract value
-                let members = self.interner.type_list(list_id);
-                if let Some(&first) = members.first() {
-                    return self.extract_value_property(first);
-                }
-                None
+        // Handle Union explicitly
+        if let Some(TypeKey::Union(list_id)) = self.interner.lookup(result_type) {
+            let members = self.interner.type_list(list_id);
+            // Get first member (yield result) and extract value
+            if let Some(&first) = members.first() {
+                return self.extract_value_property(first);
             }
-            TypeKey::Object(_) => self.extract_value_property(result_type),
-            _ => None,
+            return None;
         }
+
+        // Handle Object types
+        self.extract_value_property(result_type)
     }
 
     /// Extract 'value' property from an object type.
     fn extract_value_property(&self, obj_type: TypeId) -> Option<TypeId> {
-        let key = self.interner.lookup(obj_type)?;
-
-        if let TypeKey::Object(shape_id) = key {
-            let shape = self.interner.object_shape(shape_id);
-            for prop in &shape.properties {
-                let prop_name = self.interner.resolve_atom_ref(prop.name);
-                if prop_name.as_ref() == "value" {
-                    return Some(prop.type_id);
-                }
-            }
-        }
-        None
+        // Use PropertyExtractor to find the 'value' property
+        let mut prop_extractor = PropertyExtractor::new(self.interner, "value".to_string());
+        prop_extractor.extract(obj_type)
     }
 
     /// Extract next type (N) from Generator<Y, R, N> structure.
     fn extract_next_type_from_generator(&self, gen_type: TypeId) -> Option<TypeId> {
-        let key = self.interner.lookup(gen_type)?;
+        // Use MethodExtractor to find the 'next' method (is_method = true)
+        let mut method_extractor = MethodExtractor::new(self.interner, "next".to_string());
+        let next_method = method_extractor.extract(gen_type)?;
 
-        if let TypeKey::Object(shape_id) = key {
-            let shape = self.interner.object_shape(shape_id);
-            for prop in &shape.properties {
-                let prop_name = self.interner.resolve_atom_ref(prop.name);
-                if prop_name.as_ref() == "next" && prop.is_method {
-                    // Extract next type from the method's first parameter
-                    return self.extract_next_from_method(prop.type_id);
-                }
-            }
-        }
-        None
+        // Extract next type from the method's first parameter
+        self.extract_next_from_method(next_method)
     }
 
     /// Extract next type from next method's parameter.
     fn extract_next_from_method(&self, method_type: TypeId) -> Option<TypeId> {
-        let key = self.interner.lookup(method_type)?;
-
-        if let TypeKey::Function(func_id) = key {
-            let func = self.interner.function_shape(func_id);
-            if let Some(first_param) = func.params.first() {
-                return Some(first_param.type_id);
-            }
-        }
-        None
+        // Use ParameterExtractor to get the first parameter (index 0)
+        let mut param_extractor = ParameterExtractor::new(self.interner, 0);
+        param_extractor.extract(method_type)
     }
 
     /// Extract return type (R) from Generator<Y, R, N> structure.
     fn extract_return_type_from_generator(&self, gen_type: TypeId) -> Option<TypeId> {
-        let key = self.interner.lookup(gen_type)?;
+        // Use MethodExtractor to find the 'return' method (is_method = true)
+        let mut method_extractor = MethodExtractor::new(self.interner, "return".to_string());
+        let return_method = method_extractor.extract(gen_type)?;
 
-        if let TypeKey::Object(shape_id) = key {
-            let shape = self.interner.object_shape(shape_id);
-            for prop in &shape.properties {
-                let prop_name = self.interner.resolve_atom_ref(prop.name);
-                if prop_name.as_ref() == "return" && prop.is_method {
-                    // Extract return type from the method's parameter
-                    return self.extract_return_from_method(prop.type_id);
-                }
-            }
-        }
-        None
+        // Extract return type from the method's first parameter
+        self.extract_return_from_method(return_method)
     }
 
     /// Extract return type from return method's parameter.
     fn extract_return_from_method(&self, method_type: TypeId) -> Option<TypeId> {
-        let key = self.interner.lookup(method_type)?;
-
-        if let TypeKey::Function(func_id) = key {
-            let func = self.interner.function_shape(func_id);
-            if let Some(first_param) = func.params.first() {
-                return Some(first_param.type_id);
-            }
-        }
-        None
+        // Use ParameterExtractor to get the first parameter (index 0)
+        let mut param_extractor = ParameterExtractor::new(self.interner, 0);
+        param_extractor.extract(method_type)
     }
 }
 
