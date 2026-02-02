@@ -321,11 +321,8 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(signatures) = overload_signatures.as_deref()
-            && let Some(return_type) = self.resolve_overloaded_call_with_signatures(
-                args,
-                signatures,
-                false,
-            )
+            && let Some(return_type) =
+                self.resolve_overloaded_call_with_signatures(args, signatures, false)
         {
             return return_type;
         }
@@ -1068,8 +1065,8 @@ impl<'a> CheckerState<'a> {
     /// Inner implementation of call expression type resolution.
     pub(crate) fn get_type_of_call_expression_inner(&mut self, idx: NodeIndex) -> TypeId {
         use crate::parser::node_flags;
-        use crate::solver::{CallEvaluator, CallResult, CompatChecker};
         use crate::parser::syntax_kind_ext;
+        use crate::solver::{CallEvaluator, CallResult, CompatChecker};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
