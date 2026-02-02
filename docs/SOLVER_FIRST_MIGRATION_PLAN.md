@@ -285,6 +285,92 @@ The Solver API is **total** (always returns TypeId) for compiler error tolerance
 
 ---
 
+### 4. Error Handling Considerations (GEMINI REVIEW FEEDBACK)
+
+**Issue**: The plan focuses on returning `TypeId`, but Checker needs diagnostic context for error reporting.
+
+**Current Approach** (Phase 1):
+- Solver returns `TypeId::ERROR` or `TypeId::NEVER`
+- Checker uses side-channel or AST correlation for diagnostics
+- **Simpler to implement** - validates the architecture first
+
+**Future Enhancement** (Phase 2+ if needed):
+- Consider `Result<TypeId, InferenceError>` for better diagnostics
+- Add correlation IDs to `ObjectLiteralProperty` for error mapping
+- Enables precise error messages without side-channels
+
+**Decision**: Start with simple approach (return TypeId), enhance if Phase 1 reveals diagnostic limitations.
+
+---
+
+### 5. Boolean Logic Normalization (GEMINI REVIEW FEEDBACK)
+
+**Critical Addition for Phase 4**:
+
+The plan underestimates `extract_type_guard` complexity. TypeScript allows:
+```typescript
+if (isString(x) && x.length > 5 || x === "foo")
+```
+
+**Required Sub-task** (Phase 4, Day 3):
+- Implement boolean expression normalization in Checker
+- Flatten complex boolean logic using De Morgan's laws
+- Convert `!(typeof x !== 'string')` to positive `typeof x === 'string'`
+- Ensure Solver receives atomic `TypeGuard`s, not complex expressions
+
+**Step 24.5** (New): Implement boolean expression normalizer
+- Files: `src/checker/control_flow.rs`
+- Logic: Normalize AND/OR/NOT before `extract_type_guard`
+- Tests: Unit tests for complex guard extraction
+
+---
+
+### 6. Property-Based Testing (GEMINI REVIEW FEEDBACK)
+
+**Addition to Testing Strategy**:
+
+Since `narrowing.rs` is pure set algebra, it's perfect for property-based testing.
+
+**Recommended** (Phase 2, Day 2):
+- Add `proptest` crate for narrowing module
+- Test set theoretic invariants:
+  - Commutativity: `A ∩ B = B ∩ A`
+  - Associativity: `(A ∩ B) ∩ C = A ∩ (B ∩ C)`
+  - Identity: `A ∩ Universal = A`
+- Catches edge cases unit tests miss
+
+**Implementation** (Optional but Recommended):
+```rust
+#[proptest]
+fn test_narrow_intersection_commutative(a: TypeId, b: TypeId) {
+    let ab1 = solver.narrow_intersection(a, b);
+    let ab2 = solver.narrow_intersection(b, a);
+    assert_eq!(ab1, ab2);
+}
+```
+
+---
+
+### 7. Shadow Testing Performance (GEMINI REVIEW FEEDBACK)
+
+**Risk Mitigation Update**:
+
+Shadow testing (running old + new logic) doubles type-checking work.
+
+**Required Fix**:
+- Add `#[cfg(debug_assertions)]` gate to shadow testing code
+- Never ship shadow testing in release builds
+- Add compiler flag or feature flag to enable
+
+**Example**:
+```rust
+#[cfg(debug_assertions)]
+let shadow_result = self.old_bct_logic(elements);
+assert_eq!(shadow_result, new_result, "BCT mismatch");
+```
+
+---
+
 ## 4. Testing Strategy
 
 ### 4.1 Unit Tests (Pure Solver Logic)
