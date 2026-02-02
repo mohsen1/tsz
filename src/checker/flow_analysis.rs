@@ -1322,9 +1322,11 @@ impl<'a> CheckerState<'a> {
             None => return declared_type,
         };
 
-        // Check if we're inside a closure and if the variable is mutable
-        if self.is_inside_closure() && self.is_mutable_binding(sym_id) {
-            // Rule #42: Reset narrowing for mutable bindings in closures
+        // Bug #1.2: Check if this is a captured mutable variable
+        // Rule #42 only applies to variables captured from outer scope, not local variables
+        if self.is_inside_closure() && self.is_captured_variable(sym_id) && self.is_mutable_binding(sym_id) {
+            // Rule #42: Reset narrowing for captured mutable bindings in closures
+            // (const variables preserve narrowing, let/var reset to declared type)
             return declared_type;
         }
 
@@ -1431,6 +1433,63 @@ impl<'a> CheckerState<'a> {
         let flags = decl_node.flags as u32;
         let is_const = (flags & node_flags::CONST) != 0;
         !is_const // Return true if NOT const (i.e., let or var)
+    }
+
+    /// Check if a variable is captured from an outer scope (vs declared locally).
+    ///
+    /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
+    /// - Variables declared INSIDE the closure should narrow normally
+    /// - Variables captured from OUTER scope reset narrowing (for let/var)
+    ///
+    /// This is determined by checking if the variable's declaration is in an ancestor scope.
+    fn is_captured_variable(&self, sym_id: SymbolId) -> bool {
+        use crate::binder::ScopeId;
+
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(sym) => sym,
+            None => return false, // If no symbol, assume not captured
+        };
+
+        // Get the declaration node
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return false;
+        }
+
+        // Find the enclosing scope of the declaration
+        let decl_scope_id = match self.ctx.binder.find_enclosing_scope(self.ctx.arena, decl_idx) {
+            Some(scope_id) => scope_id,
+            None => return false, // No scope info, assume not captured
+        };
+
+        // Get the current scope (where the variable is being accessed)
+        // We need to get the current scope from the binder's state
+        let current_scope_id = self.ctx.binder.current_scope_id;
+
+        // If declared in current scope, not captured
+        if decl_scope_id == current_scope_id {
+            return false;
+        }
+
+        // Check if declaration scope is an ancestor of current scope
+        // Walk up the scope chain from current scope to see if we find the declaration scope
+        let mut scope_id = current_scope_id;
+        let mut iterations = 0;
+        while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
+            if scope_id == decl_scope_id {
+                // Found declaration scope in ancestor chain → captured variable
+                return true;
+            }
+
+            // Move to parent scope
+            scope_id = self.ctx.binder.scopes.get(scope_id.0 as usize)
+                .map(|scope| scope.parent)
+                .unwrap_or(ScopeId::NONE);
+
+            iterations += 1;
+        }
+
+        false
     }
 
     /// Check flow-aware usage of a variable (definite assignment + type narrowing).
