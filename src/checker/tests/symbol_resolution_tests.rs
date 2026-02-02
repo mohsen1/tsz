@@ -152,3 +152,173 @@ fn test_symbol_resolution_global_console_with_libs() {
         diagnostics
     );
 }
+
+#[test]
+fn test_symbol_resolution_parameter_in_nested_function() {
+    let source = r#"
+function outer(x: number) {
+    function inner() {
+        const y = x + 1;
+        return y;
+    }
+    return inner();
+}
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for outer parameter in nested function, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_block_shadowing_is_scoped() {
+    let source = r#"
+let x = 1;
+{
+    let x = 2;
+    x;
+}
+x;
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for block-scoped shadowing, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_namespace_type_and_value() {
+    let source = r#"
+namespace N {
+    export interface I { a: number; }
+    export const value = 1;
+}
+let x: N.I;
+let y = N.value;
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+    let ts2749_count = diagnostics.iter().filter(|d| d.code == 2749).count();
+
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for namespace members, got: {:?}",
+        diagnostics
+    );
+    assert_eq!(
+        ts2749_count, 0,
+        "Expected no TS2749 for namespace type usage, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_nested_namespace_qualified_type() {
+    let source = r#"
+namespace Outer {
+    export namespace Inner {
+        export interface I { a: number; }
+    }
+}
+let x: Outer.Inner.I;
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+    let ts2749_count = diagnostics.iter().filter(|d| d.code == 2749).count();
+
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for nested namespace type, got: {:?}",
+        diagnostics
+    );
+    assert_eq!(
+        ts2749_count, 0,
+        "Expected no TS2749 for nested namespace type, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_type_alias_in_block_scope() {
+    let source = r#"
+function f() {
+    {
+        type T = { a: number };
+        let x: T;
+        return x;
+    }
+}
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+    let ts2749_count = diagnostics.iter().filter(|d| d.code == 2749).count();
+
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for block-scoped type alias, got: {:?}",
+        diagnostics
+    );
+    assert_eq!(
+        ts2749_count, 0,
+        "Expected no TS2749 for block-scoped type alias, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_global_array_with_libs() {
+    let diagnostics = collect_diagnostics_with_libs("let xs: Array<string> = [];");
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+    let ts2318_count = diagnostics.iter().filter(|d| d.code == 2318).count();
+
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for Array with lib files, got: {:?}",
+        diagnostics
+    );
+    assert_eq!(
+        ts2318_count, 0,
+        "Expected no TS2318 for Array with lib files, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_symbol_resolution_type_param_shadowing() {
+    let source = r#"
+function outer<T>() {
+    function inner<T>() {
+        let x: T;
+        return x;
+    }
+}
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+    let ts2749_count = diagnostics.iter().filter(|d| d.code == 2749).count();
+
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for shadowed type parameters, got: {:?}",
+        diagnostics
+    );
+    assert_eq!(
+        ts2749_count, 0,
+        "Expected no TS2749 for shadowed type parameters, got: {:?}",
+        diagnostics
+    );
+}
