@@ -1000,7 +1000,6 @@ mod lawyer_strict_mode_tests {
     use super::*;
 
     #[test]
-    #[ignore = "Strict any propagation not fully implemented"]
     fn test_strict_mode_any_does_not_suppress_errors() {
         let interner = TypeInterner::new();
         let mut checker = CompatChecker::new(&interner);
@@ -1082,7 +1081,6 @@ mod lawyer_strict_mode_tests {
     }
 
     #[test]
-    #[ignore = "Strict any propagation in complex structures not fully implemented"]
     fn test_any_in_complex_structure_strict_mode() {
         let interner = TypeInterner::new();
         let mut checker = CompatChecker::new(&interner);

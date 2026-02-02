@@ -308,10 +308,6 @@ impl<'a> ErrorHandler for CheckerState<'a> {
         if source == TypeId::ERROR || target == TypeId::ERROR {
             return;
         }
-        // ANY type suppression: any is assignable to/from everything
-        if source == TypeId::ANY || target == TypeId::ANY {
-            return;
-        }
         // UNKNOWN type suppression: prevents cascade errors from unresolved types
         if source == TypeId::UNKNOWN || target == TypeId::UNKNOWN {
             return;
@@ -329,10 +325,6 @@ impl<'a> ErrorHandler for CheckerState<'a> {
     ) {
         // Error type suppression
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return;
-        }
-        // ANY type suppression
-        if source == TypeId::ANY || target == TypeId::ANY {
             return;
         }
         // UNKNOWN type suppression: prevents cascade errors from unresolved types
