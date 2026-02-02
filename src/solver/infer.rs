@@ -1086,11 +1086,30 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn resolve_from_candidates(&self, candidates: &[InferenceCandidate]) -> TypeId {
-        let filtered = self.filter_candidates_by_priority(candidates);
+        // Check if we have circular candidates
+        let has_circular = candidates.iter().any(|c| c.priority == InferencePriority::Circular);
+
+        let filtered = if has_circular {
+            // When we have circular candidates, don't filter by priority
+            // This ensures that all candidates (including circular ones) are considered
+            candidates.to_vec()
+        } else {
+            self.filter_candidates_by_priority(candidates)
+        };
+
         if filtered.is_empty() {
             return TypeId::UNKNOWN;
         }
-        let widened = self.widen_candidate_types(&filtered);
+        // Filter out NEVER candidates before widening to avoid widening other candidates
+        let filtered_no_never: Vec<_> = filtered
+            .iter()
+            .filter(|c| c.type_id != TypeId::NEVER)
+            .cloned()
+            .collect();
+        if filtered_no_never.is_empty() {
+            return TypeId::NEVER;
+        }
+        let widened = self.widen_candidate_types(&filtered_no_never);
         self.best_common_type(&widened)
     }
 

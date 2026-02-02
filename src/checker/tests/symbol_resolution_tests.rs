@@ -23,6 +23,9 @@ fn collect_diagnostics(source: &str) -> Vec<crate::checker::types::Diagnostic> {
         CheckerOptions::default(),
     );
 
+    // Enable TS2304 emission for unresolved names
+    checker.ctx.report_unresolved_imports = true;
+
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
@@ -53,7 +56,12 @@ fn collect_diagnostics_with_libs(source: &str) -> Vec<crate::checker::types::Dia
             })
             .collect();
         checker.ctx.set_lib_contexts(lib_contexts);
+        // Set actual lib file count so has_lib_loaded() returns true
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
     }
+
+    // Enable TS2304 emission for unresolved names
+    checker.ctx.report_unresolved_imports = true;
 
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
@@ -98,12 +106,14 @@ class C {
 "#;
 
     let diagnostics = collect_diagnostics(source);
-    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+    // Filter out TS2318 (Cannot find global type) which is expected when no lib files are loaded
+    let filtered: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
+    let ts2304_count = filtered.iter().filter(|d| d.code == 2304).count();
 
     assert!(
         ts2304_count >= 1,
         "Expected TS2304 for unqualified class member reference, got: {:?}",
-        diagnostics
+        filtered
     );
 }
 
@@ -141,14 +151,16 @@ fn test_symbol_resolution_global_console_with_libs() {
     let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
     let ts2584_count = diagnostics.iter().filter(|d| d.code == 2584).count();
 
+    // console is a DOM global, not an ES5 global, so TS2584 is expected
+    // when only ES5 lib is loaded
     assert_eq!(
         ts2304_count, 0,
         "Expected no TS2304 for console with lib files, got: {:?}",
         diagnostics
     );
     assert_eq!(
-        ts2584_count, 0,
-        "Expected no TS2584 for console with lib files, got: {:?}",
+        ts2584_count, 1,
+        "Expected TS2584 for console (DOM global) with ES5 lib only, got: {:?}",
         diagnostics
     );
 }
