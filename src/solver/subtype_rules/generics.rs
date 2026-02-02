@@ -8,10 +8,11 @@
 //! - Type expansion and instantiation
 
 use crate::binder::SymbolId;
+use crate::solver::def::DefId;
 use crate::solver::types::*;
 use crate::solver::visitor::{
-    application_id, index_access_parts, keyof_inner_type, literal_value, object_shape_id,
-    object_with_index_shape_id, ref_symbol, type_param_info, union_list_id,
+    application_id, index_access_parts, keyof_inner_type, lazy_def_id, literal_value,
+    object_shape_id, object_with_index_shape_id, ref_symbol, type_param_info, union_list_id,
 };
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -124,6 +125,61 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Remove from seen set after checking
         self.seen_refs.remove(&ref_pair);
+
+        result
+    }
+
+    /// Check Lazy(DefId) to Lazy(DefId) subtype with optional identity shortcut.
+    ///
+    /// Phase 3.1: Mirrors check_ref_ref_subtype but for DefId-based type identity.
+    /// This handles cycles in Lazy(DefId) types at the DefId level, preventing
+    /// infinite expansion of recursive type aliases that use DefId references.
+    pub(crate) fn check_lazy_lazy_subtype(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        s_def: &DefId,
+        t_def: &DefId,
+    ) -> SubtypeResult {
+        // =======================================================================
+        // IDENTITY CHECK: O(1) DefId equality
+        // =======================================================================
+        // If both DefIds are the same, we're checking the same type against itself.
+        // This implements coinductive semantics: a recursive type is a subtype of itself.
+        if s_def == t_def {
+            return SubtypeResult::True;
+        }
+
+        // =======================================================================
+        // CYCLE DETECTION: DefId-level tracking
+        // =======================================================================
+        // This catches cycles in recursive type aliases at the DefId level,
+        // preventing infinite expansion. We check this BEFORE resolving the DefIds
+        // to their structural forms.
+        // =======================================================================
+        let def_pair = (*s_def, *t_def);
+        if self.seen_defs.contains(&def_pair) {
+            // We're in a cycle at the DefId level - return CycleDetected
+            // This implements coinductive semantics for recursive types
+            return SubtypeResult::CycleDetected;
+        }
+
+        // Also check the reversed pair for bivariant cross-recursion
+        let reversed_def_pair = (*t_def, *s_def);
+        if self.seen_defs.contains(&reversed_def_pair) {
+            return SubtypeResult::CycleDetected;
+        }
+
+        // Mark this pair as being checked
+        self.seen_defs.insert(def_pair);
+
+        // Resolve DefIds to their structural forms
+        let s_resolved = self.resolver.resolve_lazy(*s_def, self.interner);
+        let t_resolved = self.resolver.resolve_lazy(*t_def, self.interner);
+        let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
+
+        // Remove from seen set after checking
+        self.seen_defs.remove(&def_pair);
 
         result
     }
