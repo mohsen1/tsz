@@ -42,13 +42,24 @@ pub enum SubtypeResult {
     True,
     /// The relationship is definitely false
     False,
-    /// We're in a cycle and assuming true (provisional)
-    Provisional,
+    /// We're in a valid cycle (coinductive recursion)
+    ///
+    /// This represents finite/cyclic recursion like `interface List { next: List }`.
+    /// The type graph forms a closed loop, which is valid in TypeScript.
+    CycleDetected,
+    /// We've exceeded the recursion depth limit
+    ///
+    /// This represents expansive recursion that grows indefinitely like
+    /// `type T<X> = T<Box<X>>`. TypeScript rejects these as "excessively deep".
+    ///
+    /// This is treated as `false` for soundness - if we can't prove subtyping within
+    /// reasonable limits, we reject the relationship rather than accepting unsoundly.
+    DepthExceeded,
 }
 
 impl SubtypeResult {
     pub fn is_true(self) -> bool {
-        matches!(self, SubtypeResult::True | SubtypeResult::Provisional)
+        matches!(self, SubtypeResult::True | SubtypeResult::CycleDetected)
     }
 
     pub fn is_false(self) -> bool {
@@ -542,9 +553,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// 3. Meta-type evaluation (keyof, conditional, mapped, etc.)
     /// 4. Structural comparison
     ///
-    /// When a cycle is detected, we return `Provisional` (assumed true) which
-    /// implements greatest fixed point semantics - the correct behavior for
-    /// recursive type checking.
+    /// When a cycle is detected, we return `CycleDetected` (coinductive semantics)
+    /// which implements greatest fixed point semantics - the correct behavior for
+    /// recursive type checking. When depth/iteration limits are exceeded, we return
+    /// `DepthExceeded` (conservative false) for soundness.
     pub fn check_subtype(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
         // =========================================================================
         // Fast paths (no cycle tracking needed)
@@ -617,10 +629,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.total_checks += 1;
         if self.total_checks > MAX_TOTAL_SUBTYPE_CHECKS {
             // Too many checks - likely in an infinite expansion scenario
-            // Return Provisional to indicate we can't determine the result
-            // This is safer than returning False which would incorrectly reject valid types
+            // Return DepthExceeded to treat as false (soundness fix)
             self.depth_exceeded = true;
-            return SubtypeResult::Provisional;
+            return SubtypeResult::DepthExceeded;
         }
 
         // =========================================================================
@@ -628,11 +639,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =========================================================================
 
         if self.depth > MAX_SUBTYPE_DEPTH {
-            // Recursion too deep - return Provisional instead of False
-            // This prevents incorrectly rejecting valid recursive types
-            // The caller can check depth_exceeded to emit TS2589 diagnostic
+            // Recursion too deep - return DepthExceeded (treat as false for soundness)
+            // This prevents incorrectly accepting unsound expansive recursive types
+            // Valid finite cyclic types won't hit this limit
             self.depth_exceeded = true;
-            return SubtypeResult::Provisional;
+            return SubtypeResult::DepthExceeded;
         }
 
         // =========================================================================
@@ -647,7 +658,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.in_progress.contains(&pair) {
             // We're in a cycle - return provisional true
             // This implements coinductive semantics for recursive types
-            return SubtypeResult::Provisional;
+            return SubtypeResult::CycleDetected;
         }
 
         // Also check the reversed pair to detect cycles in bivariant parameter checking.
@@ -656,15 +667,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let reversed_pair = (target, source);
         if self.in_progress.contains(&reversed_pair) {
             // We're in a cross-recursion cycle from bivariant checking
-            return SubtypeResult::Provisional;
+            return SubtypeResult::CycleDetected;
         }
 
         // Memory safety: limit the number of in-progress pairs to prevent unbounded growth
         if self.in_progress.len() >= MAX_IN_PROGRESS_PAIRS {
             // Too many pairs being tracked - likely pathological case
-            // Return Provisional instead of False to avoid incorrect rejections
+            // Return DepthExceeded (treat as false for soundness)
             self.depth_exceeded = true;
-            return SubtypeResult::Provisional;
+            return SubtypeResult::DepthExceeded;
         }
 
         // Mark as in-progress BEFORE evaluation to catch expansive type cycles
@@ -703,12 +714,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.in_progress.remove(&pair);
 
         // Cache definitive results in the shared QueryCache for cross-checker memoization.
-        // Only cache True/False, not Provisional (which is a cycle-detection artifact).
+        // Only cache True/False, not non-definitive results (cycle detection artifacts).
         if let Some(db) = self.query_db {
             match result {
                 SubtypeResult::True => db.insert_subtype_cache(source, target, true),
                 SubtypeResult::False => db.insert_subtype_cache(source, target, false),
-                SubtypeResult::Provisional => {} // Don't cache provisional results
+                SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {} // Don't cache non-definitive results
             }
         }
 

@@ -56,8 +56,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - `interface Recursive { self: Recursive }`
     ///
     /// When we detect that we're comparing the same (source_sym, target_sym) pair that
-    /// we're already checking, we return `Provisional` (assumed true) which implements
-    /// coinductive semantics.
+    /// we're already checking, we return `CycleDetected` (coinductive semantics) which
+    /// implements coinductive subtype checking for recursive types.
     pub(crate) fn check_ref_ref_subtype(
         &mut self,
         source: TypeId,
@@ -79,15 +79,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =======================================================================
         let ref_pair = (*s_sym, *t_sym);
         if self.seen_refs.contains(&ref_pair) {
-            // We're in a cycle at the symbol level - return provisional true
+            // We're in a cycle at the symbol level - return CycleDetected
             // This implements coinductive semantics for recursive types
-            return SubtypeResult::Provisional;
+            return SubtypeResult::CycleDetected;
         }
 
         // Also check the reversed pair for bivariant cross-recursion
         let reversed_ref_pair = (*t_sym, *s_sym);
         if self.seen_refs.contains(&reversed_ref_pair) {
-            return SubtypeResult::Provisional;
+            return SubtypeResult::CycleDetected;
         }
 
         // Mark this pair as being checked

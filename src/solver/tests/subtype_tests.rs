@@ -1045,15 +1045,15 @@ fn test_recursion_depth_limit_provisional_subtyping() {
 
     let deep_string = nest_array(&interner, TypeId::STRING, 120);
     let deep_number = nest_array(&interner, TypeId::NUMBER, 120);
-    // Deep recursion returns Provisional (coinductive semantics) when depth limit is hit.
-    // This prevents incorrectly rejecting valid recursive types.
+    // Deep recursion returns DepthExceeded when depth limit is hit.
+    // This is now treated as false for soundness (prevents unsound type acceptance).
     // The depth_exceeded flag is set for TS2589 diagnostic emission.
     //
-    // Note: Returning Provisional means "we can't determine the result, assume compatible".
-    // This is the correct behavior for coinductive cycle handling - False would incorrectly
-    // reject valid recursive types like `type List<T> = { head: T; tail: List<T> }`.
+    // Note: Returning DepthExceeded means "the recursion is too deep, treat as incompatible".
+    // This is the conservative choice for soundness - it prevents incorrectly accepting
+    // genuinely incompatible types that happen to be deeply nested.
     let result = checker.check_subtype(deep_string, deep_number);
-    assert!(matches!(result, SubtypeResult::Provisional));
+    assert!(matches!(result, SubtypeResult::DepthExceeded));
     assert!(checker.depth_exceeded);
 }
 

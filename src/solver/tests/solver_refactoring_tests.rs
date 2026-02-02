@@ -59,10 +59,10 @@ mod phase1_cycle_detection {
         let deep_string = nest_array(&interner, TypeId::STRING, 120);
         let deep_number = nest_array(&interner, TypeId::NUMBER, 120);
 
-        // Should return Provisional (not False) when depth exceeded during comparison
+        // Should return DepthExceeded (not False) when depth exceeded during comparison
         // of incompatible types that require deep traversal
         let result = checker.check_subtype(deep_string, deep_number);
-        assert!(matches!(result, SubtypeResult::Provisional));
+        assert!(matches!(result, SubtypeResult::DepthExceeded));
         // depth_exceeded should be set for diagnostic
         assert!(checker.depth_exceeded);
     }
