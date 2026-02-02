@@ -7,18 +7,73 @@ This document explains how TypeScript declaration library files (lib files) are 
 ## Table of Contents
 
 1. [Lib Loading Overview](#lib-loading-overview)
-2. [tsc vs tsz: Current Gap](#tsc-vs-tsz-current-gap)
-3. [Lib Resolution Rules](#lib-resolution-rules)
-4. [Conformance Test Infrastructure](#conformance-test-infrastructure)
-5. [TSC Cache System](#tsc-cache-system)
-6. [Running Tests](#running-tests)
-7. [Debugging](#debugging)
+2. [Target vs Lib: The Default vs Override Relationship](#target-vs-lib-the-default-vs-override-relationship)
+3. [tsc vs tsz: Current Gap](#tsc-vs-tsz-current-gap)
+4. [Lib Resolution Rules](#lib-resolution-rules)
+5. [Virtual Host Configuration](#virtual-host-configuration)
+6. [Conformance Test Infrastructure](#conformance-test-infrastructure)
+7. [TSC Cache System](#tsc-cache-system)
+8. [Running Tests](#running-tests)
+9. [Debugging](#debugging)
 
 ---
 
 ## Lib Loading Overview
 
 TypeScript uses lib files (`lib.es5.d.ts`, `lib.es2015.d.ts`, etc.) to provide type definitions for built-in JavaScript features. The lib loaded depends on the `--target` and `--lib` compiler options.
+
+**Key Principle:**
+- **`--target`** dictates **syntax** (how code is written: arrows vs functions, `const` vs `var`)
+- **`--lib`** dictates **APIs** (what global objects/methods are available: `Promise`, `Map`, `fetch`)
+
+By default, `--target` chooses the `--lib` for you. Once you touch `--lib`, you are the pilot.
+
+---
+
+## Target vs Lib: The Default vs Override Relationship
+
+### Default Behavior (No Explicit `--lib`)
+
+When `--lib` is **omitted**, TypeScript automatically includes type definitions based on `--target`:
+
+| Target | Default Libraries | What You Get |
+|--------|-------------------|--------------|
+| ES5 | `lib.d.ts` | ES5 + DOM + ScriptHost |
+| ES6/ES2015 | `lib.es6.d.ts` | ES2015 + DOM + DOM.Iterable + ScriptHost |
+| ES2020 | `lib.es2020.full.d.ts` | ES2020 + DOM + DOM.Iterable + DOM.AsyncIterable + ScriptHost |
+| ESNext | `lib.esnext.full.d.ts` | ESNext + DOM + DOM.Iterable + DOM.AsyncIterable + ScriptHost |
+
+> **The Logic:** If you tell TypeScript you're outputting modern code (like `ES2022`), it assumes you're running that code in an environment that natively supports `ES2022` features.
+
+### Override Behavior (Explicit `--lib`)
+
+The moment you add a `lib` array to your config, **the automatic relationship breaks.** TypeScript stops looking at your `--target` for library guidance and trusts you completely.
+
+```typescript
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ES5"]  // ⚠️ Even with ESNext target, you only get ES5 types!
+  }
+}
+```
+
+If you set your target to `ESNext` but only put `["ES5"]` in your `lib` array, TypeScript will throw errors if you try to use `Promise` or `Map`, even though your output code would technically support them.
+
+### Practical Comparison
+
+| Scenario | `--target` | `--lib` | Result |
+|----------|-----------|---------|--------|
+| **Default** | ES6 | *Not set* | `Map`, `Set`, `Promise` available automatically |
+| **Override** | ES5 | `["ES2015", "DOM"]` | Can use `Promise` (must polyfill at runtime) |
+| **Strict Node** | ESNext | `["ESNext"]` | Modern JS features, but `window` throws error (no DOM) |
+
+### Why Manually Set `--lib`?
+
+- **Decoupling Syntax from APIs:** Use modern syntax (e.g., `async/await`) but polyfill the API
+- **Non-Browser Environments:** Remove DOM library to prevent accidentally using `window` or `document`
+- **Minimal Environments:** Embedded systems or custom runtimes
 
 ---
 
@@ -78,37 +133,55 @@ When packaging for npm/cargo, lib files are copied to `$PACKAGE_ROOT/TypeScript/
 
 ## Lib Resolution Rules
 
-### 1. Explicit `@lib` Directive
+### 1. Explicit `@lib` Directive (Replaces Defaults)
 
-If a test or project specifies `@lib` (or `--lib`), those exact libs are loaded:
+If a test or project specifies `@lib` (or `--lib`), it **completely replaces** the default library selection:
 
 ```typescript
+// @target: es5
 // @lib: es2015,dom
-// Loads: es2015.d.ts, dom.d.ts (and their dependencies)
+// Result: ES2015 + DOM types, NOT the default ES5 + DOM + ScriptHost
 ```
 
-### 2. Default Libs from Target
+**Important:** When `@lib` is specified, you must include everything you need. TypeScript stops looking at `@target` for library guidance.
+
+### 2. Triple-Slash Reference Directives (Adds to Existing)
+
+Unlike the `@lib` option which **replaces** defaults, triple-slash directives **add** to the existing environment:
+
+```typescript
+/// <reference lib="es2015.promise" />
+/// <reference lib="dom" />
+
+// This file now has: (default libs based on target) + es2015.promise + dom
+```
+
+**Key Differences:**
+
+| Feature | `@lib` / `--lib` | `/// <reference lib="..." />` |
+|---------|------------------|-------------------------------|
+| **Scope** | Project-wide or file-level | File-specific only |
+| **Behavior** | Replaces all defaults | Adds to existing defaults |
+| **Best Use Case** | Defining standard runtime | Testing edge cases or platform-specific APIs |
+
+**Rules for Triple-Slash Directives:**
+- Must be at the **very top** of the file
+- If any code (even `import`) appears above them, TypeScript ignores the directive
+- Provides full IntelliSense (unlike `@ts-ignore`)
+
+### 3. Default Libs from Target
 
 When no explicit `@lib` is specified, the default lib is derived from `@target`:
 
-| Target | Default Lib |
-|--------|-------------|
-| ES3, ES5 | `es5` |
-| ES6, ES2015 | `es2015` |
-| ES2016 | `es2016` |
-| ES2017 | `es2017` |
-| ES2018 | `es2018` |
-| ES2019 | `es2019` |
-| ES2020 | `es2020` |
-| ES2021 | `es2021` |
-| ES2022 | `es2022` |
-| ES2023 | `es2023` |
-| ES2024 | `es2024` |
-| ESNext | `esnext` |
+| Target | Default Lib | Includes |
+|--------|-------------|----------|
+| ES3, ES5 | `es5.full` | ES5 + DOM + ScriptHost |
+| ES6, ES2015 | `es2015.full` | ES2015 + DOM + ScriptHost |
+| ES2016-ESNext | `es20XX.full` | ES20XX + DOM + ScriptHost |
 
-### 3. Dependency Resolution
+### 4. Dependency Resolution (Reference Chain)
 
-Lib files reference other libs via `/// <reference lib="..." />` directives. These are resolved recursively:
+Lib files reference other libs via `/// <reference lib="..." />` directives. These are resolved **recursively**:
 
 ```
 es2017.d.ts
@@ -126,7 +199,9 @@ es2017.d.ts
 └── es2017.typedarrays.d.ts
 ```
 
-### 4. `@noLib` Directive
+This is why `getDefaultLibFileName()` is critical - it determines the **root** of the dependency graph.
+
+### 5. `@noLib` Directive
 
 When `@noLib: true` is specified, no lib files are loaded. This results in TS2318 errors for missing global types (Array, Object, etc.).
 
@@ -174,24 +249,77 @@ function getLibNamesForTestCase(opts, compilerOptionsTarget) {
 
 ## Virtual Host Configuration
 
-When running TSC programmatically (for cache generation or testing), we configure a virtual file system:
+When running TSC programmatically (for cache generation or testing), we configure a virtual file system. This is **critical** for correct lib loading.
+
+### The Key Insight: Reference Chain Resolution
+
+TypeScript uses `getDefaultLibFileName()` as the **ROOT** of its library dependency graph. It only loads libs reachable via `/// <reference lib="..." />` from this file.
+
+```
+getDefaultLibFileName() returns "lib.es2015.d.ts"
+    ↓
+lib.es2015.d.ts contains:
+    /// <reference lib="es5" />
+    /// <reference lib="es2015.core" />
+    /// <reference lib="es2015.promise" />
+    ...
+    ↓
+TSC recursively loads all referenced libs
+```
+
+If `getDefaultLibFileName()` returns the wrong lib, TSC never discovers the libs you need.
+
+### Correct Virtual Host Setup
 
 ```typescript
 const host = ts.createCompilerHost(compilerOptions);
 
-// Provide lib files via getSourceFile
+// Provide lib files via getSourceFile (with basename fallback)
 host.getSourceFile = (name) => sourceFiles.get(name) ?? sourceFiles.get(path.basename(name));
 
-// Return base lib file (tsc follows /// <reference lib="..."/> directives)
+// CRITICAL: Return the correct lib based on EXPLICIT @lib if specified
 host.getDefaultLibFileName = () => {
-  if (sourceFiles.has('lib.es5.d.ts')) return 'lib.es5.d.ts';
-  return 'lib.d.ts';
+  // When explicit @lib is specified, use that as the root
+  if (libNames.length > 0) {
+    const firstLib = libNames[0];  // e.g., "es6"
+    const normalized = normalizeLibName(firstLib);  // "es6" → "es2015"
+    const firstLibFile = `lib.${normalized}.d.ts`;
+    if (sourceFiles.has(firstLibFile)) {
+      return firstLibFile;  // Start from the explicit lib
+    }
+  }
+  // Fallback to target-based selection
+  return targetLibMap[target] ?? 'lib.es5.d.ts';
 };
-
-// DON'T set compilerOptions.lib - it causes tsc to look for libs at absolute paths
 ```
 
-**Important**: Do NOT set `compilerOptions.lib` when using a virtual host. This causes TSC to look for lib files at absolute paths in the TypeScript installation, bypassing your virtual file system.
+### Critical Rule: Do NOT Set `compilerOptions.lib`
+
+```typescript
+// ❌ WRONG - This bypasses your virtual filesystem!
+compilerOptions.lib = ['lib.es6.d.ts'];
+
+// ✅ CORRECT - Load libs into sourceFiles, use getDefaultLibFileName
+const libFiles = collectLibFiles(libNames, libDir);
+for (const [name, content] of libFiles.entries()) {
+  sourceFiles.set(name, ts.createSourceFile(name, content, target, true));
+}
+```
+
+**Why?** When `compilerOptions.lib` is set, TypeScript looks for those lib files at **absolute paths** in the TypeScript installation directory (e.g., `/node_modules/typescript/lib/lib.es6.d.ts`), completely bypassing your virtual file system.
+
+### The Bug We Fixed
+
+Previously, the TSC cache generator had this bug:
+1. Test file had `@lib: es6` with `@target: es5`
+2. Code set `compilerOptions.lib = ['lib.es6.d.ts']` 
+3. TSC looked for `/node_modules/typescript/lib/lib.es6.d.ts`
+4. Virtual filesystem was bypassed → TS2318 "Cannot find global type 'Promise'" errors
+
+The fix:
+1. **Don't** set `compilerOptions.lib`
+2. **Do** load libs into sourceFiles via `collectLibFiles()`
+3. **Do** return the correct lib from `getDefaultLibFileName()` based on explicit `@lib`
 
 ## TS2318: Cannot find global type
 

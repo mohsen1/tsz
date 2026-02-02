@@ -26,10 +26,17 @@ TypeScript uses **library files** (`lib.*.d.ts`) to provide type definitions for
 
 These are **compile-time only** - they tell TypeScript what types exist in the runtime environment, but don't affect the generated JavaScript.
 
-### The Core Principle
+### The Core Principle: Default vs Override
+
+The relationship between `--target` and `--lib` is a **"default vs. override"** dynamic:
+
+- **`--target`** dictates **syntax** (how code is written: arrows vs functions, `const` vs `var`)
+- **`--lib`** dictates **APIs** (what global objects/methods are available: `Promise`, `Map`, `fetch`)
 
 > When no `--lib` is specified, tsc uses the `target` to determine which libraries to load.
 > When `--lib` IS specified, it **completely replaces** the defaults - you must include everything you need.
+
+**In other words:** By default, `--target` chooses the `--lib` for you. Once you touch `--lib`, you are the pilot.
 
 ---
 
@@ -215,6 +222,51 @@ This results in errors like:
 error TS2584: Cannot find name 'console'. Do you need to change your target library?
 ```
 
+### Why Manually Set `--lib`?
+
+Common scenarios include:
+
+- **Decoupling Syntax from APIs:** You want to use modern syntax (e.g., `async/await` from `ES2017`) but your environment requires a polyfill for the API
+- **Non-Browser Environments:** If you're writing for Node.js, remove the `DOM` library to prevent accidentally using `window` or `document`
+- **Minimal/Embedded Environments:** Custom runtimes that only support specific APIs
+
+---
+
+## Triple-Slash Reference Directives
+
+### Overview
+
+While `tsconfig.json` / `--lib` sets global rules for your project, triple-slash directives allow a **single file** to claim extra capabilities:
+
+```typescript
+/// <reference lib="es2015.promise" />
+/// <reference lib="dom" />
+
+// This file now has access to Promise and DOM types
+```
+
+### Key Difference: Addition vs Replacement
+
+| Feature | `--lib` in tsconfig | `/// <reference lib="..." />` |
+|---------|---------------------|-------------------------------|
+| **Scope** | Project-wide | File-specific |
+| **Behavior** | Replaces all defaults | Adds to existing defaults |
+| **Best Use Case** | Defining the standard runtime | Testing edge cases or platform-specific APIs |
+
+### Rules
+
+1. **Addition, not Replacement:** Unlike `--lib` which replaces defaults, a triple-slash reference **adds** to the existing environment
+2. **Order Matters:** These must be at the very top of the file. If there is any code (even an `import`) above them, TypeScript will ignore the directive
+3. **Full IntelliSense:** Unlike `@ts-ignore`, using `/// <reference lib="..." />` provides full type checking and IntelliSense
+
+### Use Cases in Tests
+
+Triple-slash directives are common in testing for:
+
+- **Polyfilled Environments:** Testing code for older environments (like IE11) where you've polyfilled `Promise` or `Map`
+- **Feature Detection Tests:** Testing library code that checks `if (window.fetch)` - the test needs DOM types
+- **Isolation:** Keep your main `tsconfig.json` clean - only add WebWorker API to files that need it
+
 ---
 
 ## The `--noLib` Flag
@@ -369,6 +421,89 @@ A triple-slash directive that tells tsc not to include default libs for this fil
 ```
 
 This is NOT the same as `--noLib`. It's used in lib files themselves to prevent circular references.
+
+---
+
+## Virtual Host Configuration (Programmatic TSC)
+
+When running TSC programmatically (for tooling, cache generation, or testing), special care is required for lib loading.
+
+### The Critical Insight: Reference Chain Resolution
+
+TypeScript uses `getDefaultLibFileName()` as the **ROOT** of its library dependency graph. It only loads libs reachable via `/// <reference lib="..." />` from this file:
+
+```
+getDefaultLibFileName() returns "lib.es2015.d.ts"
+    ↓
+lib.es2015.d.ts contains:
+    /// <reference lib="es5" />
+    /// <reference lib="es2015.core" />
+    /// <reference lib="es2015.promise" />
+    ...
+    ↓
+TSC recursively loads all referenced libs
+```
+
+If `getDefaultLibFileName()` returns the wrong lib (e.g., `lib.es5.d.ts` when `@lib: es6` is specified), TSC never discovers the ES2015 libs.
+
+### Critical Rule: Do NOT Set `compilerOptions.lib` with Virtual Hosts
+
+```typescript
+// ❌ WRONG - This bypasses your virtual filesystem!
+compilerOptions.lib = ['lib.es6.d.ts'];
+
+// ✅ CORRECT - Load libs into sourceFiles, use getDefaultLibFileName
+const libFiles = collectLibFiles(libNames, libDir);
+for (const [name, content] of libFiles.entries()) {
+  sourceFiles.set(name, ts.createSourceFile(name, content, target, true));
+}
+```
+
+**Why?** When `compilerOptions.lib` is set, TypeScript resolves those lib files at **absolute paths** in the TypeScript installation directory (e.g., `/node_modules/typescript/lib/lib.es6.d.ts`), completely bypassing your virtual file system.
+
+### Correct Virtual Host Setup
+
+```typescript
+const host = ts.createCompilerHost(compilerOptions);
+
+// Provide lib files via getSourceFile (with basename fallback for full paths)
+host.getSourceFile = (name) => sourceFiles.get(name) ?? sourceFiles.get(path.basename(name));
+
+// CRITICAL: Return the correct lib based on EXPLICIT @lib if specified
+host.getDefaultLibFileName = () => {
+  // When explicit @lib is specified, use that lib as the dependency graph root
+  if (libNames.length > 0) {
+    const firstLib = libNames[0];  // e.g., "es6"
+    const normalized = normalizeLibName(firstLib);  // "es6" → "es2015"
+    const firstLibFile = `lib.${normalized}.d.ts`;
+    if (sourceFiles.has(firstLibFile)) {
+      return firstLibFile;
+    }
+  }
+  // Fallback to target-based selection
+  return targetLibMap[target] ?? 'lib.es5.d.ts';
+};
+
+host.fileExists = (name) => sourceFiles.has(name) || sourceFiles.has(path.basename(name));
+host.readFile = (name) => {
+  const sf = sourceFiles.get(name) ?? sourceFiles.get(path.basename(name));
+  return sf?.getFullText();
+};
+```
+
+### Common Bug Pattern
+
+A bug we encountered in the conformance cache generator:
+
+1. Test file had `@lib: es6` with `@target: es5`
+2. Code set `compilerOptions.lib = ['lib.es6.d.ts']`
+3. TSC looked for `/node_modules/typescript/lib/lib.es6.d.ts` (absolute path)
+4. Virtual filesystem was bypassed → TS2318 "Cannot find global type 'Promise'"
+
+**The fix:**
+1. Do NOT set `compilerOptions.lib`
+2. Load libs into sourceFiles via `collectLibFiles()`
+3. Return the correct lib from `getDefaultLibFileName()` based on explicit `@lib`
 
 ---
 
