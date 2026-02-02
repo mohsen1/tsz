@@ -589,12 +589,9 @@ impl<'a> Printer<'a> {
                 // `export var x: number;`), skip entirely. The preamble
                 // `exports.x = void 0;` already handles the forward declaration.
                 let skip = node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                    && self
-                        .arena
-                        .get_variable(node)
-                        .map_or(false, |var_data| {
-                            self.all_declarations_lack_initializer(&var_data.declarations)
-                        });
+                    && self.arena.get_variable(node).is_some_and(|var_data| {
+                        self.all_declarations_lack_initializer(&var_data.declarations)
+                    });
 
                 if !skip {
                     let export_name = names.first().copied();
@@ -1691,7 +1688,8 @@ impl<'a> Printer<'a> {
                 if c_end <= first_stmt_pos {
                     let c_pos = self.all_comments[self.comment_emit_idx].pos;
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                    let comment_text = crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                    let comment_text =
+                        crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     self.write(comment_text);
                     if c_trailing {
                         self.write_line();
@@ -1819,8 +1817,13 @@ impl<'a> Printer<'a> {
                         let c_end = self.all_comments[self.comment_emit_idx].end;
                         if c_end <= stmt_node.pos {
                             let c_pos = self.all_comments[self.comment_emit_idx].pos;
-                            let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                            let comment_text = crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                            let c_trailing =
+                                self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                            let comment_text = crate::printer::safe_slice::slice(
+                                text,
+                                c_pos as usize,
+                                c_end as usize,
+                            );
                             self.write(comment_text);
                             if c_trailing {
                                 self.write_line();
@@ -1860,7 +1863,8 @@ impl<'a> Printer<'a> {
                 let c_pos = self.all_comments[self.comment_emit_idx].pos;
                 let c_end = self.all_comments[self.comment_emit_idx].end;
                 let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                let comment_text = crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                let comment_text =
+                    crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                 self.write(comment_text);
                 if c_trailing {
                     self.write_line();

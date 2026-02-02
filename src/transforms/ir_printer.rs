@@ -63,7 +63,11 @@ fn find_statement_end(text: &str) -> usize {
         // Handle strings
         if in_string {
             if b == b'\\' {
-                i += 2; // skip escaped character
+                if i + 1 < len {
+                    i += 2; // skip escaped character
+                } else {
+                    i += 1; // just skip the backslash at end
+                }
                 continue;
             }
             if b == string_char {

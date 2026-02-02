@@ -257,7 +257,7 @@ impl<'a> TypeLowering<'a> {
     ///
     /// # Arguments
     /// * `declarations` - List of (NodeIndex, &NodeArena) pairs. Each declaration must be
-    ///                    paired with the NodeArena it belongs to.
+    ///   paired with the NodeArena it belongs to.
     pub fn lower_merged_interface_declarations(
         &self,
         declarations: &[(NodeIndex, &NodeArena)],

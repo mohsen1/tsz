@@ -109,8 +109,7 @@ impl<'a> Printer<'a> {
                     {
                         comment_end += 1;
                     }
-                    let comment_text =
-                        safe_slice::slice(text, comment_start, start + comment_end);
+                    let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
                     if !comment_text.is_empty() {
                         self.write(comment_text);
                     }
@@ -128,15 +127,20 @@ impl<'a> Printer<'a> {
                     // Multi-line comment
                     let comment_start = start + pos;
                     let mut comment_end = pos + 2;
+                    let mut found_end = false;
                     while comment_end + 1 < len {
                         if bytes[comment_end] == b'*' && bytes[comment_end + 1] == b'/' {
                             comment_end += 2;
+                            found_end = true;
                             break;
                         }
                         comment_end += 1;
                     }
-                    let comment_text =
-                        safe_slice::slice(text, comment_start, start + comment_end);
+                    if !found_end {
+                        // Unterminated block comment - skip to end
+                        comment_end = len;
+                    }
+                    let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
                     if !comment_text.is_empty() {
                         self.write(comment_text);
                     }
