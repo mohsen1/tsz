@@ -358,6 +358,128 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
     }
 }
 
+/// Visitor to extract parameter type from callable types for a call site.
+/// Filters signatures by arity (arg_count) to handle overloaded functions.
+struct ParameterForCallExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+    index: usize,
+    arg_count: usize,
+}
+
+impl<'a> ParameterForCallExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase, index: usize, arg_count: usize) -> Self {
+        Self { db, index, arg_count }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+
+    fn extract_from_params(&self, params: &[ParamInfo]) -> Option<TypeId> {
+        // Check if there's a rest parameter at the end
+        if let Some(last_param) = params.last() {
+            if last_param.rest {
+                // For rest parameter, any index should get the element type
+                if let Some(TypeKey::Array(elem)) = self.db.lookup(last_param.type_id) {
+                    return Some(elem);
+                }
+                // For rest parameter with tuple type, extract the element at the given index
+                if let Some(TypeKey::Tuple(elements)) = self.db.lookup(last_param.type_id) {
+                    let elements = self.db.tuple_list(elements);
+                    // Find the tuple element at the given index
+                    if self.index < elements.len() {
+                        return Some(elements[self.index].type_id);
+                    } else if let Some(last_elem) = elements.last()
+                        && last_elem.rest
+                    {
+                        return Some(last_elem.type_id);
+                    }
+                }
+                // Return the rest parameter type itself
+                return Some(last_param.type_id);
+            }
+        }
+
+        // For non-rest parameters, check if index is within bounds
+        if self.index < params.len() {
+            Some(params[self.index].type_id)
+        } else {
+            None
+        }
+    }
+
+    fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
+        // Count required (non-optional) parameters
+        let required_count = params.iter().filter(|p| !p.optional).count();
+
+        // Check if there's a rest parameter
+        let has_rest = params.iter().any(|p| p.rest);
+
+        if has_rest {
+            // With rest parameter: arity must be >= required_count
+            arg_count >= required_count
+        } else {
+            // Without rest parameter: arity must be within [required_count, total_count]
+            arg_count >= required_count && arg_count <= params.len()
+        }
+    }
+}
+
+impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.function_shape(FunctionShapeId(shape_id));
+        self.extract_from_params(&shape.params)
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+
+        // Filter signatures by arity
+        let mut matched = false;
+        let mut param_types: Vec<TypeId> = Vec::new();
+
+        for sig in &shape.call_signatures {
+            if self.signature_accepts_arg_count(&sig.params, self.arg_count) {
+                matched = true;
+                if let Some(param_type) = self.extract_from_params(&sig.params) {
+                    param_types.push(param_type);
+                }
+            }
+        }
+
+        // If no signatures matched, fall back to all signatures
+        if param_types.is_empty() && !matched {
+            param_types = shape
+                .call_signatures
+                .iter()
+                .filter_map(|sig| self.extract_from_params(&sig.params))
+                .collect();
+        }
+
+        if param_types.is_empty() {
+            None
+        } else if param_types.len() == 1 {
+            Some(param_types[0])
+        } else {
+            Some(self.db.union(param_types))
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 /// Context for contextual typing.
 /// Holds the expected type and provides methods to extract type information.
 pub struct ContextualTypeContext<'a> {
@@ -438,47 +560,37 @@ impl<'a> ContextualTypeContext<'a> {
     /// Get the contextual type for a call argument at the given index and arity.
     pub fn get_parameter_type_for_call(&self, index: usize, arg_count: usize) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
 
-        match key {
-            TypeKey::Function(shape_id) => {
-                let shape = self.interner.function_shape(shape_id);
-                self.get_parameter_type_from_params(&shape.params, index)
-            }
-            TypeKey::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                self.get_parameter_type_from_signatures_for_call(
-                    &shape.call_signatures,
-                    index,
-                    arg_count,
-                )
-            }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let param_types: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&m| {
-                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_parameter_type_for_call(index, arg_count)
-                    })
-                    .collect();
+        // Handle Union explicitly - collect parameter types from all members
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let param_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_parameter_type_for_call(index, arg_count)
+                })
+                .collect();
 
-                if param_types.is_empty() {
-                    None
-                } else if param_types.len() == 1 {
-                    Some(param_types[0])
-                } else {
-                    Some(self.interner.union(param_types))
-                }
-            }
-            // For Application types, unwrap to the base type
-            TypeKey::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
-                ctx.get_parameter_type_for_call(index, arg_count)
-            }
-            _ => None,
+            return if param_types.is_empty() {
+                None
+            } else if param_types.len() == 1 {
+                Some(param_types[0])
+            } else {
+                Some(self.interner.union(param_types))
+            };
         }
+
+        // Handle Application explicitly - unwrap to base type
+        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
+            let app = self.interner.type_application(app_id);
+            let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+            return ctx.get_parameter_type_for_call(index, arg_count);
+        }
+
+        // Use visitor for Function/Callable types
+        let mut extractor = ParameterForCallExtractor::new(self.interner, index, arg_count);
+        extractor.extract(expected)
     }
 
     /// Get the contextual type for a `this` parameter, if present on the expected type.
