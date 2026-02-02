@@ -1648,17 +1648,17 @@ impl<'a> Printer<'a> {
             self.ctx.module_state.has_export_assignment = true;
         }
 
-        // Extract and filter comments (strip compiler directives)
+        // Extract comments. Triple-slash references (/// <reference ...>) are
+        // preserved in output (TypeScript keeps them in JS emit).
+        // Only AMD-specific directives (/// <amd ...) are stripped.
         // Store on self so nested blocks can also distribute comments.
         self.all_comments = if !self.ctx.options.remove_comments {
             if let Some(text) = self.source_text {
                 crate::comments::get_comment_ranges(text)
                     .into_iter()
                     .filter(|c| {
-                        // Filter out triple-slash directives (/// <reference ..., /// <amd ...)
-                        // TypeScript strips these from JS output
                         let content = c.get_text(text);
-                        !content.starts_with("/// <reference") && !content.starts_with("/// <amd")
+                        !content.starts_with("/// <amd")
                     })
                     .collect()
             } else {
