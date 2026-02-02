@@ -141,16 +141,17 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check a class declaration.
     ///
-    /// Handles declaration-specific class checks.
-    /// Note: TS2564 (property initialization) is handled by CheckerState::check_property_initialization
-    /// to avoid duplicate emission.
-    pub fn check_class_declaration(&mut self, _class_idx: NodeIndex) {
-        // Property initialization (TS2564) is checked by CheckerState::check_property_initialization
-        // Additional class declaration checks will be added here as they are migrated:
-        // - Heritage clauses (extends/implements)
-        // - Member types and modifiers
-        // - Abstract implementation requirements
-        // - Constructor parameter properties
+    /// Handles declaration-specific class checks including TS2564 (strict property initialization).
+    pub fn check_class_declaration(&mut self, class_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return;
+        };
+        let Some(class_decl) = self.ctx.arena.get_class(node) else {
+            return;
+        };
+
+        // Check strict property initialization (TS2564)
+        self.check_property_initialization(class_idx, class_decl);
     }
 
     /// Check property initialization for TS2564.
