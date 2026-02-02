@@ -68,17 +68,23 @@ impl<'a> CheckerState<'a> {
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                // Phase 2: Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<DefId> {
+                    self.resolve_type_symbol_for_lowering(node_idx)
+                        .and_then(|sym_id| self.ctx.get_existing_def_id(SymbolId(sym_id)))
+                };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                let lowering = crate::solver::TypeLowering::with_resolvers(
+                let lowering = crate::solver::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
                     &type_resolver,
+                    &def_id_resolver,
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
                 let type_id = lowering.lower_type(idx);
-                // Phase 1: Post-process to convert TypeKey::Ref to TypeKey::Lazy(DefId)
+                // Phase 2: Still post-process to create DefIds for types that don't have them yet
                 return self.ctx.maybe_create_lazy_from_resolved(type_id);
             }
             // No type arguments provided - check if this generic type requires them
@@ -222,17 +228,23 @@ impl<'a> CheckerState<'a> {
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                // Phase 2: Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<DefId> {
+                    self.resolve_type_symbol_for_lowering(node_idx)
+                        .and_then(|sym_id| self.ctx.get_existing_def_id(SymbolId(sym_id)))
+                };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                let lowering = crate::solver::TypeLowering::with_resolvers(
+                let lowering = crate::solver::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
                     &type_resolver,
+                    &def_id_resolver,
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
                 let type_id = lowering.lower_type(idx);
-                // Phase 1: Post-process to convert TypeKey::Ref to TypeKey::Lazy(DefId)
+                // Phase 2: Still post-process to create DefIds for types that don't have them yet
                 return self.ctx.maybe_create_lazy_from_resolved(type_id);
             }
 
