@@ -572,15 +572,20 @@ export class TszServerClient {
       });
 
       // Handle stderr for ready signal and logging
+      const traceMode = !!process.env.TSZ_TRACE;
       this.proc.stderr?.on('data', (data: Buffer) => {
         const text = data.toString();
         if (text.includes('tsz-server ready')) {
           this.ready = true;
           resolve();
         }
+        // In trace mode, forward all stderr output for debugging
+        if (traceMode) {
+          process.stderr.write(text);
+        }
         // Suppress stack overflow and debug output - these are handled via process exit
         // Only log genuine panics that aren't stack overflows
-        if (text.includes('panic') && !text.includes('stack overflow')) {
+        else if (text.includes('panic') && !text.includes('stack overflow')) {
           process.stderr.write(`[tsz-server] ${text}`);
         }
       });
@@ -1771,7 +1776,7 @@ export async function runServerConformanceTests(config: ServerRunnerConfig = {})
     }
 
     log('\n' + '═'.repeat(60), colors.dim);
-    log(`Tip: Use --error-code=TSXXXX to investigate specific errors, --filter=PATTERN --print-test for details`, colors.dim);
+    log(`Tip: --error-code=TSXXXX to filter by error, --filter=PATTERN --print-test for details, --trace to dig deep (add tracing::debug! in Rust)`, colors.dim);
 
     // Dump per-test results if requested
     if (dumpResults) {

@@ -81,6 +81,7 @@ CFG_PRINT_TEST=false
 CFG_DUMP_RESULTS=""
 CFG_PASS_RATE_ONLY=false
 CFG_DRY_RUN=false
+CFG_TRACE=""
 
 # =============================================================================
 # Logging & Utilities
@@ -133,17 +134,31 @@ build_wasm() {
 }
 
 build_native() {
-    log_step "Building native binary (release)..."
-    require_cmd cargo
-    (cd "$ROOT_DIR" && cargo build --release --bin tsz)
-    log_success "Native binary built"
+    local profile="${1:-release}"
+    if [[ "$profile" == "debug" ]]; then
+        log_step "Building native binary (debug, for tracing)..."
+        require_cmd cargo
+        (cd "$ROOT_DIR" && cargo build --bin tsz)
+    else
+        log_step "Building native binary (release)..."
+        require_cmd cargo
+        (cd "$ROOT_DIR" && cargo build --release --bin tsz)
+    fi
+    log_success "Native binary built ($profile)"
 }
 
 build_server() {
-    log_step "Building tsz-server (release)..."
-    require_cmd cargo
-    (cd "$ROOT_DIR" && cargo build --release --bin tsz-server)
-    log_success "tsz-server built"
+    local profile="${1:-release}"
+    if [[ "$profile" == "debug" ]]; then
+        log_step "Building tsz-server (debug, for tracing)..."
+        require_cmd cargo
+        (cd "$ROOT_DIR" && cargo build --bin tsz-server)
+    else
+        log_step "Building tsz-server (release)..."
+        require_cmd cargo
+        (cd "$ROOT_DIR" && cargo build --release --bin tsz-server)
+    fi
+    log_success "tsz-server built ($profile)"
 }
 
 build_ts_harness() {
@@ -199,6 +214,9 @@ print_banner() {
     fi
     if [[ -n "$CFG_ERROR_CODE" ]]; then
         echo -e "${CYAN}║${RESET}  Error Code: $(printf '%-48s' "TS$CFG_ERROR_CODE")${CYAN}║${RESET}"
+    fi
+    if [[ -n "$CFG_TRACE" ]]; then
+        echo -e "${CYAN}║${RESET}  ${YELLOW}Trace:      $(printf '%-48s' "RUST_LOG=$CFG_TRACE")${RESET}${CYAN}║${RESET}"
     fi
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
@@ -261,6 +279,11 @@ OPTIONS:
     --pass-rate-only    Output only pass rate percentage (for CI/scripts)
     -q, --quiet         Minimal output
     --dump-results=FILE Dump full results to JSON file
+
+  Debugging:
+    --trace[=LEVEL]     Enable deep tracing for investigation (forces max=1)
+                        Levels: debug (default), trace (most verbose)
+                        Best used with --filter to select a single test
 
   Other:
     -h, --help          Show this help
@@ -343,9 +366,15 @@ build_runner_args() {
 }
 
 run_server_mode() {
-    [[ "$CFG_PRINT_TEST" != "true" ]] && print_banner "Server (persistent)"
+    local mode_desc="Server (persistent)"
+    local build_profile="release"
+    if [[ -n "$CFG_TRACE" ]]; then
+        mode_desc="Server (TRACE: $CFG_TRACE)"
+        build_profile="debug"
+    fi
+    [[ "$CFG_PRINT_TEST" != "true" ]] && print_banner "$mode_desc"
 
-    build_server
+    build_server "$build_profile"
     build_ts_harness
     build_runner
 
@@ -354,8 +383,16 @@ run_server_mode() {
     cd "$SCRIPT_DIR"
     local target_dir
     target_dir=$(get_target_dir)
-    export TSZ_SERVER_BINARY="$target_dir/release/tsz-server"
+    export TSZ_SERVER_BINARY="$target_dir/$build_profile/tsz-server"
     export TSZ_LIB_DIR="$ROOT_DIR/TypeScript/src/lib"
+
+    # Enable RUST_LOG for deep tracing when --trace is specified
+    if [[ -n "$CFG_TRACE" ]]; then
+        export RUST_LOG="$CFG_TRACE"
+        export TSZ_TRACE=1
+        log_info "Tracing enabled: RUST_LOG=$CFG_TRACE (debug build)"
+        echo ""
+    fi
 
     local args
     args="$(build_runner_args) --server"
@@ -368,14 +405,19 @@ run_server_mode() {
 run_wasm_native_mode() {
     local use_wasm="$1"
     local mode_desc
+    local build_profile="release"
     if [[ "$use_wasm" == "true" ]]; then mode_desc="WASM"; else mode_desc="Native"; fi
+    if [[ -n "$CFG_TRACE" ]]; then
+        mode_desc="$mode_desc (TRACE: $CFG_TRACE)"
+        build_profile="debug"
+    fi
 
     print_banner "$mode_desc"
 
     if [[ "$use_wasm" == "true" ]]; then
         build_wasm
     else
-        build_native
+        build_native "$build_profile"
     fi
     build_ts_harness
     build_runner
@@ -385,7 +427,15 @@ run_wasm_native_mode() {
     cd "$SCRIPT_DIR"
 
     if [[ "$use_wasm" == "false" ]]; then
-        export TSZ_BINARY="$(get_target_dir)/release/tsz"
+        export TSZ_BINARY="$(get_target_dir)/$build_profile/tsz"
+    fi
+
+    # Enable RUST_LOG for deep tracing when --trace is specified
+    if [[ -n "$CFG_TRACE" ]]; then
+        export RUST_LOG="$CFG_TRACE"
+        export TSZ_TRACE=1
+        log_info "Tracing enabled: RUST_LOG=$CFG_TRACE (debug build)"
+        echo ""
     fi
 
     local runner_args
@@ -440,6 +490,9 @@ parse_args() {
 
             --dry-run)         CFG_DRY_RUN=true ;;
 
+            --trace)           CFG_TRACE="debug" ;;
+            --trace=*)         CFG_TRACE="${1#*=}" ;;
+
             # Accept and ignore legacy flags
             --docker|--no-docker|--no-sandbox) ;;
 
@@ -454,6 +507,17 @@ parse_args() {
         CFG_WORKERS=$(detect_cores)
         if (( CFG_WORKERS > 8 )) && (( CFG_MAX < 1000 )); then
             CFG_WORKERS=8
+        fi
+    fi
+
+    # Handle --trace mode: force single test execution for deep investigation
+    if [[ -n "$CFG_TRACE" ]]; then
+        CFG_MAX=1
+        CFG_WORKERS=1
+        CFG_VERBOSE=true
+        if [[ -z "$CFG_FILTER" ]]; then
+            log_warning "Using --trace without --filter will trace the first test only"
+            log_info "Tip: Use --filter=<pattern> to select a specific test"
         fi
     fi
 
@@ -481,6 +545,7 @@ main() {
         echo "  Verbose:    $CFG_VERBOSE"
         [[ -n "$CFG_FILTER" ]] && echo "  Filter:     $CFG_FILTER"
         [[ -n "$CFG_ERROR_CODE" ]] && echo "  Error Code: TS$CFG_ERROR_CODE"
+        [[ -n "$CFG_TRACE" ]] && echo "  Trace:      RUST_LOG=$CFG_TRACE"
         exit 0
     fi
 
