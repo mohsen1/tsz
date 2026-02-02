@@ -18,6 +18,13 @@ use crate::solver::def::DefId;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
 use crate::solver::utils;
+use crate::solver::visitor::{
+    application_id, array_element_type, callable_shape_id, conditional_type_id, function_shape_id,
+    index_access_parts, intersection_list_id, intrinsic_kind, is_this_type, keyof_inner_type,
+    lazy_def_id, literal_value, mapped_type_id, object_shape_id, object_with_index_shape_id,
+    readonly_inner_type, ref_symbol, template_literal_id, tuple_list_id, type_param_info,
+    type_query_symbol, union_list_id, unique_symbol_ref,
+};
 use std::collections::HashSet;
 
 #[cfg(test)]
@@ -484,22 +491,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     pub(crate) fn resolve_ref_type(&self, type_id: TypeId) -> TypeId {
-        match self.interner.lookup(type_id) {
-            Some(TypeKey::Ref(symbol)) => self
-                .resolver
+        if let Some(symbol) = ref_symbol(self.interner, type_id) {
+            self.resolver
                 .resolve_ref(symbol, self.interner)
-                .unwrap_or(type_id),
-            _ => type_id,
+                .unwrap_or(type_id)
+        } else {
+            type_id
         }
     }
 
     pub(crate) fn resolve_lazy_type(&self, type_id: TypeId) -> TypeId {
-        match self.interner.lookup(type_id) {
-            Some(TypeKey::Lazy(def_id)) => self
-                .resolver
+        if let Some(def_id) = lazy_def_id(self.interner, type_id) {
+            self.resolver
                 .resolve_lazy(def_id, self.interner)
-                .unwrap_or(type_id),
-            _ => type_id,
+                .unwrap_or(type_id)
+        } else {
+            type_id
         }
     }
 
@@ -716,610 +723,569 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // Look up the type keys
-        let source_key = match self.interner.lookup(source) {
-            Some(k) => k,
-            None => return SubtypeResult::False,
-        };
-        let target_key = match self.interner.lookup(target) {
-            Some(k) => k,
-            None => return SubtypeResult::False,
-        };
-
         // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
         // Removed redundant check here to avoid double-checking which caused false positives.
 
-        if let Some(shape) = self.apparent_primitive_shape_for_key(&source_key) {
-            match &target_key {
-                TypeKey::Object(t_shape_id) => {
-                    let t_shape = self.interner.object_shape(*t_shape_id);
-                    return self.check_object_subtype(&shape.properties, None, &t_shape.properties);
-                }
-                TypeKey::ObjectWithIndex(t_shape_id) => {
-                    let t_shape = self.interner.object_shape(*t_shape_id);
-                    return self.check_object_with_index_subtype(&shape, None, &t_shape);
-                }
-                _ => {}
+        if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
+            if let Some(t_shape_id) = object_shape_id(self.interner, target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.check_object_subtype(&shape.properties, None, &t_shape.properties);
+            }
+            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.check_object_with_index_subtype(&shape, None, &t_shape);
             }
         }
 
-        if let TypeKey::Conditional(source_cond_id) = &source_key {
-            if let TypeKey::Conditional(target_cond_id) = &target_key {
-                let source_cond = self.interner.conditional_type(*source_cond_id);
-                let target_cond = self.interner.conditional_type(*target_cond_id);
+        if let Some(source_cond_id) = conditional_type_id(self.interner, source) {
+            if let Some(target_cond_id) = conditional_type_id(self.interner, target) {
+                let source_cond = self.interner.conditional_type(source_cond_id);
+                let target_cond = self.interner.conditional_type(target_cond_id);
                 return self.check_conditional_subtype(source_cond.as_ref(), target_cond.as_ref());
             }
 
-            let source_cond = self.interner.conditional_type(*source_cond_id);
+            let source_cond = self.interner.conditional_type(source_cond_id);
             return self.conditional_branches_subtype(source_cond.as_ref(), target);
         }
 
-        if let TypeKey::Conditional(target_cond_id) = &target_key {
-            let target_cond = self.interner.conditional_type(*target_cond_id);
+        if let Some(target_cond_id) = conditional_type_id(self.interner, target) {
+            let target_cond = self.interner.conditional_type(target_cond_id);
             return self.subtype_of_conditional_target(source, target_cond.as_ref());
         }
 
-        // =========================================================================
-        // Structural checks
-        // =========================================================================
-
-        match (&source_key, &target_key) {
-            // =========================================================================
-            // Union and intersection types (must come before intrinsic catch-all!)
-            // =========================================================================
-
-            // Union source: all members must be subtypes of target
-            (TypeKey::Union(members), _) => {
-                // Check if ALL union members are subtypes of the target
-                let member_list = self.interner.type_list(*members);
-                for &member in member_list.iter() {
-                    if !self.check_subtype(member, target).is_true() {
-                        return SubtypeResult::False;
-                    }
+        if let Some(members) = union_list_id(self.interner, source) {
+            let member_list = self.interner.type_list(members);
+            for &member in member_list.iter() {
+                if !self.check_subtype(member, target).is_true() {
+                    return SubtypeResult::False;
                 }
-                SubtypeResult::True
+            }
+            return SubtypeResult::True;
+        }
+
+        if let Some(members) = union_list_id(self.interner, target) {
+            if keyof_inner_type(self.interner, source).is_some()
+                && self.is_keyof_subtype_of_string_number_symbol_union(members)
+            {
+                return SubtypeResult::True;
             }
 
-            // Union target: source must be subtype of at least one member
-            (_, TypeKey::Union(members)) => {
-                // Special case: deferred keyof (keyof T where T is a type parameter)
-                // is always a subtype of string | number | symbol
-                if let TypeKey::KeyOf(_) = source_key {
-                    if self.is_keyof_subtype_of_string_number_symbol_union(*members) {
-                        return SubtypeResult::True;
-                    }
+            let member_list = self.interner.type_list(members);
+            for &member in member_list.iter() {
+                if self.check_subtype(source, member).is_true() {
+                    return SubtypeResult::True;
                 }
+            }
+            return SubtypeResult::False;
+        }
 
-                // Check if source is a subtype of ANY union member
-                let member_list = self.interner.type_list(*members);
-                for &member in member_list.iter() {
-                    if self.check_subtype(source, member).is_true() {
-                        return SubtypeResult::True;
-                    }
+        if let Some(members) = intersection_list_id(self.interner, source) {
+            let member_list = self.interner.type_list(members);
+
+            for &member in member_list.iter() {
+                if self.check_subtype(member, target).is_true() {
+                    return SubtypeResult::True;
                 }
-                SubtypeResult::False
             }
 
-            // Intersection source: source is subtype if any constituent is,
-            // OR if the merged object properties satisfy the target.
-            (TypeKey::Intersection(members), _) => {
-                let member_list = self.interner.type_list(*members);
+            if object_shape_id(self.interner, target).is_some()
+                || object_with_index_shape_id(self.interner, target).is_some()
+            {
+                let mut merged_properties: Vec<PropertyInfo> = Vec::new();
+                let mut merged_string_index: Option<IndexSignature> = None;
+                let mut merged_number_index: Option<IndexSignature> = None;
+                let mut has_object_members = false;
 
-                // First: check if ANY single intersection member is a subtype of the target
                 for &member in member_list.iter() {
-                    if self.check_subtype(member, target).is_true() {
-                        return SubtypeResult::True;
-                    }
-                }
-
-                // Second: if the target is an object type, try merging all object-typed
-                // intersection members into a single object and check that.
-                // This handles: { a: string } & { b: number } <: { a: string, b: number }
-                let is_object_target = matches!(
-                    &target_key,
-                    TypeKey::Object(_) | TypeKey::ObjectWithIndex(_)
-                );
-                if is_object_target {
-                    let mut merged_properties: Vec<PropertyInfo> = Vec::new();
-                    let mut merged_string_index: Option<IndexSignature> = None;
-                    let mut merged_number_index: Option<IndexSignature> = None;
-                    let mut has_object_members = false;
-                    let mut non_object_members: Vec<TypeId> = Vec::new();
-
-                    for &member in member_list.iter() {
-                        match self.interner.lookup(member) {
-                            Some(TypeKey::Object(shape_id)) => {
-                                has_object_members = true;
-                                let shape = self.interner.object_shape(shape_id);
-                                for prop in &shape.properties {
-                                    // Later properties override earlier ones (last-write-wins)
-                                    if let Some(existing) =
-                                        merged_properties.iter_mut().find(|p| p.name == prop.name)
-                                    {
-                                        *existing = prop.clone();
-                                    } else {
-                                        merged_properties.push(prop.clone());
-                                    }
-                                }
-                            }
-                            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                                has_object_members = true;
-                                let shape = self.interner.object_shape(shape_id);
-                                for prop in &shape.properties {
-                                    if let Some(existing) =
-                                        merged_properties.iter_mut().find(|p| p.name == prop.name)
-                                    {
-                                        *existing = prop.clone();
-                                    } else {
-                                        merged_properties.push(prop.clone());
-                                    }
-                                }
-                                if let Some(ref idx) = shape.string_index {
-                                    merged_string_index = Some(idx.clone());
-                                }
-                                if let Some(ref idx) = shape.number_index {
-                                    merged_number_index = Some(idx.clone());
-                                }
-                            }
-                            _ => {
-                                non_object_members.push(member);
-                            }
-                        }
-                    }
-
-                    if has_object_members && !merged_properties.is_empty() {
-                        let merged_type =
-                            if merged_string_index.is_some() || merged_number_index.is_some() {
-                                self.interner.object_with_index(ObjectShape {
-                                    properties: merged_properties,
-                                    string_index: merged_string_index,
-                                    number_index: merged_number_index,
-                                })
+                    if let Some(shape_id) = object_shape_id(self.interner, member) {
+                        has_object_members = true;
+                        let shape = self.interner.object_shape(shape_id);
+                        for prop in &shape.properties {
+                            if let Some(existing) =
+                                merged_properties.iter_mut().find(|p| p.name == prop.name)
+                            {
+                                *existing = prop.clone();
                             } else {
-                                self.interner.object(merged_properties)
-                            };
-                        if self.check_subtype(merged_type, target).is_true() {
-                            return SubtypeResult::True;
+                                merged_properties.push(prop.clone());
+                            }
+                        }
+                        continue;
+                    }
+
+                    if let Some(shape_id) = object_with_index_shape_id(self.interner, member) {
+                        has_object_members = true;
+                        let shape = self.interner.object_shape(shape_id);
+                        for prop in &shape.properties {
+                            if let Some(existing) =
+                                merged_properties.iter_mut().find(|p| p.name == prop.name)
+                            {
+                                *existing = prop.clone();
+                            } else {
+                                merged_properties.push(prop.clone());
+                            }
+                        }
+                        if let Some(ref idx) = shape.string_index {
+                            merged_string_index = Some(idx.clone());
+                        }
+                        if let Some(ref idx) = shape.number_index {
+                            merged_number_index = Some(idx.clone());
                         }
                     }
                 }
 
-                SubtypeResult::False
+                if has_object_members && !merged_properties.is_empty() {
+                    let merged_type =
+                        if merged_string_index.is_some() || merged_number_index.is_some() {
+                            self.interner.object_with_index(ObjectShape {
+                                properties: merged_properties,
+                                string_index: merged_string_index,
+                                number_index: merged_number_index,
+                            })
+                        } else {
+                            self.interner.object(merged_properties)
+                        };
+                    if self.check_subtype(merged_type, target).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
             }
 
-            // Intersection target: all members must be satisfied
-            (_, TypeKey::Intersection(members)) => {
-                // Check if source is a subtype of ALL intersection members
-                let member_list = self.interner.type_list(*members);
-                for &member in member_list.iter() {
-                    if !self.check_subtype(source, member).is_true() {
+            return SubtypeResult::False;
+        }
+
+        if let Some(members) = intersection_list_id(self.interner, target) {
+            let member_list = self.interner.type_list(members);
+            for &member in member_list.iter() {
+                if !self.check_subtype(source, member).is_true() {
+                    return SubtypeResult::False;
+                }
+            }
+            return SubtypeResult::True;
+        }
+
+        if let (Some(s_kind), Some(t_kind)) = (
+            intrinsic_kind(self.interner, source),
+            intrinsic_kind(self.interner, target),
+        ) {
+            return self.check_intrinsic_subtype(s_kind, t_kind);
+        }
+
+        if let Some(s_kind) = intrinsic_kind(self.interner, source) {
+            return if self.is_boxed_primitive_subtype(s_kind, target) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if let (Some(lit), Some(t_kind)) = (
+            literal_value(self.interner, source),
+            intrinsic_kind(self.interner, target),
+        ) {
+            return self.check_literal_to_intrinsic(&lit, t_kind);
+        }
+
+        if let (Some(s_lit), Some(t_lit)) = (
+            literal_value(self.interner, source),
+            literal_value(self.interner, target),
+        ) {
+            return if s_lit == t_lit {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if let (Some(LiteralValue::String(s_lit)), Some(t_spans)) = (
+            literal_value(self.interner, source),
+            template_literal_id(self.interner, target),
+        ) {
+            return self.check_literal_matches_template_literal(s_lit, t_spans);
+        }
+
+        if let Some(s_info) = type_param_info(self.interner, source) {
+            return self.check_type_parameter_subtype(&s_info, target);
+        }
+
+        if let Some(t_info) = type_param_info(self.interner, target) {
+            if let Some(constraint) = t_info.constraint {
+                return self.check_subtype(source, constraint);
+            }
+            return SubtypeResult::False;
+        }
+
+        if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Object) {
+            return if self.is_object_keyword_type(source) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Function) {
+            return if self.is_callable_type(source) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if let (Some(s_elem), Some(t_elem)) = (
+            array_element_type(self.interner, source),
+            array_element_type(self.interner, target),
+        ) {
+            return self.check_subtype(s_elem, t_elem);
+        }
+
+        if let (Some(s_elems), Some(t_elems)) = (
+            tuple_list_id(self.interner, source),
+            tuple_list_id(self.interner, target),
+        ) {
+            let s_elems = self.interner.tuple_list(s_elems);
+            let t_elems = self.interner.tuple_list(t_elems);
+            return self.check_tuple_subtype(&s_elems, &t_elems);
+        }
+
+        if let (Some(s_elems), Some(t_elem)) = (
+            tuple_list_id(self.interner, source),
+            array_element_type(self.interner, target),
+        ) {
+            return self.check_tuple_to_array_subtype(s_elems, t_elem);
+        }
+
+        if let (Some(s_elem), Some(t_elems)) = (
+            array_element_type(self.interner, source),
+            tuple_list_id(self.interner, target),
+        ) {
+            let t_elems = self.interner.tuple_list(t_elems);
+            return self.check_array_to_tuple_subtype(s_elem, &t_elems);
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_shape_id(self.interner, source),
+            object_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.check_object_subtype(
+                &s_shape.properties,
+                Some(s_shape_id),
+                &t_shape.properties,
+            );
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, source),
+            object_with_index_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.check_object_with_index_subtype(&s_shape, Some(s_shape_id), &t_shape);
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, source),
+            object_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.check_object_with_index_to_object(&s_shape, s_shape_id, &t_shape.properties);
+        }
+
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_shape_id(self.interner, source),
+            object_with_index_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.check_object_to_indexed(&s_shape.properties, Some(s_shape_id), &t_shape);
+        }
+
+        if let (Some(s_fn_id), Some(t_fn_id)) = (
+            function_shape_id(self.interner, source),
+            function_shape_id(self.interner, target),
+        ) {
+            let s_fn = self.interner.function_shape(s_fn_id);
+            let t_fn = self.interner.function_shape(t_fn_id);
+            return self.check_function_subtype(&s_fn, &t_fn);
+        }
+
+        if let (Some(s_callable_id), Some(t_callable_id)) = (
+            callable_shape_id(self.interner, source),
+            callable_shape_id(self.interner, target),
+        ) {
+            let s_callable = self.interner.callable_shape(s_callable_id);
+            let t_callable = self.interner.callable_shape(t_callable_id);
+            return self.check_callable_subtype(&s_callable, &t_callable);
+        }
+
+        if let (Some(s_fn_id), Some(t_callable_id)) = (
+            function_shape_id(self.interner, source),
+            callable_shape_id(self.interner, target),
+        ) {
+            return self.check_function_to_callable_subtype(s_fn_id, t_callable_id);
+        }
+
+        if let (Some(s_callable_id), Some(t_fn_id)) = (
+            callable_shape_id(self.interner, source),
+            function_shape_id(self.interner, target),
+        ) {
+            return self.check_callable_to_function_subtype(s_callable_id, t_fn_id);
+        }
+
+        if let (Some(s_app_id), Some(t_app_id)) = (
+            application_id(self.interner, source),
+            application_id(self.interner, target),
+        ) {
+            return self.check_application_to_application_subtype(s_app_id, t_app_id);
+        }
+
+        if let Some(app_id) = application_id(self.interner, source) {
+            return self.check_application_expansion_target(source, target, app_id);
+        }
+
+        if let Some(app_id) = application_id(self.interner, target) {
+            return self.check_source_to_application_expansion(source, target, app_id);
+        }
+
+        if let Some(mapped_id) = mapped_type_id(self.interner, source) {
+            return self.check_mapped_expansion_target(source, target, mapped_id);
+        }
+
+        if let Some(mapped_id) = mapped_type_id(self.interner, target) {
+            return self.check_source_to_mapped_expansion(source, target, mapped_id);
+        }
+
+        if let (Some(s_sym), Some(t_sym)) = (
+            ref_symbol(self.interner, source),
+            ref_symbol(self.interner, target),
+        ) {
+            return self.check_ref_ref_subtype(source, target, s_sym, t_sym);
+        }
+
+        if let Some(s_sym) = ref_symbol(self.interner, source) {
+            return self.check_ref_subtype(source, target, s_sym);
+        }
+
+        if let Some(t_sym) = ref_symbol(self.interner, target) {
+            return self.check_to_ref_subtype(source, target, t_sym);
+        }
+
+        if let (Some(s_def), Some(t_def)) = (
+            lazy_def_id(self.interner, source),
+            lazy_def_id(self.interner, target),
+        ) {
+            if s_def == t_def {
+                return SubtypeResult::True;
+            }
+            let s_resolved = self.resolve_lazy_type(source);
+            let t_resolved = self.resolve_lazy_type(target);
+            return if s_resolved != source || t_resolved != target {
+                self.check_subtype(s_resolved, t_resolved)
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if lazy_def_id(self.interner, source).is_some() {
+            let resolved = self.resolve_lazy_type(source);
+            return if resolved != source {
+                self.check_subtype(resolved, target)
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if lazy_def_id(self.interner, target).is_some() {
+            let resolved = self.resolve_lazy_type(target);
+            return if resolved != target {
+                self.check_subtype(source, resolved)
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if let (Some((s_obj, s_idx)), Some((t_obj, t_idx))) = (
+            index_access_parts(self.interner, source),
+            index_access_parts(self.interner, target),
+        ) {
+            return if self.check_subtype(s_obj, t_obj).is_true()
+                && self.check_subtype(s_idx, t_idx).is_true()
+            {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if let (Some(s_sym), Some(t_sym)) = (
+            type_query_symbol(self.interner, source),
+            type_query_symbol(self.interner, target),
+        ) {
+            return self.check_typequery_typequery_subtype(source, target, s_sym, t_sym);
+        }
+
+        if let Some(s_sym) = type_query_symbol(self.interner, source) {
+            return self.check_typequery_subtype(source, target, s_sym);
+        }
+
+        if let Some(t_sym) = type_query_symbol(self.interner, target) {
+            return self.check_to_typequery_subtype(source, target, t_sym);
+        }
+
+        if let (Some(s_inner), Some(t_inner)) = (
+            keyof_inner_type(self.interner, source),
+            keyof_inner_type(self.interner, target),
+        ) {
+            return self.check_subtype(t_inner, s_inner);
+        }
+
+        if let (Some(s_inner), Some(t_inner)) = (
+            readonly_inner_type(self.interner, source),
+            readonly_inner_type(self.interner, target),
+        ) {
+            return self.check_subtype(s_inner, t_inner);
+        }
+
+        if readonly_inner_type(self.interner, source).is_some()
+            && (array_element_type(self.interner, target).is_some()
+                || tuple_list_id(self.interner, target).is_some())
+        {
+            return SubtypeResult::False;
+        }
+
+        if let Some(t_inner) = readonly_inner_type(self.interner, target) {
+            if array_element_type(self.interner, source).is_some()
+                || tuple_list_id(self.interner, source).is_some()
+            {
+                return self.check_subtype(source, t_inner);
+            }
+        }
+
+        if let (Some(s_sym), Some(t_sym)) = (
+            unique_symbol_ref(self.interner, source),
+            unique_symbol_ref(self.interner, target),
+        ) {
+            return if s_sym == t_sym {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if unique_symbol_ref(self.interner, source).is_some()
+            && intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Symbol)
+        {
+            return SubtypeResult::True;
+        }
+
+        if is_this_type(self.interner, source) && is_this_type(self.interner, target) {
+            return SubtypeResult::True;
+        }
+
+        if let (Some(s_spans), Some(t_spans)) = (
+            template_literal_id(self.interner, source),
+            template_literal_id(self.interner, target),
+        ) {
+            if s_spans == t_spans {
+                return SubtypeResult::True;
+            }
+            let s_list = self.interner.template_list(s_spans);
+            let t_list = self.interner.template_list(t_spans);
+            if s_list.len() != t_list.len() {
+                return SubtypeResult::False;
+            }
+            for (s_span, t_span) in s_list.iter().zip(t_list.iter()) {
+                match (s_span, t_span) {
+                    (TemplateSpan::Text(s_text), TemplateSpan::Text(t_text)) => {
+                        if s_text != t_text {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    (TemplateSpan::Type(s_type), TemplateSpan::Type(t_type)) => {
+                        if !self.check_subtype(*s_type, *t_type).is_true() {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    _ => {
                         return SubtypeResult::False;
                     }
                 }
-                SubtypeResult::True
             }
+            return SubtypeResult::True;
+        }
 
-            // =========================================================================
-            // Intrinsic types
-            // =========================================================================
+        if template_literal_id(self.interner, source).is_some()
+            && intrinsic_kind(self.interner, target) == Some(IntrinsicKind::String)
+        {
+            return SubtypeResult::True;
+        }
 
-            // Intrinsic to intrinsic
-            (TypeKey::Intrinsic(s), TypeKey::Intrinsic(t)) => self.check_intrinsic_subtype(*s, *t),
-
-            // Rule #33: Primitive to boxed interface (e.g., number to Number)
-            // Primitives are subtypes of their boxed wrapper interfaces
-            (TypeKey::Intrinsic(s_kind), _) => {
-                if self.is_boxed_primitive_subtype(*s_kind, target) {
+        let source_is_callable = function_shape_id(self.interner, source).is_some()
+            || callable_shape_id(self.interner, source).is_some();
+        if source_is_callable {
+            if let Some(t_shape_id) = object_shape_id(self.interner, target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return if t_shape.properties.is_empty() {
                     SubtypeResult::True
                 } else {
                     SubtypeResult::False
-                }
+                };
             }
-
-            // =========================================================================
-            // Literal types
-            // =========================================================================
-
-            // Literal to intrinsic
-            (TypeKey::Literal(lit), TypeKey::Intrinsic(t)) => {
-                self.check_literal_to_intrinsic(lit, *t)
-            }
-
-            // Literal to literal
-            (TypeKey::Literal(s), TypeKey::Literal(t)) => {
-                if s == t {
+            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return if t_shape.properties.is_empty() {
                     SubtypeResult::True
                 } else {
                     SubtypeResult::False
-                }
+                };
             }
+        }
 
-            // Literal string to template literal - check if literal matches pattern
-            (TypeKey::Literal(LiteralValue::String(s_lit)), TypeKey::TemplateLiteral(t_spans)) => {
-                self.check_literal_matches_template_literal(*s_lit, *t_spans)
-            }
-
-            (TypeKey::TypeParameter(s_info), target_key) | (TypeKey::Infer(s_info), target_key) => {
-                self.check_type_parameter_subtype(s_info, target, target_key)
-            }
-
-            // Rule #31: Base Constraint Assignability - concrete type to TypeParameter
-            // source <: T where T is a type parameter
-            // TypeScript allows this if source is a subtype of T's base constraint
-            (_, TypeKey::TypeParameter(t_info)) | (_, TypeKey::Infer(t_info)) => {
-                if let Some(constraint) = t_info.constraint {
-                    // Source must be a subtype of T's constraint
-                    self.check_subtype(source, constraint)
-                } else {
-                    // Unconstrained type parameter: any concrete type can't be assigned
-                    // to an unconstrained type parameter (T could be anything)
-                    SubtypeResult::False
-                }
-            }
-
-            // object keyword accepts any non-primitive type
-            (_, TypeKey::Intrinsic(IntrinsicKind::Object)) => {
-                if self.is_object_keyword_type(source) {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                }
-            }
-
-            // Rule #29: The Global Function type - Intrinsic(Function) as untyped callable supertype
-            // Any callable type (function or callable) is a subtype of Function
-            (_, TypeKey::Intrinsic(IntrinsicKind::Function)) => {
-                if self.is_callable_type(source) {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                }
-            }
-
-            // Array to array
-            (TypeKey::Array(s_elem), TypeKey::Array(t_elem)) => {
-                // Arrays are covariant in TypeScript
-                self.check_subtype(*s_elem, *t_elem)
-            }
-
-            // Tuple to tuple
-            (TypeKey::Tuple(s_elems), TypeKey::Tuple(t_elems)) => {
-                let s_elems = self.interner.tuple_list(*s_elems);
-                let t_elems = self.interner.tuple_list(*t_elems);
-                self.check_tuple_subtype(&s_elems, &t_elems)
-            }
-
-            // Tuple to array
-            (TypeKey::Tuple(elems), TypeKey::Array(t_elem)) => {
-                self.check_tuple_to_array_subtype(*elems, *t_elem)
-            }
-
-            // Array to tuple (variadic tuples with no required fixed elements only)
-            (TypeKey::Array(s_elem), TypeKey::Tuple(t_elems)) => {
-                let t_elems = self.interner.tuple_list(*t_elems);
-                self.check_array_to_tuple_subtype(*s_elem, &t_elems)
-            }
-
-            // Object to object
-            (TypeKey::Object(s_shape_id), TypeKey::Object(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.check_object_subtype(
-                    &s_shape.properties,
-                    Some(*s_shape_id),
-                    &t_shape.properties,
-                )
-            }
-
-            // Object with index to object with index
-            (TypeKey::ObjectWithIndex(s_shape_id), TypeKey::ObjectWithIndex(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.check_object_with_index_subtype(&s_shape, Some(*s_shape_id), &t_shape)
-            }
-
-            // Object with index to simple object (index signatures can satisfy missing properties)
-            (TypeKey::ObjectWithIndex(s_shape_id), TypeKey::Object(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.check_object_with_index_to_object(&s_shape, *s_shape_id, &t_shape.properties)
-            }
-
-            // Simple object to object with index
-            (TypeKey::Object(s_shape_id), TypeKey::ObjectWithIndex(t_shape_id)) => {
-                // All source properties must satisfy target's index signature
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.check_object_to_indexed(&s_shape.properties, Some(*s_shape_id), &t_shape)
-            }
-
-            // Function to function
-            (TypeKey::Function(s_fn_id), TypeKey::Function(t_fn_id)) => {
-                let s_fn = self.interner.function_shape(*s_fn_id);
-                let t_fn = self.interner.function_shape(*t_fn_id);
-                self.check_function_subtype(&s_fn, &t_fn)
-            }
-
-            // Callable to callable (overloaded signatures)
-            (TypeKey::Callable(s_callable_id), TypeKey::Callable(t_callable_id)) => {
-                let s_callable = self.interner.callable_shape(*s_callable_id);
-                let t_callable = self.interner.callable_shape(*t_callable_id);
-                self.check_callable_subtype(&s_callable, &t_callable)
-            }
-
-            // Function to callable (single signature to overloaded)
-            (TypeKey::Function(s_fn_id), TypeKey::Callable(t_callable_id)) => {
-                self.check_function_to_callable_subtype(*s_fn_id, *t_callable_id)
-            }
-
-            // Callable to function (overloaded to single)
-            (TypeKey::Callable(s_callable_id), TypeKey::Function(t_fn_id)) => {
-                self.check_callable_to_function_subtype(*s_callable_id, *t_fn_id)
-            }
-
-            // Generic application to application
-            (TypeKey::Application(s_app_id), TypeKey::Application(t_app_id)) => {
-                self.check_application_to_application_subtype(*s_app_id, *t_app_id)
-            }
-
-            // Source is Application, target is structural - try to expand and compare
-            (TypeKey::Application(app_id), _) => {
-                self.check_application_expansion_target(source, target, *app_id)
-            }
-
-            // Target is Application, source is structural - try to expand and compare
-            (_, TypeKey::Application(app_id)) => {
-                self.check_source_to_application_expansion(source, target, *app_id)
-            }
-
-            // Source is Mapped, target is structural - try to expand and compare
-            (TypeKey::Mapped(mapped_id), _) => {
-                self.check_mapped_expansion_target(source, target, *mapped_id)
-            }
-
-            // Target is Mapped, source is structural - try to expand and compare
-            (_, TypeKey::Mapped(mapped_id)) => {
-                self.check_source_to_mapped_expansion(source, target, *mapped_id)
-            }
-
-            // Reference types - try to resolve and compare structurally
-            (TypeKey::Ref(s_sym), TypeKey::Ref(t_sym)) => {
-                self.check_ref_ref_subtype(source, target, s_sym, t_sym)
-            }
-
-            // Source is Ref, target is structural - resolve and check
-            (TypeKey::Ref(s_sym), _) => self.check_ref_subtype(source, target, s_sym),
-
-            // Source is structural, target is Ref - resolve and check
-            (_, TypeKey::Ref(t_sym)) => self.check_to_ref_subtype(source, target, t_sym),
-
-            // Lazy(DefId) types - same DefId means same type
-            (TypeKey::Lazy(s_def), TypeKey::Lazy(t_def)) => {
-                if s_def == t_def {
-                    SubtypeResult::True
-                } else {
-                    // Different DefIds - try to resolve both and compare structurally
-                    let s_resolved = self.resolve_lazy_type(source);
-                    let t_resolved = self.resolve_lazy_type(target);
-                    if s_resolved != source || t_resolved != target {
-                        self.check_subtype(s_resolved, t_resolved)
-                    } else {
-                        SubtypeResult::False
-                    }
-                }
-            }
-
-            // Source is Lazy, target is structural - resolve and check
-            (TypeKey::Lazy(_), _) => {
-                let resolved = self.resolve_lazy_type(source);
-                if resolved != source {
-                    self.check_subtype(resolved, target)
-                } else {
-                    SubtypeResult::False
-                }
-            }
-
-            // Source is structural, target is Lazy - resolve and check
-            (_, TypeKey::Lazy(_)) => {
-                let resolved = self.resolve_lazy_type(target);
-                if resolved != target {
-                    self.check_subtype(source, resolved)
-                } else {
-                    SubtypeResult::False
-                }
-            }
-
-            // Index access types
-            (TypeKey::IndexAccess(s_obj, s_idx), TypeKey::IndexAccess(t_obj, t_idx)) => {
-                if self.check_subtype(*s_obj, *t_obj).is_true()
-                    && self.check_subtype(*s_idx, *t_idx).is_true()
-                {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                }
-            }
-
-            // Type query (typeof) - resolve to structural types when possible
-            (TypeKey::TypeQuery(s_sym), TypeKey::TypeQuery(t_sym)) => {
-                self.check_typequery_typequery_subtype(source, target, s_sym, t_sym)
-            }
-
-            // Source is TypeQuery, target is structural - resolve and check
-            (TypeKey::TypeQuery(s_sym), _) => self.check_typequery_subtype(source, target, s_sym),
-
-            // Source is structural, target is TypeQuery - resolve and check
-            (_, TypeKey::TypeQuery(t_sym)) => {
-                self.check_to_typequery_subtype(source, target, t_sym)
-            }
-
-            // KeyOf types - keyof T <: keyof U if T :> U (contravariant)
-            (TypeKey::KeyOf(s_inner), TypeKey::KeyOf(t_inner)) => {
-                // keyof T <: keyof U when U <: T (contravariant in T)
-                self.check_subtype(*t_inner, *s_inner)
-            }
-            // Note: KeyOf vs Union is handled by the general Union target case above
-
-            // Readonly types - readonly T[] <: readonly U[] if T <: U
-            (TypeKey::ReadonlyType(s_inner), TypeKey::ReadonlyType(t_inner)) => {
-                self.check_subtype(*s_inner, *t_inner)
-            }
-            // Readonly array/tuple is NOT assignable to mutable version
-            // This must come after the ReadonlyType-ReadonlyType case above
-            (TypeKey::ReadonlyType(_), TypeKey::Array(_)) => SubtypeResult::False,
-            (TypeKey::ReadonlyType(_), TypeKey::Tuple(_)) => SubtypeResult::False,
-            // Mutable arrays/tuples are assignable to readonly versions
-            (TypeKey::Array(_), TypeKey::ReadonlyType(t_inner)) => {
-                self.check_subtype(source, *t_inner)
-            }
-            (TypeKey::Tuple(_), TypeKey::ReadonlyType(t_inner)) => {
-                self.check_subtype(source, *t_inner)
-            }
-
-            // Unique symbol - only equal to itself
-            (TypeKey::UniqueSymbol(s_sym), TypeKey::UniqueSymbol(t_sym)) => {
-                if s_sym == t_sym {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                }
-            }
-            // Unique symbol is a subtype of symbol
-            (TypeKey::UniqueSymbol(_), TypeKey::Intrinsic(IntrinsicKind::Symbol)) => {
-                SubtypeResult::True
-            }
-
-            // This type - identity only
-            (TypeKey::ThisType, TypeKey::ThisType) => SubtypeResult::True,
-
-            // Template literal types - structural comparison
-            (TypeKey::TemplateLiteral(s_spans), TypeKey::TemplateLiteral(t_spans)) => {
-                if s_spans == t_spans {
-                    SubtypeResult::True
-                } else {
-                    // Compare spans pairwise - each source span must be a subtype of
-                    // the corresponding target span. e.g., `foo-${number}` <: `foo-${string}`
-                    let s_list = self.interner.template_list(*s_spans);
-                    let t_list = self.interner.template_list(*t_spans);
-                    if s_list.len() != t_list.len() {
-                        SubtypeResult::False
-                    } else {
-                        let mut all_ok = true;
-                        for (s_span, t_span) in s_list.iter().zip(t_list.iter()) {
-                            match (s_span, t_span) {
-                                (TemplateSpan::Text(s_text), TemplateSpan::Text(t_text)) => {
-                                    if s_text != t_text {
-                                        all_ok = false;
-                                        break;
-                                    }
-                                }
-                                (TemplateSpan::Type(s_type), TemplateSpan::Type(t_type)) => {
-                                    if !self.check_subtype(*s_type, *t_type).is_true() {
-                                        all_ok = false;
-                                        break;
-                                    }
-                                }
-                                _ => {
-                                    // Mismatched span kinds (text vs type)
-                                    all_ok = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if all_ok {
-                            SubtypeResult::True
-                        } else {
-                            SubtypeResult::False
-                        }
-                    }
-                }
-            }
-            // Template literal is a subtype of string
-            (TypeKey::TemplateLiteral(_), TypeKey::Intrinsic(IntrinsicKind::String)) => {
-                SubtypeResult::True
-            }
-
-            // =========================================================================
-            // Cross-kind structural fallbacks
-            // =========================================================================
-            // Functions, arrays, tuples, and callables are objects in TypeScript.
-            // They should be assignable to compatible object shapes (e.g., {} or { length: number }).
-
-            // Function/Callable to Object: functions are objects with properties like
-            // name, length, bind, call, apply, etc.
-            (TypeKey::Function(_) | TypeKey::Callable(_), TypeKey::Object(t_shape_id)) => {
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                // Empty object {} accepts any non-nullable type
+        let source_is_array_or_tuple = array_element_type(self.interner, source).is_some()
+            || tuple_list_id(self.interner, source).is_some();
+        if source_is_array_or_tuple {
+            if let Some(t_shape_id) = object_shape_id(self.interner, target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
                 if t_shape.properties.is_empty() {
-                    SubtypeResult::True
-                } else {
-                    // Could check apparent function shape here, but for now return false
-                    // since we don't have the Function.prototype shape built in
-                    SubtypeResult::False
+                    return SubtypeResult::True;
                 }
-            }
-            (TypeKey::Function(_) | TypeKey::Callable(_), TypeKey::ObjectWithIndex(t_shape_id)) => {
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                if t_shape.properties.is_empty() {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
-                }
-            }
-
-            // Array/Tuple to Object: arrays and tuples have length, numeric indices, etc.
-            (TypeKey::Array(_) | TypeKey::Tuple(_), TypeKey::Object(t_shape_id)) => {
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                // Empty object {} accepts arrays and tuples
-                if t_shape.properties.is_empty() {
-                    SubtypeResult::True
-                } else {
-                    // Check if target only has properties that exist on arrays (e.g., length)
-                    let mut all_ok = true;
-                    for t_prop in &t_shape.properties {
-                        let prop_name = self.interner.resolve_atom(t_prop.name);
-                        if prop_name == "length" {
-                            // Arrays/tuples have length: number
-                            if !self.check_subtype(TypeId::NUMBER, t_prop.type_id).is_true() {
-                                all_ok = false;
-                                break;
-                            }
-                        } else {
-                            // For other properties, we can't satisfy them from array shape
+                let mut all_ok = true;
+                for t_prop in &t_shape.properties {
+                    let prop_name = self.interner.resolve_atom(t_prop.name);
+                    if prop_name == "length" {
+                        if !self.check_subtype(TypeId::NUMBER, t_prop.type_id).is_true() {
                             all_ok = false;
                             break;
                         }
-                    }
-                    if all_ok {
-                        SubtypeResult::True
                     } else {
-                        SubtypeResult::False
+                        all_ok = false;
+                        break;
                     }
                 }
+                return if all_ok {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                };
             }
-            (TypeKey::Array(_) | TypeKey::Tuple(_), TypeKey::ObjectWithIndex(t_shape_id)) => {
-                let t_shape = self.interner.object_shape(*t_shape_id);
+            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
                 if t_shape.properties.is_empty() {
-                    // Check index signatures only
                     if let Some(ref num_idx) = t_shape.number_index {
-                        // Array element type must be compatible with number index
-                        let elem_type = match &source_key {
-                            TypeKey::Array(elem) => *elem,
-                            _ => TypeId::ANY, // Tuple - simplified
-                        };
+                        let elem_type =
+                            array_element_type(self.interner, source).unwrap_or(TypeId::ANY);
                         if !self.check_subtype(elem_type, num_idx.value_type).is_true() {
                             return SubtypeResult::False;
                         }
                     }
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
+                    return SubtypeResult::True;
                 }
+                return SubtypeResult::False;
             }
-
-            // Default: not a subtype
-            _ => SubtypeResult::False,
         }
+
+        SubtypeResult::False
     }
 
     /// Check if a deferred keyof type is a subtype of string | number | symbol.
@@ -1387,203 +1353,205 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             });
         }
 
-        // Look up the type keys
-        let source_key = self.interner.lookup(source)?;
-        let target_key = self.interner.lookup(target)?;
-
         // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
         // Removed redundant check here to avoid double-checking which caused false positives.
 
-        self.explain_failure_inner(source, target, &source_key, &target_key)
+        self.explain_failure_inner(source, target)
     }
 
     fn explain_failure_inner(
         &mut self,
         source: TypeId,
         target: TypeId,
-        source_key: &TypeKey,
-        target_key: &TypeKey,
     ) -> Option<SubtypeFailureReason> {
-        if let Some(shape) = self.apparent_primitive_shape_for_key(source_key) {
-            match target_key {
-                TypeKey::Object(t_shape_id) => {
-                    let t_shape = self.interner.object_shape(*t_shape_id);
-                    return self.explain_object_failure(
-                        source,
-                        target,
-                        &shape.properties,
-                        None,
-                        &t_shape.properties,
-                    );
-                }
-                TypeKey::ObjectWithIndex(t_shape_id) => {
-                    let t_shape = self.interner.object_shape(*t_shape_id);
-                    return self
-                        .explain_indexed_object_failure(source, target, &shape, None, &t_shape);
-                }
-                _ => {}
+        if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
+            if let Some(t_shape_id) = object_shape_id(self.interner, target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.explain_object_failure(
+                    source,
+                    target,
+                    &shape.properties,
+                    None,
+                    &t_shape.properties,
+                );
+            }
+            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.explain_indexed_object_failure(source, target, &shape, None, &t_shape);
             }
         }
 
-        match (source_key, target_key) {
-            // Object to object - find the specific missing/mismatched property
-            (TypeKey::Object(s_shape_id), TypeKey::Object(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.explain_object_failure(
-                    source,
-                    target,
-                    &s_shape.properties,
-                    Some(*s_shape_id),
-                    &t_shape.properties,
-                )
-            }
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_shape_id(self.interner, source),
+            object_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.explain_object_failure(
+                source,
+                target,
+                &s_shape.properties,
+                Some(s_shape_id),
+                &t_shape.properties,
+            );
+        }
 
-            // Object with index to object with index
-            (TypeKey::ObjectWithIndex(s_shape_id), TypeKey::ObjectWithIndex(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.explain_indexed_object_failure(
-                    source,
-                    target,
-                    &s_shape,
-                    Some(*s_shape_id),
-                    &t_shape,
-                )
-            }
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, source),
+            object_with_index_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.explain_indexed_object_failure(
+                source,
+                target,
+                &s_shape,
+                Some(s_shape_id),
+                &t_shape,
+            );
+        }
 
-            // Object with index to object
-            (TypeKey::ObjectWithIndex(s_shape_id), TypeKey::Object(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.explain_object_with_index_to_object_failure(
-                    source,
-                    target,
-                    &s_shape,
-                    *s_shape_id,
-                    &t_shape.properties,
-                )
-            }
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, source),
+            object_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            return self.explain_object_with_index_to_object_failure(
+                source,
+                target,
+                &s_shape,
+                s_shape_id,
+                &t_shape.properties,
+            );
+        }
 
-            // Simple object to indexed object
-            (TypeKey::Object(s_shape_id), TypeKey::ObjectWithIndex(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                if let Some(reason) = self.explain_object_failure(
-                    source,
-                    target,
-                    &s_shape.properties,
-                    Some(*s_shape_id),
-                    &t_shape.properties,
-                ) {
-                    return Some(reason);
-                }
-                // Then check index signature constraints
-                if let Some(ref string_idx) = t_shape.string_index {
-                    for prop in &s_shape.properties {
-                        let prop_type = self.optional_property_type(prop);
-                        if !self
-                            .check_subtype(prop_type, string_idx.value_type)
-                            .is_true()
-                        {
-                            return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                                index_kind: "string",
-                                source_value_type: prop_type,
-                                target_value_type: string_idx.value_type,
-                            });
-                        }
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_shape_id(self.interner, source),
+            object_with_index_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+            if let Some(reason) = self.explain_object_failure(
+                source,
+                target,
+                &s_shape.properties,
+                Some(s_shape_id),
+                &t_shape.properties,
+            ) {
+                return Some(reason);
+            }
+            if let Some(ref string_idx) = t_shape.string_index {
+                for prop in &s_shape.properties {
+                    let prop_type = self.optional_property_type(prop);
+                    if !self
+                        .check_subtype(prop_type, string_idx.value_type)
+                        .is_true()
+                    {
+                        return Some(SubtypeFailureReason::IndexSignatureMismatch {
+                            index_kind: "string",
+                            source_value_type: prop_type,
+                            target_value_type: string_idx.value_type,
+                        });
                     }
                 }
-                None
             }
+            return None;
+        }
 
-            // Function to function
-            (TypeKey::Function(s_fn_id), TypeKey::Function(t_fn_id)) => {
-                let s_fn = self.interner.function_shape(*s_fn_id);
-                let t_fn = self.interner.function_shape(*t_fn_id);
-                self.explain_function_failure(&s_fn, &t_fn)
+        if let (Some(s_fn_id), Some(t_fn_id)) = (
+            function_shape_id(self.interner, source),
+            function_shape_id(self.interner, target),
+        ) {
+            let s_fn = self.interner.function_shape(s_fn_id);
+            let t_fn = self.interner.function_shape(t_fn_id);
+            return self.explain_function_failure(&s_fn, &t_fn);
+        }
+
+        if let (Some(s_elem), Some(t_elem)) = (
+            array_element_type(self.interner, source),
+            array_element_type(self.interner, target),
+        ) {
+            if !self.check_subtype(s_elem, t_elem).is_true() {
+                return Some(SubtypeFailureReason::ArrayElementMismatch {
+                    source_element: s_elem,
+                    target_element: t_elem,
+                });
             }
+            return None;
+        }
 
-            // Array to array
-            (TypeKey::Array(s_elem), TypeKey::Array(t_elem)) => {
-                if !self.check_subtype(*s_elem, *t_elem).is_true() {
-                    Some(SubtypeFailureReason::ArrayElementMismatch {
-                        source_element: *s_elem,
-                        target_element: *t_elem,
-                    })
-                } else {
-                    None
-                }
-            }
+        if let (Some(s_elems), Some(t_elems)) = (
+            tuple_list_id(self.interner, source),
+            tuple_list_id(self.interner, target),
+        ) {
+            let s_elems = self.interner.tuple_list(s_elems);
+            let t_elems = self.interner.tuple_list(t_elems);
+            return self.explain_tuple_failure(&s_elems, &t_elems);
+        }
 
-            // Tuple to tuple
-            (TypeKey::Tuple(s_elems), TypeKey::Tuple(t_elems)) => {
-                let s_elems = self.interner.tuple_list(*s_elems);
-                let t_elems = self.interner.tuple_list(*t_elems);
-                self.explain_tuple_failure(&s_elems, &t_elems)
-            }
+        if let Some(members) = union_list_id(self.interner, target) {
+            let members = self.interner.type_list(members);
+            return Some(SubtypeFailureReason::NoUnionMemberMatches {
+                source_type: source,
+                target_union_members: members.as_ref().to_vec(),
+            });
+        }
 
-            // Union target - source must match at least one member
-            (_, TypeKey::Union(members)) => {
-                let members = self.interner.type_list(*members);
-                Some(SubtypeFailureReason::NoUnionMemberMatches {
-                    source_type: source,
-                    target_union_members: members.as_ref().to_vec(),
-                })
-            }
-
-            // Intrinsic to intrinsic mismatch (e.g., string vs number)
-            (TypeKey::Intrinsic(s_kind), TypeKey::Intrinsic(t_kind)) => {
-                if s_kind != t_kind {
-                    Some(SubtypeFailureReason::IntrinsicTypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                } else {
-                    None
-                }
-            }
-
-            // Literal to literal mismatch (e.g., "hello" vs "world")
-            (TypeKey::Literal(_), TypeKey::Literal(_)) => {
-                Some(SubtypeFailureReason::LiteralTypeMismatch {
+        if let (Some(s_kind), Some(t_kind)) = (
+            intrinsic_kind(self.interner, source),
+            intrinsic_kind(self.interner, target),
+        ) {
+            if s_kind != t_kind {
+                return Some(SubtypeFailureReason::IntrinsicTypeMismatch {
                     source_type: source,
                     target_type: target,
-                })
+                });
             }
+            return None;
+        }
 
-            // Literal to incompatible intrinsic (e.g., "hello" vs number)
-            (TypeKey::Literal(lit), TypeKey::Intrinsic(t_kind)) => {
-                let compatible = match lit {
-                    LiteralValue::String(_) => *t_kind == IntrinsicKind::String,
-                    LiteralValue::Number(_) => *t_kind == IntrinsicKind::Number,
-                    LiteralValue::BigInt(_) => *t_kind == IntrinsicKind::Bigint,
-                    LiteralValue::Boolean(_) => *t_kind == IntrinsicKind::Boolean,
-                };
-                if !compatible {
-                    Some(SubtypeFailureReason::LiteralTypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                } else {
-                    None
-                }
-            }
-
-            // Intrinsic to literal (e.g., string vs "hello") - always incompatible
-            (TypeKey::Intrinsic(_), TypeKey::Literal(_)) => {
-                Some(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            }
-
-            // Default: generic type mismatch
-            _ => Some(SubtypeFailureReason::TypeMismatch {
+        if literal_value(self.interner, source).is_some()
+            && literal_value(self.interner, target).is_some()
+        {
+            return Some(SubtypeFailureReason::LiteralTypeMismatch {
                 source_type: source,
                 target_type: target,
-            }),
+            });
         }
+
+        if let (Some(lit), Some(t_kind)) = (
+            literal_value(self.interner, source),
+            intrinsic_kind(self.interner, target),
+        ) {
+            let compatible = match lit {
+                LiteralValue::String(_) => t_kind == IntrinsicKind::String,
+                LiteralValue::Number(_) => t_kind == IntrinsicKind::Number,
+                LiteralValue::BigInt(_) => t_kind == IntrinsicKind::Bigint,
+                LiteralValue::Boolean(_) => t_kind == IntrinsicKind::Boolean,
+            };
+            if !compatible {
+                return Some(SubtypeFailureReason::LiteralTypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+            return None;
+        }
+
+        if intrinsic_kind(self.interner, source).is_some()
+            && literal_value(self.interner, target).is_some()
+        {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        Some(SubtypeFailureReason::TypeMismatch {
+            source_type: source,
+            target_type: target,
+        })
     }
 
     /// Explain why an object type assignment failed.
@@ -2339,6 +2307,10 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/index_signature_tests.rs"]
 mod index_signature_tests;
+
+#[cfg(test)]
+#[path = "tests/generics_rules_tests.rs"]
+mod generics_rules_tests;
 
 #[cfg(test)]
 #[path = "tests/callable_tests.rs"]

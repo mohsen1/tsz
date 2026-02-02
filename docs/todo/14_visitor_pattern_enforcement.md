@@ -2,7 +2,7 @@
 
 **Reference**: Architectural Review Summary - Issue #8  
 **Severity**: 🟠 High  
-**Status**: TODO  
+**Status**: In Progress  
 **Priority**: High - Code quality and maintainability
 
 ---
@@ -36,6 +36,12 @@ Replace all manual `TypeKey` matches with `TypeVisitor` implementations from `sr
 | **Solver** | `src/solver/subtype.rs` | `check_subtype_inner` matches on `(source_key, target_key)` tuple |
 | **Solver** | `src/solver/subtype_rules/*.rs` | Various helpers (e.g., `is_object_keyword_type`) match on `TypeKey` |
 | **Checker** | `src/checker/flow_narrowing.rs` | Uses `classify_for_union_members` which internally matches `TypeKey` (indirect violation) |
+
+---
+
+## Progress Updates
+
+- 2026-02-02: Refactored `src/solver/subtype_rules/generics.rs` to use visitor helpers
 
 ---
 
