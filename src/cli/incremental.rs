@@ -13,7 +13,7 @@
 //! - Dependency graphs between files
 //! - Emitted file signatures for output caching
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -37,8 +37,9 @@ pub struct BuildInfo {
     pub file_infos: BTreeMap<String, FileInfo>,
     /// Dependency graph: file -> files it imports
     pub dependencies: BTreeMap<String, Vec<String>>,
-    /// Semantic diagnostics signatures for files
-    pub semantic_diagnostics_per_file: BTreeMap<String, Vec<String>>,
+    /// Semantic diagnostics for files (cached from previous builds)
+    #[serde(default)]
+    pub semantic_diagnostics_per_file: BTreeMap<String, Vec<CachedDiagnostic>>,
     /// Emit output signatures (for output file caching)
     pub emit_signatures: BTreeMap<String, EmitSignature>,
     /// Options that affect compilation
@@ -98,6 +99,32 @@ pub struct BuildInfoOptions {
     pub strict: Option<bool>,
 }
 
+/// Cached diagnostic information for incremental builds
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedDiagnostic {
+    pub file: String,
+    pub start: u32,
+    pub length: u32,
+    pub message_text: String,
+    pub category: u8,
+    pub code: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub related_information: Vec<CachedRelatedInformation>,
+}
+
+/// Cached related information for diagnostics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedRelatedInformation {
+    pub file: String,
+    pub start: u32,
+    pub length: u32,
+    pub message_text: String,
+    pub category: u8,
+    pub code: u32,
+}
+
 impl Default for BuildInfo {
     fn default() -> Self {
         Self {
@@ -124,23 +151,27 @@ impl BuildInfo {
     }
 
     /// Load build info from a file
-    pub fn load(path: &Path) -> Result<Self> {
+    /// Returns Ok(None) if the file exists but is incompatible (version mismatch)
+    /// Returns Ok(Some(build_info)) if the file is valid and compatible
+    pub fn load(path: &Path) -> Result<Option<Self>> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read build info: {}", path.display()))?;
 
         let build_info: BuildInfo = serde_json::from_str(&content)
             .with_context(|| format!("failed to parse build info: {}", path.display()))?;
 
-        // Validate version compatibility
+        // Validate version compatibility (Format version)
         if build_info.version != BUILD_INFO_VERSION {
-            bail!(
-                "Build info version mismatch: expected {}, got {}",
-                BUILD_INFO_VERSION,
-                build_info.version
-            );
+            return Ok(None);
         }
 
-        Ok(build_info)
+        // Validate compiler version compatibility
+        // This ensures changes in hashing algorithms or internal logic trigger a rebuild
+        if build_info.compiler_version != env!("CARGO_PKG_VERSION") {
+            return Ok(None);
+        }
+
+        Ok(Some(build_info))
     }
 
     /// Save build info to a file
@@ -490,6 +521,7 @@ mod tests {
 
         // Load
         let loaded = BuildInfo::load(&path).unwrap();
+        let loaded = loaded.expect("Should load valid build info");
 
         assert_eq!(loaded.root_files, build_info.root_files);
         assert_eq!(loaded.file_infos.len(), 1);
@@ -590,5 +622,70 @@ mod tests {
         // With outDir
         let path = default_build_info_path(config, Some(Path::new("/project/dist")));
         assert_eq!(path, PathBuf::from("/project/dist/tsconfig.tsbuildinfo"));
+    }
+
+    #[test]
+    fn test_build_info_version_mismatch_returns_none() {
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.tsbuildinfo");
+
+        // Create a build info with wrong version
+        let build_info = BuildInfo {
+            version: "0.0.0-wrong".to_string(), // Wrong version
+            compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+            ..Default::default()
+        };
+        build_info.save(&path).unwrap();
+
+        // Loading should return Ok(None) for version mismatch
+        let result = BuildInfo::load(&path).unwrap();
+        assert!(result.is_none(), "Version mismatch should return None");
+    }
+
+    #[test]
+    fn test_build_info_compiler_version_mismatch_returns_none() {
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.tsbuildinfo");
+
+        // Create a build info with wrong compiler version
+        let build_info = BuildInfo {
+            version: BUILD_INFO_VERSION.to_string(),
+            compiler_version: "0.0.0-wrong".to_string(), // Wrong version
+            ..Default::default()
+        };
+        build_info.save(&path).unwrap();
+
+        // Loading should return Ok(None) for compiler version mismatch
+        let result = BuildInfo::load(&path).unwrap();
+        assert!(result.is_none(), "Compiler version mismatch should return None");
+    }
+
+    #[test]
+    fn test_build_info_valid_versions_returns_some() {
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.tsbuildinfo");
+
+        // Create a valid build info
+        let build_info = BuildInfo {
+            version: BUILD_INFO_VERSION.to_string(),
+            compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+            root_files: vec!["src/index.ts".to_string()],
+            ..Default::default()
+        };
+        build_info.save(&path).unwrap();
+
+        // Loading should return Ok(Some(build_info))
+        let result = BuildInfo::load(&path).unwrap();
+        assert!(result.is_some(), "Valid build info should return Some");
+
+        let loaded = result.unwrap();
+        assert_eq!(loaded.version, BUILD_INFO_VERSION);
+        assert_eq!(loaded.compiler_version, env!("CARGO_PKG_VERSION"));
     }
 }
