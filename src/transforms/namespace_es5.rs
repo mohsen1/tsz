@@ -128,7 +128,10 @@ mod tests {
     #[test]
     fn test_empty_namespace_skipped() {
         let output = emit_namespace("namespace M { }");
-        assert!(output.is_empty() || output.trim().is_empty(), "Empty namespace should produce no output");
+        assert!(
+            output.is_empty() || output.trim().is_empty(),
+            "Empty namespace should produce no output"
+        );
     }
 
     #[test]

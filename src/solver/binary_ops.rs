@@ -105,7 +105,11 @@ impl<'a> BinaryOpEvaluator<'a> {
 
         // TS2469: Symbol cannot be used in arithmetic
         if self.is_symbol_like(left) || self.is_symbol_like(right) {
-            return BinaryOpResult::TypeError { left, right, op: "+" };
+            return BinaryOpResult::TypeError {
+                left,
+                right,
+                op: "+",
+            };
         }
 
         // any + anything = any (and vice versa)
@@ -117,13 +121,18 @@ impl<'a> BinaryOpEvaluator<'a> {
         if self.is_string_like(left) || self.is_string_like(right) {
             // Check if the non-string side is a valid operand (primitive)
             let valid_left = self.is_string_like(left) || self.is_valid_string_concat_operand(left);
-            let valid_right = self.is_string_like(right) || self.is_valid_string_concat_operand(right);
-            
+            let valid_right =
+                self.is_string_like(right) || self.is_valid_string_concat_operand(right);
+
             if valid_left && valid_right {
                 return BinaryOpResult::Success(TypeId::STRING);
             } else {
                 // TS2365: Operator '+' cannot be applied to types 'string' and 'object'
-                return BinaryOpResult::TypeError { left, right, op: "+" };
+                return BinaryOpResult::TypeError {
+                    left,
+                    right,
+                    op: "+",
+                };
             }
         }
 
@@ -191,7 +200,11 @@ impl<'a> BinaryOpEvaluator<'a> {
 
         // TS2469: Symbol cannot be used in comparison operators
         if self.is_symbol_like(left) || self.is_symbol_like(right) {
-            return BinaryOpResult::TypeError { left, right, op: "<" };
+            return BinaryOpResult::TypeError {
+                left,
+                right,
+                op: "<",
+            };
         }
 
         // Any allows comparison
@@ -220,7 +233,11 @@ impl<'a> BinaryOpEvaluator<'a> {
         }
 
         // Mismatch - emit TS2365
-        BinaryOpResult::TypeError { left, right, op: "<" }
+        BinaryOpResult::TypeError {
+            left,
+            right,
+            op: "<",
+        }
     }
 
     /// Evaluate logical operators (&&, ||).
@@ -417,7 +434,10 @@ impl<'a> BinaryOpEvaluator<'a> {
             return true;
         }
         if let Some(key) = self.interner.lookup(type_id) {
-            matches!(key, TypeKey::Intrinsic(IntrinsicKind::Symbol) | TypeKey::UniqueSymbol(_))
+            matches!(
+                key,
+                TypeKey::Intrinsic(IntrinsicKind::Symbol) | TypeKey::UniqueSymbol(_)
+            )
         } else {
             false
         }

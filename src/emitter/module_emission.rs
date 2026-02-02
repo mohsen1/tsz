@@ -478,14 +478,13 @@ impl<'a> Printer<'a> {
 
         if export.is_default_export {
             // Check if the clause is a declaration (function/class) that doesn't need semicolon
-            let clause_is_func_or_class = if let Some(clause_node) =
-                self.arena.get(export.export_clause)
-            {
-                clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            } else {
-                false
-            };
+            let clause_is_func_or_class =
+                if let Some(clause_node) = self.arena.get(export.export_clause) {
+                    clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                } else {
+                    false
+                };
             self.write("export default ");
             self.emit(export.export_clause);
             if !clause_is_func_or_class {

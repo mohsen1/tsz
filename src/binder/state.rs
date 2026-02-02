@@ -945,8 +945,10 @@ impl BinderState {
                                     if !existing_mut.declarations.contains(&decl) {
                                         existing_mut.declarations.push(decl);
                                         // Track which arena this specific declaration belongs to
-                                        self.declaration_arenas
-                                            .insert((existing_id, decl), Arc::clone(&lib_ctx.arena));
+                                        self.declaration_arenas.insert(
+                                            (existing_id, decl),
+                                            Arc::clone(&lib_ctx.arena),
+                                        );
                                     }
                                 }
                                 // Update value_declaration if not set

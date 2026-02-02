@@ -1278,13 +1278,19 @@ mod tests {
     #[test]
     fn test_namespace_es5_exported_empty_namespace_skipped() {
         let ir = transform_namespace("export namespace M { }");
-        assert!(ir.is_none(), "Empty exported namespace should produce no IR");
+        assert!(
+            ir.is_none(),
+            "Empty exported namespace should produce no IR"
+        );
     }
 
     #[test]
     fn test_namespace_es5_exported_namespace() {
         let ir = transform_namespace("export namespace M { export var x = 1; }");
-        assert!(ir.is_some(), "Should produce IR for exported namespace with content");
+        assert!(
+            ir.is_some(),
+            "Should produce IR for exported namespace with content"
+        );
 
         if let Some(IRNode::NamespaceIIFE {
             name,
@@ -1384,8 +1390,10 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_commonjs_exported() {
-        let mut parser =
-            ParserState::new("test.ts".to_string(), "export namespace M { export var x = 1; }".to_string());
+        let mut parser = ParserState::new(
+            "test.ts".to_string(),
+            "export namespace M { export var x = 1; }".to_string(),
+        );
         let root = parser.parse_source_file();
 
         let ir = if let Some(root_node) = parser.arena.get(root)
@@ -1551,7 +1559,10 @@ mod tests {
         // Namespace A contains only an empty nested namespace B, which gets skipped.
         // Since A then has no runtime content, A should also be skipped.
         let ir = transform_namespace("namespace A { namespace B { } }");
-        assert!(ir.is_none(), "Namespace with only empty nested namespace should be skipped");
+        assert!(
+            ir.is_none(),
+            "Namespace with only empty nested namespace should be skipped"
+        );
     }
 
     #[test]
@@ -1587,7 +1598,10 @@ mod tests {
     #[test]
     fn test_namespace_es5_empty_namespace_no_output() {
         let output = transform_and_emit("namespace A { }");
-        assert!(output.is_empty() || output.trim().is_empty(), "Empty namespace should produce no output");
+        assert!(
+            output.is_empty() || output.trim().is_empty(),
+            "Empty namespace should produce no output"
+        );
     }
 
     #[test]
@@ -1604,8 +1618,10 @@ mod tests {
 
     #[test]
     fn test_namespace_es5_transformer_set_commonjs() {
-        let mut parser =
-            ParserState::new("test.ts".to_string(), "export namespace M { export var x = 1; }".to_string());
+        let mut parser = ParserState::new(
+            "test.ts".to_string(),
+            "export namespace M { export var x = 1; }".to_string(),
+        );
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root)
