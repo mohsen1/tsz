@@ -11,9 +11,122 @@
 
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
+use crate::solver::visitor::TypeVisitor;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
+
+// =============================================================================
+// Visitor Pattern Implementations
+// =============================================================================
+
+/// Visitor to extract the `this` type from callable types.
+struct ThisTypeExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> ThisTypeExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for ThisTypeExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+        self.db.function_shape(FunctionShapeId(shape_id)).this_type
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+        // Collect this types from all signatures
+        let this_types: Vec<TypeId> = shape
+            .call_signatures
+            .iter()
+            .filter_map(|sig| sig.this_type)
+            .collect();
+
+        if this_types.is_empty() {
+            None
+        } else if this_types.len() == 1 {
+            Some(this_types[0])
+        } else {
+            Some(self.db.union(this_types))
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+/// Visitor to extract the return type from callable types.
+struct ReturnTypeExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+}
+
+impl<'a> ReturnTypeExtractor<'a> {
+    fn new(db: &'a dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.visit_type(self.db, type_id)
+    }
+}
+
+impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+        Some(self.db.function_shape(FunctionShapeId(shape_id)).return_type)
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+        // Collect return types from all signatures
+        if shape.call_signatures.is_empty() {
+            return None;
+        }
+
+        let return_types: Vec<TypeId> = shape
+            .call_signatures
+            .iter()
+            .map(|sig| sig.return_type)
+            .collect();
+
+        if return_types.len() == 1 {
+            Some(return_types[0])
+        } else {
+            Some(self.db.union(return_types))
+        }
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
 
 /// Context for contextual typing.
 /// Holds the expected type and provides methods to extract type information.
@@ -153,79 +266,73 @@ impl<'a> ContextualTypeContext<'a> {
     /// Get the contextual type for a `this` parameter, if present on the expected type.
     pub fn get_this_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
 
-        match key {
-            TypeKey::Function(shape_id) => self.interner.function_shape(shape_id).this_type,
-            TypeKey::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                self.get_this_type_from_signatures(&shape.call_signatures)
-            }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let this_types: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&m| {
-                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_this_type()
-                    })
-                    .collect();
+        // Handle Union explicitly - collect this types from all members
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let this_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_this_type()
+                })
+                .collect();
 
-                if this_types.is_empty() {
-                    None
-                } else if this_types.len() == 1 {
-                    Some(this_types[0])
-                } else {
-                    Some(self.interner.union(this_types))
-                }
-            }
-            // For Application types, unwrap to the base type
-            TypeKey::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
-                ctx.get_this_type()
-            }
-            _ => None,
+            return if this_types.is_empty() {
+                None
+            } else if this_types.len() == 1 {
+                Some(this_types[0])
+            } else {
+                Some(self.interner.union(this_types))
+            };
         }
+
+        // Handle Application explicitly - unwrap to base type
+        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
+            let app = self.interner.type_application(app_id);
+            let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+            return ctx.get_this_type();
+        }
+
+        // Use visitor for Function/Callable types
+        let mut extractor = ThisTypeExtractor::new(self.interner);
+        extractor.extract(expected)
     }
 
     /// Get the contextual return type for a function.
     pub fn get_return_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
-        let key = self.interner.lookup(expected)?;
 
-        match key {
-            TypeKey::Function(shape_id) => Some(self.interner.function_shape(shape_id).return_type),
-            TypeKey::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                self.get_return_type_from_signatures(&shape.call_signatures)
-            }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let return_types: Vec<TypeId> = members
-                    .iter()
-                    .filter_map(|&m| {
-                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                        ctx.get_return_type()
-                    })
-                    .collect();
+        // Handle Union explicitly - collect return types from all members
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let return_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_return_type()
+                })
+                .collect();
 
-                if return_types.is_empty() {
-                    None
-                } else if return_types.len() == 1 {
-                    Some(return_types[0])
-                } else {
-                    Some(self.interner.union(return_types))
-                }
-            }
-            // For Application types, unwrap to the base type
-            TypeKey::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
-                ctx.get_return_type()
-            }
-            _ => None,
+            return if return_types.is_empty() {
+                None
+            } else if return_types.len() == 1 {
+                Some(return_types[0])
+            } else {
+                Some(self.interner.union(return_types))
+            };
         }
+
+        // Handle Application explicitly - unwrap to base type
+        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
+            let app = self.interner.type_application(app_id);
+            let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+            return ctx.get_return_type();
+        }
+
+        // Use visitor for Function/Callable types
+        let mut extractor = ReturnTypeExtractor::new(self.interner);
+        extractor.extract(expected)
     }
 
     /// Get the contextual element type for an array.
