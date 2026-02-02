@@ -1613,7 +1613,6 @@ fn test_project_scope_cache_reuse_hover_to_completions_after_edit() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_signature_help_after_edit() {
     let mut project = Project::new();
 
@@ -1622,7 +1621,8 @@ fn test_project_scope_cache_reuse_hover_to_signature_help_after_edit() {
         "function foo(a: number, b: string) {}\nfoo(1, \"x\");\n".to_string(),
     );
     let hover_position = Position::new(1, 0);
-    let signature_position = Position::new(1, 0);
+    // Position must be inside the call args (after the opening paren)
+    let signature_position = Position::new(1, 4);
 
     let edit = {
         let file = project.file("a.ts").unwrap();
@@ -1779,7 +1779,6 @@ fn test_project_scope_cache_reuse_hover_to_completions() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_project_scope_cache_reuse_hover_to_signature_help() {
     let mut project = Project::new();
 
@@ -1788,7 +1787,8 @@ fn test_project_scope_cache_reuse_hover_to_signature_help() {
         "function foo(a: number, b: string) {}\nfoo(1, \"x\");\n".to_string(),
     );
     let hover_position = Position::new(1, 0);
-    let signature_position = Position::new(1, 0);
+    // Position must be inside the call args (after the opening paren)
+    let signature_position = Position::new(1, 4);
 
     assert!(project.get_hover("a.ts", hover_position).is_some());
     assert!(
