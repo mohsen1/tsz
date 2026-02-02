@@ -2,7 +2,7 @@
 
 **Reference**: Architectural Review Summary - Issue #3  
 **Severity**: 🔴 Critical  
-**Status**: TODO  
+**Status**: DONE  
 **Priority**: Critical - Architecture violation and correctness divergence
 
 ---
@@ -138,9 +138,9 @@ This plan aligns with the **Solver-First** architecture by keeping the Solver pu
 
 ## Acceptance Criteria
 
-- [ ] `ObjectShape` includes `flags` in hash/equality
-- [ ] `StickyFreshnessTracker` moved to Checker
-- [ ] Solver has no `SymbolId` dependencies
-- [ ] Fresh and non-fresh objects intern to different `TypeId`s
-- [ ] Widening operation correctly strips freshness
+- [x] `ObjectShape` includes `flags` in hash/equality
+- [x] `StickyFreshnessTracker` moved to Checker
+- [x] Solver has no `SymbolId` dependencies
+- [x] Fresh and non-fresh objects intern to different `TypeId`s
+- [x] Widening operation correctly strips freshness
 - [ ] Conformance tests pass with no regressions

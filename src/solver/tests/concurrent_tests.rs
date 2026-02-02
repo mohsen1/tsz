@@ -5,8 +5,8 @@
 
 use crate::interner::Atom;
 use crate::solver::{
-    CallableShape, FunctionShape, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeInterner,
-    TypeParamInfo,
+    CallableShape, FunctionShape, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId,
+    TypeInterner, TypeParamInfo,
 };
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -209,6 +209,7 @@ fn test_concurrent_property_map_building() {
         .collect();
 
     let shape = ObjectShape {
+        flags: ObjectFlags::empty(),
         properties: props,
         string_index: None,
         number_index: None,

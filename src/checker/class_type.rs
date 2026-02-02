@@ -28,8 +28,8 @@ use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeLowering,
-    TypeSubstitution, instantiate_type,
+    CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
+    TypeLowering, TypeSubstitution, instantiate_type,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -871,6 +871,7 @@ impl<'a> CheckerState<'a> {
         let props: Vec<PropertyInfo> = properties.into_values().collect();
         let mut instance_type = if string_index.is_some() || number_index.is_some() {
             self.ctx.types.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties: props,
                 string_index,
                 number_index,

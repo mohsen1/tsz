@@ -316,6 +316,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         ObjectShape {
+            flags: ObjectFlags::empty(),
             properties,
             string_index: None,
             number_index,

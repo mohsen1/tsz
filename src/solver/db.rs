@@ -9,9 +9,9 @@ use crate::solver::intern::TypeInterner;
 use crate::solver::narrowing;
 use crate::solver::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, IndexInfo, MappedType, MappedTypeId, ObjectShape, ObjectShapeId, PropertyInfo,
-    PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
-    TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
+    FunctionShapeId, IndexInfo, MappedType, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId,
+    PropertyInfo, PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement,
+    TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
 };
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, RwLock};
@@ -51,6 +51,10 @@ pub trait TypeDatabase {
     fn array(&self, element: TypeId) -> TypeId;
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId;
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId;
+    fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId;
+    fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.object_with_flags(properties, ObjectFlags::FRESH_LITERAL)
+    }
     fn object_with_index(&self, shape: ObjectShape) -> TypeId;
     fn function(&self, shape: FunctionShape) -> TypeId;
     fn callable(&self, shape: CallableShape) -> TypeId;
@@ -176,6 +180,10 @@ impl TypeDatabase for TypeInterner {
 
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
         TypeInterner::object(self, properties)
+    }
+
+    fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
+        TypeInterner::object_with_flags(self, properties, flags)
     }
 
     fn object_with_index(&self, shape: ObjectShape) -> TypeId {
@@ -633,6 +641,10 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.interner.object(properties)
+    }
+
+    fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
+        self.interner.object_with_flags(properties, flags)
     }
 
     fn object_with_index(&self, shape: ObjectShape) -> TypeId {

@@ -81,8 +81,8 @@ impl<'a> CheckerState<'a> {
         let right_raw = self.get_type_of_node(right_idx);
         let right_type = self.resolve_type_query_type(right_raw);
 
-        // NOTE: Freshness is now tracked SYNTACTICALLY via is_syntactically_fresh()
-        // rather than by TypeId. No need to manually track freshness removal.
+        // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
+        // No need to manually track freshness removal here.
 
         self.ctx.contextual_type = prev_context;
 
@@ -226,8 +226,8 @@ impl<'a> CheckerState<'a> {
         let right_raw = self.get_type_of_node(right_idx);
         let right_type = self.resolve_type_query_type(right_raw);
 
-        // NOTE: Freshness is now tracked SYNTACTICALLY via is_syntactically_fresh()
-        // rather than by TypeId. No need to manually track freshness removal.
+        // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
+        // No need to manually track freshness removal here.
 
         self.ctx.contextual_type = prev_context;
 

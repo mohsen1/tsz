@@ -2681,6 +2681,7 @@ impl<'a> InferSubstitutor<'a> {
                 });
                 if changed {
                     self.interner.object_with_index(ObjectShape {
+                        flags: shape.flags,
                         properties,
                         string_index,
                         number_index,

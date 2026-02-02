@@ -426,7 +426,8 @@ impl<'a> CheckerState<'a> {
                         }
 
                         // For object literals, check excess properties
-                        // Freshness is determined syntactically inside check_object_literal_excess_properties
+                        // Freshness is determined by the TypeId flags inside
+                        // check_object_literal_excess_properties.
                         checker.check_object_literal_excess_properties(
                             init_type,
                             declared_type,
@@ -434,8 +435,8 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    // Note: Freshness is now determined syntactically at check time.
-                    // We no longer track freshness by TypeId to avoid the "Zombie Freshness" bug.
+                    // Note: Freshness is tracked by the TypeId flags.
+                    // Fresh vs non-fresh object types are interned distinctly.
                 }
                 // Type annotation determines the final type
                 return declared_type;
@@ -445,8 +446,8 @@ impl<'a> CheckerState<'a> {
             if !var_decl.initializer.is_none() {
                 let init_type = checker.get_type_of_node(var_decl.initializer);
 
-                // Note: Freshness is now determined syntactically at check time.
-                // We no longer track freshness by TypeId to avoid the "Zombie Freshness" bug.
+                // Note: Freshness is tracked by the TypeId flags.
+                // Fresh vs non-fresh object types are interned distinctly.
 
                 if let Some(literal_type) =
                     checker.literal_type_from_initializer(var_decl.initializer)
@@ -465,6 +466,9 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
             self.push_symbol_dependency(sym_id, true);
             let mut final_type = compute_final_type(self);
+            if !self.ctx.compiler_options.sound_mode {
+                final_type = crate::solver::freshness::widen_freshness(self.ctx.types, final_type);
+            }
             self.pop_symbol_dependency();
 
             // Variables without an initializer/annotation can still get a contextual type in some
@@ -765,46 +769,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if an expression is syntactically "fresh" for excess property checking.
-    ///
-    /// An expression is fresh if it's an object literal expression directly, or wrapped
-    /// in parentheses/type assertions. Variables, property accesses, and other expressions
-    /// are NOT fresh - they allow width subtyping (extra properties).
-    ///
-    /// This is the correct implementation per TypeScript semantics: freshness is a property
-    /// of the EXPRESSION, not the TYPE. Two object literals `{ a: 1 }` and `{ a: 1 }` are
-    /// both fresh, even though they share the same TypeId.
-    pub(crate) fn is_syntactically_fresh(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-
-        // Object literal expressions are fresh
-        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return true;
-        }
-
-        // Parenthesized expressions: check the inner expression
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                return self.is_syntactically_fresh(paren.expression);
-            }
-        }
-
-        // Type assertions (as T) and satisfies expressions: check the inner expression
-        if node.kind == syntax_kind_ext::AS_EXPRESSION
-            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
-            || node.kind == syntax_kind_ext::TYPE_ASSERTION
-        {
-            if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
-                return self.is_syntactically_fresh(assertion.expression);
-            }
-        }
-
-        // Everything else (variables, calls, property access) is NOT fresh
-        false
-    }
-
     /// Check object literal assignment for excess properties.
     ///
     /// **Note**: This check is specific to object literals and is NOT part of general
@@ -823,17 +787,17 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use crate::solver::type_queries;
+        use crate::solver::{freshness, type_queries};
 
         // Only check excess properties for FRESH object literals
         // This is the key TypeScript behavior:
         // - const p: Point = {x: 1, y: 2, z: 3}  // ERROR: 'z' is excess (fresh)
         // - const obj = {x: 1, y: 2, z: 3}; p = obj;  // OK: obj loses freshness
         //
-        // IMPORTANT: Freshness is determined SYNTACTICALLY by the expression, not by TypeId.
-        // This fixes the "Zombie Freshness" bug where structurally identical object literals
-        // would incorrectly share freshness state due to TypeId interning.
-        if !self.is_syntactically_fresh(idx) {
+        // IMPORTANT: Freshness is tracked on the TypeId itself.
+        // This fixes the "Zombie Freshness" bug by keeping fresh vs non-fresh
+        // object types distinct at the interner level.
+        if !freshness::is_fresh_object_type(self.ctx.types, source) {
             return;
         }
 

@@ -1599,11 +1599,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
-        let object_type = self.ctx.types.object(properties);
+        let object_type = self.ctx.types.object_fresh(properties);
 
-        // NOTE: Freshness is now tracked SYNTACTICALLY in is_syntactically_fresh()
-        // rather than by TypeId. This fixes the "Zombie Freshness" bug where
-        // structurally identical object literals incorrectly shared freshness state.
+        // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
+        // This fixes the "Zombie Freshness" bug by distinguishing fresh vs
+        // non-fresh object types at interning time.
 
         object_type
     }

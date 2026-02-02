@@ -291,6 +291,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if string_index.is_some() || number_index.is_some() {
             self.interner().object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
                 properties,
                 string_index,
                 number_index,

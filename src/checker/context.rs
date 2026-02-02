@@ -462,9 +462,9 @@ pub struct CheckerContext<'a> {
 
     /// Whether type resolution fuel was exhausted (for timeout detection).
     pub fuel_exhausted: RefCell<bool>,
-    // NOTE: Freshness is now tracked SYNTACTICALLY via is_syntactically_fresh() in CheckerState.
-    // This fixes the "Zombie Freshness" bug where structurally identical object literals
-    // incorrectly shared freshness state due to TypeId interning.
+    // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
+    // This fixes the "Zombie Freshness" bug by interning fresh vs non-fresh
+    // object shapes distinctly.
 }
 
 /// Context for a lib file (arena + binder) for global type resolution.
