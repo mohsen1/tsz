@@ -129,6 +129,8 @@ pub enum IRNode {
         body: Vec<IRNode>,
         /// Whether body is a single expression (for arrow conversion)
         is_expression_body: bool,
+        /// Source range of the body block (pos, end) for single-line detection
+        body_source_range: Option<(u32, u32)>,
     },
 
     /// Logical OR: `left || right`
@@ -586,6 +588,7 @@ impl IRNode {
             parameters: params,
             body,
             is_expression_body: false,
+            body_source_range: None,
         }
     }
 

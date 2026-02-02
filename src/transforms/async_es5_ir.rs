@@ -199,6 +199,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 parameters: ir_params,
                 body: vec![awaiter_call],
                 is_expression_body: false,
+                body_source_range: None,
             }
         }
     }
@@ -1387,6 +1388,7 @@ impl<'a> AsyncES5Transformer<'a> {
             parameters: params,
             body,
             is_expression_body: false,
+            body_source_range: None,
         }
     }
 
@@ -1411,6 +1413,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 parameters: params,
                 body: vec![],
                 is_expression_body: false,
+                body_source_range: None,
             };
         };
 
@@ -1422,6 +1425,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 parameters: params,
                 body,
                 is_expression_body: false,
+                body_source_range: None,
             }
         } else {
             // Expression body - wrap in return
@@ -1431,6 +1435,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 parameters: params,
                 body: vec![IRNode::ReturnStatement(Some(Box::new(expr)))],
                 is_expression_body: true,
+                body_source_range: None,
             }
         }
     }

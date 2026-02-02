@@ -631,6 +631,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         parameters: vec![],
                         body: self.convert_block_body(getter_body),
                         is_expression_body: false,
+                        body_source_range: None,
                     }),
                 }));
             }
@@ -654,6 +655,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         parameters: vec![IRParam::new(param_name)],
                         body: self.convert_block_body(setter_body),
                         is_expression_body: false,
+                        body_source_range: None,
                     }),
                 }));
             }
@@ -859,6 +861,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         parameters: params,
                         body: method_body,
                         is_expression_body: false,
+                        body_source_range: None,
                     }),
                 });
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -931,6 +934,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.convert_block_body(accessor_data.body)
             },
             is_expression_body: false,
+            body_source_range: None,
         })
     }
 
@@ -950,6 +954,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.convert_block_body(accessor_data.body)
             },
             is_expression_body: false,
+            body_source_range: None,
         })
     }
 
@@ -1020,6 +1025,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         parameters: params,
                         body: method_body,
                         is_expression_body: false,
+                        body_source_range: None,
                     }),
                 });
             } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
@@ -2053,6 +2059,12 @@ impl<'a> AstToIr<'a> {
                 get_identifier_text(self.arena, func.name)
             };
             let params = self.convert_parameters(&func.parameters);
+            // Capture body source range for single-line detection
+            let body_source_range = if !func.body.is_none() {
+                self.arena.get(func.body).map(|body_node| (body_node.pos as u32, body_node.end as u32))
+            } else {
+                None
+            };
             let body = if func.body.is_none() {
                 vec![]
             } else if let Some(body_node) = self.arena.get(func.body)
@@ -2072,6 +2084,7 @@ impl<'a> AstToIr<'a> {
                 parameters: params,
                 body,
                 is_expression_body: false,
+                body_source_range,
             }
         } else {
             IRNode::ASTRef(idx)
@@ -2119,6 +2132,7 @@ impl<'a> AstToIr<'a> {
                 parameters: params,
                 body,
                 is_expression_body,
+                body_source_range: None,
             };
 
             // If this arrow captures `this`, wrap in IIFE:
@@ -2134,6 +2148,7 @@ impl<'a> AstToIr<'a> {
                         }],
                         body: vec![IRNode::ReturnStatement(Some(Box::new(func_expr)))],
                         is_expression_body: false,
+                        body_source_range: None,
                     }),
                     arguments: vec![IRNode::This {
                         captured: prev_captured,
