@@ -363,6 +363,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// This catches cycles in Ref types before they're resolved, preventing
     /// infinite expansion of recursive type aliases and interfaces.
     pub(crate) seen_refs: HashSet<(SymbolRef, SymbolRef)>,
+    /// Active DefId pairs being checked (for DefId-level cycle detection)
+    /// Phase 3.1: Catches cycles in Lazy(DefId) types before they're resolved.
+    /// This mirrors seen_refs but for the new DefId-based type identity system.
+    pub(crate) seen_defs: HashSet<(DefId, DefId)>,
     /// Current recursion depth (for stack overflow prevention)
     pub(crate) depth: u32,
     /// Total number of check_subtype calls (iteration limit)
@@ -415,6 +419,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             resolver: &NOOP,
             in_progress: HashSet::new(),
             seen_refs: HashSet::new(),
+            seen_defs: HashSet::new(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,
@@ -442,6 +447,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             resolver,
             in_progress: HashSet::new(),
             seen_refs: HashSet::new(),
+            seen_defs: HashSet::new(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,
@@ -1091,16 +1097,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             lazy_def_id(self.interner, source),
             lazy_def_id(self.interner, target),
         ) {
-            if s_def == t_def {
-                return SubtypeResult::True;
-            }
-            let s_resolved = self.resolve_lazy_type(source);
-            let t_resolved = self.resolve_lazy_type(target);
-            return if s_resolved != source || t_resolved != target {
-                self.check_subtype(s_resolved, t_resolved)
-            } else {
-                SubtypeResult::False
-            };
+            // Phase 3.1: Use proper DefId-level cycle detection
+            return self.check_lazy_lazy_subtype(source, target, &s_def, &t_def);
         }
 
         if lazy_def_id(self.interner, source).is_some() {
