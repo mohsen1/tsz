@@ -848,16 +848,19 @@ impl<'a> CheckerContext<'a> {
 
     /// Set resolved module errors map for cross-file import resolution.
     /// Populated by the driver when ModuleResolver returns specific errors (TS2834, TS2835, TS2792, etc.).
-    pub fn set_resolved_module_errors(&mut self, errors: FxHashMap<(usize, String), ResolutionError>) {
+    pub fn set_resolved_module_errors(
+        &mut self,
+        errors: FxHashMap<(usize, String), ResolutionError>,
+    ) {
         self.resolved_module_errors = Some(errors);
     }
 
     /// Get the resolution error for a specifier, if any.
     /// Returns the specific error (TS2834, TS2835, TS2792, etc.) if the module resolution failed with a known error.
     pub fn get_resolution_error(&self, specifier: &str) -> Option<&ResolutionError> {
-        self.resolved_module_errors.as_ref().and_then(|errors| {
-            errors.get(&(self.current_file_idx, specifier.to_string()))
-        })
+        self.resolved_module_errors
+            .as_ref()
+            .and_then(|errors| errors.get(&(self.current_file_idx, specifier.to_string())))
     }
 
     /// Set the current file index.

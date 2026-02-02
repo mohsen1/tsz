@@ -224,6 +224,14 @@ pub struct Printer<'a> {
 
     /// Recursion depth counter to prevent infinite loops
     emit_recursion_depth: u32,
+
+    /// All comments in the source file, collected once during emit_source_file.
+    /// Used for distributing comments to blocks and other nested constructs.
+    pub(super) all_comments: Vec<crate::comments::CommentRange>,
+
+    /// Shared index into all_comments, monotonically advancing as comments are emitted.
+    /// Used across emit_source_file and emit_block to prevent double-emission.
+    pub(super) comment_emit_idx: usize,
 }
 
 impl<'a> Printer<'a> {
@@ -266,6 +274,8 @@ impl<'a> Printer<'a> {
             last_processed_pos: 0,
             pending_source_pos: None,
             emit_recursion_depth: 0,
+            all_comments: Vec::new(),
+            comment_emit_idx: 0,
         }
     }
 
@@ -362,20 +372,25 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if a node spans a single line in the source.
-    /// For blocks like `{ }`, we look for the closing `}` and check if there's a newline
-    /// between the opening `{` and the first `}`.
+    /// Finds the first `{` and last `}` within the node's source span and checks
+    /// if there's a newline between them. Uses `rfind` to handle nested braces correctly.
     fn is_single_line(&self, node: &Node) -> bool {
         if let Some(text) = self.source_text {
             let start = node.pos as usize;
-            if start < text.len() {
-                // Find the first closing brace after the opening
-                // For a block, the source starts with `{` and we want to find the matching `}`
-                let slice = &text[start..];
-                if let Some(close_idx) = slice.find('}') {
-                    // Check if there's a newline between `{` and `}`
-                    let inner = &slice[..close_idx + 1];
-                    return !inner.contains('\n');
+            let end = std::cmp::min(node.end as usize, text.len());
+            if start < end {
+                let slice = &text[start..end];
+                // Find the first `{` and last `}` in the node's range
+                if let Some(open) = slice.find('{') {
+                    if let Some(close) = slice.rfind('}') {
+                        if close > open {
+                            let inner = &slice[open..close + 1];
+                            return !inner.contains('\n');
+                        }
+                    }
                 }
+                // Fallback: check entire span for newlines
+                return !slice.contains('\n');
             }
         }
         // Default to multi-line if we can't determine
@@ -570,10 +585,20 @@ impl<'a> Printer<'a> {
                 is_default,
                 inner,
             } => {
-                let export_name = names.first().copied();
-                self.emit_commonjs_export(names.as_ref(), is_default, |this| {
-                    this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                });
+                // For exported variable declarations with no initializers (e.g.,
+                // `export var x: number;`), skip entirely. The preamble
+                // `exports.x = void 0;` already handles the forward declaration.
+                let skip = node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    && self.arena.get_variable(node).is_some_and(|var_data| {
+                        self.all_declarations_lack_initializer(&var_data.declarations)
+                    });
+
+                if !skip {
+                    let export_name = names.first().copied();
+                    self.emit_commonjs_export(names.as_ref(), is_default, |this| {
+                        this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                    });
+                }
             }
 
             EmitDirective::CommonJSExportDefaultExpr => {
@@ -1620,16 +1645,17 @@ impl<'a> Printer<'a> {
             self.ctx.module_state.has_export_assignment = true;
         }
 
-        // Extract and filter comments (strip compiler directives)
-        let all_comments = if !self.ctx.options.remove_comments {
+        // Extract comments. Triple-slash references (/// <reference ...>) are
+        // preserved in output (TypeScript keeps them in JS emit).
+        // Only AMD-specific directives (/// <amd ...) are stripped.
+        // Store on self so nested blocks can also distribute comments.
+        self.all_comments = if !self.ctx.options.remove_comments {
             if let Some(text) = self.source_text {
                 crate::comments::get_comment_ranges(text)
                     .into_iter()
                     .filter(|c| {
-                        // Filter out triple-slash directives (/// <reference ..., /// <amd ...)
-                        // TypeScript strips these from JS output
                         let content = c.get_text(text);
-                        !content.starts_with("/// <reference") && !content.starts_with("/// <amd")
+                        !content.starts_with("/// <amd")
                     })
                     .collect()
             } else {
@@ -1639,7 +1665,7 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
-        let mut comment_idx = 0;
+        self.comment_emit_idx = 0;
 
         // CommonJS: Emit "use strict" FIRST (before comments and helpers)
         if self.ctx.is_commonjs() {
@@ -1657,15 +1683,18 @@ impl<'a> Printer<'a> {
             .unwrap_or(node.end);
 
         if let Some(text) = self.source_text {
-            while comment_idx < all_comments.len() {
-                let comment = &all_comments[comment_idx];
-                if comment.end <= first_stmt_pos {
-                    let comment_text = comment.get_text(text);
+            while self.comment_emit_idx < self.all_comments.len() {
+                let c_end = self.all_comments[self.comment_emit_idx].end;
+                if c_end <= first_stmt_pos {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    let comment_text =
+                        crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     self.write(comment_text);
-                    if comment.has_trailing_new_line {
+                    if c_trailing {
                         self.write_line();
                     }
-                    comment_idx += 1;
+                    self.comment_emit_idx += 1;
                 } else {
                     break;
                 }
@@ -1752,16 +1781,8 @@ impl<'a> Printer<'a> {
                 self.arena,
                 &source.statements.nodes,
             );
-            // Emit function exports: exports.compile = compile;
-            for name in &func_exports {
-                self.write("exports.");
-                self.write(name);
-                self.write(" = ");
-                self.write(name);
-                self.write(";");
-                self.write_line();
-            }
-            // Emit other exports: exports.X = void 0;
+            // Emit other exports first: exports.X = void 0;
+            // TypeScript emits void 0 initialization before hoisted function exports
             if !other_exports.is_empty() {
                 for (i, name) in other_exports.iter().enumerate() {
                     if i > 0 {
@@ -1773,35 +1794,46 @@ impl<'a> Printer<'a> {
                 self.write(" = void 0;");
                 self.write_line();
             }
+            // Emit function exports: exports.compile = compile;
+            for name in &func_exports {
+                self.write("exports.");
+                self.write(name);
+                self.write(" = ");
+                self.write(name);
+                self.write(";");
+                self.write_line();
+            }
         }
 
-        // Emit statements with their comments
+        // Emit statements with their comments using shared comment_emit_idx.
+        // Inner blocks (via emit_block) advance comment_emit_idx for their contents.
+        // For non-block constructs (classes, etc.), we use stmt_node.end as skip boundary
+        // to prevent inner comments from leaking to the top level.
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 // Emit any comments that appear before this statement
                 if let Some(text) = self.source_text {
-                    while comment_idx < all_comments.len() {
-                        let comment = &all_comments[comment_idx];
-                        if comment.end <= stmt_node.pos {
-                            // This comment is before the statement, emit it
-                            let comment_text = comment.get_text(text);
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        if c_end <= stmt_node.pos {
+                            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                            let c_trailing =
+                                self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                            let comment_text = crate::printer::safe_slice::slice(
+                                text,
+                                c_pos as usize,
+                                c_end as usize,
+                            );
                             self.write(comment_text);
-                            // Only add newline if the comment has a trailing newline
-                            if comment.has_trailing_new_line {
+                            if c_trailing {
                                 self.write_line();
                             }
-                            // Track last processed position for gap detection
-                            self.last_processed_pos = comment.end;
-                            comment_idx += 1;
+                            self.comment_emit_idx += 1;
                         } else {
-                            // This comment is after the statement start, stop
                             break;
                         }
                     }
                 }
-
-                // Track that we've processed up to this statement's position
-                self.last_processed_pos = stmt_node.pos;
             }
 
             let before_len = self.writer.len();
@@ -1811,30 +1843,33 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
 
-            // Update last processed position and skip comments inside this statement
+            // Skip past comments inside this statement to prevent inner comments
+            // (e.g., inside class bodies) from leaking to the top level.
+            // For statements with blocks (functions, if/while/for), emit_block may have
+            // already advanced comment_emit_idx past these; this ensures we also handle
+            // non-block constructs like classes.
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                // Advance comment_idx past all comments within this statement's range.
-                // This prevents comments inside class bodies, function bodies, etc.
-                // from being emitted as orphaned trailing comments at EOF.
-                while comment_idx < all_comments.len()
-                    && all_comments[comment_idx].pos < stmt_node.end
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < stmt_node.end
                 {
-                    comment_idx += 1;
+                    self.comment_emit_idx += 1;
                 }
-                self.last_processed_pos = stmt_node.end;
             }
         }
 
         // Emit remaining trailing comments at the end of file
         if let Some(text) = self.source_text {
-            while comment_idx < all_comments.len() {
-                let comment = &all_comments[comment_idx];
-                let comment_text = comment.get_text(text);
+            while self.comment_emit_idx < self.all_comments.len() {
+                let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                let c_end = self.all_comments[self.comment_emit_idx].end;
+                let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                let comment_text =
+                    crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                 self.write(comment_text);
-                if comment.has_trailing_new_line {
+                if c_trailing {
                     self.write_line();
                 }
-                comment_idx += 1;
+                self.comment_emit_idx += 1;
             }
         }
     }
@@ -1890,6 +1925,22 @@ fn get_operator_text(op: u16) -> &'static str {
         k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<",
         k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>",
         k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>",
+        k if k == SyntaxKind::InstanceOfKeyword as u16 => "instanceof",
+        k if k == SyntaxKind::InKeyword as u16 => "in",
+        k if k == SyntaxKind::TypeOfKeyword as u16 => "typeof ",
+        k if k == SyntaxKind::VoidKeyword as u16 => "void ",
+        k if k == SyntaxKind::DeleteKeyword as u16 => "delete ",
+        k if k == SyntaxKind::CommaToken as u16 => ",",
+        k if k == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => "**=",
+        k if k == SyntaxKind::AmpersandEqualsToken as u16 => "&=",
+        k if k == SyntaxKind::BarEqualsToken as u16 => "|=",
+        k if k == SyntaxKind::CaretEqualsToken as u16 => "^=",
+        k if k == SyntaxKind::LessThanLessThanEqualsToken as u16 => "<<=",
+        k if k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16 => ">>=",
+        k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16 => ">>>=",
+        k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16 => "&&=",
+        k if k == SyntaxKind::BarBarEqualsToken as u16 => "||=",
+        k if k == SyntaxKind::QuestionQuestionEqualsToken as u16 => "??=",
         _ => "",
     }
 }

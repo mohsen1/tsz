@@ -18,8 +18,110 @@
 //! // output: "function foo() {\n    return 42;\n}"
 //! ```
 
+use std::fmt::Write;
+
 use crate::parser::node::NodeArena;
 use crate::transforms::ir::*;
+
+/// Find the end of a statement in source text by scanning for ';' at depth 0
+/// or a balanced closing '}' that returns brace depth to 0.
+/// Handles strings, parens, and brace nesting.
+fn find_statement_end(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut brace_depth: i32 = 0;
+    let mut paren_depth: i32 = 0;
+    let mut in_string = false;
+    let mut string_char: u8 = 0;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+
+        // Handle line comments
+        if in_line_comment {
+            if b == b'\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Handle block comments
+        if in_block_comment {
+            if b == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
+                in_block_comment = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Handle strings
+        if in_string {
+            if b == b'\\' {
+                if i + 1 < len {
+                    i += 2; // skip escaped character
+                } else {
+                    i += 1; // just skip the backslash at end
+                }
+                continue;
+            }
+            if b == string_char {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match b {
+            b'"' | b'\'' | b'`' => {
+                in_string = true;
+                string_char = b;
+            }
+            b'/' if i + 1 < len => {
+                if bytes[i + 1] == b'/' {
+                    in_line_comment = true;
+                    i += 2;
+                    continue;
+                }
+                if bytes[i + 1] == b'*' {
+                    in_block_comment = true;
+                    i += 2;
+                    continue;
+                }
+            }
+            b'(' => paren_depth += 1,
+            b')' => {
+                paren_depth -= 1;
+            }
+            b'{' => brace_depth += 1,
+            b'}' => {
+                brace_depth -= 1;
+                if brace_depth == 0 && paren_depth == 0 {
+                    // End of a block construct (function, if, for, etc.)
+                    return i + 1;
+                }
+                if brace_depth < 0 {
+                    // Extra '}' from parent block
+                    return i;
+                }
+            }
+            b';' if brace_depth == 0 && paren_depth == 0 => {
+                return i + 1;
+            }
+            _ => {}
+        }
+
+        i += 1;
+    }
+
+    // No terminator found - return trimmed end
+    text.trim_end().len()
+}
 
 /// IR Printer - converts IR nodes to JavaScript strings
 pub struct IRPrinter<'a> {
@@ -128,9 +230,13 @@ impl<'a> IRPrinter<'a> {
                 right,
             } => {
                 self.emit_node(left);
-                self.write(" ");
-                self.write(operator);
-                self.write(" ");
+                if *operator == "," {
+                    self.write(", ");
+                } else {
+                    self.write(" ");
+                    self.write(operator);
+                    self.write(" ");
+                }
                 self.emit_node(right);
             }
             IRNode::PrefixUnaryExpr { operator, operand } => {
@@ -223,6 +329,7 @@ impl<'a> IRPrinter<'a> {
                 parameters,
                 body,
                 is_expression_body,
+                body_source_range,
             } => {
                 self.write("function ");
                 if let Some(n) = name {
@@ -238,9 +345,24 @@ impl<'a> IRPrinter<'a> {
                     self.write("{ }");
                     return;
                 }
-                // Arrow-to-function with single return: { return expr; }
+                // Single-line function body: { return expr; }
+                // Applies to arrow-to-function conversions (is_expression_body)
+                // and regular function expressions that were single-line in source
+                let is_source_single_line = body_source_range
+                    .and_then(|(pos, end)| {
+                        self.source_text.map(|text| {
+                            let start = pos as usize;
+                            let end = std::cmp::min(end as usize, text.len());
+                            if start < end {
+                                !text[start..end].contains('\n')
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                    .unwrap_or(false);
                 if !has_defaults
-                    && *is_expression_body
+                    && (*is_expression_body || is_source_single_line)
                     && body.len() == 1
                     && let IRNode::ReturnStatement(Some(expr)) = &body[0]
                 {
@@ -323,7 +445,9 @@ impl<'a> IRPrinter<'a> {
                 self.write(") ");
                 self.emit_node(then_branch);
                 if let Some(else_br) = else_branch {
-                    self.write(" else ");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("else ");
                     self.emit_node(else_br);
                 }
             }
@@ -728,16 +852,29 @@ impl<'a> IRPrinter<'a> {
                 }
             }
             IRNode::ASTRef(idx) => {
-                // Fallback: emit a placeholder or use the arena if available
+                // Emit AST node by using its source text.
+                // node.pos includes leading trivia, and node.end may extend past the
+                // node's actual content into the next sibling's trivia or the parent
+                // block's closing brace. We skip leading trivia and find the actual
+                // statement end by scanning for ';' or balanced '}' at depth 0.
                 if let Some(arena) = self.arena
                     && let Some(text) = self.source_text
                     && let Some(node) = arena.get(*idx)
                 {
                     let start = node.pos as usize;
-                    let end = node.end as usize;
-                    if start < end && end <= text.len() {
-                        self.write(&text[start..end]);
-                        return;
+                    let end = std::cmp::min(node.end as usize, text.len());
+                    if start < end {
+                        let raw = &text[start..end];
+                        // Skip leading whitespace/trivia
+                        let trimmed = raw.trim_start_matches(|c: char| c.is_whitespace());
+                        if !trimmed.is_empty() {
+                            let stmt_end = find_statement_end(trimmed);
+                            let result = &trimmed[..stmt_end];
+                            if !result.is_empty() {
+                                self.write(result);
+                                return;
+                            }
+                        }
                     }
                 }
                 self.write("/* ASTRef */");
@@ -1180,6 +1317,11 @@ impl<'a> IRPrinter<'a> {
                 '\n' => self.output.push_str("\\n"),
                 '\r' => self.output.push_str("\\r"),
                 '\t' => self.output.push_str("\\t"),
+                '\0' => self.output.push_str("\\0"),
+                c if (c as u32) < 0x20 || c == '\x7F' => {
+                    // Escape control characters as \u00NN (matching TypeScript format)
+                    write!(self.output, "\\u{:04X}", c as u32).unwrap();
+                }
                 _ => self.output.push(c),
             }
         }

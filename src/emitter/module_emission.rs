@@ -24,9 +24,19 @@ impl<'a> Printer<'a> {
         let prev_module = self.ctx.options.module;
         self.ctx.options.module = ModuleKind::None;
 
+        let before_len = self.writer.len();
         emit_inner(self);
+        let inner_emitted = self.writer.len() > before_len;
 
         self.ctx.options.module = prev_module;
+
+        // If the inner emit produced nothing (e.g., variable declaration with
+        // no initializer where only the type annotation was stripped), skip
+        // the export assignment. The preamble `exports.X = void 0;` already
+        // handles the forward declaration.
+        if !inner_emitted {
+            return;
+        }
 
         self.write_line();
         if is_default {
@@ -468,14 +478,13 @@ impl<'a> Printer<'a> {
 
         if export.is_default_export {
             // Check if the clause is a declaration (function/class) that doesn't need semicolon
-            let clause_is_func_or_class = if let Some(clause_node) =
-                self.arena.get(export.export_clause)
-            {
-                clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            } else {
-                false
-            };
+            let clause_is_func_or_class =
+                if let Some(clause_node) = self.arena.get(export.export_clause) {
+                    clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        || clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                } else {
+                    false
+                };
             self.write("export default ");
             self.emit(export.export_clause);
             if !clause_is_func_or_class {
@@ -1057,33 +1066,25 @@ impl<'a> Printer<'a> {
         false
     }
 
-    /// Check if a file is a runtime module (has value imports/exports).
+    /// Check if a file is a module (has any import/export syntax).
+    /// TypeScript considers a file a module if it has ANY import/export syntax,
+    /// including type-only imports/exports, declared exports, and exported
+    /// interfaces/type aliases.
     pub(super) fn file_is_module(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {
                     k if k == syntax_kind_ext::IMPORT_DECLARATION
-                        || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION =>
+                        || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        || k == syntax_kind_ext::EXPORT_DECLARATION
+                        || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
                     {
-                        if let Some(import_decl) = self.arena.get_import_decl(node)
-                            && self.import_decl_has_runtime_value(import_decl)
-                        {
-                            return true;
-                        }
+                        return true;
                     }
-                    k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                        if let Some(export_decl) = self.arena.get_export_decl(node)
-                            && self.export_decl_has_runtime_value(export_decl)
-                        {
-                            return true;
-                        }
-                    }
-                    k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
-                    // Check for export modifier on declarations
+                    // Check for export modifier on any declaration type
                     k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                         if let Some(var_stmt) = self.arena.get_variable(node)
                             && self.has_export_modifier(&var_stmt.modifiers)
-                            && !self.has_declare_modifier(&var_stmt.modifiers)
                         {
                             return true;
                         }
@@ -1091,7 +1092,6 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         if let Some(func) = self.arena.get_function(node)
                             && self.has_export_modifier(&func.modifiers)
-                            && !self.has_declare_modifier(&func.modifiers)
                         {
                             return true;
                         }
@@ -1099,7 +1099,6 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::CLASS_DECLARATION => {
                         if let Some(class) = self.arena.get_class(node)
                             && self.has_export_modifier(&class.modifiers)
-                            && !self.has_declare_modifier(&class.modifiers)
                         {
                             return true;
                         }
@@ -1107,9 +1106,6 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::ENUM_DECLARATION => {
                         if let Some(enum_decl) = self.arena.get_enum(node)
                             && self.has_export_modifier(&enum_decl.modifiers)
-                            && !self.has_declare_modifier(&enum_decl.modifiers)
-                            && !self
-                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
                         {
                             return true;
                         }
@@ -1117,7 +1113,20 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::MODULE_DECLARATION => {
                         if let Some(module) = self.arena.get_module(node)
                             && self.has_export_modifier(&module.modifiers)
-                            && !self.has_declare_modifier(&module.modifiers)
+                        {
+                            return true;
+                        }
+                    }
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        if let Some(iface) = self.arena.get_interface(node)
+                            && self.has_export_modifier(&iface.modifiers)
+                        {
+                            return true;
+                        }
+                    }
+                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                        if let Some(type_alias) = self.arena.get_type_alias(node)
+                            && self.has_export_modifier(&type_alias.modifiers)
                         {
                             return true;
                         }
@@ -1311,6 +1320,8 @@ impl<'a> Printer<'a> {
     /// Check if we should emit the __esModule marker.
     /// Returns true if the file contains any ES6 module syntax (import/export),
     /// excluding `export =` which is legacy CommonJS.
+    /// TypeScript emits __esModule for ANY module syntax, including type-only
+    /// imports/exports, declared exports, and exported interfaces/type aliases.
     pub(super) fn should_emit_es_module_marker(&self, statements: &NodeList) -> bool {
         // First check: if file has export =, don't emit __esModule at all
         for &stmt_idx in &statements.nodes {
@@ -1321,32 +1332,23 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Second check: look for runtime module syntax
+        // Second check: look for ANY module syntax (including type-only)
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {
                     k if k == syntax_kind_ext::IMPORT_DECLARATION
                         || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION =>
                     {
-                        if let Some(import_decl) = self.arena.get_import_decl(node)
-                            && self.import_decl_has_runtime_value(import_decl)
-                        {
-                            return true;
-                        }
+                        return true;
                     }
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                        if let Some(export_decl) = self.arena.get_export_decl(node)
-                            && self.export_decl_has_runtime_value(export_decl)
-                        {
-                            return true;
-                        }
+                        return true;
                     }
-                    // Note: EXPORT_ASSIGNMENT (export =) is excluded - it's CommonJS style
-                    // Check for export modifier on declarations
+                    // Check for export modifier on any declaration type
+                    // (including declare and type-only declarations)
                     k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                         if let Some(var_stmt) = self.arena.get_variable(node)
                             && self.has_export_modifier(&var_stmt.modifiers)
-                            && !self.has_declare_modifier(&var_stmt.modifiers)
                         {
                             return true;
                         }
@@ -1354,7 +1356,6 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         if let Some(func) = self.arena.get_function(node)
                             && self.has_export_modifier(&func.modifiers)
-                            && !self.has_declare_modifier(&func.modifiers)
                         {
                             return true;
                         }
@@ -1362,7 +1363,6 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::CLASS_DECLARATION => {
                         if let Some(class) = self.arena.get_class(node)
                             && self.has_export_modifier(&class.modifiers)
-                            && !self.has_declare_modifier(&class.modifiers)
                         {
                             return true;
                         }
@@ -1370,9 +1370,6 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::ENUM_DECLARATION => {
                         if let Some(enum_decl) = self.arena.get_enum(node)
                             && self.has_export_modifier(&enum_decl.modifiers)
-                            && !self.has_declare_modifier(&enum_decl.modifiers)
-                            && !self
-                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
                         {
                             return true;
                         }
@@ -1380,7 +1377,20 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::MODULE_DECLARATION => {
                         if let Some(module) = self.arena.get_module(node)
                             && self.has_export_modifier(&module.modifiers)
-                            && !self.has_declare_modifier(&module.modifiers)
+                        {
+                            return true;
+                        }
+                    }
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        if let Some(iface) = self.arena.get_interface(node)
+                            && self.has_export_modifier(&iface.modifiers)
+                        {
+                            return true;
+                        }
+                    }
+                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                        if let Some(type_alias) = self.arena.get_type_alias(node)
+                            && self.has_export_modifier(&type_alias.modifiers)
                         {
                             return true;
                         }
@@ -1414,17 +1424,8 @@ impl<'a> Printer<'a> {
         let (func_exports, other_exports) =
             module_commonjs::collect_export_names_categorized(self.arena, &statements.nodes);
 
-        // Emit hoisted function exports: exports.f = f;
-        for name in &func_exports {
-            self.write("exports.");
-            self.write(name);
-            self.write(" = ");
-            self.write(name);
-            self.write(";");
-            self.write_line();
-        }
-
-        // Emit non-hoisted exports: exports.a = exports.b = void 0;
+        // Emit non-hoisted exports first: exports.a = exports.b = void 0;
+        // TypeScript emits void 0 initialization before hoisted function exports
         if !other_exports.is_empty() {
             for (i, name) in other_exports.iter().enumerate() {
                 if i > 0 {
@@ -1434,6 +1435,16 @@ impl<'a> Printer<'a> {
                 self.write(name);
             }
             self.write(" = void 0;");
+            self.write_line();
+        }
+
+        // Emit hoisted function exports: exports.f = f;
+        for name in &func_exports {
+            self.write("exports.");
+            self.write(name);
+            self.write(" = ");
+            self.write(name);
+            self.write(";");
             self.write_line();
         }
     }

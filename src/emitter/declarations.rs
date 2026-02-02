@@ -101,7 +101,10 @@ impl<'a> Printer<'a> {
             "var"
         };
         self.write(keyword);
-        self.write(" ");
+        // Only write space if there are declarations to emit
+        if !decl_list.declarations.nodes.is_empty() {
+            self.write(" ");
+        }
 
         let prev = self.emit_missing_initializer_as_void_0;
         if force_void_0 {
@@ -506,11 +509,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (public, protected, private)
-        self.emit_class_member_modifiers(&ctor.modifiers);
+        // Emit modifiers (public, protected, private) - skip for JS emit
+        // self.emit_class_member_modifiers(&ctor.modifiers);
 
         self.write("constructor(");
-        self.emit_comma_separated(&ctor.parameters.nodes);
+        self.emit_function_parameters_js(&ctor.parameters.nodes);
         self.write(")");
 
         if !ctor.body.is_none() {
@@ -524,8 +527,8 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (static, private, etc.)
-        self.emit_class_member_modifiers(&accessor.modifiers);
+        // Emit modifiers (static only for JavaScript)
+        self.emit_class_member_modifiers_js(&accessor.modifiers);
 
         self.write("get ");
         self.emit(accessor.name);
@@ -547,13 +550,13 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (static, private, etc.)
-        self.emit_class_member_modifiers(&accessor.modifiers);
+        // Emit modifiers (static only for JavaScript)
+        self.emit_class_member_modifiers_js(&accessor.modifiers);
 
         self.write("set ");
         self.emit(accessor.name);
         self.write("(");
-        self.emit_comma_separated(&accessor.parameters.nodes);
+        self.emit_function_parameters_js(&accessor.parameters.nodes);
         self.write(")");
 
         if !accessor.body.is_none() {
