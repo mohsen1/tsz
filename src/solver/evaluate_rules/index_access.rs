@@ -222,12 +222,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().union(results);
         }
 
+        let interner = self.interner();
         let mut visitor = IndexAccessVisitor {
             evaluator: self,
             object_type,
             index_type,
         };
-        if let Some(result) = visitor.visit_type(self.interner(), object_type) {
+        if let Some(result) = visitor.visit_type(interner, object_type) {
             return result;
         }
 

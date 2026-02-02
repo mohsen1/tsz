@@ -498,6 +498,7 @@ fn test_object_shape_extractors() {
     assert!(object_with_index_shape_id(&interner, obj).is_none());
 
     let obj_with_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("y"),
             type_id: TypeId::STRING,

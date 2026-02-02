@@ -522,7 +522,7 @@ pub struct IndexInfo {
 }
 
 bitflags::bitflags! {
-    #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
     pub struct ObjectFlags: u32 {
         const FRESH_LITERAL = 1 << 0;
     }

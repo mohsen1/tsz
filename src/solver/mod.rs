@@ -26,7 +26,7 @@ pub mod element_access;
 mod evaluate;
 pub mod evaluate_rules;
 mod flow_analysis;
-mod freshness;
+pub mod freshness;
 mod format;
 mod index_signatures;
 mod infer;

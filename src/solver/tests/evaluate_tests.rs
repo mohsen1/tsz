@@ -4499,6 +4499,7 @@ fn test_conditional_infer_object_index_signature_distributive() {
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | { b: number }.
     let extends_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4562,6 +4563,7 @@ fn test_conditional_infer_number_index_signature_distributive() {
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | { 1: number }.
     let extends_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4625,6 +4627,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_input() 
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | { 1: number } (no distribution).
     let extends_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4688,6 +4691,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_branch()
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | number (no distribution).
     let extends_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -4742,6 +4746,7 @@ fn test_conditional_infer_object_index_signature_non_object_union_branch() {
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | number.
     let extends_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4796,6 +4801,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_input() 
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | { b: number } (no distribution).
     let extends_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -4859,6 +4865,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_branch()
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | number (no distribution).
     let extends_obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -9402,6 +9409,7 @@ fn test_conditional_infer_object_string_index_signature() {
     }));
 
     let source = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -9411,6 +9419,7 @@ fn test_conditional_infer_object_string_index_signature() {
         number_index: None,
     });
     let pattern = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -9756,6 +9765,7 @@ fn test_index_access_object_with_string_index_signature() {
     let key_y = interner.literal_string("y");
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: key_x,
             type_id: TypeId::STRING,
@@ -9796,6 +9806,7 @@ fn test_index_access_object_with_string_index_signature_optional_property() {
     let key_y = interner.literal_string("y");
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: key_x,
             type_id: TypeId::NUMBER,
@@ -9831,6 +9842,7 @@ fn test_index_access_object_with_string_index_signature_optional_property_no_unc
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("x"),
             type_id: TypeId::NUMBER,
@@ -9875,6 +9887,7 @@ fn test_no_unchecked_object_index_signature_evaluate() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -9897,6 +9910,7 @@ fn test_index_access_object_with_number_index_signature() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -9919,6 +9933,7 @@ fn test_index_access_object_with_number_index_signature_no_unchecked() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -10058,6 +10073,7 @@ fn test_index_access_with_no_unchecked_indexed_access() {
     let interner = TypeInterner::new();
 
     let indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -10086,6 +10102,7 @@ fn test_index_access_with_options_helper_no_unchecked_indexed_access() {
     let interner = TypeInterner::new();
 
     let indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -11068,6 +11085,7 @@ fn test_keyof_object_with_string_index_signature() {
 
     let key_x = interner.intern_string("x");
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: key_x,
             type_id: TypeId::NUMBER,
@@ -11099,6 +11117,7 @@ fn test_keyof_object_with_number_index_signature() {
 
     let key_x = interner.intern_string("x");
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: key_x,
             type_id: TypeId::NUMBER,
@@ -11228,6 +11247,7 @@ fn test_keyof_union_string_index_overlap_literal() {
     let interner = TypeInterner::new();
 
     let obj_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -11256,6 +11276,7 @@ fn test_keyof_union_index_signature_intersection() {
     let interner = TypeInterner::new();
 
     let string_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -11265,6 +11286,7 @@ fn test_keyof_union_index_signature_intersection() {
         number_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -12076,6 +12098,7 @@ fn test_keyof_both_index_signatures() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12358,6 +12381,7 @@ fn test_keyof_union_with_index_signature_and_literal() {
     }]);
 
     let obj_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -12391,6 +12415,7 @@ fn test_keyof_intersection_with_index_signature() {
     }]);
 
     let obj_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -16613,6 +16638,7 @@ fn test_application_ref_expansion_with_index_signature() {
 
     // Define: type Dict<T> = { [key: string]: T }
     let dict_body = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -16637,6 +16663,7 @@ fn test_application_ref_expansion_with_index_signature() {
 
     // Expected: { [key: string]: number }
     let expected = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -16674,6 +16701,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
 
     // Define: type NumericDict<T> = { [index: number]: T }
     let numeric_dict_body = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -16698,6 +16726,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
 
     // Expected: { [index: number]: string }
     let expected = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -24975,6 +25004,7 @@ fn test_record_string_keys() {
 
     // Record with string keys creates an index signature
     let record = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -25003,6 +25033,7 @@ fn test_record_number_keys() {
     let interner = TypeInterner::new();
 
     let record = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -25078,6 +25109,7 @@ fn test_record_with_object_value() {
     }]);
 
     let record = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -25510,6 +25542,7 @@ fn test_record_with_union_value() {
     let value_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     let record = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -25574,6 +25607,7 @@ fn test_readonly_with_index_signature() {
     let interner = TypeInterner::new();
 
     let readonly_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -28241,6 +28275,7 @@ fn test_recursive_type_json_value() {
 
     // Create { [key: string]: JsonValue } index signature object
     let json_object = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -28364,6 +28399,7 @@ fn test_recursive_type_dom_node() {
 
     // Create Record<string, string> for attributes
     let attrs_type = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -31981,6 +32017,7 @@ fn test_satisfies_record_type() {
 
     // Record<string, number> is an object with string index signature
     let record = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -39777,6 +39814,7 @@ fn test_infer_from_index_signature_value() {
 
     // Pattern: { [k: string]: infer V }
     let pattern = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -39788,6 +39826,7 @@ fn test_infer_from_index_signature_value() {
 
     // Input: { [k: string]: number }
     let input = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -40071,6 +40110,7 @@ fn test_infer_with_keyof_constraint() {
 
     // Pattern: { [key: infer K]: number } where K extends string
     let pattern = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: infer_k,
@@ -40082,6 +40122,7 @@ fn test_infer_with_keyof_constraint() {
 
     // Input: { [key: string]: number }
     let input = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -40883,6 +40924,7 @@ fn test_keyof_intersection_both_index_signatures() {
     let interner = TypeInterner::new();
 
     let string_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -40893,6 +40935,7 @@ fn test_keyof_intersection_both_index_signatures() {
     });
 
     let number_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
         number_index: Some(IndexSignature {
@@ -40916,6 +40959,7 @@ fn test_keyof_union_index_and_literal() {
     let interner = TypeInterner::new();
 
     let string_indexed = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -43305,6 +43349,7 @@ fn test_indexed_access_string_index_signature() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -43326,6 +43371,7 @@ fn test_indexed_access_number_index_signature() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: None,
         number_index: Some(IndexSignature {
@@ -43347,6 +43393,7 @@ fn test_indexed_access_property_overrides_index_signature() {
     let interner = TypeInterner::new();
 
     let obj = interner.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("a"),
             type_id: TypeId::BOOLEAN,

@@ -1405,3 +1405,32 @@ pub fn is_empty_object_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> boo
         _ => false,
     }
 }
+
+// =============================================================================
+// Object Type Classification
+// =============================================================================
+
+/// Classification of object types for freshness tracking.
+pub enum ObjectTypeKind {
+    /// A regular object type (no index signatures).
+    Object(ObjectShapeId),
+    /// An object type with index signatures.
+    ObjectWithIndex(ObjectShapeId),
+    /// Not an object type.
+    NotObject,
+}
+
+/// Classify a type as an object type kind.
+///
+/// This is used by the freshness tracking system to determine if a type
+/// is a fresh object literal that needs special handling.
+pub fn classify_object_type(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> ObjectTypeKind {
+    match types.lookup(type_id) {
+        Some(TypeKey::Object(shape_id)) => ObjectTypeKind::Object(shape_id),
+        Some(TypeKey::ObjectWithIndex(shape_id)) => ObjectTypeKind::ObjectWithIndex(shape_id),
+        _ => ObjectTypeKind::NotObject,
+    }
+}
