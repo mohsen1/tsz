@@ -290,26 +290,27 @@ pub fn merge_shared_lib_symbols(binder: &mut BinderState) {
     }
 }
 
-/// Helper function to load lib.d.ts from disk for tests that need global types.
+/// Helper function to load lib files from disk for tests that need global types.
 /// Returns a vector of LibFile objects that can be used with bind_source_file_with_libs.
 ///
-/// This function tries multiple locations to find lib.d.ts:
-/// 1. TypeScript/node_modules/typescript/lib/lib.d.ts (repo structure)
-/// 2. ../TypeScript/node_modules/typescript/lib/lib.d.ts (parent directory)
+/// This function loads lib.es5.d.ts which contains core global types (Array, Boolean, etc.)
+/// from TypeScript's lib directory.
 ///
-/// If lib.d.ts is not found, returns an empty vector.
+/// If lib files are not found, returns an empty vector.
 #[inline]
 pub fn load_lib_files_for_test() -> Vec<Arc<crate::lib_loader::LibFile>> {
+    // Load lib.es5.d.ts which contains the actual type definitions (Array, Boolean, etc.)
+    // lib.d.ts is just references to other lib files
     let lib_paths = [
-        std::path::PathBuf::from("TypeScript/node_modules/typescript/lib/lib.d.ts"),
-        std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.d.ts"),
+        std::path::PathBuf::from("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
     ];
 
     for lib_path in &lib_paths {
         if lib_path.exists() {
             if let Ok(content) = std::fs::read_to_string(lib_path) {
                 let lib_file =
-                    crate::lib_loader::LibFile::from_source("lib.d.ts".to_string(), content);
+                    crate::lib_loader::LibFile::from_source("lib.es5.d.ts".to_string(), content);
                 return vec![Arc::new(lib_file)];
             }
         }

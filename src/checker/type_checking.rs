@@ -950,71 +950,93 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Validation:
     /// - Emits TS1308 if await is used outside async function
-    /// - Recursively checks child expressions for await expressions
+    /// - Iteratively checks child expressions for await expressions (no recursion)
     pub(crate) fn check_await_expression(&mut self, expr_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return;
-        };
+        // Use iterative approach with explicit stack to handle deeply nested expressions
+        // This prevents stack overflow for expressions like `0 + 0 + 0 + ... + 0` (50K+ deep)
+        let mut stack = vec![expr_idx];
 
-        // If this is an await expression, check if we're in async context
-        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION && !self.ctx.in_async_context() {
-            use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_node(
-                expr_idx,
-                diagnostic_messages::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
-                diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
-            );
-        }
+        while let Some(current_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(current_idx) else {
+                continue;
+            };
 
-        // Recursively check child expressions
-        match node.kind {
-            syntax_kind_ext::BINARY_EXPRESSION => {
-                if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
-                    self.check_await_expression(bin_expr.left);
-                    self.check_await_expression(bin_expr.right);
-                }
+            // If this is an await expression, check if we're in async context
+            if node.kind == syntax_kind_ext::AWAIT_EXPRESSION && !self.ctx.in_async_context() {
+                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    current_idx,
+                    diagnostic_messages::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
+                    diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
+                );
             }
-            syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
-                if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
-                    self.check_await_expression(unary_expr.expression);
-                }
-            }
-            syntax_kind_ext::AWAIT_EXPRESSION => {
-                // Already checked above
-                if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
-                    self.check_await_expression(unary_expr.expression);
-                }
-            }
-            syntax_kind_ext::CALL_EXPRESSION => {
-                if let Some(call_expr) = self.ctx.arena.get_call_expr(node) {
-                    self.check_await_expression(call_expr.expression);
-                    // Check arguments
-                    if let Some(ref args) = call_expr.arguments {
-                        for &arg in &args.nodes {
-                            self.check_await_expression(arg);
+
+            // Push child expressions onto stack for iterative processing
+            match node.kind {
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
+                        if !bin_expr.right.is_none() {
+                            stack.push(bin_expr.right);
+                        }
+                        if !bin_expr.left.is_none() {
+                            stack.push(bin_expr.left);
                         }
                     }
                 }
-            }
-            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                if let Some(access_expr) = self.ctx.arena.get_access_expr(node) {
-                    self.check_await_expression(access_expr.expression);
+                syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
+                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
+                        if !unary_expr.expression.is_none() {
+                            stack.push(unary_expr.expression);
+                        }
+                    }
                 }
-            }
-            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                // Element access is stored differently - need to check the actual structure
-                // The expression and argument are stored in specific data_index positions
-                // For now, skip this to avoid breaking the build
-            }
-            syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                if let Some(paren_expr) = self.ctx.arena.get_parenthesized(node) {
-                    self.check_await_expression(paren_expr.expression);
+                syntax_kind_ext::AWAIT_EXPRESSION => {
+                    // Already checked above
+                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
+                        if !unary_expr.expression.is_none() {
+                            stack.push(unary_expr.expression);
+                        }
+                    }
                 }
-            }
-            _ => {
-                // For other expression types, don't recurse into children
-                // to avoid infinite recursion or performance issues
+                syntax_kind_ext::CALL_EXPRESSION => {
+                    if let Some(call_expr) = self.ctx.arena.get_call_expr(node) {
+                        // Check arguments (push in reverse order for correct traversal)
+                        if let Some(ref args) = call_expr.arguments {
+                            for &arg in args.nodes.iter().rev() {
+                                if !arg.is_none() {
+                                    stack.push(arg);
+                                }
+                            }
+                        }
+                        if !call_expr.expression.is_none() {
+                            stack.push(call_expr.expression);
+                        }
+                    }
+                }
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    if let Some(access_expr) = self.ctx.arena.get_access_expr(node) {
+                        if !access_expr.expression.is_none() {
+                            stack.push(access_expr.expression);
+                        }
+                    }
+                }
+                syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                    // Element access is stored differently - need to check the actual structure
+                    // The expression and argument are stored in specific data_index positions
+                    // For now, skip this to avoid breaking the build
+                }
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    if let Some(paren_expr) = self.ctx.arena.get_parenthesized(node) {
+                        if !paren_expr.expression.is_none() {
+                            stack.push(paren_expr.expression);
+                        }
+                    }
+                }
+                _ => {
+                    // For other expression types, don't recurse into children
+                    // to avoid infinite recursion or performance issues
+                }
             }
         }
     }

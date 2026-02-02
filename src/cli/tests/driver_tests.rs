@@ -1870,7 +1870,6 @@ fn compile_with_cache_updates_dependencies_for_changed_files() {
 }
 
 #[test]
-#[ignore = "TODO: driver needs work"]
 fn compile_with_cache_skips_dependents_when_exports_unchanged() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

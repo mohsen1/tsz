@@ -14,13 +14,28 @@ use crate::solver::TypeInterner;
 use crate::test_fixtures::TestContext;
 use std::sync::Arc;
 
-/// Helper function to check source without lib.d.ts and return diagnostics.
+/// Helper function to check source with lib.es5.d.ts and return diagnostics.
+/// Loads lib files to avoid TS2318 errors for missing global types.
 /// Creates the checker with the parser's arena directly to ensure proper node resolution.
 fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+    // We still need lib files to avoid TS2318 errors for global types
+    // The "without lib" name is a misnomer - we need basic global types
+    let lib_files = crate::test_fixtures::load_lib_files_for_test();
+
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| crate::binder::state::LibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&lib_contexts);
+    }
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -33,32 +48,25 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
         "test.ts".to_string(),
         options,
     );
-    // Don't set lib_contexts - no lib files loaded
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
 
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
 
-/// Helper function to check source WITH lib.d.ts and return diagnostics.
+/// Helper function to check source WITH lib.es5.d.ts and return diagnostics.
 fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
-    // Load lib.d.ts from disk
-    let lib_path = std::path::PathBuf::from("TypeScript/node_modules/typescript/lib/lib.d.ts");
-    let lib_files = if lib_path.exists() {
-        let content = std::fs::read_to_string(&lib_path).expect("Failed to read lib.d.ts");
-        let lib_file = crate::lib_loader::LibFile::from_source("lib.d.ts".to_string(), content);
-        vec![std::sync::Arc::new(lib_file)]
-    } else {
-        // Fallback: try to find lib.d.ts in parent directories
-        let alt_path =
-            std::path::PathBuf::from("../TypeScript/node_modules/typescript/lib/lib.d.ts");
-        if alt_path.exists() {
-            let content = std::fs::read_to_string(&alt_path).expect("Failed to read lib.d.ts");
-            let lib_file = crate::lib_loader::LibFile::from_source("lib.d.ts".to_string(), content);
-            vec![std::sync::Arc::new(lib_file)]
-        } else {
-            Vec::new()
-        }
-    };
+    // Load lib.es5.d.ts which contains actual type definitions
+    let lib_files = crate::test_fixtures::load_lib_files_for_test();
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
