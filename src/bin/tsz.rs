@@ -758,6 +758,7 @@ fn handle_all() -> Result<()> {
 fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use wasm::checker::types::diagnostics::DiagnosticCategory;
     use wasm::cli::project_refs::ProjectReferenceGraph;
+    use wasm::cli::build;
 
     let tsconfig_path = args
         .project
@@ -823,19 +824,29 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     // Build each project in dependency order
     let mut total_errors = 0;
     let mut built_count = 0;
+    let mut skipped_count = 0;
     let pretty = args
         .pretty
         .unwrap_or_else(|| std::io::stderr().is_terminal());
     let mut reporter = Reporter::new(pretty);
 
     if args.build_verbose {
-        println!("Building {} project(s)...", build_order.len());
+        println!("Checking {} project(s)...", build_order.len());
     }
 
     for project_id in &build_order {
         let Some(project) = graph.get_project(*project_id) else {
             continue;
         };
+
+        // Check if project is up-to-date (unless --force is set)
+        if !args.force && build::is_project_up_to_date(project, args) {
+            if args.build_verbose {
+                println!("✓ Up to date: {}", project.config_path.display());
+            }
+            skipped_count += 1;
+            continue;
+        }
 
         if args.build_verbose {
             println!("\nBuilding: {}", project.config_path.display());
@@ -878,8 +889,8 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     if args.build_verbose {
         println!(
-            "\nBuilt {} project(s) with {} error(s)",
-            built_count, total_errors
+            "\nBuilt {} project(s), skipped {} up-to-date project(s), {} error(s)",
+            built_count, skipped_count, total_errors
         );
     }
 
