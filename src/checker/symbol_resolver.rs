@@ -301,8 +301,7 @@ impl<'a> CheckerState<'a> {
                 if should_skip_lib_symbol(sym_id) {
                     return false;
                 }
-                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                {
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if is_class_member {
                         return is_from_lib(sym_id)
@@ -407,8 +406,7 @@ impl<'a> CheckerState<'a> {
                 if should_skip_lib_symbol(sym_id) {
                     return false;
                 }
-                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                {
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if is_class_member {
                         return false;

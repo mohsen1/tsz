@@ -323,13 +323,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Each union member must satisfy the properties it has
         for &union_member in union_members.iter() {
             // Get properties from the union member
-            let union_props = if let Some(shape_id) = object_shape_id(self.interner, union_member)
-            {
+            let union_props = if let Some(shape_id) = object_shape_id(self.interner, union_member) {
                 let shape = self.interner.object_shape(shape_id);
                 shape.properties.clone()
-            } else if let Some(shape_id) =
-                object_with_index_shape_id(self.interner, union_member)
-            {
+            } else if let Some(shape_id) = object_with_index_shape_id(self.interner, union_member) {
                 let shape = self.interner.object_shape(shape_id);
                 shape.properties.clone()
             } else {

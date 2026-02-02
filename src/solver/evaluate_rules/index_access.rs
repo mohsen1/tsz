@@ -35,7 +35,10 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             | IntrinsicKind::Bigint
             | IntrinsicKind::Symbol => {
                 let shape = self.evaluator.apparent_primitive_shape(kind);
-                Some(self.evaluator.evaluate_object_with_index(&shape, self.index_type))
+                Some(
+                    self.evaluator
+                        .evaluate_object_with_index(&shape, self.index_type),
+                )
             }
             _ => None,
         }
@@ -50,7 +53,10 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
                         .intern(TypeKey::IndexAccess(self.object_type, self.index_type)),
                 )
             } else {
-                Some(self.evaluator.recurse_index_access(constraint, self.index_type))
+                Some(
+                    self.evaluator
+                        .recurse_index_access(constraint, self.index_type),
+                )
             }
         } else {
             Some(
@@ -76,13 +82,25 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
-        let shape = self.evaluator.interner().object_shape(ObjectShapeId(shape_id));
-        Some(self.evaluator.evaluate_object_index(&shape.properties, self.index_type))
+        let shape = self
+            .evaluator
+            .interner()
+            .object_shape(ObjectShapeId(shape_id));
+        Some(
+            self.evaluator
+                .evaluate_object_index(&shape.properties, self.index_type),
+        )
     }
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
-        let shape = self.evaluator.interner().object_shape(ObjectShapeId(shape_id));
-        Some(self.evaluator.evaluate_object_with_index(&shape, self.index_type))
+        let shape = self
+            .evaluator
+            .interner()
+            .object_shape(ObjectShapeId(shape_id));
+        Some(
+            self.evaluator
+                .evaluate_object_with_index(&shape, self.index_type),
+        )
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
@@ -112,15 +130,18 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
-        Some(self.evaluator.evaluate_array_index(element_type, self.index_type))
+        Some(
+            self.evaluator
+                .evaluate_array_index(element_type, self.index_type),
+        )
     }
 
     fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
-        let elements = self
-            .evaluator
-            .interner()
-            .tuple_list(TupleListId(list_id));
-        Some(self.evaluator.evaluate_tuple_index(&elements, self.index_type))
+        let elements = self.evaluator.interner().tuple_list(TupleListId(list_id));
+        Some(
+            self.evaluator
+                .evaluate_tuple_index(&elements, self.index_type),
+        )
     }
 
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
@@ -136,7 +157,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     .intern(TypeKey::IndexAccess(self.object_type, self.index_type)),
             )
         } else {
-            Some(self.evaluator.recurse_index_access(resolved, self.index_type))
+            Some(
+                self.evaluator
+                    .recurse_index_access(resolved, self.index_type),
+            )
         }
     }
 
@@ -149,7 +173,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
-        Some(self.evaluator.recurse_index_access(inner_type, self.index_type))
+        Some(
+            self.evaluator
+                .recurse_index_access(inner_type, self.index_type),
+        )
     }
 
     fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {

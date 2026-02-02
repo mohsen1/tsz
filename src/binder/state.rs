@@ -565,11 +565,7 @@ impl BinderState {
         };
 
         let mut consider = |sym_id: SymbolId| -> Option<SymbolId> {
-            if accept(sym_id) {
-                Some(sym_id)
-            } else {
-                None
-            }
+            if accept(sym_id) { Some(sym_id) } else { None }
         };
 
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {

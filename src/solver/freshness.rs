@@ -1,7 +1,7 @@
 //! Freshness helpers for object literal excess property checking.
 
 use crate::solver::types::ObjectFlags;
-use crate::solver::visitor::{classify_object_type, ObjectTypeKind};
+use crate::solver::visitor::{ObjectTypeKind, classify_object_type};
 use crate::solver::{TypeDatabase, TypeId};
 
 pub fn is_fresh_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

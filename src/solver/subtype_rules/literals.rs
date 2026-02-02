@@ -126,10 +126,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let type_id = *type_id;
                 if let Some(kind) = intrinsic_kind(self.interner, type_id) {
                     return match kind {
-                        IntrinsicKind::String => self.match_string_wildcard(remaining, spans, span_idx),
-                        IntrinsicKind::Number => self.match_number_pattern(remaining, spans, span_idx),
-                        IntrinsicKind::Boolean => self.match_boolean_pattern(remaining, spans, span_idx),
-                        IntrinsicKind::Bigint => self.match_bigint_pattern(remaining, spans, span_idx),
+                        IntrinsicKind::String => {
+                            self.match_string_wildcard(remaining, spans, span_idx)
+                        }
+                        IntrinsicKind::Number => {
+                            self.match_number_pattern(remaining, spans, span_idx)
+                        }
+                        IntrinsicKind::Boolean => {
+                            self.match_boolean_pattern(remaining, spans, span_idx)
+                        }
+                        IntrinsicKind::Bigint => {
+                            self.match_bigint_pattern(remaining, spans, span_idx)
+                        }
                         _ => false,
                     };
                 }
@@ -195,8 +203,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     Some(IntrinsicKind::String) => {
                         self.match_string_wildcard(remaining, spans, span_idx)
                     }
-                    Some(IntrinsicKind::Number) => self.match_number_pattern(remaining, spans, span_idx),
-                    Some(IntrinsicKind::Boolean) => self.match_boolean_pattern(remaining, spans, span_idx),
+                    Some(IntrinsicKind::Number) => {
+                        self.match_number_pattern(remaining, spans, span_idx)
+                    }
+                    Some(IntrinsicKind::Boolean) => {
+                        self.match_boolean_pattern(remaining, spans, span_idx)
+                    }
                     _ => false,
                 }
             }
@@ -421,7 +433,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let matched = match kind {
                     IntrinsicKind::String => self.match_string_wildcard(remaining, spans, span_idx),
                     IntrinsicKind::Number => self.match_number_pattern(remaining, spans, span_idx),
-                    IntrinsicKind::Boolean => self.match_boolean_pattern(remaining, spans, span_idx),
+                    IntrinsicKind::Boolean => {
+                        self.match_boolean_pattern(remaining, spans, span_idx)
+                    }
                     _ => false,
                 };
                 if matched {
