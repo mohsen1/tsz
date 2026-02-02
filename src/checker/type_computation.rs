@@ -281,18 +281,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Choose a best common type if any element is a supertype of all others.
-        // Rule #32: Best Common Type (BCT) Inference
-        // Use union type as the best common type for array elements.
-        // This is a simplified implementation that creates a union of all element types.
-        let element_type = if element_types.is_empty() {
-            TypeId::NEVER
-        } else if element_types.len() == 1 {
-            element_types[0]
-        } else {
-            // Create a union of all element types
-            self.ctx.types.union(element_types)
-        };
+        // Use Solver API for Best Common Type computation (Solver-First architecture)
+        let element_type = expression_ops::compute_best_common_type(self.ctx.types, &element_types);
 
         self.ctx.types.array(element_type)
     }
