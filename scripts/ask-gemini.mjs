@@ -2,7 +2,7 @@
 
 import { execSync } from 'child_process';
 import { parseArgs } from 'util';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import 'dotenv/config';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -178,10 +178,50 @@ const MAX_GEMINI_TOKENS = 1_000_000;
 const INITIAL_YEK_LIMIT = '4000k'; // Start high, will auto-adjust down
 
 /**
+ * Read files directly that might be ignored by yek (e.g., scripts/, docs/).
+ * Returns formatted context string for these files.
+ */
+function readDirectIncludedFiles(paths) {
+  const sections = [];
+  const includedFiles = [];
+  
+  if (paths.length > 0) {
+    console.log(`  - Reading ${paths.length} directly included file(s)...`);
+  }
+  
+  for (const filePath of paths) {
+    // Skip directories, only handle files
+    if (existsSync(filePath)) {
+      try {
+        const stats = statSync(filePath);
+        if (stats.isFile()) {
+          const content = readFileSync(filePath, 'utf-8');
+          sections.push(`>>>> ${filePath}\n${content}`);
+          includedFiles.push(filePath);
+        }
+      } catch (err) {
+        console.log(`    Warning: Could not read ${filePath}: ${err.message}`);
+      }
+    } else {
+      console.log(`    Warning: File not found: ${filePath}`);
+    }
+  }
+  
+  if (includedFiles.length > 0) {
+    console.log(`    Read ${includedFiles.length} file(s) directly`);
+  }
+  
+  return { context: sections.join('\n\n'), files: includedFiles };
+}
+
+/**
  * Gather context from yek with given token limit and apply filters.
  * Returns { context, files, estimatedTokens, stats }
  */
-function gatherContextWithLimit(yekTokenLimit, includePaths, filterTests) {
+function gatherContextWithLimit(yekTokenLimit, includePaths, filterTests, directIncludePaths = []) {
+  // First, read any directly specified files that yek might ignore
+  const directResult = readDirectIncludedFiles(directIncludePaths);
+  
   let yekCommand = `yek --config-file yek.yaml --tokens ${yekTokenLimit}`;
   if (includePaths) {
     yekCommand += ` ${includePaths}`;
@@ -234,12 +274,20 @@ function gatherContextWithLimit(yekTokenLimit, includePaths, filterTests) {
 
   context = filteredSections.join('');
 
+  // Merge directly included files at the beginning
+  if (directResult.context) {
+    context = directResult.context + '\n\n' + context;
+  }
+
   // Extract file list
   const fileMarkerRegex = /^>>>> (.+)$/gm;
-  const files = [];
+  const files = [...directResult.files]; // Start with directly included files
   let match;
   while ((match = fileMarkerRegex.exec(context)) !== null) {
-    files.push(match[1]);
+    // Avoid duplicates
+    if (!files.includes(match[1])) {
+      files.push(match[1]);
+    }
   }
 
   const contextBytes = Buffer.byteLength(context, 'utf-8');
@@ -258,12 +306,12 @@ function gatherContextWithLimit(yekTokenLimit, includePaths, filterTests) {
  * Find optimal yek token limit to target ~90% Gemini utilization.
  * Uses binary search for accuracy.
  */
-function findOptimalTokenLimit(includePaths, filterTests, verbose = true) {
+function findOptimalTokenLimit(includePaths, filterTests, verbose = true, directIncludePaths = []) {
   const targetTokens = Math.floor(MAX_GEMINI_TOKENS * TARGET_TOKEN_UTILIZATION);
 
   // First pass with high limit to see max content
   if (verbose) process.stdout.write('  - Auto-sizing context...');
-  let result = gatherContextWithLimit(INITIAL_YEK_LIMIT, includePaths, filterTests);
+  let result = gatherContextWithLimit(INITIAL_YEK_LIMIT, includePaths, filterTests, directIncludePaths);
 
   if (result.estimatedTokens <= targetTokens) {
     // Already under target, use all content
@@ -282,7 +330,7 @@ function findOptimalTokenLimit(includePaths, filterTests, verbose = true) {
     const mid = Math.floor((low + high) / 2);
     const midStr = `${mid}k`;
 
-    result = gatherContextWithLimit(midStr, includePaths, filterTests);
+    result = gatherContextWithLimit(midStr, includePaths, filterTests, directIncludePaths);
 
     if (result.estimatedTokens <= targetTokens) {
       // Under target, try higher
@@ -461,6 +509,7 @@ const { values, positionals } = parseArgs({
     include: {
       type: 'string',
       short: 'i',
+      multiple: true,  // Allow multiple --include flags
     },
     tokens: {
       type: 'string',
@@ -577,9 +626,13 @@ const explicitTokenLimit = values.tokens || null;
 
 // Determine paths to include
 let includePaths = null;
-if (values.include) {
-  // User-specified paths: add core important files
-  const paths = values.include.split(/\s+/).filter(p => p);
+let directIncludePaths = []; // Paths to read directly (bypass yek ignore patterns)
+
+if (values.include && values.include.length > 0) {
+  // User-specified paths: flatten multiple --include flags and split by whitespace
+  const paths = values.include.flatMap(p => p.split(/\s+/)).filter(p => p);
+  // All user-specified paths should be read directly (bypass yek ignore patterns)
+  directIncludePaths = [...paths];
   const pathsWithImportant = addImportantFiles(paths, 'general');
   includePaths = pathsWithImportant.length > 0 ? pathsWithImportant.join(' ') : null;
 } else if (activePreset) {
@@ -636,20 +689,21 @@ try {
   console.log('Gathering context...');
 
   // Check if tests should be filtered
-  const filterTests = !(values.include && (
-    values.include.includes('test') ||
-    values.include.includes('spec') ||
-    values.include.includes('bench')
+  const includeStr = values.include ? values.include.join(' ') : '';
+  const filterTests = !(includeStr && (
+    includeStr.includes('test') ||
+    includeStr.includes('spec') ||
+    includeStr.includes('bench')
   ));
 
   // Gather context - either with explicit limit or auto-sized
   let contextResult;
   if (explicitTokenLimit) {
     console.log(`  - Using explicit token limit: ${explicitTokenLimit}`);
-    contextResult = gatherContextWithLimit(explicitTokenLimit, includePaths, filterTests);
+    contextResult = gatherContextWithLimit(explicitTokenLimit, includePaths, filterTests, directIncludePaths);
     contextResult.yekLimit = explicitTokenLimit;
   } else {
-    contextResult = findOptimalTokenLimit(includePaths, filterTests);
+    contextResult = findOptimalTokenLimit(includePaths, filterTests, true, directIncludePaths);
   }
 
   let { context, files, estimatedTokens, contextBytes, stats, yekLimit } = contextResult;
