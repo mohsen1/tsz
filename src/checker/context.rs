@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
+use crate::common::ModuleKind;
 use crate::parser::NodeIndex;
 use crate::solver::def::{DefId, DefinitionStore};
 use crate::solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId};
@@ -42,6 +43,9 @@ pub struct CheckerOptions {
     /// Controls which built-in types are available (e.g., Promise requires ES2015)
     /// Defaults to ES3 for maximum compatibility
     pub target: ScriptTarget,
+    /// Module kind (None, CommonJS, ES2015, ES2020, ES2022, ESNext, etc.)
+    /// Controls which module system is being targeted (affects import/export syntax validity)
+    pub module: ModuleKind,
     /// Emit additional JavaScript to ease support for importing CommonJS modules.
     /// When true, synthesizes default exports for CommonJS modules.
     pub es_module_interop: bool,

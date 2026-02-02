@@ -3746,6 +3746,7 @@ impl Server {
             isolated_modules: options.isolated_modules,
             no_lib: options.no_lib,
             target: checker_target,
+            module: wasm::ModuleKind::None, // TODO: read from options.module
             es_module_interop: options.es_module_interop,
             allow_synthetic_default_imports: options
                 .allow_synthetic_default_imports
