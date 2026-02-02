@@ -402,9 +402,11 @@ impl<'a> DocumentHighlightProvider<'a> {
                             if let Some(else_node) = self.arena.get(if_data.else_statement) {
                                 let else_search_end = else_node.pos as usize;
                                 let else_search_start = else_search_end.saturating_sub(20);
-                                if let Some(else_kw_off) =
-                                    self.find_keyword_in_range(else_search_start, else_search_end, "else")
-                                {
+                                if let Some(else_kw_off) = self.find_keyword_in_range(
+                                    else_search_start,
+                                    else_search_end,
+                                    "else",
+                                ) {
                                     if else_kw_off == word_start {
                                         return Some(NodeIndex(i as u32));
                                     }
@@ -729,11 +731,9 @@ impl<'a> DocumentHighlightProvider<'a> {
                                 // Fallback: search from after statement to end of do-stmt
                                 let search_start = stmt_node.end as usize;
                                 let search_end = node.end as usize;
-                                if let Some(while_kw) = self.find_keyword_in_range(
-                                    search_start,
-                                    search_end,
-                                    "while",
-                                ) {
+                                if let Some(while_kw) =
+                                    self.find_keyword_in_range(search_start, search_end, "while")
+                                {
                                     highlights.push(DocumentHighlight::text(
                                         self.keyword_range(while_kw as u32, 5),
                                     ));

@@ -39,8 +39,7 @@ impl ParserState {
         // Transfer the scanner's string interner to the arena so that atom-based
         // identifier text resolution works via get_arena() (not just into_arena()).
         // This is essential for LSP features that resolve identifier references.
-        self.arena
-            .set_interner(self.scanner.interner().clone());
+        self.arena.set_interner(self.scanner.interner().clone());
 
         self.arena.add_source_file(
             start_pos,

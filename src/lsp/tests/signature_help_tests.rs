@@ -1039,4 +1039,3 @@ fn test_signature_overload_count() {
         "Active signature should match arg count"
     );
 }
-
