@@ -29,13 +29,14 @@ Replace all manual `TypeKey` matches with `TypeVisitor` implementations from `sr
 
 ## Audit of Manual TypeKey Matches
 
-| Module | Location | Violation |
+| Module | Location | Status |
 |--------|----------|-----------|
-| **Solver** | `src/solver/evaluate_rules/index_access.rs` | `evaluate_index_access` matches on `obj_key` (Readonly, Ref, Object, etc.) |
-| **Solver** | `src/solver/narrowing.rs` | `find_discriminants` matches on `TypeKey::Union` and `TypeKey::Object` |
-| **Solver** | `src/solver/subtype.rs` | `check_subtype_inner` matches on `(source_key, target_key)` tuple |
-| **Solver** | `src/solver/subtype_rules/*.rs` | Various helpers (e.g., `is_object_keyword_type`) match on `TypeKey` |
-| **Checker** | `src/checker/flow_narrowing.rs` | Uses `classify_for_union_members` which internally matches `TypeKey` (indirect violation) |
+| **Solver** | `src/solver/evaluate_rules/index_access.rs` | ✅ COMPLETE - ArrayKeyVisitor, TupleKeyVisitor implemented |
+| **Solver** | `src/solver/narrowing.rs` | ✅ ALREADY REFACTORED - Uses visitor helpers, zero TypeKey matches |
+| **Solver** | `src/solver/subtype.rs` | ✅ ALREADY REFACTORED - Uses visitor helpers |
+| **Checker** | `src/checker/flow_narrowing.rs` | ✅ ALREADY REFACTORED - Zero TypeKey matches |
+
+**Note:** The original audit documented in this file is outdated. Most files have already been refactored to use visitor helpers from `src/solver/visitor.rs`.
 
 ---
 
