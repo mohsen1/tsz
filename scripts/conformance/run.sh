@@ -376,7 +376,7 @@ run_server_mode() {
     local target_dir
     target_dir=$(get_target_dir)
     export TSZ_SERVER_BINARY="$target_dir/$build_profile/tsz-server"
-    export TSZ_LIB_DIR="$ROOT_DIR/TypeScript/src/lib"
+    export TSZ_LIB_DIR="$ROOT_DIR/TypeScript/built/local"
 
     # Enable RUST_LOG for deep tracing when --trace is specified
     if [[ -n "$CFG_TRACE" ]]; then

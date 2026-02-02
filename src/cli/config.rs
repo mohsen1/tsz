@@ -854,6 +854,8 @@ fn lib_dir_from_cwd() -> Option<PathBuf> {
 
 fn lib_dir_from_root(root: &Path) -> Option<PathBuf> {
     let candidates = [
+        // Built/compiled libs from tsc build output (highest priority)
+        root.join("TypeScript").join("built").join("local"),
         root.join("TypeScript").join("lib"),
         root.join("TypeScript").join("src").join("lib"),
         root.join("TypeScript")
