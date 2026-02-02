@@ -100,7 +100,7 @@ fn test_missing_set_emits_ts2583_without_lib() {
 }
 
 #[test]
-fn test_missing_symbol_emits_ts2583_without_lib() {
+fn test_missing_symbol_emits_ts2585_without_lib() {
     let diagnostics = check_without_lib(r#"const s = Symbol("foo");"#);
 
     // Without lib.d.ts loaded, Symbol is completely unknown, so the checker
@@ -310,12 +310,8 @@ class C {
 }
 
 #[test]
-fn test_no_decorator_ts2318_without_experimental_decorators() {
-    // Without experimentalDecorators, decorators should not trigger the
-    // decorator-specific TS2318 for TypedPropertyDescriptor. However,
-    // the checker still emits TS2318 for basic global types (Array, Boolean,
-    // etc.) when no lib is loaded, which is correct and independent of
-    // the decorator flag.
+fn test_no_ts2318_without_experimental_decorators() {
+    // Without experimentalDecorators, decorators should not trigger TS2318
     let options = CheckerOptions {
         experimental_decorators: false,
         ..Default::default()
