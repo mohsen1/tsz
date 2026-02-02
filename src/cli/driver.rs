@@ -417,6 +417,7 @@ fn compilation_cache_to_build_info(
         dependencies,
         semantic_diagnostics_per_file,
         emit_signatures,
+        latest_changed_dts_file: None, // TODO: Track most recently changed .d.ts file
         options: build_options,
         build_time: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

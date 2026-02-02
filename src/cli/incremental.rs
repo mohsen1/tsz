@@ -42,6 +42,10 @@ pub struct BuildInfo {
     pub semantic_diagnostics_per_file: BTreeMap<String, Vec<CachedDiagnostic>>,
     /// Emit output signatures (for output file caching)
     pub emit_signatures: BTreeMap<String, EmitSignature>,
+    /// Path to the most recently changed .d.ts file
+    /// Used by project references for fast invalidation checking
+    #[serde(rename = "latestChangedDtsFile", skip_serializing_if = "Option::is_none")]
+    pub latest_changed_dts_file: Option<String>,
     /// Options that affect compilation
     #[serde(default)]
     pub options: BuildInfoOptions,
@@ -135,6 +139,7 @@ impl Default for BuildInfo {
             dependencies: BTreeMap::new(),
             semantic_diagnostics_per_file: BTreeMap::new(),
             emit_signatures: BTreeMap::new(),
+            latest_changed_dts_file: None,
             options: BuildInfoOptions::default(),
             build_time: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
