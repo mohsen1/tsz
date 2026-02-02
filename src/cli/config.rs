@@ -761,11 +761,12 @@ pub(crate) fn resolve_default_lib_files(target: ScriptTarget) -> Result<Vec<Path
 /// We use the source tree naming since that's what exists in TypeScript/src/lib.
 pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
     match target {
-        // tsc maps ES3/ES5 to lib.d.ts, which equals es5.full.d.ts (ES5 + DOM + ScriptHost)
-        ScriptTarget::ES3 | ScriptTarget::ES5 => "es5.full",
-        // tsc maps ES2015 to lib.es6.d.ts, which equals es2015.full.d.ts (ES2015 + DOM + ScriptHost)
-        ScriptTarget::ES2015 => "es2015.full",
-        // ES2016+ map to lib.es20XX.full.d.ts
+        // ES3/ES5 -> lib.d.ts (ES5 + DOM + ScriptHost)
+        ScriptTarget::ES3 | ScriptTarget::ES5 => "lib",
+        // ES2015 -> lib.es6.d.ts (ES2015 + DOM + DOM.Iterable + ScriptHost)
+        // Note: NOT "es2015.full" (doesn't exist), use "es6" per tsc convention
+        ScriptTarget::ES2015 => "es6",
+        // ES2016+ use .full variants (ES + DOM + ScriptHost + others)
         ScriptTarget::ES2016 => "es2016.full",
         ScriptTarget::ES2017 => "es2017.full",
         ScriptTarget::ES2018 => "es2018.full",
