@@ -104,7 +104,6 @@ fn test_ts2322_return_wrong_primitive() {
 }
 
 #[test]
-#[ignore] // Object literal property type mismatch detection not yet implemented
 fn test_ts2322_return_wrong_object_property() {
     let source = r#"
         function returnObject(): { a: number } {
@@ -149,7 +148,6 @@ fn test_ts2322_variable_declaration_wrong_type() {
 }
 
 #[test]
-#[ignore] // Object literal property type mismatch detection not yet implemented
 fn test_ts2322_variable_declaration_wrong_object_property() {
     let source = r#"
         let y: { a: number } = { a: "string" };
@@ -191,7 +189,6 @@ fn test_ts2322_assignment_wrong_primitive() {
 }
 
 #[test]
-#[ignore] // Object literal property type mismatch detection not yet implemented
 fn test_ts2322_assignment_wrong_object_property() {
     let source = r#"
         let obj: { a: number };
