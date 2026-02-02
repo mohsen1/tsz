@@ -488,7 +488,17 @@ impl<'a> CheckerState<'a> {
                 pushed_this_type = true;
             }
 
-            self.push_return_type(return_type);
+            // For generator functions with explicit return type (Generator<Y, R, N> or AsyncGenerator<Y, R, N>),
+            // return statements should be checked against TReturn (R), not the full Generator type.
+            // This matches TypeScript's behavior where `return x` in a generator checks `x` against TReturn.
+            let body_return_type = if is_generator && has_type_annotation {
+                self.get_generator_return_type_argument(return_type)
+                    .unwrap_or(return_type)
+            } else {
+                return_type
+            };
+
+            self.push_return_type(body_return_type);
             // Skip body statement checking for function declarations.
             // Function declarations are checked via check_function_declaration (in
             // state_checking_members.rs) which correctly maintains the full type

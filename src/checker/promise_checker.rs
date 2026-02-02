@@ -558,4 +558,89 @@ impl<'a> CheckerState<'a> {
     // and `resolve_value_symbol_for_lowering`. This is a deliberate choice to
     // keep the implementation encapsulated while still organizing the promise
     // type checking logic into a separate module.
+
+    // =========================================================================
+    // Generator Type Helpers
+    // =========================================================================
+
+    /// Extract the TReturn type argument from Generator<Y, R, N> or AsyncGenerator<Y, R, N>.
+    ///
+    /// For generator functions with explicit return types, the return statement
+    /// should be checked against TReturn (the second type argument), not the full
+    /// Generator/AsyncGenerator type.
+    ///
+    /// Returns `Some(TReturn)` if the type is a Generator/AsyncGenerator/Iterator/AsyncIterator
+    /// type application with at least 2 type arguments, otherwise `None`.
+    pub fn get_generator_return_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use crate::solver::type_queries::get_type_application;
+
+        // Check if it's a type application (e.g., Generator<Y, R, N>)
+        let app = get_type_application(self.ctx.types, type_id)?;
+
+        // Need at least 2 type arguments (Y and R)
+        if app.args.len() < 2 {
+            return None;
+        }
+
+        // Check if base is Generator, AsyncGenerator, Iterator, or AsyncIterator
+        let is_generator_like = self.is_generator_like_base_type(app.base);
+
+        if is_generator_like {
+            // Return the second type argument (TReturn)
+            Some(app.args[1])
+        } else {
+            None
+        }
+    }
+
+    /// Check if a type is a Generator-like base type (Generator, AsyncGenerator,
+    /// Iterator, AsyncIterator, IterableIterator, AsyncIterableIterator).
+    fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        // Fast path: Check for symbol references to known Generator-like types
+        if let Some(type_key) = self.ctx.types.lookup(type_id) {
+            if let TypeKey::Ref(sym_ref) = type_key {
+                // Use get_symbol_globally to find the symbol even if it's in a lib file
+                if let Some(symbol) = self.get_symbol_globally(SymbolId(sym_ref.0)) {
+                    if Self::is_generator_like_name(&symbol.escaped_name) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Robust check: Resolve the global types and compare TypeIds
+        // This handles cases where the type is structural (Object/Callable) rather than a Ref
+        for name in &[
+            "Generator",
+            "AsyncGenerator",
+            "Iterator",
+            "AsyncIterator",
+            "IterableIterator",
+            "AsyncIterableIterator",
+        ] {
+            // resolve_global_interface_type handles looking up in lib files and merging declarations
+            if let Some(global_type) = self.resolve_global_interface_type(name) {
+                if global_type == type_id {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a name refers to a Generator-like type.
+    fn is_generator_like_name(name: &str) -> bool {
+        matches!(
+            name,
+            "Generator"
+                | "AsyncGenerator"
+                | "Iterator"
+                | "AsyncIterator"
+                | "IterableIterator"
+                | "AsyncIterableIterator"
+        )
+    }
 }
