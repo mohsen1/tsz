@@ -1691,8 +1691,18 @@ fn collect_diagnostics(
             match module_resolver.resolve(specifier, file_path, span) {
                 Ok(resolved_module) => {
                     let canonical = canonicalize_or_owned(&resolved_module.resolved_path);
+                    tracing::debug!(
+                        "ModuleResolver resolved specifier='{}' from file='{}' to path='{}' canonical='{}'",
+                        specifier,
+                        file_path.display(),
+                        resolved_module.resolved_path.display(),
+                        canonical.display()
+                    );
                     if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                        tracing::debug!("Found target_idx={} for canonical path", target_idx);
                         resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                    } else {
+                        tracing::debug!("No target_idx found for canonical path! Available: {:?}", canonical_to_file_idx.keys().collect::<Vec<_>>());
                     }
                 }
                 Err(failure) => {
@@ -1874,9 +1884,18 @@ fn collect_diagnostics(
         // Build resolved_modules set for backward compatibility
         // Only include modules that were successfully resolved (not in error map)
         let mut resolved_modules = HashSet::new();
+        tracing::debug!(
+            "Building resolved_modules for file_idx={} file='{}' with {} specifiers",
+            file_idx,
+            file.file_name,
+            module_specifiers.len()
+        );
         for (specifier, _) in &module_specifiers {
             // Check if this specifier is in resolved_module_paths (successfully resolved)
-            if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
+            let key = (file_idx, specifier.clone());
+            let in_paths = resolved_module_paths.contains_key(&key);
+            tracing::debug!("  specifier='{}' key={:?} in_resolved_module_paths={}", specifier, key, in_paths);
+            if in_paths {
                 resolved_modules.insert(specifier.clone());
             } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone())) {
                 // Not in error map either - might be external module, check with old resolver

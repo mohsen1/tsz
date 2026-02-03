@@ -61,7 +61,7 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
             let key = cap.get(1).unwrap().as_str();
             let value = cap.get(2).unwrap().as_str();
 
-            if key == "filename" {
+            if key.to_lowercase() == "filename" {
                 // Save previous file if exists
                 if let Some(filename) = current_filename.take() {
                     filenames.push((filename, current_content.join("\n")));

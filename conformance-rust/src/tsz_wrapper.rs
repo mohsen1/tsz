@@ -40,28 +40,31 @@ pub fn compile_test(
     let temp_dir = TempDir::new()?;
     let dir_path = temp_dir.path();
 
-    // Write main file
-    let main_file = dir_path.join("test.ts");
-    std::fs::write(&main_file, content)?;
-
-    // Write additional files from @filename directives
-    for (filename, file_content) in filenames {
-        // Sanitize filename to prevent path traversal outside temp dir
-        let sanitized = filename
-            .replace("..", "_")
-            .trim_start_matches('/')
-            .to_string();
-        let file_path = dir_path.join(&sanitized);
-        
-        // Verify the path is still inside temp_dir
-        if !file_path.starts_with(dir_path) {
-            continue; // Skip files that would escape the temp directory
+    if filenames.is_empty() {
+        // Single-file test: write content to test.ts (strip directive comments)
+        let stripped_content = strip_directive_comments(content);
+        let main_file = dir_path.join("test.ts");
+        std::fs::write(&main_file, stripped_content)?;
+    } else {
+        // Multi-file test: write only the files from @filename directives
+        for (filename, file_content) in filenames {
+            // Sanitize filename to prevent path traversal outside temp dir
+            let sanitized = filename
+                .replace("..", "_")
+                .trim_start_matches('/')
+                .to_string();
+            let file_path = dir_path.join(&sanitized);
+            
+            // Verify the path is still inside temp_dir
+            if !file_path.starts_with(dir_path) {
+                continue; // Skip files that would escape the temp directory
+            }
+            
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&file_path, file_content)?;
         }
-        
-        if let Some(parent) = file_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&file_path, file_content)?;
     }
 
     // Create tsconfig.json with test options
@@ -200,6 +203,21 @@ fn extract_error_codes(
     }
 
     codes
+}
+
+/// Strip @ directive comments from test file content
+/// Removes lines like `// @strict: true` from the code
+fn strip_directive_comments(content: &str) -> String {
+    content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            // Keep lines that are not @ directives
+            // Directives start with // @key: value
+            !(trimmed.starts_with("//") && trimmed.contains("@") && trimmed.contains(":"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
