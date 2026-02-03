@@ -113,7 +113,7 @@ pub struct BinderState {
     /// Symbol IDs that originated from lib files.
     /// Used by get_symbol() to check lib_binders first for these IDs,
     /// avoiding collision with local symbols at the same index.
-    pub(crate) lib_symbol_ids: FxHashSet<SymbolId>,
+    pub lib_symbol_ids: FxHashSet<SymbolId>,
 
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file

@@ -3327,16 +3327,26 @@ impl Server {
             parse_errors: Vec<i32>,
         }
 
-        // CRITICAL PERFORMANCE FIX: Reuse unified binder's lib symbols ONCE
-        // instead of merging thousands of symbols for every file in the loop.
-        // The unified lib binder already has all lib symbols merged - we copy its
-        // file_locals and set it as a lib_binder so symbols resolve correctly.
+        // CRITICAL: Fix SymbolId collisions by reserving lib SymbolIds in user binders
+        //
+        // Problem: Lib has symbols 0..N (Array, String, etc.) in its arena.
+        // We copy these SymbolIds into user's file_locals via HashMap clone.
+        // But user binder allocates new symbols from 0, eventually colliding with lib SymbolIds.
+        //
+        // Solution: Reserve SymbolIds 0..N in user's arena BEFORE binding.
+        // This forces new allocations to start at N, preventing collisions.
+        // Lib symbols are accessed via lib_binders fallback OR via reserved slots.
         let unified_lib_binder = if !lib_files.is_empty() {
             Some(lib_files[0].binder.clone())
         } else {
             None
         };
-        let lib_file_locals = unified_lib_binder.as_ref().map(|b| &b.file_locals);
+
+        // Count lib symbols to set base offset in user binders
+        let lib_symbol_count = unified_lib_binder
+            .as_ref()
+            .map(|b| b.symbols.len())
+            .unwrap_or(0);
 
         let mut bound_files: Vec<BoundFile> = Vec::with_capacity(files.len());
         let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
@@ -3367,17 +3377,20 @@ impl Server {
                 .collect();
             let arena = Arc::new(parser.into_arena());
 
-            // Bind immediately: copy lib symbols (cheap HashMap clone) and set lib_binder
-            // instead of merging thousands of symbols (expensive) for every file.
-            // bind_source_file preserves lib symbols that were in file_locals beforehand.
+            // Bind with SymbolId collision prevention:
+            // 1. Set base offset for user arena to prevent allocation collisions
+            // 2. Set lib_binders for lib symbol resolution (fallback)
+            // 3. Do NOT copy file_locals - let lib symbols be resolved via lib_binders
             let mut binder = BinderState::new();
-            if let (Some(lib_symbols), Some(lib_binder)) =
-                (lib_file_locals, unified_lib_binder.as_ref())
+            if let Some(lib_binder) = unified_lib_binder.as_ref()
             {
-                // Copy lib symbols into binder's file_locals - this is O(M) but only a HashMap clone
-                // vs O(M*N) if we merged for every file
-                binder.file_locals = lib_symbols.clone();
-                // Set unified binder as lib_binder so SymbolIds resolve correctly
+                // Step 1: Set base offset so user symbols start AFTER lib symbols.
+                // This ensures lookups for lib IDs (0..N) return None in the user arena,
+                // triggering the fallback to lib_binders.
+                binder.symbols = wasm::binder::SymbolArena::new_with_base(lib_symbol_count as u32);
+
+                // Step 2: Set lib_binder for fallback resolution
+                // Lib symbols will be resolved via get_global_type() which checks lib_binders
                 binder.lib_binders.push(Arc::clone(lib_binder));
             }
             binder.bind_source_file(&arena, root_idx);
