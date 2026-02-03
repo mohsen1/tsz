@@ -653,7 +653,34 @@ pub(crate) fn resolve_lib_files(lib_list: &[String]) -> Result<Vec<PathBuf>> {
         return Ok(Vec::new());
     }
 
-    let lib_dir = default_lib_dir()?;
+    // Try to get lib_dir, but allow fallback to embedded libs if not found
+    let lib_dir = match default_lib_dir() {
+        Ok(dir) => dir,
+        Err(_) => {
+            // Lib directory not found - try embedded libs fallback
+            #[cfg(feature = "embedded_libs")]
+            {
+                // Check if any requested lib is unknown (not in embedded libs)
+                for lib_name in lib_list {
+                    let normalized = normalize_lib_name(lib_name);
+                    // Skip known aliases
+                    if normalized == "lib" || normalized == "es6" || normalized == "es7" {
+                        continue;
+                    }
+                    // Check if lib exists in embedded libs
+                    if crate::embedded_libs::get_lib(&normalized).is_none() {
+                        // Unknown lib - return error
+                        return Err(anyhow!(
+                            "unsupported compilerOptions.lib '{}' (not found in embedded libs)",
+                            lib_name
+                        ));
+                    }
+                }
+            }
+            // Return empty to allow caller to handle fallback
+            return Ok(Vec::new());
+        }
+    };
     let lib_map = build_lib_map(&lib_dir)?;
     let mut resolved = Vec::new();
     let mut pending: VecDeque<String> = lib_list
