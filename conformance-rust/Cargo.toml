@@ -1,0 +1,56 @@
+[package]
+name = "tsz-conformance"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.wasm]
+path = ".."
+features = []
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.44", features = ["full", "tracing"] }
+futures = "0.3"
+
+# Parallelism (for cache generation)
+rayon = "1.10"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Hashing (blake3 is fastest)
+blake3 = "1.8"
+
+# Regex for directive parsing
+regex = "1.11"
+once_cell = "1.21"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# System info
+num_cpus = "1.16"
+
+# Directory traversal
+walkdir = "2.5"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Concurrent hashmap for error tracking
+dashmap = "6.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Progress reporting
+indicatif = "0.17"
+
+# Temporary files for compilation
+tempfile = "3"
+
+[dev-dependencies]
+criterion = "0.5"
