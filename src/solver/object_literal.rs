@@ -166,10 +166,14 @@ impl<'a> ObjectLiteralBuilder<'a> {
 
         // If the value type already satisfies the contextual type, use the contextual type
         // This is the key insight from bidirectional typing
-        use crate::solver::SubtypeChecker;
-        let mut checker = SubtypeChecker::new(self.db);
+        //
+        // FIX: Use CompatChecker (The Lawyer) instead of SubtypeChecker (The Judge)
+        // to ensure TypeScript's assignability rules are applied during contextual typing.
+        // This is critical for freshness checks (excess properties) and other TS rules.
+        use crate::solver::compat::CompatChecker;
+        let mut checker = CompatChecker::new(self.db);
 
-        if checker.is_subtype_of(value_type, ctx_type) {
+        if checker.is_assignable(value_type, ctx_type) {
             ctx_type
         } else {
             value_type

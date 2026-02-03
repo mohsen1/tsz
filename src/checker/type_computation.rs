@@ -133,11 +133,16 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.array(TypeId::ANY);
         }
 
-        let tuple_context = match self.ctx.contextual_type {
-            Some(ctx_type) => {
-                // Resolve lazy types (type aliases) to their actual types
-                let resolved = self.resolve_type_for_property_access(ctx_type);
-                let resolved = self.resolve_lazy_type(resolved);
+        // Resolve lazy type aliases once and reuse for both tuple_context and ctx_helper
+        // This ensures type aliases (e.g., type Tup = [string, number]) are expanded
+        // before checking for tuple elements and providing contextual typing
+        let resolved_contextual_type = match self.ctx.contextual_type {
+            Some(ctx_type) => Some(self.resolve_lazy_type(ctx_type)),
+            None => None,
+        };
+
+        let tuple_context = match resolved_contextual_type {
+            Some(resolved) => {
                 // Evaluate Application types to get their structural form
                 // This handles cases like: type MyTuple<T, U> = [T, U]; function f<A, B>(): MyTuple<A, B>
                 let evaluated = self.evaluate_application_type(resolved);
@@ -146,19 +151,12 @@ impl<'a> CheckerState<'a> {
             None => None,
         };
 
-        // Resolve lazy types in contextual type before creating helper
-        let resolved_contextual_type = self.ctx.contextual_type.map(|ctx_type| {
-            let resolved = self.resolve_type_for_property_access(ctx_type);
-            self.resolve_lazy_type(resolved)
-        });
-
-        let ctx_helper = if let Some(ctx_type) = resolved_contextual_type {
-            Some(ContextualTypeContext::with_expected(
+        let ctx_helper = match resolved_contextual_type {
+            Some(resolved) => Some(ContextualTypeContext::with_expected(
                 self.ctx.types,
-                ctx_type,
-            ))
-        } else {
-            None
+                resolved,
+            )),
+            None => None,
         };
 
         // Get types of all elements, applying contextual typing when available.
