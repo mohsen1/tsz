@@ -1124,6 +1124,7 @@ impl<'a> CheckerState<'a> {
                     properties: Vec::new(),
                     string_index: None,
                     number_index: None,
+                    symbol: None,
                 };
                 self.ctx.types.callable(shape)
             } else if !value_decl.is_none() {

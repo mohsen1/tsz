@@ -417,6 +417,7 @@ impl<'a> CheckerState<'a> {
                 properties: Vec::new(),
                 string_index: None,
                 number_index: None,
+                symbol: None,
             });
             properties.insert(
                 name,
@@ -1233,6 +1234,7 @@ impl<'a> CheckerState<'a> {
                 properties: Vec::new(),
                 string_index: None,
                 number_index: None,
+                symbol: None,
             });
             properties.insert(
                 name,
@@ -1514,12 +1516,17 @@ impl<'a> CheckerState<'a> {
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
         self.pop_type_parameters(type_param_updates);
 
+        // Get the class symbol for nominal discrimination - this ensures that distinct
+        // classes with identical structures get different TypeIds
+        let class_symbol = self.ctx.binder.get_node_symbol(class_idx);
+
         let constructor_type = self.ctx.types.callable(CallableShape {
             call_signatures: Vec::new(),
             construct_signatures,
             properties,
             string_index: static_string_index,
             number_index: static_number_index,
+            symbol: class_symbol,
         });
 
         // Track constructor accessibility

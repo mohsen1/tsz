@@ -4515,6 +4515,7 @@ fn test_function_intrinsic_accepts_callable() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol: None,
     });
 
     // Function intrinsic should accept callable types

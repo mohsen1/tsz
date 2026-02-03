@@ -286,6 +286,7 @@ fn test_concurrent_callable_creation() {
                     is_method: false,
                 }],
                 number_index: None,
+        symbol: None,
                 string_index: None,
             };
             interner.callable(shape)
