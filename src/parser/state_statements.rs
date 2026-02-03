@@ -2127,12 +2127,92 @@ impl ParserState {
     pub(crate) fn parse_class_member_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
 
+        // State tracking for TS1028 (duplicates) and TS1029 (ordering)
+        let mut seen_accessibility = false;
+        let mut seen_static = false;
+        let mut seen_abstract = false;
+        let mut seen_readonly = false;
+        let mut seen_override = false;
+        let mut seen_accessor = false;
+        let mut seen_async = false;
+
         loop {
             if self.should_stop_class_member_modifier() {
                 break;
             }
             let start_pos = self.token_pos();
-            let modifier = match self.token() {
+
+            // Before consuming token, check for TS1028 (duplicate accessibility) and TS1029 (wrong order)
+            let current_kind = self.token();
+
+            if matches!(current_kind, SyntaxKind::PublicKeyword | SyntaxKind::PrivateKeyword | SyntaxKind::ProtectedKeyword) {
+                if seen_accessibility {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Accessibility modifier already seen.",
+                        diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+                    );
+                }
+                // TS1029: accessibility must come after certain modifiers
+                if seen_static || seen_abstract || seen_readonly || seen_override || seen_accessor || seen_async {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessibility modifier' must come before other modifiers.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_accessibility = true;
+            } else if current_kind == SyntaxKind::StaticKeyword {
+                // TS1029: static must come after accessibility, before certain others
+                if seen_abstract || seen_readonly || seen_override || seen_accessor || seen_async {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'static' modifier must precede current modifier.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_static = true;
+            } else if current_kind == SyntaxKind::AbstractKeyword {
+                if seen_readonly || seen_override || seen_accessor || seen_async {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'abstract' modifier must precede current modifier.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_abstract = true;
+            } else if current_kind == SyntaxKind::ReadonlyKeyword {
+                if seen_override || seen_accessor || seen_async {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'readonly' modifier must precede current modifier.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_readonly = true;
+            } else if current_kind == SyntaxKind::OverrideKeyword {
+                if seen_accessor || seen_async {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'override' modifier must precede current modifier.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_override = true;
+            } else if current_kind == SyntaxKind::AccessorKeyword {
+                if seen_async {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'accessor' modifier must precede 'async' modifier.",
+                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    );
+                }
+                seen_accessor = true;
+            } else if current_kind == SyntaxKind::AsyncKeyword {
+                seen_async = true;
+            }
+
+            let modifier = match current_kind {
                 SyntaxKind::StaticKeyword => {
                     self.next_token();
                     self.arena
