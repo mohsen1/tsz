@@ -4055,3 +4055,29 @@ outer: for (;;) {
         "Label should be NONE due to ASI after break"
     );
 }
+
+// ============================================================================
+// TS1038 Tests: 'declare' modifier in ambient contexts
+// ============================================================================
+
+#[test]
+
+// ============================================================================
+// TS1038 Tests: 'declare' modifier in ambient contexts
+// ============================================================================
+
+#[test]
+fn test_ts1038_declare_inside_declare_namespace() {
+    let source = r#"declare namespace X { declare var y: number; }"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(!root.is_none());
+}
+
+#[test]
+fn test_ts1038_declare_inside_regular_namespace() {
+    let source = r#"namespace M { declare module 'nope' { } }"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(!root.is_none());
+}
