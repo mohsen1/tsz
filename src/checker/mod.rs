@@ -31,11 +31,11 @@ pub mod class_type;
 pub mod conditional_type;
 pub mod constructor_checker;
 pub mod context;
-pub mod dispatch;
 pub mod control_flow;
 mod control_flow_narrowing;
 pub mod declarations;
 pub mod decorators;
+pub mod dispatch;
 pub mod enum_checker;
 pub mod error_handler;
 pub mod error_reporter;
@@ -125,6 +125,9 @@ mod symbol_resolution_tests;
 #[path = "tests/symbol_resolver_stability_tests.rs"]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
+#[path = "tests/ts2300_tests.rs"]
+mod ts2300_tests;
+#[cfg(test)]
 #[path = "tests/ts2304_tests.rs"]
 mod ts2304_tests;
 #[cfg(test)]
@@ -137,9 +140,9 @@ mod value_usage_tests;
 // Re-export key types
 pub use arena::TypeArena;
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};
-pub use dispatch::ExpressionDispatcher;
 pub use control_flow::{FlowAnalyzer, FlowGraph as ControlFlowGraph};
 pub use declarations::DeclarationChecker;
+pub use dispatch::ExpressionDispatcher;
 pub use expr::ExpressionChecker;
 pub use flow_analyzer::{
     AssignmentState, AssignmentStateMap, DefiniteAssignmentAnalyzer, DefiniteAssignmentResult,
