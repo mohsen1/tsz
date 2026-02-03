@@ -893,6 +893,11 @@ impl ParserState {
                     NodeIndex::NONE
                 };
 
+                // yield * requires an expression (TS1109: Expression expected)
+                if asterisk_token && expression.is_none() {
+                    self.error_expression_expected();
+                }
+
                 let end_pos = self.token_end();
 
                 self.arena.add_unary_expr_ex(
