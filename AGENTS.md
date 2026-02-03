@@ -128,6 +128,7 @@ cargo fmt
 - Only add files you touched, do not `git add -A`
 - There is a chance another AI session is working on the same codebase. do not revert/delete
 - Make semantic and short commit headers
+- Important: When syncing, also push to remote
 
 ## Additional References
 
