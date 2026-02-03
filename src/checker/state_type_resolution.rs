@@ -618,10 +618,18 @@ impl<'a> CheckerState<'a> {
                         |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
                     let value_resolver =
                         |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                    let lowering = TypeLowering::with_resolvers(
+
+                    // Phase 4.2: Add def_id_resolver for DefId-based resolution
+                    let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
+                        self.resolve_type_symbol_for_lowering(node_idx)
+                            .map(|sym_id| self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id)))
+                    };
+
+                    let lowering = TypeLowering::with_hybrid_resolver(
                         symbol_arena,
                         self.ctx.types,
                         &type_resolver,
+                        &def_id_resolver,
                         &value_resolver,
                     )
                     .with_type_param_bindings(type_param_bindings);
@@ -670,10 +678,17 @@ impl<'a> CheckerState<'a> {
                         let value_resolver =
                             |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
 
-                        let lowering = TypeLowering::with_resolvers(
+                        // Phase 4.2: Add def_id_resolver for DefId-based resolution
+                        let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
+                            self.resolve_type_symbol_for_lowering(node_idx)
+                                .map(|sym_id| self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id)))
+                        };
+
+                        let lowering = TypeLowering::with_hybrid_resolver(
                             symbol_arena,
                             self.ctx.types,
                             &type_resolver,
+                            &def_id_resolver,
                             &value_resolver,
                         )
                         .with_type_param_bindings(type_param_bindings);
@@ -749,10 +764,18 @@ impl<'a> CheckerState<'a> {
                         |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
                     let value_resolver =
                         |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                    let lowering = TypeLowering::with_resolvers(
+
+                    // Phase 4.2: Add def_id_resolver for DefId-based resolution
+                    let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
+                        self.resolve_type_symbol_for_lowering(node_idx)
+                            .map(|sym_id| self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id)))
+                    };
+
+                    let lowering = TypeLowering::with_hybrid_resolver(
                         symbol_arena,
                         self.ctx.types,
                         &type_resolver,
+                        &def_id_resolver,
                         &value_resolver,
                     )
                     .with_type_param_bindings(type_param_bindings);

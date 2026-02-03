@@ -13,7 +13,7 @@ use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
-use crate::solver::{TypeId, TypeInterner};
+use crate::solver::{TypeId, TypeInterner, types::TypeKey};
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
 
 // =============================================================================
@@ -33151,4 +33151,193 @@ fn test_lib_merge_consistent_symbol_resolution() {
 
     let bar_sym = binder.get_symbol(bar_id).expect("Bar symbol must resolve");
     assert_eq!(bar_sym.escaped_name, "Bar", "Bar symbol name mismatch");
+}
+
+// =============================================================================
+// Selective TypeAlias Migration Tests (Phase 4.2.1)
+// =============================================================================
+//
+// These tests verify that Type Aliases are registered with DefId while
+// Classes and Interfaces use SymbolRef during the incremental migration (Issue #12).
+//
+// Migration strategy:
+// - Type Aliases → DefId-based registration [target for Phase 4.2.1]
+// - Classes → SymbolRef-based registration [legacy, deferred]
+// - Interfaces → SymbolRef-based registration [legacy, deferred]
+// =============================================================================
+
+/// Test that a type alias gets a DefId created
+///
+/// This is the core of Phase 4.2.1: verify that type aliases
+/// have DefIds created for them.
+#[test]
+fn test_selective_migration_type_alias_has_def_id() {
+    let source = r#"
+type UserId = string;
+const x: UserId = "user123";
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Get the UserId type alias symbol
+    let user_id_sym = binder
+        .file_locals
+        .get("UserId")
+        .expect("UserId symbol should exist");
+
+    // After Phase 4.2.1, type aliases should have DefIds created
+    let def_id = checker.ctx.get_existing_def_id(user_id_sym);
+    
+    assert!(
+        def_id.is_some(),
+        "Type alias should have DefId created after Phase 4.2.1"
+    );
+}
+
+/// Test that a class does NOT get a DefId created (yet)
+///
+/// Classes should remain without DefIds during Phase 4.2.1
+/// to minimize regression risk.
+#[test]
+fn test_selective_migration_class_no_def_id() {
+    let source = r#"
+class Foo {
+    x: number;
+}
+const obj: Foo = new Foo();
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Get the Foo class symbol
+    let foo_sym = binder
+        .file_locals
+        .get("Foo")
+        .expect("Foo symbol should exist");
+
+    // During Phase 4.2.1, classes should NOT have DefIds created
+    let def_id = checker.ctx.get_existing_def_id(foo_sym);
+    
+    assert!(
+        def_id.is_none(),
+        "Class should NOT have DefId during Phase 4.2.1 (deferred to later phase)"
+    );
+}
+
+/// Test that an interface does NOT get a DefId created (yet)
+///
+/// Interfaces should remain without DefIds during Phase 4.2.1
+/// to minimize regression risk.
+#[test]
+fn test_selective_migration_interface_no_def_id() {
+    let source = r#"
+interface Point {
+    x: number;
+    y: number;
+}
+const p: Point = { x: 1, y: 2 };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Get the Point interface symbol
+    let point_sym = binder
+        .file_locals
+        .get("Point")
+        .expect("Point symbol should exist");
+
+    // During Phase 4.2.1, interfaces should NOT have DefIds created
+    let def_id = checker.ctx.get_existing_def_id(point_sym);
+    
+    assert!(
+        def_id.is_none(),
+        "Interface should NOT have DefId during Phase 4.2.1 (deferred to later phase)"
+    );
+}
+
+/// Test that a generic type alias gets a DefId created
+///
+/// Generic type aliases should also get DefIds.
+#[test]
+fn test_selective_migration_generic_type_alias_has_def_id() {
+    let source = r#"
+type Box<T> = { value: T };
+const x: Box<string> = { value: "hello" };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Get the Box type alias symbol
+    let box_sym = binder
+        .file_locals
+        .get("Box")
+        .expect("Box symbol should exist");
+
+    // After Phase 4.2.1, generic type aliases should have DefIds
+    let def_id = checker.ctx.get_existing_def_id(box_sym);
+    
+    assert!(
+        def_id.is_some(),
+        "Generic type alias should have DefId created after Phase 4.2.1"
+    );
 }
