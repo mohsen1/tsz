@@ -218,6 +218,7 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
+                symbol: None,
             };
             self.ctx.types.callable(shape)
         } else if string_index.is_some() || number_index.is_some() {
@@ -476,6 +477,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .clone()
                         .or(base_shape.number_index.clone()),
+                    symbol: None,
                 })
             }
             (
@@ -492,6 +494,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape.string_index.clone(),
                     number_index: derived_shape.number_index.clone(),
+                    symbol: None,
                 })
             }
             (
@@ -514,6 +517,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .clone()
                         .or(base_shape.number_index.clone()),
+                    symbol: None,
                 })
             }
             (
@@ -530,6 +534,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
+                    symbol: None,
                 })
             }
             (
@@ -552,6 +557,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .clone()
                         .or(base_shape.number_index.clone()),
+                    symbol: None,
                 })
             }
             (
@@ -832,6 +838,7 @@ impl<'a> CheckerState<'a> {
                     properties: merged_properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
+                    symbol: None,
                 })
             }
             AugmentationTargetKind::Other => {

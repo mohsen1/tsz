@@ -1252,6 +1252,7 @@ impl<'a> CheckerState<'a> {
             properties: shape.properties.clone(),
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
+            symbol: None,
         };
         self.ctx.types.callable(new_shape)
     }
@@ -1341,6 +1342,7 @@ impl<'a> CheckerState<'a> {
                     properties: shape.properties.clone(),
                     string_index: shape.string_index.clone(),
                     number_index: shape.number_index.clone(),
+                    symbol: None,
                 };
                 self.ctx.types.callable(new_shape)
             }
@@ -1369,6 +1371,7 @@ impl<'a> CheckerState<'a> {
                     properties: vec![],
                     string_index: None,
                     number_index: None,
+                    symbol: None,
                 };
                 self.ctx.types.callable(new_shape)
             }

@@ -1073,6 +1073,7 @@ pub fn construct_to_call_callable(db: &dyn TypeDatabase, type_id: TypeId) -> Opt
                     properties: Vec::new(),
                     string_index: None,
                     number_index: None,
+                    symbol: None,
                 }))
             }
         }
