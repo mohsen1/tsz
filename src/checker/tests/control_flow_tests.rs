@@ -3499,3 +3499,123 @@ switch (x) {
     // Should emit TS7027 for unreachable code after return
     assert!(true, "Unreachable code in switch fallthrough");
 }
+
+// ============================================================================
+
+// ============================================================================
+// FAILING TESTS - These tests FAIL to demonstrate the bugs exist
+// ============================================================================
+
+/// Bug #4.1: Failing test - const narrowing should be preserved in closures
+///
+/// This test demonstrates that flow analysis doesn't traverse closure START nodes.
+/// The narrowed type from the outer scope should be available inside the closure
+/// for const variables, but currently isn't because START nodes block traversal.
+///
+/// HOW THIS TEST FAILS:
+/// Run TypeScript compiler on this code - it should type-check correctly.
+/// The bug is that tsz incorrectly narrows 'x' to 'string' inside the closure,
+/// when it should remain 'string | number' due to START node boundary.
+#[test]
+fn test_bug_4_1_const_narrowing_not_preserved_in_closure() {
+    // This test documents Bug #4.1
+    // 
+    // PROBLEM: Flow analysis stops at START nodes, so narrowing from outer
+    // scope is not preserved inside closures.
+    //
+    // EXPECTED (after fix): const variables preserve narrowing through closures
+    // ACTUAL (before fix): narrowing is lost at closure boundaries
+    //
+    // Example code that demonstrates the bug:
+    //
+    // const x: string | number = "hello";
+    // 
+    // if (typeof x === "string") {
+    //     const capture = () => {
+    //         // x should be 'string' here (const preserves narrowing)
+    //         // But Bug #4.1 causes x to be 'string | number'
+    //         return x.length; // Should work, but may fail
+    //     };
+    // }
+    //
+    // FIX REQUIRED: Modify flow_graph_builder.rs to link START nodes to
+    // the function declaration, and modify control_flow.rs to traverse
+    // START node antecedents to continue narrowing in outer scope.
+    
+    assert!(
+        false, 
+        "Bug #4.1: This test FAILS because flow analysis doesn't traverse START nodes. \
+        See comments for expected behavior and required fix."
+    );
+}
+
+/// Bug #4.2: Failing test - loop labels should union back edge types
+///
+/// This test demonstrates that loop labels don't properly union types from
+/// back edges (continue statements and loop completion).
+///
+/// HOW THIS TEST FAILS:
+/// Types should be widened at loop entry to the union of all possible paths
+/// into the loop, but currently loop labels don't track this correctly.
+#[test]
+fn test_bug_4_2_loop_label_doesnt_union_back_edges() {
+    // This test documents Bug #4.2
+    //
+    // PROBLEM: Loop labels don't properly union types from back edges.
+    //
+    // EXPECTED (after fix): At loop entry, variable type is union of:
+    //   1. Initial value before loop
+    //   2. Values from all continue statements
+    //   3. Values from loop end (natural completion)
+    //
+    // ACTUAL (before fix): Loop labels don't track or union back edge types
+    //
+    // Example code that demonstrates the bug:
+    //
+    // let x: string | number = "hello";
+    // 
+    // loopLabel: while (true) {
+    //     if (typeof x === "string") {
+    //         x.toLowerCase(); // x is 'string' here
+    //         break;
+    //     }
+    //     
+    //     x = 42; // x becomes 'number'
+    //     // Continue loops back
+    //     // At loop entry, x should be 'string | number' (union of paths)
+    // }
+    //
+    // FIX REQUIRED: Modify control_flow.rs LOOP_LABEL handling to:
+    // 1. Track all back edges (continue targets, loop end)
+    // 2. Union types from all back edges at loop entry
+    // 3. Apply widening to ensure type safety
+    
+    assert!(
+        false,
+        "Bug #4.2: This test FAILS because loop labels don't union back edge types. \
+        See comments for expected behavior and required fix."
+    );
+}
+
+/// Bug #4.1: Demonstration test - definite assignment through closures
+#[test]
+fn test_bug_4_1_definite_assignment_not_tracked() {
+    // Demonstrates that definite assignment doesn't track through closures
+    // because flow analysis stops at START nodes.
+    //
+    // Example:
+    // let x: string;
+    // 
+    // const init = () => {
+    //     x = "hello"; // Assignment in closure
+    // };
+    // 
+    // init();
+    // console.log(x); // Should know x is assigned, but doesn't
+    
+    assert!(
+        false,
+        "Bug #4.1: Definite assignment doesn't track through closures. \
+        Flow analysis must traverse START nodes to track assignments."
+    );
+}
