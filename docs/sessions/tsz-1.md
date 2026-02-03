@@ -2,66 +2,70 @@
 
 ## Current Work
 
-**Debugging TS1040 false positive** - `export async function` inside regular namespace incorrectly flagged as ambient context.
+**Completed conformance analysis (500 test sample, 12.8% pass rate)** - Identified top issues and investigated key bugs.
 
 ---
 
-## Bug Investigation
+## Conformance Results Summary
 
-### Test Case
-```typescript
-namespace M {
-    export async function f1() { }
-}
-```
+### Error Mismatches (500 tests)
+1. **TS2705** (missing=105): ES5 async functions require Promise - lib context handling
+2. **TS1109** (missing=22): Expression expected - parse error
+3. **TS2664** (missing=11): Module not found - module resolution
+4. **TS1055** (missing=11): '{0}' expected - parse error
+5. **TS2304** (missing=11): Cannot find name - binder symbol resolution
+6. **TS1359** (missing=9): Type identifier expected - parse error
+7. **TS2585** (missing=9): Cannot find name, did you mean? - binder
+8. **TS2524** (missing=7): Abstract class issues - checker
+9. **TS2654** (extra=6): Multiple default exports - false positive
+10. **TS1042** (missing=6): async modifier cannot be used here
 
-**Expected**: No errors (TypeScript accepts this)
-**Actual**: TS1040: 'async' modifier cannot be used in an ambient context
+### Investigated Issues
 
-### Analysis
+#### TS1040 False Positive (Punted)
+**Test**: `namespace M { async function f1() { } }`
+- Expected: No errors (TypeScript accepts this)
+- Actual: TS1040 emitted
+- Root cause: Unable to identify - context flag logic appears correct but error still emitted
+- Only affects async functions inside regular (non-declare) namespaces
 
-The parser sets `CONTEXT_FLAG_AMBIENT` only in `parse_module_block()` when `is_ambient=true`. For `namespace M` (no `declare` modifier), `is_ambient` should be `false`.
-
-Code path:
-1. `parse_module_declaration()` → `parse_module_declaration_with_modifiers(start_pos, None)`
-2. `is_declare = modifiers.as_ref()...` → `None.as_ref()` → `None` → `false`
-3. `parse_module_block(false)` called with `is_ambient = false`
-4. Ambient flag should NOT be set
-5. But error is still emitted
-
-### Hypothesis
-There may be:
-- A bug in how `is_declare` is computed
-- Another code path setting the ambient flag
-- Context flags not being properly restored
-
----
-
-## Findings (500 test sample)
-
-Top error mismatches:
-1. **TS2705** (missing=105): ES5 async functions require Promise
-2. **TS1109/TS1055/TS1359** (missing=43): Parse errors
-3. **TS2304/TS2585** (missing=20): Cannot find name
-4. **TS2664** (missing=11): Module not found
-5. **TS2654** (extra=6): Multiple default exports
-6. **TS2524/TS2515** (missing=13): Abstract class issues
+#### TS2705 Investigation (Completed)
+**Error**: "An async function or method in ES5 requires the 'Promise' constructor"
+- Should be emitted when: target=ES5, async functions used, Promise not in lib
+- Missing 105 times in conformance
+- Tests examined have `es2015.promise` in lib, so TS2705 shouldn't emit
+- Root cause: Need to find test WITHOUT Promise in lib to verify behavior
 
 ---
 
-## Next Steps
-1. Fix TS1040 false positive (debug context flag handling)
-2. Investigate TS2705 - lib context for ES5 async/Promise
-3. Fix parse errors (TS1109/TS1055/TS1359)
+## Recommendations
+
+### Priority 1: Parse Errors (42 missing total)
+- **TS1109** (Expression expected): missing=22
+- **TS1055** ('{0}' expected): missing=11
+- **TS1359** (Type identifier expected): missing=9
+- **Action**: Find specific failing tests, compare parser output with TSC
+
+### Priority 2: Lib Context for ES5 Async (105 missing)
+- **TS2705**: Need to verify lib context handling
+- **Action**: Find test case with ES5 target + no Promise lib
+
+### Priority 3: Symbol Resolution (20 missing)
+- **TS2304** (Cannot find name): missing=11
+- **TS2585** (Cannot find name, suggestion): missing=9
+- **Action**: Investigate binder symbol resolution
 
 ---
 
 ## History (Last 20)
 
-*No work history yet*
+*2026-02-03 22:00 - Started conformance analysis, ran 500 tests, identified top issues*
+*2026-02-03 23:30 - Investigated TS1040 bug, traced parser code, unable to identify root cause*
+*2026-02-03 23:45 - Investigated TS2705, found tests include Promise in lib*
+*2026-02-03 23:50 - Investigated parse errors, confirmed 42 missing parse errors*
 
 ---
 
 ## Punted Todos
 
-*No punted items*
+- **TS1040 false positive**: Async functions in regular namespaces incorrectly flagged as ambient context. Requires deeper runtime debugging or more targeted Gemini queries with smaller context.
