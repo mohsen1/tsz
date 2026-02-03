@@ -24,6 +24,15 @@ fn check_source(source: &str) -> Vec<Diagnostic> {
     );
 
     checker.check_source_file(root);
+
+    // Debug: print all diagnostics
+    eprintln!("=== All diagnostics for source ===");
+    eprintln!("{}", source);
+    eprintln!("Diagnostics count: {}", checker.ctx.diagnostics.len());
+    for d in &checker.ctx.diagnostics {
+        eprintln!("  Code: {}, Message: {}", d.code, d.message_text);
+    }
+
     checker.ctx.diagnostics.clone()
 }
 
@@ -220,7 +229,6 @@ add(...args);  // Should work
 }
 
 #[test]
-#[ignore = "TODO: Spread type checking needs refinement"]
 fn test_spread_in_function_call_with_wrong_types() {
     let source = r#"
 function add(a: number, b: number, c: number) {
@@ -238,13 +246,13 @@ add(...args);  // Should emit TS2345
         eprintln!("  code: {}, message: {}", d.code, d.message_text);
     }
 
-    // Should emit TS2345 (for function arguments) - the spread array has type (string | number)[]
-    // which is not assignable to number parameters
-    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    // TypeScript emits TS2556 for this case: "A spread argument must either have a tuple type or be passed to a rest parameter."
+    // The spread array has type (string | number)[] which is not a tuple type.
+    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert!(
-        ts2345_count >= 1,
-        "Expected at least 1 TS2345 error for spread with wrong types, got {}",
-        ts2345_count
+        ts2556_count >= 1,
+        "Expected at least 1 TS2556 error for spread of non-tuple array, got {}",
+        ts2556_count
     );
 }
 

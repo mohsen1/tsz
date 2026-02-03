@@ -1166,6 +1166,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report a spread argument type error (TS2556).
+    /// TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
+    pub fn error_spread_must_be_tuple_or_rest_at(&mut self, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::SPREAD_MUST_BE_TUPLE_OR_REST,
+                category: DiagnosticCategory::Error,
+                message_text: diagnostic_messages::SPREAD_MUST_BE_TUPLE_OR_REST.to_string(),
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
     /// Report an "expected at least N arguments" error (TS2555).
     /// TS2555: Expected at least {0} arguments, but got {1}.
     pub fn error_expected_at_least_arguments_at(

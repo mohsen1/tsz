@@ -772,10 +772,21 @@ impl<'a> CheckerState<'a> {
 
         // Check if this is a lazy type
         if let Some(def_id) = lazy_def_id(self.ctx.types, type_id) {
-            // Look up the definition's body
+            // Try to look up the definition's body in the definition store first
             if let Some(body) = self.ctx.definition_store.get_body(def_id) {
                 // Recursively resolve in case the body is also a lazy type
                 return self.resolve_lazy_type_inner(body, visited);
+            }
+
+            // If not in the definition store, try to resolve via symbol lookup
+            // This handles type aliases that are resolved through compute_type_of_symbol
+            let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
+            if let Some(sym_id) = sym_id_opt {
+                let resolved = self.get_type_of_symbol(sym_id);
+                // Only recurse if the resolved type is different from the original
+                if resolved != type_id {
+                    return self.resolve_lazy_type_inner(resolved, visited);
+                }
             }
         }
 

@@ -1796,7 +1796,7 @@ pub fn classify_for_assignability_eval(
     };
 
     match key {
-        TypeKey::Application(_) => AssignabilityEvalKind::Application,
+        TypeKey::Application(_) | TypeKey::Lazy(_) => AssignabilityEvalKind::Application,
         TypeKey::IndexAccess(_, _)
         | TypeKey::KeyOf(_)
         | TypeKey::Mapped(_)
