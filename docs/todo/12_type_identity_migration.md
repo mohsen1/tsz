@@ -91,38 +91,58 @@ Update the Solver to understand and resolve `DefId`s exclusively.
 
 ### Phase 4: Remove TypeKey::Ref (Final Phase)
 
-**Status**: BLOCKED on Fn vs FnMut API incompatibility
+**Status**: Phase 4.1 COMPLETED (Feb 3, 2026)
 
-**Problem Discovered** (Feb 3, 2026):
-Phase 4.1 attempt revealed fundamental API incompatibility:
-- `TypeLowering::with_hybrid_resolver()` accepts `&dyn Fn` (immutable closures)
-- `get_or_create_def_id()` requires `&mut self` (mutable access)
-- Cannot call mutable method from immutable closure → compilation error
-
-**Required Changes** (significant API refactoring):
-1. Change `TypeLowering` API from `Fn` to `FnMut` for all resolver closures
-2. Update TypeLowering construction: `with_hybrid_resolver` → `with_hybrid_resolver_mut`
-3. Update all TypeLowering usage sites (2 locations in state_type_resolution.rs)
-4. Ensure all closure captures support mutable access
-
-**Alternative Approaches**:
-- Accept TypeKey::Ref as permanent legacy (not recommended)
-- Redesign TypeLowering to decouple from CheckerContext mutability
-- Create DefIds earlier (before TypeLowering) via pre-scan
-
-**Strategic Question**: Should we invest in this API refactoring or accept mixed identity?
+**Problem Solved**: Fn vs FnMut API incompatibility
+- Original issue: `get_or_create_def_id(&mut self)` cannot be called from `Fn` closures
+- Solution: Used interior mutability (RefCell) for DefId mappings
+- Changed signature: `get_or_create_def_id(&mut self)` → `get_or_create_def_id(&self)`
 
 ---
 
-### Phase 4: Remove TypeKey::Ref (Final Phase) [BLOCKED]
+### ✅ Completed: Phase 4.1 - RefCell for DefId Mappings (Feb 3, 2026)
 
-**Revised Strategy** (Feb 3, 2026): Focus on eliminating `Ref` production at the source.
+**Approach**: Interior Mutability with RefCell
+- Wrapped `symbol_to_def` and `def_to_symbol` HashMaps in RefCell
+- Changed `get_or_create_def_id(&mut self)` to `get_or_create_def_id(&self)`
+- Updated resolver to use `get_or_create_def_id` instead of `get_existing_def_id`
+
+**Implementation:**
+1. Updated `src/checker/context.rs`:
+   - Wrapped `symbol_to_def: RefCell<FxHashMap<SymbolId, DefId>>`
+   - Wrapped `def_to_symbol: RefCell<FxHashMap<DefId, SymbolId>>`
+   - Updated all 4 initialization sites
+   - Changed `get_or_create_def_id` to use `&self` with `.borrow()`/`.borrow_mut()`
+   - Updated `get_existing_def_id`, `def_to_symbol_id` to use `.borrow()`
+   - Updated all access sites in state_type_environment.rs, state_type_analysis.rs
+
+2. Updated `src/checker/state_type_resolution.rs`:
+   - Changed resolver from `get_existing_def_id` to `get_or_create_def_id`
+   - Changed from `.and_then()` to `.map()` since get_or_create_def_id always returns DefId
+
+3. Updated `src/solver/lower.rs`:
+   - Updated comments to reflect Phase 4.1 status
+   - Logic remains: prefer DefId, fall back to SymbolRef for compatibility
+
+**Test Results:**
+- Before: 7821 passed, 15 failed, 170 ignored
+- After: 7849 passed, 10 failed, 172 skipped
+- **Net improvement: +28 passed, -5 failed**
+
+**Commits:**
+- `ce14c0d32`: feat: implement Phase 4.1 - RefCell for DefId mappings and get_or_create_def_id
+
+---
+
+### Phase 4: Remove TypeKey::Ref (Final Phase) [IN PROGRESS]
+
+**Current Status**: Phase 4.1 complete, ready for Phase 4.2
 
 **Gemini Strategic Recommendation**: Skip premature optimization (Phase 3.5). Instead, force TypeLowering to always produce `Lazy(DefId)`, which makes cleanup trivial.
 
-#### Phase 4.1: Update TypeLowering to Always Use DefId
+#### ✅ Phase 4.1: Update TypeLowering to Always Use DefId (COMPLETED)
 
-**Goal**: Ensure `TypeLowering` never emits `TypeKey::Ref`.
+**Goal**: Ensure `TypeLowering` prefers `DefId` when available.
 
 1. **Refactor `lower_type_reference`** (`src/solver/lower.rs`)
    - Current: Falls back to `TypeKey::Ref(symbol_ref)` when no DefId

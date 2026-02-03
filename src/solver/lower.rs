@@ -2292,11 +2292,11 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a qualified name type (A.B).
     fn lower_qualified_name_type(&self, node_idx: NodeIndex) -> TypeId {
-        // Phase 2: Prefer DefId over SymbolId for type identity
+        // Phase 4.1: Prefer DefId, fall back to SymbolRef for compatibility
         if let Some(def_id) = self.resolve_def_id(node_idx) {
             return self.interner.intern(TypeKey::Lazy(def_id));
         }
-        // Fall back to SymbolId for compatibility
+        // Fall back to SymbolRef for lib types and backward compatibility
         if let Some(symbol_id) = self.resolve_type_symbol(node_idx) {
             return self.interner.reference(SymbolRef(symbol_id));
         }
@@ -2317,11 +2317,11 @@ impl<'a> TypeLowering<'a> {
                 return type_param;
             }
 
-            // Phase 2: Prefer DefId over SymbolId for type identity
+            // Phase 4.1: Prefer DefId, fall back to SymbolRef for compatibility
             if let Some(def_id) = self.resolve_def_id(node_idx) {
                 return self.interner.intern(TypeKey::Lazy(def_id));
             }
-            // Fall back to SymbolId for compatibility
+            // Fall back to SymbolRef for lib types and backward compatibility
             if let Some(symbol_id) = self.resolve_type_symbol(node_idx) {
                 return self.interner.reference(SymbolRef(symbol_id));
             }
