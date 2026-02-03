@@ -135,7 +135,6 @@ run_tests() {
 
     cd "$REPO_ROOT"
     # Filter out --workers and --no-cache from passed args to avoid duplication
-    local filtered_args=()
     local extra_args=()
     local verbose=false
     local has_error_code=false
@@ -169,14 +168,22 @@ run_tests() {
 
     # If --error-code is present, capture output and print test file contents before FINAL RESULTS
     if [ "$has_error_code" = true ]; then
-        # Capture output
-        local output
-        output=$($RUNNER_BIN \
+        # Use temp file to capture output while showing real-time progress
+        local tmpfile
+        tmpfile=$(mktemp)
+        trap "rm -f '$tmpfile'" EXIT
+        
+        # Run with tee to show output in real-time AND capture it
+        local runner_exit=0
+        $RUNNER_BIN \
             --test-dir "$TEST_DIR" \
             --cache-file "$CACHE_FILE" \
             --tsz-binary "$TSZ_BIN" \
             --workers $WORKERS \
-            "${extra_args[@]}" 2>&1)
+            "${extra_args[@]}" 2>&1 | tee "$tmpfile" || runner_exit=$?
+        
+        local output
+        output=$(cat "$tmpfile")
         
         # Extract failing test paths (up to 10)
         local failing_tests=()
@@ -195,41 +202,27 @@ run_tests() {
             fi
         done <<< "$output"
         
-        # Print everything before FINAL RESULTS
-        local final_results_line
-        final_results_line=$(echo "$output" | grep -n "FINAL RESULTS:" | head -1 | cut -d: -f1)
-        
-        if [ -n "$final_results_line" ] && [ "$final_results_line" -gt 1 ]; then
-            # Print everything before FINAL RESULTS
-            echo "$output" | head -n $((final_results_line - 1))
+        # Print test file contents if we have any (output already shown via tee)
+        if [ ${#failing_tests[@]} -gt 0 ]; then
+            echo ""
+            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+            echo -e "${YELLOW}Test File Contents (${#failing_tests[@]} failing tests)${NC}"
+            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+            echo ""
             
-            # Print test file contents if we have any
-            if [ ${#failing_tests[@]} -gt 0 ]; then
+            for test_file in "${failing_tests[@]}"; do
+                local rel_path="${test_file#$REPO_ROOT/}"
+                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${GREEN}File: $rel_path${NC}"
+                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                cat "$test_file"
                 echo ""
-                echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
-                echo -e "${YELLOW}Test File Contents (${#failing_tests[@]} failing tests)${NC}"
-                echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
-                echo ""
-                
-                for test_file in "${failing_tests[@]}"; do
-                    local rel_path="${test_file#$REPO_ROOT/}"
-                    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                    echo -e "${GREEN}File: $rel_path${NC}"
-                    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                    cat "$test_file"
-                    echo ""
-                done
-                
-                echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
-                echo ""
-            fi
+            done
             
-            # Print FINAL RESULTS and everything after
-            echo "$output" | tail -n +$final_results_line
-        else
-            # No FINAL RESULTS found, just print everything
-            echo "$output"
+            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
         fi
+        
+        rm -f "$tmpfile"
     else
         # No --error-code, run normally
         $RUNNER_BIN \
