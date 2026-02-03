@@ -26,7 +26,7 @@ use crate::solver::visitor::{
     readonly_inner_type, ref_symbol, template_literal_id, tuple_list_id, type_param_info,
     type_query_symbol, union_list_id, unique_symbol_ref,
 };
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
@@ -453,15 +453,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) query_db: Option<&'a dyn QueryDatabase>,
     pub(crate) resolver: &'a R,
     /// Active subtype pairs being checked (for cycle detection at TypeId level)
-    pub(crate) in_progress: HashSet<(TypeId, TypeId)>,
+    pub(crate) in_progress: FxHashSet<(TypeId, TypeId)>,
     /// Active SymbolRef pairs being checked (for DefId-level cycle detection)
     /// This catches cycles in Ref types before they're resolved, preventing
     /// infinite expansion of recursive type aliases and interfaces.
-    pub(crate) seen_refs: HashSet<(SymbolRef, SymbolRef)>,
+    pub(crate) seen_refs: FxHashSet<(SymbolRef, SymbolRef)>,
     /// Active DefId pairs being checked (for DefId-level cycle detection)
     /// Phase 3.1: Catches cycles in Lazy(DefId) types before they're resolved.
     /// This mirrors seen_refs but for the new DefId-based type identity system.
-    pub(crate) seen_defs: HashSet<(DefId, DefId)>,
+    pub(crate) seen_defs: FxHashSet<(DefId, DefId)>,
     /// Current recursion depth (for stack overflow prevention)
     pub(crate) depth: u32,
     /// Total number of check_subtype calls (iteration limit)
@@ -512,9 +512,9 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             interner,
             query_db: None,
             resolver: &NOOP,
-            in_progress: HashSet::new(),
-            seen_refs: HashSet::new(),
-            seen_defs: HashSet::new(),
+            in_progress: FxHashSet::default(),
+            seen_refs: FxHashSet::default(),
+            seen_defs: FxHashSet::default(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,
@@ -540,9 +540,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             interner,
             query_db: None,
             resolver,
-            in_progress: HashSet::new(),
-            seen_refs: HashSet::new(),
-            seen_defs: HashSet::new(),
+            in_progress: FxHashSet::default(),
+            seen_refs: FxHashSet::default(),
+            seen_defs: FxHashSet::default(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,
