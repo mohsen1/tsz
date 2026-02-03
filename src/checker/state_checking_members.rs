@@ -174,6 +174,42 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2300 "Duplicate identifier" error for a class member (property or method).
+    /// Helper function to avoid code duplication in check_duplicate_class_members.
+    fn report_duplicate_class_member_ts2300(&mut self, member_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        let member_node = self.ctx.arena.get(member_idx);
+        let (name, error_node) = match member_node.map(|n| n.kind) {
+            Some(k) if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let prop = self.ctx.arena.get_property_decl(member_node.unwrap());
+                let name = prop.and_then(|p| self.get_member_name_text(p.name));
+                let node = prop
+                    .map(|p| p.name)
+                    .filter(|idx| !idx.is_none())
+                    .unwrap_or(member_idx);
+                (name, node)
+            }
+            Some(k) if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let method = self.ctx.arena.get_method_decl(member_node.unwrap());
+                let name = method.and_then(|m| self.get_member_name_text(m.name));
+                let node = method
+                    .map(|m| m.name)
+                    .filter(|idx| !idx.is_none())
+                    .unwrap_or(member_idx);
+                (name, node)
+            }
+            _ => return,
+        };
+
+        if let Some(name) = name {
+            let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+            self.error_at_node(error_node, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+        }
+    }
+
     /// Check for duplicate property/method names in class members (TS2300, TS2393).
     /// TypeScript reports:
     /// - TS2300 "Duplicate identifier 'X'." for duplicate properties
@@ -290,6 +326,7 @@ impl<'a> CheckerState<'a> {
 
             // Count types of members
             let property_count = info.is_property.iter().filter(|&&p| p).count();
+            let method_count = info.is_property.len() - property_count;
             let method_impl_count = info
                 .is_property
                 .iter()
@@ -297,48 +334,49 @@ impl<'a> CheckerState<'a> {
                 .filter(|(is_prop, has_body)| !**is_prop && **has_body)
                 .count();
 
-            // Case 1: Multiple properties with same name -> TS2300 for all
-            // Case 2: Property mixed with methods -> TS2300 for all
+            // Case 1: Multiple properties with same name (no methods) -> TS2300 for subsequent only
+            // Case 2: Property mixed with methods:
+            //   - If property comes first: TS2300 for ALL (both property and method)
+            //   - If method comes first: TS2300 for subsequent (only property)
             // Case 3: Multiple method implementations -> TS2393 for implementations only
             // Case 4: Method overloads (signatures + 1 implementation) -> Valid, no error
 
-            if property_count > 0 {
-                // If any properties are involved, it's TS2300 for subsequent declarations
+            if property_count > 0 && method_count == 0 {
+                // All properties: only report subsequent declarations
                 for &idx in info.indices.iter().skip(1) {
-                    let member_node = self.ctx.arena.get(idx);
-                    let (name, error_node) = match member_node.map(|n| n.kind) {
-                        Some(k) if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                            let prop = self.ctx.arena.get_property_decl(member_node.unwrap());
-                            let name = prop.and_then(|p| self.get_member_name_text(p.name));
-                            let node = prop
-                                .map(|p| p.name)
-                                .filter(|idx| !idx.is_none())
-                                .unwrap_or(idx);
-                            (name, node)
-                        }
-                        Some(k) if k == syntax_kind_ext::METHOD_DECLARATION => {
-                            let method = self.ctx.arena.get_method_decl(member_node.unwrap());
-                            let name = method.and_then(|m| self.get_member_name_text(m.name));
-                            let node = method
-                                .map(|m| m.name)
-                                .filter(|idx| !idx.is_none())
-                                .unwrap_or(idx);
-                            (name, node)
-                        }
-                        _ => continue,
-                    };
+                    self.report_duplicate_class_member_ts2300(idx);
+                }
+            } else if property_count > 0 && method_count > 0 {
+                // Mixed properties and methods: check if first is property
+                let first_is_property = info.is_property.first().copied().unwrap_or(false);
+                let skip_count = if first_is_property { 0 } else { 1 };
 
-                    if let Some(name) = name {
-                        let message =
-                            format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+                for &idx in info.indices.iter().skip(skip_count) {
+                    self.report_duplicate_class_member_ts2300(idx);
+                }
+            } else if method_impl_count > 1 {
+                // Multiple method implementations -> TS2393 for implementations only
+                for ((&idx, &is_prop), &has_body) in info
+                    .indices
+                    .iter()
+                    .zip(info.is_property.iter())
+                    .zip(info.method_has_body.iter())
+                {
+                    if !is_prop && has_body {
+                        let member_node = self.ctx.arena.get(idx);
+                        let error_node = member_node
+                            .and_then(|n| self.ctx.arena.get_method_decl(n))
+                            .map(|m| m.name)
+                            .filter(|idx| !idx.is_none())
+                            .unwrap_or(idx);
                         self.error_at_node(
                             error_node,
-                            &message,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            "Duplicate function implementation.",
+                            diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
                         );
                     }
                 }
-            } else if method_impl_count > 1 {
+            } else {
                 // Multiple method implementations -> TS2393 for implementations only
                 for ((&idx, &is_prop), &has_body) in info
                     .indices
