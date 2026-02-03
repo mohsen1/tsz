@@ -1759,9 +1759,17 @@ impl<'a> CheckerState<'a> {
                         None
                     };
 
-                    // Create base lowering with the fallback arena and resolver
+                    // Create def_id_resolver that converts SymbolIds to DefIds
+                    // This is required for Phase 4.2 which uses TypeKey::Lazy(DefId) everywhere
+                    let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::DefId> {
+                        resolver(node_idx).map(|sym_id| {
+                            self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id))
+                        })
+                    };
+
+                    // Create base lowering with the fallback arena and both resolvers
                     let lowering =
-                        TypeLowering::with_resolver(fallback_arena, self.ctx.types, &resolver);
+                        TypeLowering::with_hybrid_resolver(fallback_arena, self.ctx.types, &resolver, &def_id_resolver, &|_| None);
 
                     // Try to lower as interface first (handles declaration merging)
                     if !symbol.declarations.is_empty() {
@@ -1883,8 +1891,15 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
-            // Lower the augmentation declarations from the current file's arena with the resolver
-            let lowering = TypeLowering::with_resolver(self.ctx.arena, self.ctx.types, &resolver);
+            // Create def_id_resolver that converts SymbolIds to DefIds
+            let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::DefId> {
+                resolver(node_idx).map(|sym_id| {
+                    self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id))
+                })
+            };
+
+            // Lower the augmentation declarations from the current file's arena with the resolvers
+            let lowering = TypeLowering::with_hybrid_resolver(self.ctx.arena, self.ctx.types, &resolver, &def_id_resolver, &|_| None);
             let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
 
             // Merge lib type with augmentation using intersection
@@ -1978,8 +1993,15 @@ impl<'a> CheckerState<'a> {
                         None
                     };
 
+                    // Create def_id_resolver that converts SymbolIds to DefIds
+                    let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::DefId> {
+                        resolver(node_idx).map(|sym_id| {
+                            self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id))
+                        })
+                    };
+
                     let lowering =
-                        TypeLowering::with_resolver(fallback_arena, self.ctx.types, &resolver);
+                        TypeLowering::with_hybrid_resolver(fallback_arena, self.ctx.types, &resolver, &def_id_resolver, &|_| None);
 
                     if !symbol.declarations.is_empty() {
                         // Use lower_merged_interface_declarations for proper multi-arena support
@@ -2091,7 +2113,14 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
-            let lowering = TypeLowering::with_resolver(self.ctx.arena, self.ctx.types, &resolver);
+            // Create def_id_resolver that converts SymbolIds to DefIds
+            let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::DefId> {
+                resolver(node_idx).map(|sym_id| {
+                    self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id))
+                })
+            };
+
+            let lowering = TypeLowering::with_hybrid_resolver(self.ctx.arena, self.ctx.types, &resolver, &def_id_resolver, &|_| None);
             let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
 
             lib_type_id = if let Some(lib_type) = lib_type_id {

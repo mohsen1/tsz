@@ -2290,14 +2290,12 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a qualified name type (A.B).
     fn lower_qualified_name_type(&self, node_idx: NodeIndex) -> TypeId {
-        // Phase 4.1: Prefer DefId, fall back to SymbolRef for compatibility
+        // Phase 4.2: Must resolve to DefId - no fallback to SymbolRef
+        // The def_id_resolver closure must be provided and must return valid DefIds
         if let Some(def_id) = self.resolve_def_id(node_idx) {
             return self.interner.intern(TypeKey::Lazy(def_id));
         }
-        // Fall back to SymbolRef for lib types and backward compatibility
-        if let Some(symbol_id) = self.resolve_type_symbol(node_idx) {
-            return self.interner.reference(SymbolRef(symbol_id));
-        }
+        // If def_id resolution failed, this is an error - don't create bogus Lazy types
         TypeId::ERROR
     }
 
@@ -2315,14 +2313,12 @@ impl<'a> TypeLowering<'a> {
                 return type_param;
             }
 
-            // Phase 4.1: Prefer DefId, fall back to SymbolRef for compatibility
+            // Phase 4.2: Must resolve to DefId - no fallback to SymbolRef
+            // The def_id_resolver closure must be provided and must return valid DefIds
             if let Some(def_id) = self.resolve_def_id(node_idx) {
                 return self.interner.intern(TypeKey::Lazy(def_id));
             }
-            // Fall back to SymbolRef for lib types and backward compatibility
-            if let Some(symbol_id) = self.resolve_type_symbol(node_idx) {
-                return self.interner.reference(SymbolRef(symbol_id));
-            }
+            // If def_id resolution failed, this is an error - don't create bogus Lazy types
 
             // Check for built-in type names only if not resolved (shadowing-safe)
             match name.as_ref() {
