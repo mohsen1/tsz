@@ -1207,9 +1207,35 @@ impl ParserState {
     /// Parse parameter list
     pub(crate) fn parse_parameter_list(&mut self) -> NodeList {
         let mut params = Vec::new();
+        let mut seen_rest_parameter = false;
+        let mut emitted_rest_error = false;
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
+            // TS1014: A rest parameter must be last in a parameter list
+            // Check BEFORE parsing the next parameter (but only emit once)
+            if seen_rest_parameter && !emitted_rest_error {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "A rest parameter must be last in a parameter list.",
+                    diagnostic_codes::REST_PARAMETER_MUST_BE_LAST,
+                );
+                emitted_rest_error = true;
+            }
+
             let param = self.parse_parameter();
+
+            // Check if this is a rest parameter (...)
+            let is_rest_param = if let Some(node) = self.arena.get(param) {
+                if let Some(param_data) = self.arena.get_parameter(node) {
+                    param_data.dot_dot_dot_token
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            seen_rest_parameter = seen_rest_parameter || is_rest_param;
             params.push(param);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
