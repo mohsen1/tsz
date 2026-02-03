@@ -2334,7 +2334,8 @@ impl<'a> CheckerState<'a> {
                 || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
                 && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node)
             {
-                let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types);
+                let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types)
+                    .with_flow_cache(&self.ctx.flow_analysis_cache);
                 return analyzer.assignment_targets_reference(for_data.initializer, idx);
             }
             current = parent;

@@ -1351,7 +1351,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.binder,
             self.ctx.types,
             &self.ctx.node_types,
-        );
+        )
+        .with_flow_cache(&self.ctx.flow_analysis_cache);
 
         analyzer.get_flow_type(idx, declared_type, flow_node)
     }
@@ -1802,7 +1803,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.binder,
             self.ctx.types,
             &self.ctx.node_types,
-        );
+        )
+        .with_flow_cache(&self.ctx.flow_analysis_cache);
 
         analyzer.is_definitely_assigned(idx, flow_node)
     }
