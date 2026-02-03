@@ -981,6 +981,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 properties: merged_properties,
                                 string_index: merged_string_index,
                                 number_index: merged_number_index,
+                                symbol: None,
                             })
                         } else {
                             self.interner.object(merged_properties)

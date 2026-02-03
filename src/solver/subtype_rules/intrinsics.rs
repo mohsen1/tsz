@@ -332,6 +332,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             properties,
             string_index: None,
             number_index,
+            symbol: None,
         }
     }
 

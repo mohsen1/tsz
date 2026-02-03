@@ -50,6 +50,7 @@ impl<'a> ObjectLiteralBuilder<'a> {
             properties,
             string_index,
             number_index,
+            symbol: None,
         })
     }
 

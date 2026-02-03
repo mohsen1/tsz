@@ -83,6 +83,7 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index: None,
                 number_index,
+                symbol: None,
             }));
         }
 

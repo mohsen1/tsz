@@ -15,7 +15,7 @@
 use crate::binder::SymbolId;
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
-use crate::solver::types::{PropertyInfo, TypeId};
+use crate::solver::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId};
 use rustc_hash::FxHashMap;
 
 /// Builder for constructing class instance types.
@@ -113,10 +113,19 @@ impl<'a> ClassTypeBuilder<'a> {
     }
 
     /// Create an object type from properties.
-    fn create_object_type(&self, properties: Vec<PropertyInfo>, _symbol: SymbolId) -> TypeId {
-        // TODO: For nominal typing support, we might want to track the class symbol
-        // For now, create a structural object type
-        self.db.object(properties)
+    fn create_object_type(&self, properties: Vec<PropertyInfo>, symbol: SymbolId) -> TypeId {
+        // Create an object type with the class symbol for nominal discrimination
+        // The symbol field affects Hash (for interning) but NOT PartialEq (for structural comparison)
+        // This ensures that:
+        // - Different classes with identical structures get different TypeIds (via Hash in interner)
+        // - Structural type checking still works correctly (via PartialEq ignoring symbol)
+        self.db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol: Some(symbol),
+        })
     }
 }
 

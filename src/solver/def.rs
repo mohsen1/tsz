@@ -188,6 +188,7 @@ impl DefinitionInfo {
             properties,
             string_index: None,
             number_index: None,
+            symbol: None,
         };
         DefinitionInfo {
             kind: DefKind::Interface,
@@ -217,12 +218,14 @@ impl DefinitionInfo {
             properties: instance_properties,
             string_index: None,
             number_index: None,
+            symbol: None,
         };
         let static_shape = ObjectShape {
             flags: ObjectFlags::empty(),
             properties: static_properties,
             string_index: None,
             number_index: None,
+            symbol: None,
         };
         DefinitionInfo {
             kind: DefKind::Class,

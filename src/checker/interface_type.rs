@@ -227,6 +227,7 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
+                symbol: None,
             })
         } else if !properties.is_empty() {
             self.ctx.types.object(properties)
@@ -583,6 +584,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
+                    symbol: None,
                 })
             }
             (
@@ -598,6 +600,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape.string_index.clone(),
                     number_index: derived_shape.number_index.clone(),
+                    symbol: None,
                 })
             }
             (
@@ -619,6 +622,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
+                    symbol: None,
                 })
             }
             (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => {
@@ -826,6 +830,7 @@ impl<'a> CheckerState<'a> {
                     properties: merged_properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
+                    symbol: None,
                 })
             }
             AugmentationTargetKind::Callable(shape_id) => {
