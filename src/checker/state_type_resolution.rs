@@ -620,41 +620,27 @@ impl<'a> CheckerState<'a> {
             }
             if symbol.flags & symbol_flags::INTERFACE != 0 {
                 if !symbol.declarations.is_empty() {
-                    // IMPORTANT: Use the correct arena for the symbol - lib types use a different arena
-                    let symbol_arena = self
-                        .ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .map(|arena| arena.as_ref())
-                        .unwrap_or(self.ctx.arena);
+                    // Phase 4.3: Return Lazy(DefId) for interface type references
+                    // This preserves interface names in error messages (e.g., "type A" instead of "{ x: number }")
+                    //
+                    // IMPORTANT: We must still compute and cache the structural type first so that:
+                    // 1. resolve_lazy() can return the cached type when needed for type checking
+                    // 2. The DefinitionStore can be populated with the interface shape
+                    //
+                    // The flow is:
+                    // 1. get_type_of_symbol() computes and caches the structural type in symbol_types
+                    // 2. create_lazy_type_ref() returns TypeKey::Lazy(DefId) for error formatting
+                    // 3. resolve_lazy() returns the cached structural type for actual type checking
 
-                    let type_param_bindings = self.get_type_param_bindings();
-                    let type_resolver =
-                        |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                    let value_resolver =
-                        |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                    // Step 1: Ensure the structural type is computed and cached
+                    let _structural_type = self.get_type_of_symbol(sym_id);
 
-                    // Phase 4.2: Add def_id_resolver for DefId-based resolution
-                    let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
-                        self.resolve_type_symbol_for_lowering(node_idx)
-                            .map(|sym_id| self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id)))
-                    };
+                    // Step 2: Return a Lazy type reference for the interface
+                    // This allows error formatting to look up the interface name by DefId
+                    let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
 
-                    let lowering = TypeLowering::with_hybrid_resolver(
-                        symbol_arena,
-                        self.ctx.types,
-                        &type_resolver,
-                        &def_id_resolver,
-                        &value_resolver,
-                    )
-                    .with_type_param_bindings(type_param_bindings);
-                    let interface_type =
-                        lowering.lower_interface_declarations(&symbol.declarations);
-                    let result =
-                        self.merge_interface_heritage_types(&symbol.declarations, interface_type);
                     self.ctx.leave_recursion();
-                    return result;
+                    return lazy_type;
                 }
                 if !symbol.value_declaration.is_none() {
                     let result = self.get_type_of_interface(symbol.value_declaration);
