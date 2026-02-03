@@ -639,6 +639,29 @@ impl<'a> CheckerState<'a> {
                     return result;
                 }
             }
+
+            // For type aliases, resolve the body type using the correct arena
+            if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                let decl_idx = if !symbol.value_declaration.is_none() {
+                    symbol.value_declaration
+                } else {
+                    symbol
+                        .declarations
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE)
+                };
+                if !decl_idx.is_none() {
+                    // For type aliases, the type_node is in the lib file's arena
+                    // We need to resolve it by fetching the type alias node and getting its type_node
+                    if let Some(node) = self.ctx.arena.get(decl_idx)
+                        && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+                    {
+                        self.ctx.leave_recursion();
+                        return self.get_type_from_type_node(type_alias.type_node);
+                    }
+                }
+            }
         }
         let result = self.get_type_of_symbol(sym_id);
         self.ctx.leave_recursion();
