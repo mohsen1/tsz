@@ -33342,20 +33342,17 @@ const x: Box<string> = { value: "hello" };
     );
 }
 
-/// Test generic recursive type alias (Phase 4.2.1 known issue)
+/// Test generic recursive type alias (Phase 4.2.1)
 ///
 /// This test verifies that generic recursive type aliases like:
 ///   type List<T> = { value: T; next: List<T> | null }
 /// work correctly with DefId-based resolution.
 ///
-/// KNOWN ISSUE (Phase 4.2.1):
-/// - The type is displayed as `Lazy(1)<number>` instead of `List<number>`
-/// - Type checking fails when it should succeed
-/// - Root cause: Application(Lazy(def_id), args) resolution needs fixing in checker pipeline
-/// - Solver unit test passes: test_application_ref_expansion_recursive
-/// - This is a separate issue from the solver evaluation logic
+/// Phase 4.2.1 FIX:
+/// - Implemented get_lazy_type_params in CheckerContext
+/// - Type parameters are now stored in def_type_params cache
+/// - Enables Solver to expand Application(Lazy(DefId), Args)
 #[test]
-#[ignore = "Phase 4.2.1: Generic recursive type resolution needs fixing in checker pipeline"]
 fn test_generic_recursive_type_alias() {
     let source = r#"
 type List<T> = { value: T; next: List<T> | null };

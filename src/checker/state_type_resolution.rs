@@ -741,6 +741,10 @@ impl<'a> CheckerState<'a> {
                 if let Some((instance_type, params)) =
                     self.class_instance_type_with_params_from_symbol(sym_id)
                 {
+                    // Phase 4.2.1: Store type parameters for DefId-based resolution
+                    if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                    }
                     return (instance_type, params);
                 }
             }
@@ -801,6 +805,12 @@ impl<'a> CheckerState<'a> {
                         self.merge_interface_heritage_types(&symbol.declarations, interface_type);
 
                     self.pop_type_parameters(updates);
+
+                    // Phase 4.2.1: Store type parameters for DefId-based resolution
+                    if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                    }
+
                     return (merged, params);
                 }
             }
@@ -823,6 +833,13 @@ impl<'a> CheckerState<'a> {
                     let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
                     let alias_type = self.get_type_from_type_node(type_alias.type_node);
                     self.pop_type_parameters(updates);
+
+                    // Phase 4.2.1: Store type parameters for DefId-based resolution
+                    // This enables the Solver to expand Application(Lazy(DefId), Args)
+                    if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                    }
+
                     return (alias_type, params);
                 }
             }
