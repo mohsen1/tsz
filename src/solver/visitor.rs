@@ -235,7 +235,6 @@ pub trait TypeVisitor: Sized {
             TypeKey::Function(id) => self.visit_function(id.0),
             TypeKey::Callable(id) => self.visit_callable(id.0),
             TypeKey::TypeParameter(info) => self.visit_type_parameter(info),
-            TypeKey::Ref(sym_ref) => self.visit_ref(sym_ref.0),
             TypeKey::Lazy(def_id) => self.visit_lazy(def_id.0),
             TypeKey::Application(id) => self.visit_application(id.0),
             TypeKey::Conditional(id) => self.visit_conditional(id.0),
@@ -330,7 +329,7 @@ impl TypeKindVisitor {
             TypeKey::Application(_) => TypeKind::Generic,
             TypeKey::TypeParameter(_) | TypeKey::Infer(_) => TypeKind::TypeParameter,
             TypeKey::Conditional(_) => TypeKind::Conditional,
-            TypeKey::Ref(_) | TypeKey::Lazy(_) => TypeKind::Reference,
+            TypeKey::Lazy(_) => TypeKind::Reference,
             TypeKey::Mapped(_) => TypeKind::Mapped,
             TypeKey::IndexAccess(_, _) => TypeKind::IndexAccess,
             TypeKey::TemplateLiteral(_) => TypeKind::TemplateLiteral,
@@ -709,7 +708,12 @@ pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
 /// Extract the type reference symbol if this is a Ref type.
 pub fn ref_symbol(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef> {
     extract_type_data(types, type_id, |key| match key {
-        TypeKey::Ref(sym_ref) => Some(*sym_ref),
+        TypeKey::Lazy(def_id) => {
+            // TypeKey::Ref has been migrated to TypeKey::Lazy(DefId)
+            // We can no longer extract SymbolRef from it
+            // Return None or handle as needed based on migration strategy
+            None
+        }
         _ => None,
     })
 }
@@ -1102,8 +1106,7 @@ impl<'a> RecursiveTypeCollector<'a> {
                     self.visit(default);
                 }
             }
-            TypeKey::Ref(_)
-            | TypeKey::Lazy(_)
+            TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => {
@@ -1291,8 +1294,7 @@ where
                 info.constraint.map(|c| self.check(c)).unwrap_or(false)
                     || info.default.map(|d| self.check(d)).unwrap_or(false)
             }
-            TypeKey::Ref(_)
-            | TypeKey::Lazy(_)
+            TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => false,
