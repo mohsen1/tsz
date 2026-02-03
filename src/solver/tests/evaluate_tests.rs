@@ -44706,7 +44706,7 @@ fn test_tail_recursive_conditional() {
     // Build a chain of 60 nested conditionals
     // Each conditional: `string extends number ? never : string`
     // This will take the false branch each time
-    
+
     let mut current_type = TypeId::STRING;
 
     for _ in 0..60 {
