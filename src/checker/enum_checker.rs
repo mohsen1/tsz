@@ -29,6 +29,18 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the type represents a TypeScript enum.
     pub fn is_enum_type(&self, type_id: TypeId) -> bool {
+        // Check for Lazy types (new representation for enums, namespaces, etc.)
+        if let Some(def_id) = crate::solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
+        {
+            if let Some(sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id).copied() {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    return (symbol.flags & symbol_flags::ENUM) != 0;
+                }
+            }
+            return false;
+        }
+
+        // Fallback to deprecated Ref types for compatibility
         if let Some(sym_ref) = crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id)
         {
             if let Some(symbol) = self
@@ -49,6 +61,19 @@ impl<'a> CheckerState<'a> {
     ///
     /// Const enums are fully inlined and cannot be accessed at runtime.
     pub fn is_const_enum_type(&self, type_id: TypeId) -> bool {
+        // Check for Lazy types (new representation for enums, namespaces, etc.)
+        if let Some(def_id) = crate::solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
+        {
+            if let Some(sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id).copied() {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    return (symbol.flags & symbol_flags::ENUM) != 0
+                        && (symbol.flags & symbol_flags::CONST_ENUM) != 0;
+                }
+            }
+            return false;
+        }
+
+        // Fallback to deprecated Ref types for compatibility
         if let Some(sym_ref) = crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id)
         {
             if let Some(symbol) = self
@@ -117,7 +142,14 @@ impl<'a> CheckerState<'a> {
             return type_id; // Return the union as-is
         }
 
-        // Check if it's a Ref type
+        // Check for Lazy types (new representation for enums, namespaces, etc.)
+        if crate::solver::type_queries::get_lazy_def_id(self.ctx.types, type_id).is_some() {
+            // For enum types, we need to check the member types
+            // Default to STRING for string enums, NUMBER for numeric enums
+            return TypeId::UNKNOWN;
+        }
+
+        // Fallback to deprecated Ref types for compatibility
         if crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id).is_some() {
             // For enum types, we need to check the member types
             // Default to STRING for string enums, NUMBER for numeric enums
