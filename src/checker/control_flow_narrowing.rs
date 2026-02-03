@@ -1663,6 +1663,64 @@ impl<'a> FlowAnalyzer<'a> {
         !is_const // Return true if NOT const (i.e., let or var)
     }
 
+    /// Check if a variable is captured from an outer scope (vs declared locally).
+    ///
+    /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
+    /// - Variables declared INSIDE the closure should narrow normally
+    /// - Variables captured from OUTER scope reset narrowing (for let/var)
+    pub(crate) fn is_captured_variable(&self, reference: NodeIndex) -> bool {
+        use crate::binder::ScopeId;
+        const MAX_TREE_WALK_ITERATIONS: usize = 1000;
+
+        // Resolve the identifier reference to its symbol
+        let Some(symbol_id) = self.binder.resolve_identifier(self.arena, reference) else {
+            return false;
+        };
+
+        // Get the symbol's value declaration
+        let Some(symbol) = self.binder.get_symbol(symbol_id) else {
+            return false;
+        };
+
+        let decl_id = symbol.value_declaration;
+        if decl_id == NodeIndex::NONE {
+            return false;
+        }
+
+        // Find the enclosing scope of the declaration
+        let Some(decl_scope_id) = self.binder.find_enclosing_scope(self.arena, decl_id) else {
+            return false;
+        };
+
+        // Get the current scope (where the variable is being accessed)
+        let current_scope_id = self.binder.current_scope_id;
+
+        // If declared in current scope, not captured
+        if decl_scope_id == current_scope_id {
+            return false;
+        }
+
+        // Check if declaration scope is an ancestor of current scope
+        // Walk up the scope chain from current scope to see if we find the declaration scope
+        let mut scope_id = current_scope_id;
+        let mut iterations = 0;
+        while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
+            if scope_id == decl_scope_id {
+                // Found declaration scope in ancestor chain → captured variable
+                return true;
+            }
+
+            // Move to parent scope
+            scope_id = self.binder.scopes.get(scope_id.0 as usize)
+                .map(|scope| scope.parent)
+                .unwrap_or(ScopeId::NONE);
+
+            iterations += 1;
+        }
+
+        false
+    }
+
     /// Extract a TypeGuard from a binary expression node.
     ///
     /// This method translates AST nodes into AST-agnostic TypeGuard enums,
