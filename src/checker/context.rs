@@ -390,6 +390,12 @@ pub struct CheckerContext<'a> {
     /// Wrapped in RefCell to allow mutation through shared references (for use in Fn closures).
     pub def_to_symbol: RefCell<FxHashMap<DefId, SymbolId>>,
 
+    /// Type parameters for DefIds (used for type aliases, classes, interfaces).
+    /// Enables the Solver to expand Application(Lazy(DefId), Args) by providing
+    /// the type parameters needed for generic substitution.
+    /// Wrapped in RefCell to allow mutation through shared references.
+    pub def_type_params: RefCell<FxHashMap<DefId, Vec<crate::solver::TypeParamInfo>>>,
+
     /// Abstract constructor types (TypeIds) produced for abstract classes.
     pub abstract_constructor_types: FxHashSet<TypeId>,
 
@@ -546,6 +552,7 @@ impl<'a> CheckerContext<'a> {
             definition_store: DefinitionStore::new(),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
+            def_type_params: RefCell::new(FxHashMap::default()),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -629,6 +636,7 @@ impl<'a> CheckerContext<'a> {
             definition_store: DefinitionStore::new(),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
+            def_type_params: RefCell::new(FxHashMap::default()),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -714,6 +722,7 @@ impl<'a> CheckerContext<'a> {
             definition_store: DefinitionStore::new(),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
+            def_type_params: RefCell::new(FxHashMap::default()),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -798,6 +807,7 @@ impl<'a> CheckerContext<'a> {
             definition_store: DefinitionStore::new(),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
+            def_type_params: RefCell::new(FxHashMap::default()),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -1022,6 +1032,35 @@ impl<'a> CheckerContext<'a> {
     /// Look up the SymbolId for a DefId (reverse mapping).
     pub fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
         self.def_to_symbol.borrow().get(&def_id).copied()
+    }
+
+    /// Insert type parameters for a DefId (Phase 4.2.1: generic type alias support).
+    ///
+    /// This enables the Solver to expand Application(Lazy(DefId), Args) by providing
+    /// the type parameters needed for generic substitution.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // For type List<T> = { value: T; next: List<T> | null }
+    /// let def_id = ctx.get_or_create_def_id(list_sym_id);
+    /// let params = vec![TypeParamInfo { name: "T", ... }];
+    /// ctx.insert_def_type_params(def_id, params);
+    /// ```
+    pub fn insert_def_type_params(
+        &self,
+        def_id: DefId,
+        params: Vec<crate::solver::TypeParamInfo>,
+    ) {
+        if !params.is_empty() {
+            self.def_type_params.borrow_mut().insert(def_id, params);
+        }
+    }
+
+    /// Get type parameters for a DefId.
+    ///
+    /// Returns None if the DefId has no type parameters or hasn't been registered yet.
+    pub fn get_def_type_params(&self, def_id: DefId) -> Option<Vec<crate::solver::TypeParamInfo>> {
+        self.def_type_params.borrow().get(&def_id).cloned()
     }
 
     /// Resolve a TypeId to its underlying SymbolId if it is a reference type.
@@ -1592,16 +1631,16 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
 
     /// Get type parameters for a Lazy type.
     ///
-    /// Type parameters are embedded in the type itself (Callable, Interface, etc.)
-    /// rather than stored separately. The ApplicationEvaluator extracts them from
-    /// the resolved body type, so this returns None.
+    /// Phase 4.2.1: For type aliases, type parameters are stored in def_type_params
+    /// and used by the Solver to expand Application(Lazy(DefId), Args).
+    ///
+    /// For classes/interfaces, type parameters are embedded in the resolved type's shape
+    /// (Callable.type_params, Interface.type_params, etc.) rather than stored separately.
     fn get_lazy_type_params(
         &self,
-        _def_id: crate::solver::DefId,
+        def_id: crate::solver::DefId,
     ) -> Option<Vec<crate::solver::TypeParamInfo>> {
-        // Type parameters are extracted from the resolved type's shape
-        // (Callable.type_params, Interface.type_params, etc.)
-        // rather than stored separately in the resolver.
-        None
+        // Phase 4.2.1: Look up type parameters for type aliases
+        self.get_def_type_params(def_id)
     }
 }
