@@ -17,9 +17,22 @@ Looking for tractable test failures to fix, particularly those related to:
 
 ## Session Summary
 
-**Total tests fixed/unignored: 15**
-- 13 TS2304 (Cannot find name) tests - fixed missing `report_unresolved_imports` flag
+**Total tests fixed/unignored: 16**
+- 14 TS2304 (Cannot find name) tests - fixed missing `report_unresolved_imports` flag
 - 2 TS2339 (Property not exist) tests - fixed unknown type error suppression
+
+---
+
+### 2025-02-03: Fixed another TS2304 test (test_ts2304_emitted_for_undefined_name)
+
+Added `report_unresolved_imports = true` to the `check_without_lib` helper function
+in `src/checker/tests/ts2304_tests.rs`.
+
+**Root cause**: Same issue as previous TS2304 tests - the helper function wasn't
+setting the flag needed to report TS2304 errors for unresolved identifiers.
+
+**Tests fixed** (1 test):
+- test_ts2304_emitted_for_undefined_name (no longer ignored)
 
 ---
 
