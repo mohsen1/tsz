@@ -212,8 +212,14 @@ pub struct BindResult {
 /// # Returns
 /// Vector of BindResult for each file
 pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> {
+    eprintln!("[PARSE-BIND] Processing {} file(s)", files.len());
+    for (name, _) in &files {
+        eprintln!("[PARSE-BIND]   - file: {}", name);
+    }
+
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
+            eprintln!("[PARSE-BIND] Binding file: {}", file_name);
             // Parse
             let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
@@ -223,6 +229,20 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
             // Bind
             let mut binder = BinderState::new();
             binder.bind_source_file(&arena, source_file);
+
+            eprintln!(
+                "[PARSE-BIND] Finished binding {}: {} augment(s), {} declared_modules",
+                file_name,
+                binder.module_augmentations.len(),
+                binder.declared_modules.len()
+            );
+            for (spec, augs) in &binder.module_augmentations {
+                eprintln!(
+                    "[PARSE-BIND]   - module '{}' has {} augment(s)",
+                    spec,
+                    augs.len()
+                );
+            }
 
             BindResult {
                 file_name,
@@ -977,6 +997,20 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 .iter()
                 .map(|(spec, augs)| {
                     let arena = Arc::clone(&result.arena);
+                    eprintln!(
+                        "[MERGE-AUG] File {}: module={} has {} augmentation(s)",
+                        result.file_name,
+                        spec,
+                        augs.len()
+                    );
+                    for aug in augs {
+                        eprintln!(
+                            "[MERGE-AUG]   - name={}, node={:?}, has_arena_before={}",
+                            aug.name,
+                            aug.node,
+                            aug.arena.is_some()
+                        );
+                    }
                     (
                         spec.clone(),
                         augs.iter()
@@ -1379,8 +1413,25 @@ pub(crate) fn create_binder_from_bound_file(
         Vec<crate::binder::ModuleAugmentation>,
     > = rustc_hash::FxHashMap::default();
 
+    eprintln!(
+        "[BINDER-CREATE] Creating binder for file: {}",
+        file.file_name
+    );
     for other_file in &program.files {
         for (spec, augs) in &other_file.module_augmentations {
+            eprintln!(
+                "[BINDER-CREATE]   Merging from {}: module='{}' with {} augment(s)",
+                other_file.file_name,
+                spec,
+                augs.len()
+            );
+            for aug in augs {
+                eprintln!(
+                    "[BINDER-CREATE]     - name={}, has_arena={}",
+                    aug.name,
+                    aug.arena.is_some()
+                );
+            }
             merged_module_augmentations
                 .entry(spec.clone())
                 .or_default()

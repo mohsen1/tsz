@@ -691,18 +691,42 @@ impl<'a> CheckerState<'a> {
         module_spec: &str,
         interface_name: &str,
     ) -> Vec<crate::binder::ModuleAugmentation> {
-        self.ctx
+        eprintln!(
+            "[GET-AUG-DECL] Looking for: module={}, interface={}",
+            module_spec, interface_name
+        );
+        eprintln!(
+            "[GET-AUG-DECL] Available modules: {:?}",
+            self.ctx
+                .binder
+                .module_augmentations
+                .keys()
+                .collect::<Vec<_>>()
+        );
+
+        let result: Vec<crate::binder::ModuleAugmentation> = self
+            .ctx
             .binder
             .module_augmentations
             .get(module_spec)
             .map(|augmentations| {
+                eprintln!(
+                    "[GET-AUG-DECL] Module has {} augment(s)",
+                    augmentations.len()
+                );
                 augmentations
                     .iter()
                     .filter(|aug| aug.name == interface_name)
                     .cloned()
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+
+        eprintln!(
+            "[GET-AUG-DECL] Found {} matching augmentation(s)",
+            result.len()
+        );
+        result
     }
 
     /// Get all module augmentation members for a given module specifier and interface name.
@@ -811,15 +835,32 @@ impl<'a> CheckerState<'a> {
         use crate::solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
         use crate::solver::{CallableShape, ObjectFlags, ObjectShape};
 
+        eprintln!(
+            "[APPLY-AUG] Applying augmentations: module={}, interface={}, base_type={:?}",
+            module_spec, interface_name, base_type
+        );
+
         let augmentation_members =
             self.get_module_augmentation_members(module_spec, interface_name);
 
+        eprintln!(
+            "[APPLY-AUG] Found {} augmentation member(s)",
+            augmentation_members.len()
+        );
+        for member in &augmentation_members {
+            eprintln!("[APPLY-AUG]   - member: name={:?}", member.name);
+        }
+
         if augmentation_members.is_empty() {
+            eprintln!("[APPLY-AUG] No members found, returning base_type");
             return base_type;
         }
 
         // Get the base type's properties and merge with augmentation members
-        match classify_for_augmentation(self.ctx.types, base_type) {
+        let kind = classify_for_augmentation(self.ctx.types, base_type);
+        eprintln!("[APPLY-AUG] Base type classified as: {:?}", kind);
+
+        match kind {
             AugmentationTargetKind::Object(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);
                 let merged_properties =
