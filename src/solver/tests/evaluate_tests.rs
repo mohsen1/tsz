@@ -1,5 +1,6 @@
 use super::*;
 use crate::solver::{SubtypeChecker, TypeSubstitution, instantiate_type};
+use crate::solver::def::DefId;
 
 #[test]
 fn test_conditional_true_branch() {
@@ -15924,8 +15925,9 @@ fn test_application_ref_expansion_recursive() {
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
-    // Create Ref(1) for List type alias (self-reference)
-    let list_ref = interner.reference(SymbolRef(1));
+    // Phase 4.2: Create Lazy(DefId) for List type alias (self-reference)
+    let list_def_id = DefId(1);
+    let list_ref = interner.intern(TypeKey::Lazy(list_def_id));
 
     // Create Application: List<T> (recursive reference in type body)
     let list_t = interner.application(list_ref, vec![t_type]);
@@ -15958,9 +15960,9 @@ fn test_application_ref_expansion_recursive() {
     // Create Application: List<string>
     let list_string = interner.application(list_ref, vec![TypeId::STRING]);
 
-    // Set up resolver with type parameters
+    // Set up resolver with type parameters (Phase 4.2: use DefId-based API)
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), list_body, vec![t_param]);
+    env.insert_def_with_params(list_def_id, list_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(list_string);
