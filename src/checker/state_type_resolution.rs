@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
                 // Phase 2: Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<DefId> {
                     self.resolve_type_symbol_for_lowering(node_idx)
-                        .and_then(|sym_id| self.ctx.get_existing_def_id(SymbolId(sym_id)))
+                        .map(|sym_id| self.ctx.get_or_create_def_id(SymbolId(sym_id)))
                 };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
@@ -231,7 +231,7 @@ impl<'a> CheckerState<'a> {
                 // Phase 2: Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<DefId> {
                     self.resolve_type_symbol_for_lowering(node_idx)
-                        .and_then(|sym_id| self.ctx.get_existing_def_id(SymbolId(sym_id)))
+                        .map(|sym_id| self.ctx.get_or_create_def_id(SymbolId(sym_id)))
                 };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
