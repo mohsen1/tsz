@@ -201,7 +201,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag = builder.type_not_assignable(source, target, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -640,7 +640,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag = builder.property_missing(prop_name, source, target, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -666,7 +666,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag = builder.property_not_exist(prop_name, type_id, loc.start, loc.length());
             // Use push_diagnostic for deduplication
             self.ctx
@@ -686,7 +686,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag = builder.excess_property(prop_name, target, loc.start, loc.length());
             // Use push_diagnostic for deduplication
             self.ctx
@@ -701,7 +701,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag = builder.readonly_property(prop_name, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -752,7 +752,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        let mut formatter = self.ctx.create_type_formatter();
         let index_str = formatter.format(index_type);
         let object_str = formatter.format(object_type);
         let message = format!(
@@ -802,7 +802,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag = builder.cannot_find_name(name, loc.start, loc.length());
             self.ctx
                 .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
@@ -1128,7 +1128,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag =
                 builder.argument_not_assignable(arg_type, param_type, loc.start, loc.length());
             self.ctx
@@ -1150,7 +1150,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag = builder.argument_count_mismatch(expected, got, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -1195,7 +1195,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        let mut formatter = self.ctx.create_type_formatter();
         let mut related = Vec::new();
         let span =
             crate::solver::SourceSpan::new(self.ctx.file_name.as_str(), loc.start, loc.length());
@@ -1241,7 +1241,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            );
+            ).with_def_store(&self.ctx.definition_store);
             let diag = builder.not_callable(type_id, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -1263,7 +1263,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        let mut formatter = self.ctx.create_type_formatter();
         let type_str = formatter.format(type_id);
 
         let message = diagnostic_messages::CANNOT_INVOKE_EXPRESSION_LACKING_CALL_SIGNATURE
@@ -1333,7 +1333,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        let mut formatter = self.ctx.create_type_formatter();
         let type_str = formatter.format(type_id);
 
         let message =
@@ -1363,7 +1363,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        let mut formatter = self.ctx.create_type_formatter();
         let type_str = formatter.format(type_id);
 
         let message =
@@ -1476,46 +1476,49 @@ impl<'a> CheckerState<'a> {
         let right_is_symbol = evaluator.is_symbol_like(right_type);
 
         if left_is_symbol || right_is_symbol {
-            let mut formatter =
-                TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+            // Format type strings first to avoid holding formatter across mutable borrows
+            let left_type_str = if left_is_symbol {
+                Some(self.ctx.create_type_formatter().format(left_type))
+            } else {
+                None
+            };
+            let right_type_str = if right_is_symbol {
+                Some(self.ctx.create_type_formatter().format(right_type))
+            } else {
+                None
+            };
 
             // Emit TS2469 for symbol operands
-            if left_is_symbol {
-                if let Some(loc) = self.get_source_location(left_idx) {
-                    let type_str = formatter.format(left_type);
-                    let message = format_message(
-                        diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                        &[op, &type_str],
-                    );
-                    self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                        category: DiagnosticCategory::Error,
-                        message_text: message,
-                        file: self.ctx.file_name.clone(),
-                        start: loc.start,
-                        length: loc.length(),
-                        related_information: Vec::new(),
-                    });
-                }
+            if let (Some(loc), Some(type_str)) = (self.get_source_location(left_idx), left_type_str.as_deref()) {
+                let message = format_message(
+                    diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                    &[op, type_str],
+                );
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
             }
 
-            if right_is_symbol {
-                if let Some(loc) = self.get_source_location(right_idx) {
-                    let type_str = formatter.format(right_type);
-                    let message = format_message(
-                        diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                        &[op, &type_str],
-                    );
-                    self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                        category: DiagnosticCategory::Error,
-                        message_text: message,
-                        file: self.ctx.file_name.clone(),
-                        start: loc.start,
-                        length: loc.length(),
-                        related_information: Vec::new(),
-                    });
-                }
+            if let (Some(loc), Some(type_str)) = (self.get_source_location(right_idx), right_type_str.as_deref()) {
+                let message = format_message(
+                    diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                    &[op, type_str],
+                );
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
             }
 
             // If both are symbols, we're done (no need for TS2365)
@@ -1527,7 +1530,7 @@ impl<'a> CheckerState<'a> {
             // (but we've already emitted TS2469 for the symbol)
         }
 
-        let mut formatter = TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        let mut formatter = self.ctx.create_type_formatter();
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 
