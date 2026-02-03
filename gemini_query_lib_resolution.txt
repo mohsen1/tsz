@@ -1,0 +1,136 @@
+## Context
+
+We're in the middle of migrating from TypeKey::Ref(SymbolRef) to TypeKey::Lazy(DefId). We've completed the core changes but conformance pass rate is stuck at 4.5% with **114,109 TS2318 errors** ("Cannot find global type 'X'").
+
+## The Problem
+
+Lib type resolution is completely broken. When user code references `Array`, `Promise`, `Object`, etc., we emit TS2318 instead of finding them from the loaded lib.d.ts files.
+
+### What We've Already Fixed
+
+1. **TypeLowering def_id_resolver** (src/checker/type_checking_queries.rs):
+   - Added def_id_resolver closure in resolve_lib_type_by_name
+   - Properly converts SymbolIds to DefIds using get_or_create_def_id()
+
+2. **SymbolId ↔ DefId mappings** (src/checker/context.rs):
+   - get_or_create_def_id() creates BOTH symbol_to_def AND def_to_symbol mappings
+   - def_to_symbol_id() looks up the reverse mapping
+
+3. **Application type evaluation** (src/solver/application.rs):
+   - Changed from get_symbol_ref() to get_lazy_def_id()
+   - Uses resolver.resolve_lazy(def_id, ...) to get body type
+
+4. **Classification enums** (src/solver/type_queries_extended.rs):
+   - Added Lazy(DefId) variants to PromiseTypeKind, ConstructSignatureKind, SymbolRefKind
+
+## The Root Cause (I Think)
+
+**The CheckerContext doesn't implement TypeResolver!**
+
+When ApplicationEvaluator evaluates `Array<string>`:
+1. Gets DefId for Array from get_lazy_def_id()
+2. Calls self.resolver.resolve_lazy(def_id, ...)  <-- THIS IS THE PROBLEM
+3. Returns None because there's no resolve_lazy implementation in the checker
+4. Application fails, cascading to TS2318 errors
+
+### Evidence
+
+```bash
+$ grep -rn "fn resolve_lazy" src/checker --include="*.rs"
+# NO RESULTS!
+```
+
+The only TypeResolver implementations are:
+- src/solver/subtype.rs: TypeEnvironment (has resolve_lazy via get_def())
+- src/solver/lower.rs: IndexSignatureResolver (stub returning ERROR)
+
+But CheckerContext, which is the main resolver used in type checking, doesn't implement TypeResolver at all!
+
+### The Question
+
+How should we implement TypeResolver for CheckerContext?
+
+Should we:
+1. **Add TypeResolver impl for CheckerContext**: Implement resolve_lazy() to look up the symbol's type from symbol_types cache and resolve it lazily?
+2. **Create a bridge TypeResolver**: Make a wrapper struct that implements TypeResolver and delegates to CheckerContext methods?
+3. **Use a different resolver for lib types**: Pass TypeEnvironment as the resolver for ApplicationEvaluator?
+4. **Something else**?
+
+## Details
+
+### TypeResolver Trait Definition
+
+```rust
+// src/solver/subtype.rs
+pub trait TypeResolver {
+    #[deprecated(note = "Use resolve_lazy with DefId instead")]
+    fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId>;
+
+    fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None  // Default implementation returns None!
+    }
+
+    fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
+        None
+    }
+
+    fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        None
+    }
+}
+```
+
+### How ApplicationEvaluator Uses It
+
+```rust
+// src/solver/application.rs:141
+let Some(body_type) = self.resolver.resolve_lazy(def_id, self.interner) else {
+    return ApplicationResult::ResolutionFailed(type_id);
+};
+
+let type_params = self.resolver.get_lazy_type_params(def_id).unwrap_or_default();
+```
+
+### What We Have Available
+
+In CheckerContext:
+- `symbol_types: FxHashMap<SymbolId, TypeId>` - cached types for symbols
+- `def_to_symbol: RefCell<FxHashMap<DefId, SymbolId>>` - reverse mapping
+- `get_type_of_symbol(sym_id: SymbolId)` - computes and caches type for a symbol
+- `def_to_symbol_id(def_id: DefId) -> Option<SymbolId>` - bridge function
+
+### The Challenge
+
+resolve_lazy() needs to:
+1. Convert DefId → SymbolId (we have def_to_symbol_id())
+2. Get the TypeId for that symbol (from symbol_types cache or compute it)
+3. Return the TypeId
+
+But get_type_of_symbol() is on CheckerState, not CheckerContext. And resolve_lazy is a pure function (takes &self, no mutable access).
+
+## Usage Flow
+
+```
+User types: let x: Array<string>
+    ↓
+TypeLowering lowers "Array" to TypeKey::Lazy(def_id_for_Array)
+    ↓
+TypeDatabase stores: Array → Lazy(def_id)
+    ↓
+ApplicationEvaluator sees Application(base=Array, args=[string])
+    ↓
+get_lazy_def_id() gets def_id_for_Array
+    ↓
+Calls resolver.resolve_lazy(def_id_for_Array, ...)  <-- FAILS HERE
+    ↓
+Returns None → ResolutionFailed → Error cascade
+```
+
+## Expected Behavior
+
+When resolve_lazy(def_id_for_Array) is called:
+1. Convert def_id_for_Array → SymbolId for Array symbol
+2. Get TypeId for Array symbol (the Callable/Interface type)
+3. Return that TypeId so ApplicationEvaluator can substitute [string] for T
+
+This should work for ANY symbol referenced via TypeKey::Lazy(DefId) - not just lib types but all user-defined interfaces, type aliases, classes, etc.
