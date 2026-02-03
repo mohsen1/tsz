@@ -3543,15 +3543,25 @@ impl Server {
     }
 
     /// Normalize lib name aliases to their canonical form.
-    /// TypeScript's libMap (in commandLineParser.ts) maps short names to actual lib files:
-    /// - es6 -> es2015
+    /// IMPORTANT: lib.es6.d.ts and lib.es2015.d.ts are DIFFERENT files:
+    /// - lib.es6.d.ts includes ES2015 + DOM (for web targets)
+    /// - lib.es2015.d.ts includes ES2015 ONLY (for non-web targets)
+    ///
+    /// For conformance tests (web targets), we MUST use "es6" to get DOM types.
+    /// TypeScript's libMap (in commandLineParser.ts) maps short names to actual lib files.
+    ///
+    /// lib name mapping:
+    /// - es6 -> es6 (NOT es2015! lib.es6.d.ts includes DOM)
     /// - es7 -> es2016
     /// - lib -> es5 (the default lib.d.ts)
     /// - dom -> dom.generated (TypeScript source uses .generated suffix)
     fn normalize_lib_alias(name: &str) -> String {
         match name.to_lowercase().trim() {
             // ES version aliases
-            "es6" => "es2015".to_string(),
+            // NOTE: Do NOT map "es6" to "es2015" - they are different files!
+            // lib.es6.d.ts = ES2015 + DOM (web)
+            // lib.es2015.d.ts = ES2015 only (non-web)
+            "es6" => "es6".to_string(),
             "es7" => "es2016".to_string(),
             // lib.d.ts is equivalent to es5
             "lib" | "lib.d.ts" => "es5".to_string(),
@@ -3559,7 +3569,7 @@ impl Server {
             "dom" => "dom.generated".to_string(),
             "dom.iterable" => "dom.iterable.generated".to_string(),
             "dom.asynciterable" => "dom.asynciterable.generated".to_string(),
-            // Full lib aliases (e.g., "lib.es6.d.ts" -> "es2015")
+            // Full lib aliases (e.g., "lib.es6.d.ts" -> "es6")
             s if s.starts_with("lib.") && s.ends_with(".d.ts") => {
                 let inner = &s[4..s.len() - 5]; // Extract between "lib." and ".d.ts"
                 Self::normalize_lib_alias(inner)
