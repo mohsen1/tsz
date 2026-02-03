@@ -1610,12 +1610,24 @@ fn test_lower_type_reference_with_arguments() {
 
 #[test]
 fn test_lower_type_query_uses_value_resolver() {
+    use crate::solver::def::DefId;
+
     let (arena, type_idx) = parse_type_alias_type_node("type T = Foo | typeof Foo;");
     let interner = TypeInterner::new();
 
-    let type_resolver = |_node_idx: NodeIndex| Some(1);
+    // Phase 4.2: Use def_id_resolver for Foo reference
+    let def_id_resolver = |_node_idx: NodeIndex| Some(DefId(1));
+    let type_resolver = |_node_idx: NodeIndex| None;  // Not needed with def_id_resolver
     let value_resolver = |_node_idx: NodeIndex| Some(2);
-    let lowering = TypeLowering::with_resolvers(&arena, &interner, &type_resolver, &value_resolver);
+
+    // Use with_hybrid_resolver to provide def_id_resolver and value_resolver
+    let lowering = TypeLowering::with_hybrid_resolver(
+        &arena,
+        &interner,
+        &type_resolver,
+        &def_id_resolver,
+        &value_resolver,
+    );
 
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
