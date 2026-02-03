@@ -1012,6 +1012,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_intrinsic_subtype(s_kind, t_kind);
         }
 
+        // Type parameter checks BEFORE boxed primitive check
+        // Unconstrained type parameters should be handled before other checks
+        if let Some(s_info) = type_param_info(self.interner, source) {
+            return self.check_type_parameter_subtype(&s_info, target);
+        }
+
+        if let Some(t_info) = type_param_info(self.interner, target) {
+            if let Some(constraint) = t_info.constraint {
+                // Special case: if source is EXACTLY the constraint, it's NOT assignable to T
+                // This prevents `constraint <: T` from being True (T is a type parameter)
+                // But structural subtypes of the constraint should still be assignable
+                if source == constraint {
+                    return SubtypeResult::False;
+                }
+                return self.check_subtype(source, constraint);
+            }
+            // Unconstrained type parameter acts like `unknown` (top type)
+            // Everything is assignable to an unconstrained type parameter
+            return SubtypeResult::True;
+        }
+
         if let Some(s_kind) = intrinsic_kind(self.interner, source) {
             return if self.is_boxed_primitive_subtype(s_kind, target) {
                 SubtypeResult::True
@@ -1043,23 +1064,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             template_literal_id(self.interner, target),
         ) {
             return self.check_literal_matches_template_literal(s_lit, t_spans);
-        }
-
-        if let Some(s_info) = type_param_info(self.interner, source) {
-            return self.check_type_parameter_subtype(&s_info, target);
-        }
-
-        if let Some(t_info) = type_param_info(self.interner, target) {
-            if let Some(constraint) = t_info.constraint {
-                // Special case: if source is EXACTLY the constraint, it's NOT assignable to T
-                // This prevents `constraint <: T` from being True (T is a type parameter)
-                // But structural subtypes of the constraint should still be assignable
-                if source == constraint {
-                    return SubtypeResult::False;
-                }
-                return self.check_subtype(source, constraint);
-            }
-            return SubtypeResult::False;
         }
 
         if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Object) {

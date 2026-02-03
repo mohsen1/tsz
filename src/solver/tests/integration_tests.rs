@@ -105,7 +105,6 @@ mod generic_strictness_tests {
     /// implemented. When checking against an unconstrained generic, the checker should
     /// use Unknown as the fallback type, but this is not working correctly.
     #[test]
-    #[ignore = "Unconstrained generic fallback to Unknown not fully implemented"]
     fn test_unconstrained_generic_fallback_to_unknown() {
         let interner = TypeInterner::new();
         let mut checker = CompatChecker::new(&interner);
