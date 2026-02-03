@@ -2,11 +2,26 @@
 
 ## Current Work
 
-*No active work*
+**Investigating more ignored tests to fix**
+
+Ran `cargo nextest run --run-ignored all` and found:
+- 7874 passing ignored tests (can be unignored!)
+- 192 failing ignored tests (need investigation/fixing)
+
+Looking for tractable test failures to fix, particularly those related to:
+- Error reporting configuration issues
+- Simple test expectation updates
+- Missing flags or setup
 
 ---
 
-## History (Last 20)
+## Session Summary
+
+**Total tests fixed/unignored: 15**
+- 13 TS2304 (Cannot find name) tests - fixed missing `report_unresolved_imports` flag
+- 2 TS2339 (Property not exist) tests - fixed unknown type error suppression
+
+---
 
 ### 2025-02-03: Fixed TS2339 property access on unknown types
 
