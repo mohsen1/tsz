@@ -1,0 +1,118 @@
+## Context
+
+We're migrating from TypeKey::Ref(SymbolRef) to TypeKey::Lazy(DefId). We've already fixed the core type resolution, but the classification enums in `type_queries_extended.rs` don't handle `TypeKey::Lazy` properly.
+
+## The Problem
+
+Three classification functions have deprecated SymbolRef variants and don't handle Lazy types:
+
+### 1. PromiseTypeKind (line 328)
+```rust
+pub enum PromiseTypeKind {
+    Application { app_id, base, args },
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
+    SymbolRef(crate::solver::types::SymbolRef),  // DEPRECATED
+    Object(shape_id),
+    Union(members),
+    NotPromise,
+}
+
+pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseTypeKind {
+    match key {
+        TypeKey::Application(app_id) => { ... }
+        TypeKey::Object(shape_id) => PromiseTypeKind::Object(shape_id),
+        TypeKey::Union(list_id) => PromiseTypeKind::Union(members),
+        _ => PromiseTypeKind::NotPromise,  // TypeKey::Lazy falls through here!
+    }
+}
+```
+
+**Issue:** When we have a `TypeKey::Lazy(DefId)` pointing to Promise or PromiseLike, it falls through to `NotPromise`, breaking promise checking.
+
+### 2. ConstructSignatureKind (line 491)
+```rust
+pub enum ConstructSignatureKind {
+    Callable(shape_id),
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
+    Ref(crate::solver::types::SymbolRef),  // DEPRECATED
+    TypeQuery(sym_ref),
+    Application(app_id),
+    Union(members),
+    Intersection(members),
+    TypeParameter { constraint },
+    Function(shape_id),
+    NoConstruct,
+}
+
+pub fn classify_for_construct_signature(...) -> ConstructSignatureKind {
+    match key {
+        TypeKey::Callable(shape_id) => ...
+        TypeKey::TypeQuery(sym_ref) => ConstructSignatureKind::TypeQuery(sym_ref),
+        // ... no TypeKey::Lazy handling!
+        _ => ConstructSignatureKind::NoConstruct,
+    }
+}
+```
+
+### 3. SymbolRefKind (line 1180)
+```rust
+pub enum SymbolRefKind {
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
+    Ref(crate::solver::types::SymbolRef),  // DEPRECATED
+    TypeQuery(crate::solver::types::SymbolRef),
+    Other,
+}
+
+pub fn classify_symbol_ref(...) -> SymbolRefKind {
+    match db.lookup(type_id) {
+        Some(TypeKey::TypeQuery(sym_ref)) => SymbolRefKind::TypeQuery(sym_ref),
+        _ => SymbolRefKind::Other,  // TypeKey::Lazy falls through!
+    }
+}
+```
+
+## The Question
+
+What's the right way to fix these classification functions for Phase 4.2?
+
+Should we:
+1. **Add Lazy variants to the enums**: Add `Lazy(DefId)` variants to each enum and handle them in the classification functions?
+2. **Eagerly resolve Lazy types**: In each classification function, when we hit `TypeKey::Lazy(def_id)`, use the TypeResolver to resolve it to the actual type, then classify that?
+3. **Create a unified classification function**: Make a helper that resolves Lazy types before classification?
+4. **Something else**?
+
+The challenge is that the classification functions are in the solver (pure, no Binder access), but resolving DefIds requires the TypeResolver trait which is implemented by the CheckerContext (has Binder access).
+
+## What We've Already Done
+
+We already added `resolve_type_to_symbol_id()` in CheckerContext that:
+1. Gets DefId from TypeId using `get_lazy_def_id()`
+2. Converts to SymbolId using `def_to_symbol_id()`
+
+But these classification functions don't have access to CheckerContext - they only have `&dyn TypeDatabase`.
+
+## Usage Examples
+
+These are used in promise_checker.rs, constructor_checker.rs, and type_checking_utilities.rs:
+
+```rust
+// In promise_checker.rs
+match classify_promise_type(self.ctx.types, type_id) {
+    PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
+        // BROKEN: This cast creates bogus SymbolId
+        if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+            ...
+        }
+    }
+    ...
+}
+
+// In type_computation_complex.rs
+match classify_for_construct_signature(self.ctx.types, base) {
+    ConstructSignatureKind::Ref(sym_ref) => {
+        // BROKEN: sym_ref.0 is a DefId, not a SymbolId
+        let symbol_id = SymbolId(sym_ref.0);
+    }
+    ...
+}
+```

@@ -1639,15 +1639,23 @@ impl<'a> CheckerState<'a> {
         use crate::solver::type_queries::{SymbolRefKind, classify_symbol_ref};
 
         let sym_id = match classify_symbol_ref(self.ctx.types, type_id) {
-            SymbolRefKind::Ref(sym_ref) | SymbolRefKind::TypeQuery(sym_ref) => sym_ref.0,
+            SymbolRefKind::Lazy(def_id) => {
+                // Phase 4.2: Use DefId -> SymbolId bridge
+                self.ctx.def_to_symbol_id(def_id)?
+            }
+            #[allow(deprecated)]
+            SymbolRefKind::Ref(sym_ref) | SymbolRefKind::TypeQuery(sym_ref) => {
+                // Fallback for legacy SymbolRef (shouldn't happen anymore)
+                SymbolId(sym_ref.0)
+            }
             SymbolRefKind::Other => return None,
         };
 
-        let symbol = self.ctx.binder.get_symbol(SymbolId(sym_id))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::ENUM == 0 {
             return None;
         }
-        Some(SymbolId(sym_id))
+        Some(sym_id)
     }
 
     /// Determine the kind of enum (string, numeric, or mixed).
