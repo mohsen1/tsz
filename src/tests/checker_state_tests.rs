@@ -9259,7 +9259,6 @@ const second = tup[1];
 #[test]
 fn test_checker_array_element_access_unchecked() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 const arr: number[] = [];
@@ -9269,19 +9268,8 @@ const value = arr[0];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types (Array, etc.)
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9292,17 +9280,7 @@ const value = arr[0];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
