@@ -219,9 +219,15 @@ impl Runner {
             if path.extension().map_or(false, |ext| {
                 ext == "ts" || ext == "tsx" || ext == "js" || ext == "jsx"
             }) {
+                let path_str = path.to_string_lossy();
+                
+                // Skip fourslash tests (language service tests with special format)
+                if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
+                    continue;
+                }
+                
                 // Apply filter pattern if specified
                 if let Some(ref filter) = self.args.filter {
-                    let path_str = path.to_string_lossy();
                     if !path_str.contains(filter) {
                         continue;
                     }

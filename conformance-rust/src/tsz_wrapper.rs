@@ -46,7 +46,18 @@ pub fn compile_test(
 
     // Write additional files from @filename directives
     for (filename, file_content) in filenames {
-        let file_path = dir_path.join(filename);
+        // Sanitize filename to prevent path traversal outside temp dir
+        let sanitized = filename
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .to_string();
+        let file_path = dir_path.join(&sanitized);
+        
+        // Verify the path is still inside temp_dir
+        if !file_path.starts_with(dir_path) {
+            continue; // Skip files that would escape the temp directory
+        }
+        
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
