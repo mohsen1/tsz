@@ -391,6 +391,7 @@ impl TypeInterner {
                 properties: Vec::new(),
                 string_index: None,
                 number_index: None,
+                symbol: None,
             })
         })
     }
@@ -1196,6 +1197,7 @@ impl TypeInterner {
             properties: merged_props,
             string_index: merged_string_index,
             number_index: merged_number_index,
+            symbol: None,
         };
 
         let shape_id = self.intern_object_shape(shape);
@@ -1575,6 +1577,7 @@ impl TypeInterner {
             properties,
             string_index: None,
             number_index: None,
+            symbol: None,
         });
         self.intern(TypeKey::Object(shape_id))
     }

@@ -295,6 +295,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 properties,
                 string_index,
                 number_index,
+                symbol: None,
             })
         } else {
             self.interner().object(properties)

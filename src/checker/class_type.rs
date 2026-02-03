@@ -876,6 +876,7 @@ impl<'a> CheckerState<'a> {
                 properties: props,
                 string_index,
                 number_index,
+                symbol: None,
             })
         } else {
             self.ctx.types.object(props)

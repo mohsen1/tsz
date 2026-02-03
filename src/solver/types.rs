@@ -562,7 +562,12 @@ bitflags::bitflags! {
 }
 
 /// Object type with properties and optional index signatures
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+///
+/// NOTE: The `symbol` field affects Hash (for interning) but NOT PartialEq (for structural comparison).
+/// This ensures that:
+/// - Different classes with identical structures get different TypeIds (via Hash in interner)
+/// - Structural type checking still works correctly (via PartialEq ignoring symbol)
+#[derive(Clone, Debug)]
 pub struct ObjectShape {
     /// Object-level flags (e.g. fresh literal tracking).
     pub flags: ObjectFlags,
@@ -572,6 +577,44 @@ pub struct ObjectShape {
     pub string_index: Option<IndexSignature>,
     /// Number index signature: { [key: number]: T }
     pub number_index: Option<IndexSignature>,
+    /// Nominal identity for class instance types (prevents structural interning of distinct classes)
+    pub symbol: Option<crate::binder::SymbolId>,
+}
+
+impl PartialEq for ObjectShape {
+    fn eq(&self, other: &Self) -> bool {
+        // Structural equality: ignore the `symbol` field for type comparison
+        self.flags == other.flags
+            && self.properties == other.properties
+            && self.string_index == other.string_index
+            && self.number_index == other.number_index
+    }
+}
+
+impl Eq for ObjectShape {}
+
+impl std::hash::Hash for ObjectShape {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Include the `symbol` field in hash for nominal interning
+        // This ensures different classes get different TypeIds
+        self.flags.hash(state);
+        self.properties.hash(state);
+        self.string_index.hash(state);
+        self.number_index.hash(state);
+        self.symbol.hash(state);
+    }
+}
+
+impl Default for ObjectShape {
+    fn default() -> Self {
+        Self {
+            flags: ObjectFlags::empty(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+        }
+    }
 }
 
 /// Tuple element information

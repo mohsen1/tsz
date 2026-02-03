@@ -683,6 +683,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 properties,
                 string_index,
                 number_index,
+                symbol: None,
             });
         }
 

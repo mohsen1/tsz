@@ -1007,6 +1007,7 @@ impl<'a> TypeLowering<'a> {
                     properties,
                     string_index,
                     number_index,
+                    symbol: None,
                 });
             }
 
@@ -1182,6 +1183,7 @@ impl<'a> TypeLowering<'a> {
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,
+                symbol: None,
             });
         }
 

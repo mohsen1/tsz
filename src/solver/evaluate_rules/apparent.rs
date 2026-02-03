@@ -122,6 +122,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             properties,
             string_index: None,
             number_index,
+            symbol: None,
         }
     }
 

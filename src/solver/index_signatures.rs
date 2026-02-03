@@ -408,6 +408,7 @@ mod tests {
 
         // Object with string index
         let obj = db.object_with_index(ObjectShape {
+            symbol: None,
             flags: ObjectFlags::empty(),
             properties: vec![],
             string_index: Some(IndexSignature {
@@ -429,6 +430,7 @@ mod tests {
 
         // Object with number index
         let obj = db.object_with_index(ObjectShape {
+            symbol: None,
             flags: ObjectFlags::empty(),
             properties: vec![],
             string_index: None,
@@ -450,6 +452,7 @@ mod tests {
 
         // Readonly string index
         let obj1 = db.object_with_index(ObjectShape {
+            symbol: None,
             flags: ObjectFlags::empty(),
             properties: vec![],
             string_index: Some(IndexSignature {
@@ -462,6 +465,7 @@ mod tests {
 
         // Mutable string index
         let obj2 = db.object_with_index(ObjectShape {
+            symbol: None,
             flags: ObjectFlags::empty(),
             properties: vec![],
             string_index: Some(IndexSignature {
