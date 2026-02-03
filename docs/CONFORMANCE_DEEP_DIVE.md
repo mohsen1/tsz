@@ -1,13 +1,39 @@
 # Conformance Deep Dive: Action Plan for Improving Pass Rate
 
-**Generated:** 2025-02-02
-**Overall Pass Rate:** 49.7% (6,147 passed, 6,194 failed, 12,341 total tests)
-**Last Updated:** 2025-02-02 (Generic type system validation completed)
+**Generated:** 2026-02-03
+**Overall Pass Rate:** 88.7% (5,941 passed, 754 skipped, 0 crashed, 6,695 total tests)
+**Last Updated:** 2026-02-03 (Rust conformance runner implemented)
+
+## Running Conformance Tests
+
+The conformance test system is now implemented in Rust for performance.
+
+**Quick Start:**
+```bash
+# Generate TSC cache (one-time setup)
+./scripts/conformance.sh generate
+
+# Run full test suite
+./scripts/conformance.sh run
+
+# Run specific tests with details
+./scripts/conformance.sh run --max 100 --verbose
+```
+
+**For detailed error analysis:**
+```bash
+# Filter by error code (e.g., only TS2304 errors)
+./scripts/conformance.sh run --all --filter "2304"
+
+# Test specific patterns
+./scripts/conformance.sh run --filter "namespace" --verbose
+```
 
 ## Related Documents
 
 - **`GENERICS_IMPLEMENTATION_PLAN.md`** - Comprehensive generics strategy with 4-sprint roadmap
 - **`docs/architecture/NORTH_STAR.md`** - Target architecture (Solver-First)
+- **`conformance-rust/README.md`** - Technical documentation for the Rust conformance runner
 
 ## Executive Summary
 
@@ -219,9 +245,9 @@ This is **NOT just a symbol resolution bug**. At 50% conformance, TS2304 is ofte
 **Investigation Strategy:**
 ```bash
 # Categorize failures by pattern:
-./scripts/conformance/run.sh --error-code=2304 --filter="namespace" --max=10 --print-test
-./scripts/conformance/run.sh --error-code=2304 --filter="infer" --max=10 --print-test
-./scripts/conformance/run.sh --error-code=2304 --filter="ambient" --max=10 --print-test
+././scripts/conformance.sh run --error-code=2304 --filter="namespace" --max=10 --print-test
+././scripts/conformance.sh run --error-code=2304 --filter="infer" --max=10 --print-test
+././scripts/conformance.sh run --error-code=2304 --filter="ambient" --max=10 --print-test
 
 # For each failure, check:
 # 1. Does binder find the symbol? (check symbol table)
@@ -237,9 +263,9 @@ This is **NOT just a symbol resolution bug**. At 50% conformance, TS2304 is ofte
 **Investigation Steps:**
 ```bash
 # Find failing patterns:
-./scripts/conformance/run.sh --error-code=2304 --filter="namespace" --max=10 --print-test
-./scripts/conformance/run.sh --error-code=2304 --filter="import" --max=10 --print-test
-./scripts/conformance/run.sh --error-code=2304 --filter="generic" --max=10 --print-test
+././scripts/conformance.sh run --error-code=2304 --filter="namespace" --max=10 --print-test
+././scripts/conformance.sh run --error-code=2304 --filter="import" --max=10 --print-test
+././scripts/conformance.sh run --error-code=2304 --filter="generic" --max=10 --print-test
 ```
 
 **Implementation Plan:**
@@ -420,8 +446,8 @@ fn has_property(&self, type_id: TypeId, prop: &str) -> bool {
 **Impact Assessment:**
 ```bash
 # Find CFA-related failures:
-./scripts/conformance/run.sh --filter="const.*if|let.*if" --max=20 --print-test
-./scripts/conformance/run.sh --filter="narrow" --max=20 --print-test
+././scripts/conformance.sh run --filter="const.*if|let.*if" --max=20 --print-test
+././scripts/conformance.sh run --filter="narrow" --max=20 --print-test
 ```
 
 **Investigation Areas:**
@@ -632,28 +658,28 @@ import foo = require('bar');  // Always TS1202 in ESM mode
 
 ```bash
 # Establish baseline for specific error code
-./scripts/conformance/run.sh --error-code=TSXXXX --pass-rate-only
+././scripts/conformance.sh run --error-code=TSXXXX --pass-rate-only
 
 # Examine specific failures
-./scripts/conformance/run.sh --error-code=TSXXXX --max=5 --print-test
+././scripts/conformance.sh run --error-code=TSXXXX --max=5 --print-test
 
 # Deep trace for single test
-./scripts/conformance/run.sh --error-code=TSXXXX --filter="pattern" --max=1 --trace
+././scripts/conformance.sh run --error-code=TSXXXX --filter="pattern" --max=1 --trace
 ```
 
 ### After Implementing Fixes
 
 ```bash
 # Verify improvement
-./scripts/conformance/run.sh --error-code=TSXXXX --pass-rate-only
+././scripts/conformance.sh run --error-code=TSXXXX --pass-rate-only
 
 # Check for regressions
-./scripts/conformance/run.sh --pass-rate-only
+././scripts/conformance.sh run --pass-rate-only
 
 # Full comparison
-./scripts/conformance/run.sh --dump-results=before.json
+././scripts/conformance.sh run --dump-results=before.json
 # Make changes
-./scripts/conformance/run.sh --dump-results=after.json
+././scripts/conformance.sh run --dump-results=after.json
 # diff before.json after.json
 ```
 
@@ -681,13 +707,13 @@ import foo = require('bar');  // Always TS1202 in ESM mode
 
 ```bash
 # See detailed failure information
-./scripts/conformance/run.sh --error-code=TSXXXX --print-test
+././scripts/conformance.sh run --error-code=TSXXXX --print-test
 
 # Trace single test with debug output
-./scripts/conformance/run.sh --filter="testName" --max=1 --trace=trace
+././scripts/conformance.sh run --filter="testName" --max=1 --trace=trace
 
 # Get JSON results for analysis
-./scripts/conformance/run.sh --dump-results=results.json
+././scripts/conformance.sh run --dump-results=results.json
 ```
 
 ---
@@ -937,16 +963,16 @@ pub const TS1005: u32 = 1005;  // Expected token
 **Quick Win Validation Commands:**
 ```bash
 # Before fix
-./scripts/conformance/run.sh --error-code=1202 --pass-rate-only
+././scripts/conformance.sh run --error-code=1202 --pass-rate-only
 
 # After fix (should see 9.2% → ~90%)
-./scripts/conformance/run.sh --error-code=1202 --pass-rate-only
+././scripts/conformance.sh run --error-code=1202 --pass-rate-only
 
 # Track overall progress
-./scripts/conformance/run.sh --pass-rate-only
+././scripts/conformance.sh run --pass-rate-only
 
 # Find CFA-related failures
-./scripts/conformance/run.sh --filter="const.*if|let.*if" --max=20 --print-test
+././scripts/conformance.sh run --filter="const.*if|let.*if" --max=20 --print-test
 ```
 
 ---
