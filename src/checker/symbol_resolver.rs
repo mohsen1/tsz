@@ -1212,7 +1212,9 @@ impl<'a> CheckerState<'a> {
         // e.g., `import x = require('./util')` has module_specifier = StringLiteral('./util')
         if node.kind == SyntaxKind::StringLiteral as u16 {
             let literal = self.ctx.arena.get_literal(node)?;
-            return Some(literal.text.clone());
+            // Strip surrounding quotes if present (parser stores raw text with quotes)
+            let text = literal.text.trim_matches(|c| c == '"' || c == '\'');
+            return Some(text.to_string());
         }
 
         // Handle full require() call expression (for other contexts)
