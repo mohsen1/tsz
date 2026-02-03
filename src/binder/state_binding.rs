@@ -97,6 +97,13 @@ impl BinderState {
                     binder.bind_parameter(arena, param_idx);
                 }
 
+                // Hoisting: Collect var and function declarations from the function body
+                // This ensures var declarations are accessible throughout the function scope
+                // before their actual declaration point (JavaScript hoisting behavior)
+                binder.collect_hoisted_from_node(arena, func.body);
+                binder.process_hoisted_functions(arena);
+                binder.process_hoisted_vars(arena);
+
                 // Bind body
                 binder.bind_node(arena, func.body);
             });
@@ -150,6 +157,13 @@ impl BinderState {
                         binder.bind_parameter(arena, param_idx);
                     }
 
+                    // Hoisting: Collect var and function declarations from the function body
+                    // This ensures var declarations are accessible throughout the function scope
+                    // before their actual declaration point (JavaScript hoisting behavior)
+                    binder.collect_hoisted_from_node(arena, func.body);
+                    binder.process_hoisted_functions(arena);
+                    binder.process_hoisted_vars(arena);
+
                     // Bind body (could be a block or an expression)
                     binder.bind_node(arena, func.body);
                 },
@@ -180,6 +194,13 @@ impl BinderState {
                     for &param_idx in &func.parameters.nodes {
                         binder.bind_parameter(arena, param_idx);
                     }
+
+                    // Hoisting: Collect var and function declarations from the function body
+                    // This ensures var declarations are accessible throughout the function scope
+                    // before their actual declaration point (JavaScript hoisting behavior)
+                    binder.collect_hoisted_from_node(arena, func.body);
+                    binder.process_hoisted_functions(arena);
+                    binder.process_hoisted_vars(arena);
 
                     // Bind body
                     binder.bind_node(arena, func.body);
