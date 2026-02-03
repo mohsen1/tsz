@@ -42,6 +42,16 @@ impl<'a> CheckerState<'a> {
     /// - Object types from lib files (conservatively assumed to be Promise-like)
     pub fn type_ref_is_promise_like(&self, type_id: TypeId) -> bool {
         match classify_promise_type(self.ctx.types, type_id) {
+            PromiseTypeKind::Lazy(def_id) => {
+                // Phase 4.2: Use DefId -> SymbolId bridge
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        return self.is_promise_like_name(symbol.escaped_name.as_str());
+                    }
+                }
+                false
+            }
+            #[allow(deprecated)]
             PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
                     return self.is_promise_like_name(symbol.escaped_name.as_str());
@@ -78,6 +88,16 @@ impl<'a> CheckerState<'a> {
                 // We do NOT use type_ref_is_promise_like here because it conservatively assumes
                 // all Object types are Promise-like, which causes false negatives for TS2705
                 match classify_promise_type(self.ctx.types, base) {
+                    PromiseTypeKind::Lazy(def_id) => {
+                        // Phase 4.2: Use DefId -> SymbolId bridge
+                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                                return self.is_promise_like_name(symbol.escaped_name.as_str());
+                            }
+                        }
+                        false
+                    }
+                    #[allow(deprecated)]
                     PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
                         if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
                             return self.is_promise_like_name(symbol.escaped_name.as_str());
@@ -91,6 +111,17 @@ impl<'a> CheckerState<'a> {
                     _ => false,
                 }
             }
+            PromiseTypeKind::Lazy(def_id) => {
+                // Phase 4.2: Use DefId -> SymbolId bridge
+                // Check for direct Promise or PromiseLike reference (this also handles type aliases)
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        return self.is_promise_like_name(symbol.escaped_name.as_str());
+                    }
+                }
+                false
+            }
+            #[allow(deprecated)]
             PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
                 // Check for direct Promise or PromiseLike reference (this also handles type aliases)
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
@@ -172,16 +203,30 @@ impl<'a> CheckerState<'a> {
             // and we have type arguments, return the first one
             // This handles cases where Promise doesn't have expected flags or where
             // promise_like_type_argument_from_base fails for other reasons
-            if let PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) =
-                classify_promise_type(self.ctx.types, base)
-            {
-                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-                    if self.is_promise_like_name(symbol.escaped_name.as_str()) {
-                        if let Some(&first_arg) = args.first() {
-                            return Some(first_arg);
+            match classify_promise_type(self.ctx.types, base) {
+                PromiseTypeKind::Lazy(def_id) => {
+                    // Phase 4.2: Use DefId -> SymbolId bridge
+                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            if self.is_promise_like_name(symbol.escaped_name.as_str()) {
+                                if let Some(&first_arg) = args.first() {
+                                    return Some(first_arg);
+                                }
+                            }
                         }
                     }
                 }
+                #[allow(deprecated)]
+                PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) => {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+                        if self.is_promise_like_name(symbol.escaped_name.as_str()) {
+                            if let Some(&first_arg) = args.first() {
+                                return Some(first_arg);
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -203,12 +248,19 @@ impl<'a> CheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
-        let PromiseTypeKind::SymbolRef(SymbolRef(sym_id)) =
-            classify_promise_type(self.ctx.types, base)
-        else {
-            return None;
+        // Phase 4.2: Handle Lazy variant properly
+        let sym_id = match classify_promise_type(self.ctx.types, base) {
+            PromiseTypeKind::Lazy(def_id) => {
+                // Use DefId -> SymbolId bridge
+                self.ctx.def_to_symbol_id(def_id)?
+            }
+            #[allow(deprecated)]
+            PromiseTypeKind::SymbolRef(sym_ref) => {
+                // Fallback for old SymbolRef (shouldn't happen anymore)
+                SymbolId(sym_ref.0)
+            }
+            _ => return None,
         };
-        let sym_id = SymbolId(sym_id);
 
         // Try to get the symbol, but handle the case where it doesn't exist (e.g., import from missing module)
         let symbol = self.ctx.binder.get_symbol(sym_id);

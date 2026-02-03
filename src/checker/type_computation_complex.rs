@@ -579,6 +579,7 @@ impl<'a> CheckerState<'a> {
         use crate::solver::type_queries::{
             ConstructSignatureKind, classify_for_construct_signature,
         };
+        use crate::solver::types::TypeKey;
 
         match classify_for_construct_signature(self.ctx.types, type_id) {
             ConstructSignatureKind::Callable(shape_id) => {
@@ -588,6 +589,31 @@ impl<'a> CheckerState<'a> {
                     .first()
                     .map(|sig| sig.return_type)
             }
+            ConstructSignatureKind::Lazy(def_id) => {
+                // Phase 4.2: Lazy type - resolve DefId to SymbolId
+                // This handles cases like `typeof M1` where M1 is a class
+                if let Some(symbol_id) = self.ctx.def_to_symbol_id(def_id) {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+                        // Check if this is a class symbol
+                        if (symbol.flags & crate::binder::symbol_flags::CLASS) != 0 {
+                            // For class symbols, the instance type is what we want
+                            // The construct signature returns the instance type
+                            // We create a Lazy type to this symbol as the instance type
+                            return Some(self.ctx.types.intern(TypeKey::Lazy(def_id)));
+                        }
+                        // Check interfaces and other symbols for cached types with construct signatures
+                        if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
+                            // Recursively check the cached type
+                            // Avoid infinite loops by checking if it's the same as the input
+                            if cached_type != type_id {
+                                return self.get_construct_signature_return_type(cached_type);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            #[allow(deprecated)]
             ConstructSignatureKind::Ref(sym_ref) => {
                 // Ref to a symbol - get the symbol's type which should be a Callable
                 // This handles cases like `typeof M1` where M1 is a class

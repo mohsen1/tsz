@@ -332,6 +332,8 @@ pub enum PromiseTypeKind {
         base: TypeId,
         args: Vec<TypeId>,
     },
+    /// Lazy reference (DefId) - needs resolution to check if it's Promise
+    Lazy(crate::solver::def::DefId),
     /// Symbol reference (like Promise or PromiseLike)
     #[deprecated(note = "Lazy types don't use SymbolRef")]
     SymbolRef(crate::solver::types::SymbolRef),
@@ -361,6 +363,7 @@ pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseT
                 args: app.args.clone(),
             }
         }
+        TypeKey::Lazy(def_id) => PromiseTypeKind::Lazy(def_id),
         TypeKey::Object(shape_id) => PromiseTypeKind::Object(shape_id),
         TypeKey::Union(list_id) => {
             let members = db.type_list(list_id);
@@ -491,6 +494,8 @@ pub fn classify_for_abstract_check(
 pub enum ConstructSignatureKind {
     /// Callable type with potential construct signatures
     Callable(crate::solver::types::CallableShapeId),
+    /// Lazy reference (DefId) - resolve and check
+    Lazy(crate::solver::def::DefId),
     /// Symbol reference - may be a class (deprecated)
     #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
@@ -521,6 +526,7 @@ pub fn classify_for_construct_signature(
 
     match key {
         TypeKey::Callable(shape_id) => ConstructSignatureKind::Callable(shape_id),
+        TypeKey::Lazy(def_id) => ConstructSignatureKind::Lazy(def_id),
         TypeKey::TypeQuery(sym_ref) => ConstructSignatureKind::TypeQuery(sym_ref),
         TypeKey::Application(app_id) => ConstructSignatureKind::Application(app_id),
         TypeKey::Union(list_id) => {
@@ -1178,6 +1184,8 @@ pub fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryK
 /// Classification for symbol reference types.
 #[derive(Debug, Clone)]
 pub enum SymbolRefKind {
+    /// Lazy reference (DefId)
+    Lazy(crate::solver::def::DefId),
     #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
     TypeQuery(crate::solver::types::SymbolRef),
@@ -1187,6 +1195,7 @@ pub enum SymbolRefKind {
 /// Classify a type as a symbol reference.
 pub fn classify_symbol_ref(db: &dyn TypeDatabase, type_id: TypeId) -> SymbolRefKind {
     match db.lookup(type_id) {
+        Some(TypeKey::Lazy(def_id)) => SymbolRefKind::Lazy(def_id),
         Some(TypeKey::TypeQuery(sym_ref)) => SymbolRefKind::TypeQuery(sym_ref),
         _ => SymbolRefKind::Other,
     }
