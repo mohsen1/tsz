@@ -15,8 +15,7 @@ use crate::checker::types::diagnostics::Diagnostic;
 use crate::common::ModuleKind;
 use crate::parser::NodeIndex;
 use crate::solver::def::{DefId, DefinitionStore};
-use crate::solver::types::SymbolRef;
-use crate::solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId};
+use crate::solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId, judge::JudgeConfig};
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
@@ -1546,16 +1545,33 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.exact_optional_property_types
     }
 
+    /// Convert CheckerOptions to JudgeConfig for the CompatChecker.
+    fn as_judge_config(&self) -> JudgeConfig {
+        JudgeConfig {
+            strict_function_types: self.strict_function_types(),
+            strict_null_checks: self.strict_null_checks(),
+            exact_optional_property_types: self.exact_optional_property_types(),
+            no_unchecked_indexed_access: self.no_unchecked_indexed_access(),
+        }
+    }
+
     /// Apply standard compiler options to a CompatChecker, including query_db.
+    /// This wires the CompilerOptions (via JudgeConfig) and the QueryDatabase.
     pub fn configure_compat_checker<R: crate::solver::TypeResolver>(
         &self,
         checker: &mut crate::solver::CompatChecker<'a, R>,
     ) {
-        checker.set_strict_function_types(self.strict_function_types());
-        checker.set_strict_null_checks(self.strict_null_checks());
-        checker.set_exact_optional_property_types(self.exact_optional_property_types());
-        checker.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
+        // Apply configuration from options
+        checker.apply_config(&self.as_judge_config());
+
+        // Set the query database for memoization/interning
         checker.set_query_db(self.types);
+
+        // Configure strict subtype checking if Sound Mode is enabled
+        if self.compiler_options.sound_mode {
+            checker.set_strict_subtype_checking(true);
+            checker.set_strict_any_propagation(true);
+        }
     }
 
     /// Check if noUnusedLocals is enabled.

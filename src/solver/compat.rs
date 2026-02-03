@@ -235,6 +235,19 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         &mut self.lawyer
     }
 
+    /// Apply configuration from JudgeConfig.
+    ///
+    /// This is used to configure the CompatChecker with settings from
+    /// the CompilerOptions (passed through JudgeConfig).
+    pub fn apply_config(&mut self, config: &crate::solver::judge::JudgeConfig) {
+        self.strict_function_types = config.strict_function_types;
+        self.strict_null_checks = config.strict_null_checks;
+        self.exact_optional_property_types = config.exact_optional_property_types;
+        self.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+        // Clear cache as configuration changed
+        self.cache.clear();
+    }
+
     /// Check if `source` is assignable to `target` using TS compatibility rules.
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
         // Without strictNullChecks, null and undefined are assignable to and from any type.

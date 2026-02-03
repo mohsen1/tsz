@@ -358,6 +358,22 @@ pub trait QueryDatabase: TypeDatabase {
         crate::solver::subtype::is_subtype_of(self.as_type_database(), source, target)
     }
 
+    /// TypeScript assignability check with full compatibility rules (The Lawyer).
+    ///
+    /// This is distinct from `is_subtype_of`:
+    /// - `is_subtype_of` = Strict structural subtyping (The Judge) - for internal solver use
+    /// - `is_assignable_to` = Loose with TS rules (The Lawyer) - for Checker diagnostics
+    ///
+    /// The Lawyer handles:
+    /// - Any type propagation (any is assignable to/from everything)
+    /// - Legacy null/undefined assignability (without strictNullChecks)
+    /// - Weak type detection (excess property checking)
+    /// - Empty object accepts any non-nullish value
+    /// - Function bivariance (when not in strictFunctionTypes mode)
+    ///
+    /// Uses separate cache from `is_subtype_of` to prevent cache poisoning.
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool;
+
     /// Look up a cached subtype result for the given type pair.
     /// Returns `None` if the result is not cached.
     /// Default implementation returns `None` (no caching).
@@ -495,6 +511,13 @@ impl QueryDatabase for TypeInterner {
     fn remove_nullish(&self, type_id: TypeId) -> TypeId {
         narrowing::remove_nullish(self, type_id)
     }
+
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        // Default implementation: use CompatChecker
+        use crate::solver::compat::CompatChecker;
+        let mut checker = CompatChecker::new(self);
+        checker.is_assignable(source, target)
+    }
 }
 
 /// Query database wrapper with basic caching.
@@ -502,6 +525,10 @@ pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
     eval_cache: RwLock<FxHashMap<TypeId, TypeId>>,
     subtype_cache: RwLock<FxHashMap<(TypeId, TypeId), bool>>,
+    /// CRITICAL: Separate cache for assignability to prevent cache poisoning.
+    /// This ensures that loose assignability results (e.g., any is assignable to number)
+    /// don't contaminate strict subtype checks.
+    assignability_cache: RwLock<FxHashMap<(TypeId, TypeId), bool>>,
 }
 
 impl<'a> QueryCache<'a> {
@@ -510,6 +537,7 @@ impl<'a> QueryCache<'a> {
             interner,
             eval_cache: RwLock::new(FxHashMap::default()),
             subtype_cache: RwLock::new(FxHashMap::default()),
+            assignability_cache: RwLock::new(FxHashMap::default()),
         }
     }
 
@@ -520,6 +548,10 @@ impl<'a> QueryCache<'a> {
             Err(e) => e.into_inner().clear(),
         }
         match self.subtype_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.assignability_cache.write() {
             Ok(mut cache) => cache.clear(),
             Err(e) => e.into_inner().clear(),
         }
@@ -538,6 +570,43 @@ impl<'a> QueryCache<'a> {
         match self.subtype_cache.read() {
             Ok(cache) => cache.len(),
             Err(e) => e.into_inner().len(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn assignability_cache_len(&self) -> usize {
+        match self.assignability_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
+    }
+
+    /// Helper to check a cache with poisoned lock handling.
+    fn check_cache(
+        &self,
+        cache: &RwLock<FxHashMap<(TypeId, TypeId), bool>>,
+        key: (TypeId, TypeId),
+    ) -> Option<bool> {
+        match cache.read() {
+            Ok(cached) => cached.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
+        }
+    }
+
+    /// Helper to insert into a cache with poisoned lock handling.
+    fn insert_cache(
+        &self,
+        cache: &RwLock<FxHashMap<(TypeId, TypeId), bool>>,
+        key: (TypeId, TypeId),
+        result: bool,
+    ) {
+        match cache.write() {
+            Ok(mut c) => {
+                c.insert(key, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, result);
+            }
         }
     }
 }
@@ -758,6 +827,25 @@ impl QueryDatabase for QueryCache<'_> {
                 e.into_inner().insert(key, result);
             }
         }
+        result
+    }
+
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        // LOOSE: Use CompatChecker (The Lawyer)
+        // This is for Checker diagnostics - full TypeScript compatibility rules
+        let key = (source, target);
+
+        if let Some(result) = self.check_cache(&self.assignability_cache, key) {
+            return result;
+        }
+
+        // Use CompatChecker with all compatibility rules
+        use crate::solver::compat::CompatChecker;
+        let mut checker = CompatChecker::new(self.as_type_database());
+
+        let result = checker.is_assignable(source, target);
+
+        self.insert_cache(&self.assignability_cache, key, result);
         result
     }
 
@@ -1089,6 +1177,10 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
 
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         self.query_cache.is_subtype_of(source, target)
+    }
+
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        self.query_cache.is_assignable_to(source, target)
     }
 
     fn lookup_subtype_cache(&self, source: TypeId, target: TypeId) -> Option<bool> {
