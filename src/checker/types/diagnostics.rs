@@ -125,6 +125,8 @@ pub mod diagnostic_messages {
     // Function/call errors
     pub const EXPECTED_ARGUMENTS: &str = "Expected {0} arguments, but got {1}.";
     pub const EXPECTED_AT_LEAST_ARGUMENTS: &str = "Expected at least {0} arguments, but got {1}.";
+    pub const SPREAD_MUST_BE_TUPLE_OR_REST: &str =
+        "A spread argument must either have a tuple type or be passed to a rest parameter.";
     pub const ARGUMENT_NOT_ASSIGNABLE: &str =
         "Argument of type '{0}' is not assignable to parameter of type '{1}'.";
     pub const CANNOT_INVOKE_EXPRESSION_LACKING_CALL_SIGNATURE: &str = "Cannot invoke an expression whose type lacks a call signature. Type '{0}' has no compatible call signatures.";
@@ -418,6 +420,7 @@ pub mod diagnostic_codes {
     pub const CANNOT_FIND_NAME_CHANGE_TARGET_LIB: u32 = 2584;
     pub const EXPECTED_ARGUMENTS: u32 = 2554; // Expected {0} arguments, but got {1}
     pub const EXPECTED_AT_LEAST_ARGUMENTS: u32 = 2555;
+    pub const SPREAD_MUST_BE_TUPLE_OR_REST: u32 = 2556; // A spread argument must either have a tuple type or be passed to a rest parameter
     pub const NO_OVERLOAD_MATCHES_CALL: u32 = 2769;
     pub const FUNCTION_IMPLEMENTATION_NAME_MUST_BE: u32 = 2389; // Function implementation name must be '{0}'
     pub const CONSTRUCTOR_IMPLEMENTATION_MISSING: u32 = 2390; // Constructor implementation is missing

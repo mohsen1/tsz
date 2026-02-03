@@ -31,7 +31,7 @@ use crate::solver::TypeId;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TypeSymbolResolution {
+pub enum TypeSymbolResolution {
     Type(SymbolId),
     ValueOnly(SymbolId),
     NotFound,

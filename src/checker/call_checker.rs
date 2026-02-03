@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
     {
         use crate::solver::type_queries::{get_array_element_type, get_tuple_elements};
 
-        // First pass: count expanded arguments (spreads of tuple types expand to multiple args)
+        // First pass: count expanded arguments (spreads of tuple/array literals expand to multiple args)
         let mut expanded_count = 0usize;
         for &arg_idx in args.iter() {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx)
@@ -63,6 +63,15 @@ impl<'a> CheckerState<'a> {
                 if let Some(elems) = get_tuple_elements(self.ctx.types, spread_type) {
                     expanded_count += elems.len();
                     continue;
+                }
+                // Check if it's an array literal spread
+                if get_array_element_type(self.ctx.types, spread_type).is_some() {
+                    if let Some(expr_node) = self.ctx.arena.get(spread_data.expression) {
+                        if let Some(literal) = self.ctx.arena.get_literal_expr(expr_node) {
+                            expanded_count += literal.elements.nodes.len();
+                            continue;
+                        }
+                    }
                 }
             }
             expanded_count += 1;
@@ -93,11 +102,56 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // If it's an array type, push the element type (variadic handling)
-                    if let Some(elem_type) = get_array_element_type(self.ctx.types, spread_type) {
-                        arg_types.push(elem_type);
-                        effective_index += 1;
-                        continue;
+                    // If it's an array type, check if it's an array literal spread
+                    // For array literals, we want to check each element individually
+                    // For non-literal arrays, treat as variadic (check element type against remaining params)
+                    if get_array_element_type(self.ctx.types, spread_type).is_some() {
+                        // Check if the spread expression is an array literal
+                        if let Some(expr_node) = self.ctx.arena.get(spread_data.expression) {
+                            if let Some(literal) = self.ctx.arena.get_literal_expr(expr_node) {
+                                // It's an array literal - get each element's type individually
+                                for &elem_idx in literal.elements.nodes.iter() {
+                                    if elem_idx.is_none() {
+                                        continue;
+                                    }
+                                    // Skip spread elements within the spread (unlikely but handle it)
+                                    if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
+                                        if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                                            // For nested spreads in array literals, use the element type
+                                            if let Some(elem_type) =
+                                                get_array_element_type(self.ctx.types, spread_type)
+                                            {
+                                                arg_types.push(elem_type);
+                                                effective_index += 1;
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    // Get the type of this specific element
+                                    let elem_type = self.get_type_of_node(elem_idx);
+                                    arg_types.push(elem_type);
+                                    effective_index += 1;
+                                }
+                                continue;
+                            }
+                        }
+
+                        // Not an array literal - treat as variadic (element type applies to all remaining params)
+                        // But first, emit TS2556 error: spread must be tuple or rest parameter
+                        if get_array_element_type(self.ctx.types, spread_type).is_some() {
+                            // This is a spread of a non-tuple array type
+                            // TypeScript emits TS2556: "A spread argument must either have a tuple type or be passed to a rest parameter."
+                            // We'll emit the error here on the spread expression
+                            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                            // Continue processing - push the element type for assignability checking
+                            if let Some(elem_type) =
+                                get_array_element_type(self.ctx.types, spread_type)
+                            {
+                                arg_types.push(elem_type);
+                                effective_index += 1;
+                                continue;
+                            }
+                        }
                     }
 
                     // Otherwise just push the spread type as-is

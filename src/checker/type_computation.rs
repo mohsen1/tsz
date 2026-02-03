@@ -126,22 +126,33 @@ impl<'a> CheckerState<'a> {
             // via control flow. Since we don't yet support evolving arrays, use any[] to
             // avoid false TS2322 errors on subsequent element assignments.
             if let Some(contextual) = self.ctx.contextual_type {
-                return contextual;
+                // Resolve lazy types (type aliases) before using the contextual type
+                let resolved = self.resolve_type_for_property_access(contextual);
+                return self.resolve_lazy_type(resolved);
             }
             return self.ctx.types.array(TypeId::ANY);
         }
 
         let tuple_context = match self.ctx.contextual_type {
             Some(ctx_type) => {
+                // Resolve lazy types (type aliases) to their actual types
+                let resolved = self.resolve_type_for_property_access(ctx_type);
+                let resolved = self.resolve_lazy_type(resolved);
                 // Evaluate Application types to get their structural form
                 // This handles cases like: type MyTuple<T, U> = [T, U]; function f<A, B>(): MyTuple<A, B>
-                let evaluated = self.evaluate_application_type(ctx_type);
+                let evaluated = self.evaluate_application_type(resolved);
                 crate::solver::type_queries::get_tuple_elements(self.ctx.types, evaluated)
             }
             None => None,
         };
 
-        let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
+        // Resolve lazy types in contextual type before creating helper
+        let resolved_contextual_type = self.ctx.contextual_type.map(|ctx_type| {
+            let resolved = self.resolve_type_for_property_access(ctx_type);
+            self.resolve_lazy_type(resolved)
+        });
+
+        let ctx_helper = if let Some(ctx_type) = resolved_contextual_type {
             Some(ContextualTypeContext::with_expected(
                 self.ctx.types,
                 ctx_type,
