@@ -9,6 +9,7 @@ use crate::binder::{
     ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, SymbolArena, SymbolId,
     SymbolTable, flow_flags, symbol_flags,
 };
+use crate::common::ScriptTarget;
 use crate::lib_loader;
 use crate::module_resolution_debug::ModuleResolutionDebugger;
 use crate::parser::node::{Node, NodeArena};
@@ -20,6 +21,22 @@ use std::sync::Arc;
 use tracing::{Level, debug, span};
 
 const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
+
+/// Configuration options for the binder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BinderOptions {
+    /// ECMAScript target version.
+    /// This affects language-specific behaviors like block-scoped function hoisting.
+    pub target: ScriptTarget,
+}
+
+impl Default for BinderOptions {
+    fn default() -> Self {
+        BinderOptions {
+            target: ScriptTarget::default(),
+        }
+    }
+}
 
 /// Lib file context for global type resolution.
 /// This mirrors the definition in checker::context to avoid circular dependencies.
@@ -33,6 +50,8 @@ pub struct LibContext {
 
 /// Binder state using NodeArena.
 pub struct BinderState {
+    /// Binder options (ES target, etc.)
+    pub options: BinderOptions,
     /// Arena for symbol storage
     pub symbols: SymbolArena,
     /// Current symbol table (local scope)
@@ -174,10 +193,15 @@ pub struct ResolutionStats {
 
 impl BinderState {
     pub fn new() -> Self {
+        Self::with_options(BinderOptions::default())
+    }
+
+    pub fn with_options(options: BinderOptions) -> Self {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
         BinderState {
+            options,
             symbols: SymbolArena::new(),
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
@@ -308,10 +332,26 @@ impl BinderState {
         file_locals: SymbolTable,
         node_symbols: FxHashMap<u32, SymbolId>,
     ) -> Self {
+        Self::from_bound_state_with_options(
+            BinderOptions::default(),
+            symbols,
+            file_locals,
+            node_symbols,
+        )
+    }
+
+    /// Create a BinderState from existing bound state with options.
+    pub fn from_bound_state_with_options(
+        options: BinderOptions,
+        symbols: SymbolArena,
+        file_locals: SymbolTable,
+        node_symbols: FxHashMap<u32, SymbolId>,
+    ) -> Self {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
         BinderState {
+            options,
             symbols,
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
@@ -360,6 +400,7 @@ impl BinderState {
         node_scope_ids: FxHashMap<u32, ScopeId>,
     ) -> Self {
         Self::from_bound_state_with_scopes_and_augmentations(
+            BinderOptions::default(),
             symbols,
             file_locals,
             node_symbols,
@@ -383,6 +424,7 @@ impl BinderState {
     /// Global augmentations are interface/type declarations inside `declare global` blocks
     /// that should merge with lib.d.ts symbols during type resolution.
     pub fn from_bound_state_with_scopes_and_augmentations(
+        options: BinderOptions,
         symbols: SymbolArena,
         file_locals: SymbolTable,
         node_symbols: FxHashMap<u32, SymbolId>,
@@ -405,6 +447,7 @@ impl BinderState {
         });
 
         BinderState {
+            options,
             symbols,
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
@@ -1612,8 +1655,13 @@ impl BinderState {
                         self.hoisted_functions.push(stmt_idx);
                     }
                     k if k == syntax_kind_ext::BLOCK => {
-                        if let Some(block) = arena.get_block(node) {
-                            self.collect_hoisted_declarations(arena, &block.statements);
+                        // In ES5 and earlier, function declarations inside blocks are hoisted
+                        // to the containing function scope. In ES6+, they remain block-scoped.
+                        // Only descend into blocks to collect functions if we're in ES5 mode.
+                        if self.options.target.is_es5() {
+                            if let Some(block) = arena.get_block(node) {
+                                self.collect_hoisted_declarations(arena, &block.statements);
+                            }
                         }
                     }
                     k if k == syntax_kind_ext::IF_STATEMENT => {
@@ -1744,8 +1792,13 @@ impl BinderState {
     pub(crate) fn collect_hoisted_from_node(&mut self, arena: &NodeArena, idx: NodeIndex) {
         if let Some(node) = arena.get(idx) {
             if node.kind == syntax_kind_ext::BLOCK {
-                if let Some(block) = arena.get_block(node) {
-                    self.collect_hoisted_declarations(arena, &block.statements);
+                // In ES5 and earlier, function declarations inside blocks are hoisted
+                // to the containing function scope. In ES6+, they remain block-scoped.
+                // Only descend into blocks to collect functions if we're in ES5 mode.
+                if self.options.target.is_es5() {
+                    if let Some(block) = arena.get_block(node) {
+                        self.collect_hoisted_declarations(arena, &block.statements);
+                    }
                 }
             } else {
                 // Handle single statement (not wrapped in a block)

@@ -4,12 +4,15 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::binder::BinderOptions;
 use crate::binder::BinderState;
 use crate::binder::{SymbolId, SymbolTable, symbol_flags};
 use crate::checker::TypeCache;
 use crate::checker::context::LibContext;
 use crate::checker::state::CheckerState;
-use crate::checker::types::diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes};
+use crate::checker::types::diagnostics::{
+    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+};
 use crate::cli::args::CliArgs;
 use crate::cli::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
@@ -293,7 +296,10 @@ fn compilation_cache_to_build_info(
     base_dir: &Path,
     options: &ResolvedCompilerOptions,
 ) -> BuildInfo {
-    use crate::cli::incremental::{BuildInfoOptions, EmitSignature, FileInfo as IncrementalFileInfo, CachedDiagnostic, CachedRelatedInformation};
+    use crate::cli::incremental::{
+        BuildInfoOptions, CachedDiagnostic, CachedRelatedInformation, EmitSignature,
+        FileInfo as IncrementalFileInfo,
+    };
     use std::collections::BTreeMap;
 
     let mut file_infos = BTreeMap::new();
@@ -311,12 +317,15 @@ fn compilation_cache_to_build_info(
         // Create file info with version (hash) and signature
         let version = format!("{:016x}", hash);
         let signature = Some(format!("{:016x}", hash));
-        file_infos.insert(relative_path.clone(), IncrementalFileInfo {
-            version,
-            signature,
-            affected_files_pending_emit: false,
-            implied_format: None,
-        });
+        file_infos.insert(
+            relative_path.clone(),
+            IncrementalFileInfo {
+                version,
+                signature,
+                affected_files_pending_emit: false,
+                implied_format: None,
+            },
+        );
 
         // Convert dependencies
         if let Some(deps) = cache.dependencies.get(path) {
@@ -334,11 +343,14 @@ fn compilation_cache_to_build_info(
         }
 
         // Add emit signature (empty for now, populated during emit)
-        emit_signatures.insert(relative_path, EmitSignature {
-            js: None,
-            dts: None,
-            map: None,
-        });
+        emit_signatures.insert(
+            relative_path,
+            EmitSignature {
+                js: None,
+                dts: None,
+                map: None,
+            },
+        );
     }
 
     // Convert diagnostics to cached format
@@ -350,38 +362,45 @@ fn compilation_cache_to_build_info(
             .to_string_lossy()
             .replace('\\', "/");
 
-        let cached_diagnostics: Vec<CachedDiagnostic> = diagnostics.iter().map(|d| {
-            let file_path = Path::new(&d.file);
-            CachedDiagnostic {
-                file: file_path
-                    .strip_prefix(base_dir)
-                    .unwrap_or(file_path)
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .to_string(),
-                start: d.start,
-                length: d.length,
-                message_text: d.message_text.clone(),
-                category: d.category as u8,
-                code: d.code,
-                related_information: d.related_information.iter().map(|r| {
-                    let rel_file_path = Path::new(&r.file);
-                    CachedRelatedInformation {
-                        file: rel_file_path
-                            .strip_prefix(base_dir)
-                            .unwrap_or(rel_file_path)
-                            .to_string_lossy()
-                            .replace('\\', "/")
-                            .to_string(),
-                        start: r.start,
-                        length: r.length,
-                        message_text: r.message_text.clone(),
-                        category: r.category as u8,
-                        code: r.code,
-                    }
-                }).collect(),
-            }
-        }).collect();
+        let cached_diagnostics: Vec<CachedDiagnostic> = diagnostics
+            .iter()
+            .map(|d| {
+                let file_path = Path::new(&d.file);
+                CachedDiagnostic {
+                    file: file_path
+                        .strip_prefix(base_dir)
+                        .unwrap_or(file_path)
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                        .to_string(),
+                    start: d.start,
+                    length: d.length,
+                    message_text: d.message_text.clone(),
+                    category: d.category as u8,
+                    code: d.code,
+                    related_information: d
+                        .related_information
+                        .iter()
+                        .map(|r| {
+                            let rel_file_path = Path::new(&r.file);
+                            CachedRelatedInformation {
+                                file: rel_file_path
+                                    .strip_prefix(base_dir)
+                                    .unwrap_or(rel_file_path)
+                                    .to_string_lossy()
+                                    .replace('\\', "/")
+                                    .to_string(),
+                                start: r.start,
+                                length: r.length,
+                                message_text: r.message_text.clone(),
+                                category: r.category as u8,
+                                code: r.code,
+                            }
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
 
         if !cached_diagnostics.is_empty() {
             semantic_diagnostics_per_file.insert(relative_path, cached_diagnostics);
@@ -427,10 +446,7 @@ fn compilation_cache_to_build_info(
 }
 
 /// Load BuildInfo and create an initial CompilationCache from it
-fn build_info_to_compilation_cache(
-    build_info: &BuildInfo,
-    base_dir: &Path,
-) -> CompilationCache {
+fn build_info_to_compilation_cache(build_info: &BuildInfo, base_dir: &Path) -> CompilationCache {
     let mut cache = CompilationCache::default();
 
     // Convert string paths back to PathBuf and populate export_hashes
@@ -447,7 +463,8 @@ fn build_info_to_compilation_cache(
             let mut dep_paths = HashSet::new();
             for dep in deps {
                 let dep_path = base_dir.join(dep);
-                cache.reverse_dependencies
+                cache
+                    .reverse_dependencies
                     .entry(dep_path.clone())
                     .or_default()
                     .insert(full_path.clone());
@@ -461,8 +478,9 @@ fn build_info_to_compilation_cache(
     for (path_str, cached_diagnostics) in &build_info.semantic_diagnostics_per_file {
         let full_path = base_dir.join(path_str);
 
-        let diagnostics: Vec<Diagnostic> = cached_diagnostics.iter().map(|cd| {
-            Diagnostic {
+        let diagnostics: Vec<Diagnostic> = cached_diagnostics
+            .iter()
+            .map(|cd| Diagnostic {
                 file: full_path.to_string_lossy().into_owned(),
                 start: cd.start,
                 length: cd.length,
@@ -474,8 +492,10 @@ fn build_info_to_compilation_cache(
                     _ => DiagnosticCategory::Message,
                 },
                 code: cd.code,
-                related_information: cd.related_information.iter().map(|r| {
-                    DiagnosticRelatedInformation {
+                related_information: cd
+                    .related_information
+                    .iter()
+                    .map(|r| DiagnosticRelatedInformation {
                         file: base_dir.join(&r.file).to_string_lossy().into_owned(),
                         start: r.start,
                         length: r.length,
@@ -487,10 +507,10 @@ fn build_info_to_compilation_cache(
                             _ => DiagnosticCategory::Message,
                         },
                         code: r.code,
-                    }
-                }).collect(),
-            }
-        }).collect();
+                    })
+                    .collect(),
+            })
+            .collect();
 
         if !diagnostics.is_empty() {
             cache.diagnostics.insert(full_path, diagnostics);
@@ -645,7 +665,8 @@ fn compile_inner(
     // Load BuildInfo if incremental compilation is enabled and no cache was provided
     if cache.is_none() && (resolved.incremental || resolved.ts_build_info_file.is_some()) {
         let tsconfig_path_ref = tsconfig_path.as_deref();
-        if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir) {
+        if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir)
+        {
             if build_info_path.exists() {
                 match BuildInfo::load(&build_info_path) {
                     Ok(Some(build_info)) => {
@@ -660,7 +681,11 @@ fn compile_inner(
                         );
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to load BuildInfo from {}: {}, starting fresh", build_info_path.display(), e);
+                        tracing::warn!(
+                            "Failed to load BuildInfo from {}: {}, starting fresh",
+                            build_info_path.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -743,11 +768,12 @@ fn compile_inner(
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
     let no_types_and_symbols = sources_have_no_types_and_symbols(&sources);
-    let lib_paths: Vec<PathBuf> = if resolved.checker.no_lib || disable_default_libs || no_types_and_symbols {
-        Vec::new()
-    } else {
-        resolved.lib_files.clone()
-    };
+    let lib_paths: Vec<PathBuf> =
+        if resolved.checker.no_lib || disable_default_libs || no_types_and_symbols {
+            Vec::new()
+        } else {
+            resolved.lib_files.clone()
+        };
 
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
         let result = build_program_with_cache(sources, c, &lib_paths);
@@ -782,7 +808,13 @@ fn compile_inner(
         load_lib_files_for_contexts(&lib_paths, resolved.printer.target)
     };
 
-    let mut diagnostics = collect_diagnostics(&program, &resolved, &base_dir, effective_cache, &lib_contexts);
+    let mut diagnostics = collect_diagnostics(
+        &program,
+        &resolved,
+        &base_dir,
+        effective_cache,
+        &lib_contexts,
+    );
     // Add TS1490 diagnostics for binary files
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.sort_by(|left, right| {
@@ -834,7 +866,8 @@ fn compile_inner(
     // Save BuildInfo if incremental compilation is enabled
     if should_save_build_info && has_error == false {
         let tsconfig_path_ref = tsconfig_path.as_deref();
-        if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir) {
+        if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir)
+        {
             // Build BuildInfo from the cache (which has been updated by collect_diagnostics)
             // If local_cache exists (from BuildInfo), use it; otherwise create minimal info
             let mut build_info = if let Some(ref lc) = local_cache {
@@ -844,13 +877,16 @@ fn compile_inner(
                 BuildInfo {
                     version: crate::cli::incremental::BUILD_INFO_VERSION.to_string(),
                     compiler_version: env!("CARGO_PKG_VERSION").to_string(),
-                    root_files: file_paths.iter().map(|p| {
-                        p.strip_prefix(&base_dir)
-                            .unwrap_or(p)
-                            .to_string_lossy()
-                            .replace('\\', "/")
-                            .to_string()
-                    }).collect(),
+                    root_files: file_paths
+                        .iter()
+                        .map(|p| {
+                            p.strip_prefix(&base_dir)
+                                .unwrap_or(p)
+                                .to_string_lossy()
+                                .replace('\\', "/")
+                                .to_string()
+                        })
+                        .collect(),
                     ..Default::default()
                 }
             };
@@ -859,7 +895,11 @@ fn compile_inner(
             build_info.latest_changed_dts_file = latest_changed_dts_file;
 
             if let Err(e) = build_info.save(&build_info_path) {
-                tracing::warn!("Failed to save BuildInfo to {}: {}", build_info_path.display(), e);
+                tracing::warn!(
+                    "Failed to save BuildInfo to {}: {}",
+                    build_info_path.display(),
+                    e
+                );
             } else {
                 tracing::info!("Saved BuildInfo to: {}", build_info_path.display());
             }
@@ -1842,7 +1882,8 @@ fn collect_diagnostics(
 
         // Check if file has cached type information
         // If no cache or cache miss, file needs to be checked
-        let needs_check = cache.as_deref()
+        let needs_check = cache
+            .as_deref()
             .map(|c| !c.type_caches.contains_key(&file_path))
             .unwrap_or(true); // No cache at all -> check everything
 
@@ -1971,8 +2012,10 @@ fn collect_diagnostics(
             let old_hash = c.export_hashes.get(&file_path).copied();
 
             // Always update cache with new results
-            c.type_caches.insert(file_path.clone(), checker.extract_cache());
-            c.diagnostics.insert(file_path.clone(), file_diagnostics.clone());
+            c.type_caches
+                .insert(file_path.clone(), checker.extract_cache());
+            c.diagnostics
+                .insert(file_path.clone(), file_diagnostics.clone());
             c.export_hashes.insert(file_path.clone(), new_hash);
 
             // If export hash changed (or was missing), invalidate dependents
@@ -2011,12 +2054,9 @@ fn collect_diagnostics(
 
     // Cleanup unused entries from the cache
     if let Some(c) = cache {
-        c.type_caches
-            .retain(|path, _| used_paths.contains(path));
-        c.diagnostics
-            .retain(|path, _| used_paths.contains(path));
-        c.export_hashes
-            .retain(|path, _| used_paths.contains(path));
+        c.type_caches.retain(|path, _| used_paths.contains(path));
+        c.diagnostics.retain(|path, _| used_paths.contains(path));
+        c.export_hashes.retain(|path, _| used_paths.contains(path));
     }
 
     diagnostics
@@ -2535,6 +2575,7 @@ fn create_binder_from_bound_file(
     }
 
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
+        BinderOptions::default(),
         program.symbols.clone(),
         file_locals,
         file.node_symbols.clone(),
