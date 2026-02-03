@@ -959,9 +959,9 @@ pub fn is_template_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bo
     matches!(types.lookup(type_id), Some(TypeKey::TemplateLiteral(_)))
 }
 
-/// Check if a type is a type reference (Ref).
+/// Check if a type is a type reference (Lazy/DefId).
 pub fn is_type_reference(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(types.lookup(type_id), Some(TypeKey::Ref(_)))
+    matches!(types.lookup(type_id), Some(TypeKey::Lazy(_)))
 }
 
 /// Check if a type is a generic type application.

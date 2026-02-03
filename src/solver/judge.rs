@@ -446,14 +446,11 @@ impl<'a> Judge for DefaultJudge<'a> {
             None => return TypeId::ERROR,
         };
 
-        // Try to get type params from Lazy - convert DefId to SymbolRef
+        // Try to get type params from Lazy - use DefId directly
         if let TypeKey::Lazy(def_id) = &key {
-            if let Some(sym_id) = self.env.def_to_symbol_id(*def_id) {
-                let sym_ref = crate::solver::SymbolRef(sym_id.0);
-                if let Some(params) = self.env.get_params(sym_ref) {
-                    if let Some(resolved) = self.env.get(sym_ref) {
-                        return instantiate_generic(self.db, resolved, params, args);
-                    }
+            if let Some(params) = self.env.get_def_params(*def_id) {
+                if let Some(resolved) = self.env.get_def(*def_id) {
+                    return instantiate_generic(self.db, resolved, params, args);
                 }
             }
         }
@@ -720,12 +717,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         match key {
             TypeKey::TypeParameter(ref info) => info.constraint.unwrap_or(type_id),
             TypeKey::Lazy(def_id) => {
-                if let Some(sym_id) = self.env.def_to_symbol_id(*def_id) {
-                    let sym_ref = crate::solver::SymbolRef(sym_id.0);
-                    self.env.get(sym_ref).unwrap_or(type_id)
-                } else {
-                    type_id
-                }
+                self.env.get_def(def_id).unwrap_or(type_id)
             }
             _ => type_id,
         }

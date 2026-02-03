@@ -1013,16 +1013,9 @@ impl<'a> CheckerContext<'a> {
     ///
     /// **Pattern:** TypeLowering creates Ref → post-process → returns Lazy
     ///
-    /// This avoids the Fn/FnMut problem with resolver closures by creating
-    /// DefIds after TypeLowering completes (when &mut self is available).
+    /// PHASE 4.2: TypeKey::Ref removed, all types are now Lazy(DefId).
+    /// This function is now a no-op since all types are already Lazy.
     pub fn maybe_create_lazy_from_resolved(&mut self, type_id: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
-
-        if let Some(TypeKey::Ref(SymbolRef(sym_ref))) = self.types.lookup(type_id) {
-            let sym_id = SymbolId(sym_ref);
-            let def_id = self.get_or_create_def_id(sym_id);
-            return self.types.intern(TypeKey::Lazy(def_id));
-        }
         type_id
     }
 

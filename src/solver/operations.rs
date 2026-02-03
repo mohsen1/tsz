@@ -1172,7 +1172,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeKey::Infer(_)
             | TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
-            | TypeKey::Ref(_)
             | TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)

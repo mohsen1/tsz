@@ -495,8 +495,8 @@ fn test_lower_array_type_reference_respects_resolver() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Ref(SymbolRef(sym_id))) => assert_eq!(sym_id, 1),
-                other => panic!("Expected Ref base type, got {:?}", other),
+                Some(TypeKey::Lazy(_def_id)) => {}, // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
         _ => panic!("Expected Application type, got {:?}", key),
@@ -530,8 +530,8 @@ fn test_lower_readonly_array_type_reference_respects_resolver() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Ref(SymbolRef(sym_id))) => assert_eq!(sym_id, 2),
-                other => panic!("Expected Ref base type, got {:?}", other),
+                Some(TypeKey::Lazy(_def_id)) => {}, // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
         _ => panic!("Expected Application type, got {:?}", key),
@@ -1510,8 +1510,8 @@ fn test_lower_generic_type_reference_uses_type_parameter_args() {
                     let app = interner.type_application(app_id);
                     let base_key = interner.lookup(app.base).expect("Type should exist");
                     match base_key {
-                        TypeKey::Ref(SymbolRef(1)) => {}
-                        _ => panic!("Expected reference base type, got {:?}", base_key),
+                        TypeKey::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                        _ => panic!("Expected lazy base type, got {:?}", base_key),
                     }
 
                     assert_eq!(app.args.len(), 1);
@@ -1556,8 +1556,8 @@ fn test_lower_type_reference_with_arguments() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Ref(SymbolRef(sym_id))) => assert_eq!(sym_id, 1),
-                other => panic!("Expected Ref base type, got {:?}", other),
+                Some(TypeKey::Lazy(_def_id)) => {}, // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
         _ => panic!("Expected Application type, got {:?}", key),
@@ -1578,13 +1578,13 @@ fn test_lower_type_query_uses_value_resolver() {
     match key {
         TypeKey::Union(members) => {
             let members = interner.type_list(members);
-            let mut saw_ref = false;
+            let mut saw_lazy = false;
             let mut saw_query = false;
             for &member in members.iter() {
                 match interner.lookup(member) {
-                    Some(TypeKey::Ref(SymbolRef(sym_id))) => {
-                        assert_eq!(sym_id, 1);
-                        saw_ref = true;
+                    Some(TypeKey::Lazy(_def_id)) => {
+                        // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                        saw_lazy = true;
                     }
                     Some(TypeKey::TypeQuery(SymbolRef(sym_id))) => {
                         assert_eq!(sym_id, 2);
@@ -1593,7 +1593,7 @@ fn test_lower_type_query_uses_value_resolver() {
                     other => panic!("Unexpected union member {:?}", other),
                 }
             }
-            assert!(saw_ref, "Expected union to include type reference");
+            assert!(saw_lazy, "Expected union to include lazy type reference");
             assert!(saw_query, "Expected union to include typeof query");
         }
         _ => panic!("Expected Union type, got {:?}", key),
