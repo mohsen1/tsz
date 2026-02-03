@@ -755,8 +755,6 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         idx: NodeIndex,
     ) {
-        use crate::solver::TypeFormatter;
-
         // TS7053 is a noImplicitAny error - suppress without it
         if !self.ctx.no_implicit_any() {
             return;
@@ -1229,7 +1227,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         failures: &[crate::solver::PendingDiagnostic],
     ) {
-        use crate::solver::{PendingDiagnostic, TypeFormatter};
+        use crate::solver::PendingDiagnostic;
 
         let Some(loc) = self.get_source_location(idx) else {
             return;
@@ -1293,8 +1291,6 @@ impl<'a> CheckerState<'a> {
     /// Report TS2348: "Cannot invoke an expression whose type lacks a call signature"
     /// This is specifically for class constructors called without 'new'.
     pub fn error_class_constructor_without_new_at(&mut self, type_id: TypeId, idx: NodeIndex) {
-        use crate::solver::TypeFormatter;
-
         // Suppress cascade errors from unresolved types
         if type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
             return;
@@ -1363,8 +1359,6 @@ impl<'a> CheckerState<'a> {
     /// Report TS2507: "Type 'X' is not a constructor function type"
     /// This is for extends clauses where the base type isn't a constructor.
     pub fn error_not_a_constructor_at(&mut self, type_id: TypeId, idx: NodeIndex) {
-        use crate::solver::TypeFormatter;
-
         // Suppress error if type is ERROR/ANY/UNKNOWN - prevents cascading errors
         if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
             return;
@@ -1394,8 +1388,6 @@ impl<'a> CheckerState<'a> {
     /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
     /// This is for `new` expressions where the expression type has no construct signatures.
     pub fn error_not_constructable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
-        use crate::solver::TypeFormatter;
-
         if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
             return;
         }
@@ -1506,7 +1498,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        use crate::solver::{BinaryOpEvaluator, TypeFormatter};
+        use crate::solver::BinaryOpEvaluator;
 
         let evaluator = BinaryOpEvaluator::new(self.ctx.types);
 

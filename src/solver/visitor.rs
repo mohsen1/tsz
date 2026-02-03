@@ -708,7 +708,7 @@ pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
 /// Extract the type reference symbol if this is a Ref type.
 pub fn ref_symbol(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef> {
     extract_type_data(types, type_id, |key| match key {
-        TypeKey::Lazy(def_id) => {
+        TypeKey::Lazy(_def_id) => {
             // TypeKey::Ref has been migrated to TypeKey::Lazy(DefId)
             // We can no longer extract SymbolRef from it
             // Return None or handle as needed based on migration strategy

@@ -399,7 +399,7 @@ impl<'a> CheckerState<'a> {
             // We handle this specially by directly resolving Lazy(DefId) index access
             // types, because the TypeEvaluator might not have access to the type
             // environment's def_types map during evaluation.
-            let property_type = if let Some(TypeKey::IndexAccess(obj, idx)) =
+            let property_type = if let Some(TypeKey::IndexAccess(obj, _idx)) =
                 self.ctx.types.lookup(property_type)
             {
                 // For IndexAccess types, we need to resolve the object type and get the property

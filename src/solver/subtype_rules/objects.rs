@@ -363,7 +363,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_object_with_index_subtype(
         &mut self,
         source: &ObjectShape,
-        source_shape_id: Option<ObjectShapeId>,
+        _source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> SubtypeResult {
         // First check named properties (nominal + structural)
@@ -594,7 +594,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_object_to_indexed(
         &mut self,
         source: &[PropertyInfo],
-        source_shape_id: Option<ObjectShapeId>,
+        _source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> SubtypeResult {
         // First check named properties match

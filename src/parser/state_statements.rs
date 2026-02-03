@@ -922,7 +922,7 @@ impl ParserState {
 
         // Check for async modifier if not already parsed
         // TS1040: 'async' modifier cannot be used in an ambient context
-        let async_token_pos = self.token_pos();
+        let _async_token_pos = self.token_pos();
         let is_async = if !is_async && self.is_token(SyntaxKind::AsyncKeyword) {
             if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
                 use crate::checker::types::diagnostics::diagnostic_codes;
