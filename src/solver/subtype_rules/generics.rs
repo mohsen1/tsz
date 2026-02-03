@@ -119,8 +119,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        let s_resolved = self.resolver.resolve_ref(*s_sym, self.interner);
-        let t_resolved = self.resolver.resolve_ref(*t_sym, self.interner);
+        let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*s_sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(*s_sym, self.interner);
+            r
+        };
+        let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*t_sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(*t_sym, self.interner);
+            r
+        };
         let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
 
         // Remove from seen set after checking
@@ -228,8 +240,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        let s_resolved = self.resolver.resolve_ref(*s_sym, self.interner);
-        let t_resolved = self.resolver.resolve_ref(*t_sym, self.interner);
+        let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*s_sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(*s_sym, self.interner);
+            r
+        };
+        let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*t_sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(*t_sym, self.interner);
+            r
+        };
         self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved)
     }
 
@@ -243,7 +267,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         sym: &SymbolRef,
     ) -> SubtypeResult {
-        match self.resolver.resolve_ref(*sym, self.interner) {
+        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(*sym, self.interner);
+            r
+        };
+        match resolved {
             Some(s_resolved) => self.check_subtype(s_resolved, target),
             None => SubtypeResult::False,
         }
@@ -259,7 +290,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         _target: TypeId,
         sym: &SymbolRef,
     ) -> SubtypeResult {
-        match self.resolver.resolve_ref(*sym, self.interner) {
+        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(*sym, self.interner);
+            r
+        };
+        match resolved {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
             None => SubtypeResult::False,
         }
@@ -272,7 +310,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         sym: &SymbolRef,
     ) -> SubtypeResult {
-        match self.resolver.resolve_ref(*sym, self.interner) {
+        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(*sym, self.interner);
+            r
+        };
+        match resolved {
             Some(s_resolved) => self.check_subtype(s_resolved, target),
             None => SubtypeResult::False,
         }
@@ -285,7 +330,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         _target: TypeId,
         sym: &SymbolRef,
     ) -> SubtypeResult {
-        match self.resolver.resolve_ref(*sym, self.interner) {
+        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*sym) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(*sym, self.interner);
+            r
+        };
+        match resolved {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
             None => SubtypeResult::False,
         }
@@ -420,7 +472,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Try to get type params and resolved body from either Ref or Lazy base
         let (type_params, resolved_body) = if let Some(symbol) = ref_symbol(self.interner, app.base) {
             let params = self.resolver.get_type_params(symbol)?;
-            let body = self.resolver.resolve_ref(symbol, self.interner)?;
+            let body = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
+                self.resolver.resolve_lazy(def_id, self.interner)?
+            } else {
+                #[allow(deprecated)]
+                let r = self.resolver.resolve_ref(symbol, self.interner)?;
+                r
+            };
             (params, body)
         } else if let Some(def_id) = lazy_def_id(self.interner, app.base) {
             let params = self.resolver.get_lazy_type_params(def_id)?;
@@ -586,7 +644,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(symbol) = ref_symbol(self.interner, operand) {
             // Try to resolve the ref and get keys from the resolved type
-            let resolved = self.resolver.resolve_ref(symbol, self.interner)?;
+            let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
+                self.resolver.resolve_lazy(def_id, self.interner)?
+            } else {
+                #[allow(deprecated)]
+                let r = self.resolver.resolve_ref(symbol, self.interner)?;
+                r
+            };
             if resolved == operand {
                 return None; // Avoid infinite recursion
             }

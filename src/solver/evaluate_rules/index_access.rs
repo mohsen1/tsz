@@ -171,10 +171,18 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
         let symbol_ref = SymbolRef(symbol_ref);
-        let resolved = self
-            .evaluator
-            .resolver()
-            .resolve_ref(symbol_ref, self.evaluator.interner())?;
+        let resolved = if let Some(def_id) = self.evaluator.resolver().symbol_to_def_id(symbol_ref) {
+            self.evaluator
+                .resolver()
+                .resolve_lazy(def_id, self.evaluator.interner())?
+        } else {
+            #[allow(deprecated)]
+            let r = self
+                .evaluator
+                .resolver()
+                .resolve_ref(symbol_ref, self.evaluator.interner())?;
+            r
+        };
         if resolved == self.object_type {
             Some(
                 self.evaluator

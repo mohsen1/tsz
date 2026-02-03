@@ -1200,7 +1200,15 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         };
 
         // Resolve the symbol to get its body type
-        let Some(body_type) = self.resolver.resolve_ref(symbol, self.interner) else {
+        let body_type = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            let r = self.resolver.resolve_ref(symbol, self.interner);
+            r
+        };
+
+        let Some(body_type) = body_type else {
             // Resolution failed - fall back to structural evaluation
             let evaluated = evaluate_type(
                 self.interner,
