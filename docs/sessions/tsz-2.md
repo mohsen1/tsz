@@ -155,7 +155,26 @@ These are "Environment" errors. If tsz fails to load the standard library or imp
 
 ## History (Last 20)
 
-*No work history yet*
+### 2025-02-03: Investigated TS2322 accessor false positive with class inheritance
+
+**Test Added**: `test_accessor_type_compatibility_inheritance_no_error`
+- Confirms bug: `new B()` where `B extends A` returns Object prototype type instead of B
+- Error message shows getter returns `{ isPrototypeOf, propertyIsEnumerable, ... }` (Object)
+
+**Investigation Deep Dive**:
+1. Found `classify_for_new_expression()` missing Lazy type case
+2. Added fix to handle `TypeKey::Lazy(def_id)`
+3. Fix didn't work - reverted
+4. Verified construct signatures correctly use `instance_type` as return type
+5. Verified `compute_type_of_symbol()` returns constructor type for CLASS symbols
+
+**Root Cause**: Still unknown - bug is deep in type resolution chain for `new` expressions with class inheritance. Requires tracing through Lazy type resolution and CallEvaluator.
+
+**Files Investigated**:
+- `src/solver/type_queries_extended.rs` - classify_for_new_expression
+- `src/checker/type_computation_complex.rs` - get_type_of_new_expression
+- `src/checker/class_type.rs` - get_class_instance_type, get_class_constructor_type
+- `src/checker/state_type_analysis.rs` - get_type_of_symbol, compute_type_of_symbol
 
 ---
 
