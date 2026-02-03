@@ -382,11 +382,13 @@ pub struct CheckerContext<'a> {
 
     /// Mapping from Binder SymbolId to Solver DefId.
     /// Used during migration to avoid creating duplicate DefIds for the same symbol.
-    pub symbol_to_def: FxHashMap<SymbolId, DefId>,
+    /// Wrapped in RefCell to allow mutation through shared references (for use in Fn closures).
+    pub symbol_to_def: RefCell<FxHashMap<SymbolId, DefId>>,
 
     /// Reverse mapping from Solver DefId to Binder SymbolId.
     /// Used to look up binder symbols from DefId-based types (e.g., namespace exports).
-    pub def_to_symbol: FxHashMap<DefId, SymbolId>,
+    /// Wrapped in RefCell to allow mutation through shared references (for use in Fn closures).
+    pub def_to_symbol: RefCell<FxHashMap<DefId, SymbolId>>,
 
     /// Abstract constructor types (TypeIds) produced for abstract classes.
     pub abstract_constructor_types: FxHashSet<TypeId>,
@@ -542,8 +544,8 @@ impl<'a> CheckerContext<'a> {
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
-            symbol_to_def: FxHashMap::default(),
-            def_to_symbol: FxHashMap::default(),
+            symbol_to_def: RefCell::new(FxHashMap::default()),
+            def_to_symbol: RefCell::new(FxHashMap::default()),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -625,8 +627,8 @@ impl<'a> CheckerContext<'a> {
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
-            symbol_to_def: FxHashMap::default(),
-            def_to_symbol: FxHashMap::default(),
+            symbol_to_def: RefCell::new(FxHashMap::default()),
+            def_to_symbol: RefCell::new(FxHashMap::default()),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
@@ -710,8 +712,8 @@ impl<'a> CheckerContext<'a> {
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
-            symbol_to_def: FxHashMap::default(),
-            def_to_symbol: FxHashMap::default(),
+            symbol_to_def: RefCell::new(FxHashMap::default()),
+            def_to_symbol: RefCell::new(FxHashMap::default()),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -794,8 +796,8 @@ impl<'a> CheckerContext<'a> {
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
-            symbol_to_def: FxHashMap::default(),
-            def_to_symbol: FxHashMap::default(),
+            symbol_to_def: RefCell::new(FxHashMap::default()),
+            def_to_symbol: RefCell::new(FxHashMap::default()),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
@@ -932,10 +934,10 @@ impl<'a> CheckerContext<'a> {
     ///
     /// This is used during the migration from SymbolRef to DefId.
     /// Eventually, all type references will use DefId directly.
-    pub fn get_or_create_def_id(&mut self, sym_id: SymbolId) -> DefId {
+    pub fn get_or_create_def_id(&self, sym_id: SymbolId) -> DefId {
         use crate::solver::def::DefinitionInfo;
 
-        if let Some(&def_id) = self.symbol_to_def.get(&sym_id) {
+        if let Some(&def_id) = self.symbol_to_def.borrow().get(&sym_id) {
             return def_id;
         }
 
@@ -986,8 +988,8 @@ impl<'a> CheckerContext<'a> {
         };
 
         let def_id = self.definition_store.register(info);
-        self.symbol_to_def.insert(sym_id, def_id);
-        self.def_to_symbol.insert(def_id, sym_id);
+        self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+        self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
         def_id
     }
 
@@ -1026,7 +1028,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Look up the SymbolId for a DefId (reverse mapping).
     pub fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
-        self.def_to_symbol.get(&def_id).copied()
+        self.def_to_symbol.borrow().get(&def_id).copied()
     }
 
     /// Look up an existing DefId for a symbol without creating a new one.
@@ -1035,7 +1037,7 @@ impl<'a> CheckerContext<'a> {
     /// This is used by the DefId resolver in TypeLowering to prefer
     /// DefId when available but fall back to SymbolRef otherwise.
     pub fn get_existing_def_id(&self, sym_id: SymbolId) -> Option<DefId> {
-        self.symbol_to_def.get(&sym_id).copied()
+        self.symbol_to_def.borrow().get(&sym_id).copied()
     }
 
     /// Register a resolved type in the TypeEnvironment for both SymbolRef and DefId.
@@ -1062,7 +1064,7 @@ impl<'a> CheckerContext<'a> {
             }
 
             // Also insert with DefId key if one exists (Phase 4.3 migration)
-            if let Some(&def_id) = self.symbol_to_def.get(&sym_id) {
+            if let Some(&def_id) = self.symbol_to_def.borrow().get(&sym_id) {
                 if type_params.is_empty() {
                     env.insert_def(def_id, type_id);
                 } else {

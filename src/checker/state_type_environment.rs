@@ -687,7 +687,7 @@ impl<'a> CheckerState<'a> {
         // This can happen during recursive type resolution.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
             // Get the DefId if one exists (Phase 4.3 migration)
-            let def_id = self.ctx.symbol_to_def.get(&sym_id).copied();
+            let def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
 
             if type_params.is_empty() {
                 env.insert(SymbolRef(sym_id.0), resolved);
