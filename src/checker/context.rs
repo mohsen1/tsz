@@ -1106,6 +1106,24 @@ impl<'a> CheckerContext<'a> {
         self.symbol_to_def.borrow().get(&sym_id).copied()
     }
 
+    /// Create a TypeFormatter with full context for displaying types (Phase 4.2.1).
+    ///
+    /// This includes symbol arena and definition store, which allows the formatter
+    /// to display type names for Lazy(DefId) types instead of the internal "Lazy(def_id)"
+    /// representation.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let formatter = self.create_type_formatter();
+    /// let type_str = formatter.format(type_id);  // Shows "List<number>" not "Lazy(1)<number>"
+    /// ```
+    pub fn create_type_formatter(&self) -> crate::solver::TypeFormatter<'_> {
+        use crate::solver::TypeFormatter;
+
+        TypeFormatter::with_symbols(self.types, &self.binder.symbols)
+            .with_def_store(&self.definition_store)
+    }
+
     /// Register a resolved type in the TypeEnvironment for both SymbolRef and DefId.
     ///
     /// This ensures that both the old `TypeKey::Ref(SymbolRef)` and new `TypeKey::Lazy(DefId)`

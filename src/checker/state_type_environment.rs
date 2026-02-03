@@ -1440,8 +1440,8 @@ impl<'a> CheckerState<'a> {
     /// // format_type(Complex) → "Array<{ id: number } | null>"
     /// ```
     pub fn format_type(&self, type_id: TypeId) -> String {
-        let mut formatter =
-            crate::solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
+        // Phase 4.2.1: Use full formatter with DefId context for proper type name display
+        let mut formatter = self.ctx.create_type_formatter();
         formatter.format(type_id)
     }
 }

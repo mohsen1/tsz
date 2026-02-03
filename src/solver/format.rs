@@ -4,6 +4,7 @@
 use crate::binder::SymbolId;
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
+use crate::solver::def::DefinitionStore;
 use crate::solver::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
     get_message_template,
@@ -17,6 +18,8 @@ pub struct TypeFormatter<'a> {
     interner: &'a dyn TypeDatabase,
     /// Symbol arena for looking up symbol names (optional)
     symbol_arena: Option<&'a crate::binder::SymbolArena>,
+    /// Definition store for looking up DefId names (optional)
+    def_store: Option<&'a DefinitionStore>,
     /// Maximum depth for nested type printing
     max_depth: u32,
     /// Maximum number of union members to display before truncating
@@ -31,6 +34,7 @@ impl<'a> TypeFormatter<'a> {
         TypeFormatter {
             interner,
             symbol_arena: None,
+            def_store: None,
             max_depth: 5,
             max_union_members: 5,
             current_depth: 0,
@@ -46,11 +50,18 @@ impl<'a> TypeFormatter<'a> {
         TypeFormatter {
             interner,
             symbol_arena: Some(symbol_arena),
+            def_store: None,
             max_depth: 5,
             max_union_members: 5,
             current_depth: 0,
             atom_cache: FxHashMap::default(),
         }
+    }
+
+    /// Add access to definition store for DefId name resolution (Phase 4.2.1).
+    pub fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
+        self.def_store = Some(def_store);
+        self
     }
 
     pub fn with_limits(mut self, max_depth: u32, max_union_members: usize) -> Self {
@@ -208,14 +219,40 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeKey::TypeParameter(info) => self.atom(info.name).to_string(),
             TypeKey::Lazy(def_id) => {
-                // Lazy types use DefId which doesn't have direct symbol access
-                // TODO: Look up definition name from DefinitionStore when available
-                format!("Lazy({})", def_id.0)
+                // Phase 4.2.1: Try to get the type name from the definition store
+                if let Some(def_store) = self.def_store {
+                    if let Some(def) = def_store.get(*def_id) {
+                        // Use the definition name if available
+                        self.atom(def.name).to_string()
+                    } else {
+                        format!("Lazy({})", def_id.0)
+                    }
+                } else {
+                    format!("Lazy({})", def_id.0)
+                }
             }
             TypeKey::Application(app) => {
                 let app = self.interner.type_application(*app);
+                let base_key = self.interner.lookup(app.base);
+
+                // Phase 4.2.1: Special handling for Application(Lazy(def_id), args)
+                // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
+                let base_str = if let Some(TypeKey::Lazy(def_id)) = base_key {
+                    if let Some(def_store) = self.def_store {
+                        if let Some(def) = def_store.get(def_id) {
+                            self.atom(def.name).to_string()
+                        } else {
+                            format!("Lazy({})", def_id.0)
+                        }
+                    } else {
+                        format!("Lazy({})", def_id.0)
+                    }
+                } else {
+                    self.format(app.base)
+                };
+
                 let args: Vec<String> = app.args.iter().map(|&arg| self.format(arg)).collect();
-                format!("{}<{}>", self.format(app.base), args.join(", "))
+                format!("{}<{}>", base_str, args.join(", "))
             }
             TypeKey::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(*cond_id);
