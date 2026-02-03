@@ -33,16 +33,18 @@ Commands:
   clean       Remove cache file
 
 Options:
-  --workers N     Number of parallel workers (default: 16)
-  --max N         Maximum number of tests to run (default: all)
-  --verbose       Show per-test results
-  --filter PAT    Filter test files by pattern
+  --workers N       Number of parallel workers (default: 16)
+  --max N           Maximum number of tests to run (default: all)
+  --verbose         Show per-test results
+  --filter PAT      Filter test files by pattern
+  --error-code N    Only show tests with this error code (e.g., 2304)
 
 Examples:
-  ./scripts/conformance.sh all                    # Full pipeline
-  ./scripts/conformance.sh run --max 100          # Test first 100 files
-  ./scripts/conformance.sh run --filter "strict"  # Run tests matching "strict"
-  ./scripts/conformance.sh generate --workers 32  # Regenerate cache with 32 workers
+  ./scripts/conformance.sh all                        # Full pipeline
+  ./scripts/conformance.sh run --max 100              # Test first 100 files
+  ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
+  ./scripts/conformance.sh run --error-code 2304      # Only show tests with TS2304
+  ./scripts/conformance.sh generate --workers 32      # Regenerate cache with 32 workers
 
 Note: Binaries are automatically built if not found.
 Cache location: tsc-cache-full.json (in repo root)

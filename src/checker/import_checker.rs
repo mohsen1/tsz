@@ -204,11 +204,15 @@ impl<'a> CheckerState<'a> {
     // Import Equals Declaration Validation
     // =========================================================================
 
-    /// Check an import equals declaration for ESM compatibility and unresolved modules.
+    /// Check an import equals declaration for ESM compatibility, unresolved modules,
+    /// and conflicts with local declarations.
     ///
-    /// Validates `import x = require()` style imports, emitting TS1202 when used
-    /// in ES modules and TS2307 when the module cannot be found.
+    /// Validates `import x = require()` and `import x = Namespace` style imports:
+    /// - TS1202 when import assignment is used in ES modules
+    /// - TS2307 when the module cannot be found
+    /// - TS2440 when import conflicts with a local declaration
     pub(crate) fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
+        use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::{
             diagnostic_codes, diagnostic_messages, format_message,
         };
@@ -220,10 +224,74 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Get the import alias name (e.g., 'a' in 'import a = M')
+        let import_name = self
+            .ctx
+            .arena
+            .get(import.import_clause)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .map(|id| id.escaped_text.clone());
+
+        // Check for TS2440: Import declaration conflicts with local declaration
+        // This error is specific to ImportEqualsDeclaration (not ES6 imports).
+        // It occurs when:
+        // 1. The import introduces a name that already has a value declaration
+        // 2. The value declaration is in the same file (local)
+        //
+        // Note: The binder does NOT merge import equals declarations - it creates
+        // a new symbol and overwrites the scope. So we need to find ALL symbols
+        // with the same name and check if any non-import has VALUE flags.
+        if let Some(ref name) = import_name {
+            // Get the symbol for this import
+            let import_sym_id = self.ctx.binder.node_symbols.get(&stmt_idx.0).copied();
+
+            // Find all symbols with this name (there may be multiple due to shadowing)
+            let all_symbols = self.ctx.binder.symbols.find_all_by_name(name);
+
+            for sym_id in all_symbols {
+                // Skip the import's own symbol
+                if Some(sym_id) == import_sym_id {
+                    continue;
+                }
+
+                if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
+                    // Check if this symbol has value semantics
+                    let is_value = (sym.flags & symbol_flags::VALUE) != 0;
+                    let is_alias = (sym.flags & symbol_flags::ALIAS) != 0;
+
+                    // Skip if this is also an import/alias
+                    if is_alias {
+                        continue;
+                    }
+
+                    // Check if this symbol has any declaration in the CURRENT file
+                    // A declaration is in the current file if it's in node_symbols
+                    let has_local_declaration = sym.declarations.iter().any(|&decl_idx| {
+                        // The declaration is local if its node_symbols entry points to this symbol
+                        self.ctx.binder.node_symbols.get(&decl_idx.0) == Some(&sym_id)
+                    });
+
+                    if is_value && has_local_declaration {
+                        let message = format_message(
+                            diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL,
+                            &[name],
+                        );
+                        self.error_at_node(
+                            stmt_idx,
+                            &message,
+                            diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL,
+                        );
+                        return; // Don't emit further errors for this import
+                    }
+                }
+            }
+        }
+
         let Some(ref_node) = self.ctx.arena.get(import.module_specifier) else {
             return;
         };
 
+        // Only check for unresolved modules if this is a require() style import
         if ref_node.kind != SyntaxKind::StringLiteral as u16 {
             return;
         }

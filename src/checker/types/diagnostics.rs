@@ -88,6 +88,8 @@ pub mod diagnostic_messages {
     pub const TYPE_NOT_ASSIGNABLE: &str = "Type '{0}' is not assignable to type '{1}'.";
     pub const CANNOT_FIND_NAME: &str = "Cannot find name '{0}'.";
     pub const DUPLICATE_IDENTIFIER: &str = "Duplicate identifier '{0}'.";
+    pub const IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL: &str =
+        "Import declaration conflicts with local declaration of '{0}'.";
     pub const MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS: &str =
         "Multiple constructor implementations are not allowed.";
     pub const PROPERTY_DOES_NOT_EXIST: &str = "Property '{0}' does not exist on type '{1}'.";
@@ -369,6 +371,7 @@ pub mod diagnostic_codes {
     pub const DUPLICATE_IDENTIFIER: u32 = 2300;
     pub const CANNOT_FIND_NAME: u32 = 2304;
     pub const MODULE_HAS_NO_EXPORTED_MEMBER: u32 = 2305;
+    pub const IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL: u32 = 2440;
     pub const GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS: u32 = 2314;
     pub const TYPE_IS_NOT_GENERIC: u32 = 2315;
     pub const TYPE_NOT_ASSIGNABLE_TO_TYPE: u32 = 2322;
