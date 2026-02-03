@@ -44,30 +44,53 @@ Examples:
   ./scripts/conformance.sh run --filter "strict"  # Run tests matching "strict"
   ./scripts/conformance.sh generate --workers 32  # Regenerate cache with 32 workers
 
+Note: Binaries are automatically built if not found.
 Cache location: tsc-cache-full.json (in repo root)
 Test directory: TypeScript/tests/cases/conformance
 EOF
 }
 
-# Check binaries exist
-check_binaries() {
+# Build binaries if needed
+ensure_binaries() {
+    local need_tsz=false
+    local need_conformance=false
+
     if [ ! -f "$TSZ_BIN" ]; then
-        echo "Error: tsz binary not found at $TSZ_BIN"
-        echo "Build tsz first: cargo build --release --bin tsz"
+        need_tsz=true
+    fi
+
+    if [ ! -f "$CACHE_GEN_BIN" ] || [ ! -f "$RUNNER_BIN" ]; then
+        need_conformance=true
+    fi
+
+    if [ "$need_tsz" = true ]; then
+        echo -e "${YELLOW}Building tsz...${NC}"
+        cd "$REPO_ROOT"
+        cargo build --release --bin tsz
+        echo ""
+    fi
+
+    if [ "$need_conformance" = true ]; then
+        echo -e "${YELLOW}Building conformance runner...${NC}"
+        cd "$REPO_ROOT/conformance-rust"
+        cargo build --release
+        cd "$REPO_ROOT"
+        echo ""
+    fi
+
+    # Final check
+    if [ ! -f "$TSZ_BIN" ]; then
+        echo "Error: tsz binary not found at $TSZ_BIN after build"
         exit 1
     fi
 
     if [ ! -f "$CACHE_GEN_BIN" ]; then
-        echo "Error: generate-tsc-cache binary not found at $CACHE_GEN_BIN"
-        echo "Build conformance tools first:"
-        echo "  cd conformance-rust && cargo build --release"
+        echo "Error: generate-tsc-cache binary not found at $CACHE_GEN_BIN after build"
         exit 1
     fi
 
     if [ ! -f "$RUNNER_BIN" ]; then
-        echo "Error: tsz-conformance binary not found at $RUNNER_BIN"
-        echo "Build conformance tools first:"
-        echo "  cd conformance-rust && cargo build --release"
+        echo "Error: tsz-conformance binary not found at $RUNNER_BIN after build"
         exit 1
     fi
 }
@@ -136,11 +159,11 @@ shift || true
 
 case "$COMMAND" in
     generate)
-        check_binaries
+        ensure_binaries
         generate_cache
         ;;
     run)
-        check_binaries
+        ensure_binaries
         if [ ! -f "$CACHE_FILE" ]; then
             echo -e "${YELLOW}Cache not found, generating first...${NC}"
             echo ""
@@ -150,7 +173,7 @@ case "$COMMAND" in
         run_tests "$@"
         ;;
     all)
-        check_binaries
+        ensure_binaries
         generate_cache
         echo ""
         run_tests "$@"
