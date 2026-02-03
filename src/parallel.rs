@@ -26,6 +26,7 @@
 //! // results is Vec<ParseResult> with parsed ASTs
 //! ```
 
+use crate::binder::BinderOptions;
 use crate::binder::BinderState;
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
@@ -1341,6 +1342,7 @@ pub(crate) fn create_binder_from_bound_file(
     }
 
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
+        BinderOptions::default(),
         program.symbols.clone(),
         file_locals,
         file.node_symbols.clone(),
