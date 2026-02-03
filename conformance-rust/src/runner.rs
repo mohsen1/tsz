@@ -83,6 +83,8 @@ impl Runner {
         // Base path for relative display (current working directory)
         let base_path: PathBuf = std::env::current_dir().unwrap_or_default();
 
+        let error_code_filter = self.args.error_code;
+
         stream::iter(test_files)
             .for_each_concurrent(Some(concurrency_limit), |path| {
                 let permit = semaphore.clone();
@@ -109,22 +111,31 @@ impl Runner {
                                 }
                                 TestResult::Fail { expected, actual, missing, extra, options } => {
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
-                                    println!("FAIL {}", rel_path);
+                                    
+                                    // Filter by error code if specified
+                                    let should_print = match error_code_filter {
+                                        Some(code) => expected.contains(&code) || actual.contains(&code),
+                                        None => true,
+                                    };
+                                    
+                                    if should_print {
+                                        println!("FAIL {}", rel_path);
 
-                                    if print_test {
-                                        let expected_str: Vec<String> = expected.iter().map(|c| format!("TS{}", c)).collect();
-                                        let actual_str: Vec<String> = actual.iter().map(|c| format!("TS{}", c)).collect();
-                                        println!("  expected: [{}]", expected_str.join(", "));
-                                        println!("  actual:   [{}]", actual_str.join(", "));
-                                        
-                                        // Print resolved compiler options
-                                        if !options.is_empty() {
-                                            let opts_str: Vec<String> = options.iter()
-                                                .map(|(k, v)| format!("{}: {}", k, v))
-                                                .collect();
-                                            println!("  options:  {{{}}}", opts_str.join(", "));
-                                        } else {
-                                            println!("  options:  {{}}");
+                                        if print_test {
+                                            let expected_str: Vec<String> = expected.iter().map(|c| format!("TS{}", c)).collect();
+                                            let actual_str: Vec<String> = actual.iter().map(|c| format!("TS{}", c)).collect();
+                                            println!("  expected: [{}]", expected_str.join(", "));
+                                            println!("  actual:   [{}]", actual_str.join(", "));
+                                            
+                                            // Print resolved compiler options
+                                            if !options.is_empty() {
+                                                let opts_str: Vec<String> = options.iter()
+                                                    .map(|(k, v)| format!("{}: {}", k, v))
+                                                    .collect();
+                                                println!("  options:  {{{}}}", opts_str.join(", "));
+                                            } else {
+                                                println!("  options:  {{}}");
+                                            }
                                         }
                                     }
 

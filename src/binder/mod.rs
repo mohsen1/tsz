@@ -362,6 +362,23 @@ impl SymbolArena {
         None
     }
 
+    /// Find all symbols with a given name (for conflict detection).
+    ///
+    /// Returns all symbol IDs that have the specified name, which can happen
+    /// when declarations shadow each other or when there are conflicts.
+    pub fn find_all_by_name(&self, name: &str) -> Vec<SymbolId> {
+        self.symbols
+            .iter()
+            .filter(|s| s.escaped_name == name)
+            .map(|s| s.id)
+            .collect()
+    }
+
+    /// Iterate over all symbols in the arena.
+    pub fn iter(&self) -> impl Iterator<Item = &Symbol> {
+        self.symbols.iter()
+    }
+
     /// Reserve SymbolIds in this arena by pre-allocating placeholder symbols.
     ///
     /// This is used when copying lib file_locals into a user binder:
