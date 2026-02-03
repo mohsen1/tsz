@@ -320,13 +320,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 result
             }
             TypeKey::TypeQuery(symbol) => {
-                let result =
-                    if let Some(resolved) = self.resolver.resolve_ref(*symbol, self.interner) {
-                        resolved
-                    } else {
-                        // Pass through unchanged if not resolved
-                        type_id
-                    };
+                let result = if let Some(def_id) = self.resolver.symbol_to_def_id(*symbol) {
+                    match self.resolver.resolve_lazy(def_id, self.interner) {
+                        Some(resolved) => resolved,
+                        None => type_id,
+                    }
+                } else {
+                    #[allow(deprecated)]
+                    match self.resolver.resolve_ref(*symbol, self.interner) {
+                        Some(resolved) => resolved,
+                        None => type_id,
+                    }
+                };
                 self.visiting.remove(&type_id);
                 self.cache.insert(type_id, result);
                 result
@@ -345,12 +350,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             // Resolve Ref types to their structural form
             TypeKey::Ref(symbol) => {
-                let result =
-                    if let Some(resolved) = self.resolver.resolve_ref(*symbol, self.interner) {
-                        resolved
-                    } else {
-                        TypeId::ERROR
-                    };
+                let result = if let Some(def_id) = self.resolver.symbol_to_def_id(*symbol) {
+                    match self.resolver.resolve_lazy(def_id, self.interner) {
+                        Some(resolved) => resolved,
+                        None => TypeId::ERROR,
+                    }
+                } else {
+                    #[allow(deprecated)]
+                    match self.resolver.resolve_ref(*symbol, self.interner) {
+                        Some(resolved) => resolved,
+                        None => TypeId::ERROR,
+                    }
+                };
                 self.visiting.remove(&type_id);
                 self.cache.insert(type_id, result);
                 result
@@ -406,7 +417,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let TypeKey::Ref(symbol) = base_key {
             // Try to get the type parameters for this symbol
             let type_params = self.resolver.get_type_params(symbol);
-            let resolved = self.resolver.resolve_ref(symbol, self.interner);
+            let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
+                match self.resolver.resolve_lazy(def_id, self.interner) {
+                    Some(r) => Some(r),
+                    None => None,
+                }
+            } else {
+                #[allow(deprecated)]
+                self.resolver.resolve_ref(symbol, self.interner)
+            };
 
             if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
@@ -605,9 +624,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match key {
             TypeKey::TypeQuery(sym_ref) => {
                 // Resolve the TypeQuery to get the actual type, or pass through if unresolved
-                self.resolver
-                    .resolve_ref(sym_ref, self.interner)
-                    .unwrap_or(arg)
+                if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
+                    match self.resolver.resolve_lazy(def_id, self.interner) {
+                        Some(resolved) => resolved,
+                        None => arg,
+                    }
+                } else {
+                    #[allow(deprecated)]
+                    match self.resolver.resolve_ref(sym_ref, self.interner) {
+                        Some(resolved) => resolved,
+                        None => arg,
+                    }
+                }
             }
             TypeKey::Application(_) => {
                 // Use evaluate() to ensure depth limits are enforced
@@ -616,9 +644,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::Ref(sym_ref) => {
                 // Also try to resolve Ref types in type arguments
                 // This helps with generic instantiation accuracy
-                self.resolver
-                    .resolve_ref(sym_ref, self.interner)
-                    .unwrap_or(arg)
+                if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
+                    match self.resolver.resolve_lazy(def_id, self.interner) {
+                        Some(resolved) => resolved,
+                        None => arg,
+                    }
+                } else {
+                    #[allow(deprecated)]
+                    match self.resolver.resolve_ref(sym_ref, self.interner) {
+                        Some(resolved) => resolved,
+                        None => arg,
+                    }
+                }
             }
             TypeKey::Lazy(def_id) => {
                 // Also try to resolve Lazy types in type arguments (Phase 4.3)

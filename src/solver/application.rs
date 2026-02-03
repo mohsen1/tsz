@@ -138,7 +138,14 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         };
 
         // Resolve the symbol to get its body type
-        let Some(body_type) = self.resolver.resolve_ref(sym_ref, self.interner) else {
+        let body_type = if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        } else {
+            #[allow(deprecated)]
+            self.resolver.resolve_ref(sym_ref, self.interner)
+        };
+
+        let Some(body_type) = body_type else {
             return ApplicationResult::ResolutionFailed(type_id);
         };
 

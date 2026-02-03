@@ -575,9 +575,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     pub(crate) fn resolve_ref_type(&self, type_id: TypeId) -> TypeId {
         if let Some(symbol) = ref_symbol(self.interner, type_id) {
-            self.resolver
-                .resolve_ref(symbol, self.interner)
-                .unwrap_or(type_id)
+            if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
+                self.resolver
+                    .resolve_lazy(def_id, self.interner)
+                    .unwrap_or(type_id)
+            } else {
+                #[allow(deprecated)]
+                self.resolver
+                    .resolve_ref(symbol, self.interner)
+                    .unwrap_or(type_id)
+            }
         } else {
             type_id
         }
