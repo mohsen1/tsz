@@ -427,8 +427,22 @@ impl<'a> FlowGraphBuilder<'a> {
 
     /// Build flow graph for an if statement.
     fn build_if_statement(&mut self, if_stmt: &crate::parser::node::IfStatementData) {
+        // Bug #2.1: Track assignments in condition expression
+        self.handle_expression_for_assignments(if_stmt.expression);
+
         // Save flow before the condition
         let pre_condition_flow = self.current_flow;
+
+        // If already unreachable, stay unreachable (Bug #3.1 fix)
+        if pre_condition_flow == self.graph.unreachable_flow {
+            // Build branches for error checking but don't resurrect flow
+            self.build_statement(if_stmt.then_statement);
+            if !if_stmt.else_statement.is_none() {
+                self.build_statement(if_stmt.else_statement);
+            }
+            // Stay unreachable - don't resurrect with merge label
+            return;
+        }
 
         // Create flow node for the true branch
         let true_flow = self.create_flow_node(
@@ -502,6 +516,9 @@ impl<'a> FlowGraphBuilder<'a> {
 
         self.current_flow = loop_label;
 
+        // Bug #2.1: Track assignments in condition expression
+        self.handle_expression_for_assignments(loop_data.condition);
+
         // Create flow for entering loop body
         let true_flow =
             self.create_flow_node(flow_flags::TRUE_CONDITION, loop_label, loop_data.condition);
@@ -554,6 +571,9 @@ impl<'a> FlowGraphBuilder<'a> {
 
         // Loop back to loop label (body always executes once)
         self.add_antecedent(loop_label, self.current_flow);
+
+        // Bug #2.1: Track assignments in condition expression
+        self.handle_expression_for_assignments(loop_data.condition);
 
         // Create flow for condition
         let pre_condition_flow = self.current_flow;
@@ -611,6 +631,9 @@ impl<'a> FlowGraphBuilder<'a> {
 
         // Handle condition if present
         if !loop_data.condition.is_none() {
+            // Bug #2.1: Track assignments in condition expression
+            self.handle_expression_for_assignments(loop_data.condition);
+
             let true_flow =
                 self.create_flow_node(flow_flags::TRUE_CONDITION, loop_label, loop_data.condition);
             self.current_flow = true_flow;
@@ -730,6 +753,9 @@ impl<'a> FlowGraphBuilder<'a> {
 
     /// Build flow graph for a switch statement.
     fn build_switch_statement(&mut self, switch_data: &crate::parser::node::SwitchData) {
+        // Bug #2.1: Track assignments in switch expression
+        self.handle_expression_for_assignments(switch_data.expression);
+
         let pre_switch_flow = self.current_flow;
 
         // Create branch label for end of switch

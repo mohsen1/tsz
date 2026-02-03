@@ -399,9 +399,10 @@ impl<'a> FlowAnalyzer<'a> {
                 // because the closure may capture the variable and it could be mutated.
                 // For const variables, narrowing is preserved (they're immutable).
                 if let Some(&ant) = flow.antecedent.first() {
-                    // Check if the reference is a mutable variable
-                    if self.is_mutable_variable(reference) {
-                        // Mutable variable - cannot use narrowing from outer scope
+                    // Bug #1.2 fix: Check if the reference is a CAPTURED mutable variable
+                    // Only reset narrowing for captured mutable variables, not local ones
+                    if self.is_mutable_variable(reference) && self.is_captured_variable(reference) {
+                        // Captured mutable variable - cannot use narrowing from outer scope
                         // Return the initial (declared) type instead of crossing boundary
                         initial_type
                     } else if !in_worklist.contains(&ant) && !visited.contains(&ant) {
@@ -413,7 +414,34 @@ impl<'a> FlowAnalyzer<'a> {
                         current_type
                     }
                 } else {
-                    current_type
+                    // Bug #4.1 fix: START node with no antecedents - try to find outer flow
+                    // This happens when entering a closure/function body
+                    // flow.node contains the function declaration node
+                    if !flow.node.is_none() {
+                        // Try to get the flow node where this function was declared
+                        if let Some(&outer_flow) = self.binder.node_flow.get(&flow.node.0) {
+                            // Bug #1.2 fix: Check if the reference is a CAPTURED mutable variable
+                            if self.is_mutable_variable(reference) && self.is_captured_variable(reference) {
+                                // Captured mutable variable - cannot use narrowing from outer scope
+                                // Return the initial (declared) type
+                                initial_type
+                            } else {
+                                // Const or immutable - preserve narrowing from outer scope
+                                // Add outer flow to worklist and continue traversal
+                                if !in_worklist.contains(&outer_flow) && !visited.contains(&outer_flow) {
+                                    worklist.push_back((outer_flow, current_type));
+                                    in_worklist.insert(outer_flow);
+                                }
+                                // Return result from outer flow if available, otherwise current_type
+                                *results.get(&outer_flow).unwrap_or(&current_type)
+                            }
+                        } else {
+                            // No outer flow found - use current type
+                            current_type
+                        }
+                    } else {
+                        current_type
+                    }
                 }
             } else {
                 // Default: continue to antecedent

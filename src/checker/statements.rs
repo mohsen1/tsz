@@ -242,6 +242,12 @@ impl StatementChecker {
                 let is_for_of = kind == syntax_kind_ext::FOR_OF_STATEMENT;
 
                 if let Some((expression, initializer, await_modifier, statement)) = for_data {
+                    // Bug #9: Check await_modifier is only used in async context
+                    // for-await-of requires async function context
+                    if await_modifier {
+                        state.check_await_expression(expression);
+                    }
+
                     // Determine the element type for the loop variable (for-of) or key type (for-in).
                     let expr_type = state.get_type_of_node(expression);
                     let loop_var_type = if is_for_of {
