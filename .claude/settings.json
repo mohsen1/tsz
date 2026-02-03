@@ -11,6 +11,17 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Reminder: commit and sync with main when work is done. use scripts/ask-gemini.mjs for what to do next if you are not sure'"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -29,6 +40,15 @@
           {
             "type": "command",
             "command": "osascript -e 'display notification \"Claude Code is waiting for your attention\" with title \"Claude Code\" sound name \"default\"'"
+          }
+        ]
+      },
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "Use scripts/ask-gemini.mjs to find out what to do next if you are not sure. Make sure to commit and sync with main when work is done."
           }
         ]
       }
