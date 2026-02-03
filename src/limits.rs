@@ -128,6 +128,21 @@ pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 /// Maximum constraint solving iterations during type inference.
 pub const MAX_CONSTRAINT_ITERATIONS: u32 = 100;
 
+/// Maximum types in best common type (BCT) algorithm before using heuristic bailout.
+///
+/// The BCT algorithm has O(N·D²) complexity where N is the number of types
+/// and D is the inheritance hierarchy depth. For large array literals, this becomes
+/// prohibitively expensive.
+///
+/// Threshold: 20 types
+/// Rationale:
+/// - Array literals with >20 distinct types are rare in practice
+/// - Falling back to Union is semantically correct and much faster
+/// - Prevents quadratic behavior that degrades from 1.31x to 3.84x
+///
+/// See: docs/todo/14_perf.md - "Generic Functions Scaling (3.84x → 1.31x degradation)"
+pub const BCT_BAILOUT_THRESHOLD: usize = 20;
+
 /// Maximum iterations for type unwrapping.
 pub const MAX_UNWRAP_ITERATIONS: u32 = 1_000;
 

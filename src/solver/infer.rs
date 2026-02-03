@@ -11,6 +11,7 @@
 //! - Efficient unification with path compression
 
 use crate::interner::Atom;
+use crate::limits::BCT_BAILOUT_THRESHOLD;
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -40,7 +41,7 @@ pub enum InferencePriority {
 }
 
 /// A candidate type for an inference variable.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InferenceCandidate {
     pub type_id: TypeId,
     pub priority: InferencePriority,
@@ -82,8 +83,22 @@ impl UnifyValue for InferenceInfo {
 
     fn unify_values(a: &Self, b: &Self) -> Result<Self, Self::Error> {
         let mut merged = a.clone();
-        merged.candidates.extend(b.candidates.iter().cloned());
-        merged.upper_bounds.extend(b.upper_bounds.iter().copied());
+
+        // Deduplicate candidates to prevent exponential growth in constraint lists
+        // This improves performance for complex generic type inference
+        for candidate in &b.candidates {
+            if !merged.candidates.contains(candidate) {
+                merged.candidates.push(candidate.clone());
+            }
+        }
+
+        // Deduplicate upper bounds
+        for bound in &b.upper_bounds {
+            if !merged.upper_bounds.contains(bound) {
+                merged.upper_bounds.push(*bound);
+            }
+        }
+
         if merged.resolved.is_none() {
             merged.resolved = b.resolved;
         }
@@ -1271,6 +1286,14 @@ impl<'a> InferenceContext<'a> {
     fn find_common_base_class(&self, types: &[TypeId]) -> Option<TypeId> {
         // Only applicable if we have at least 2 types
         if types.len() < 2 {
+            return None;
+        }
+
+        // HEURISTIC: Bail out for large arrays to prevent O(N·D²) behavior
+        // If we have > BCT_BAILOUT_THRESHOLD distinct types in an array literal,
+        // falling back to Union is semantically correct and much faster.
+        // See: docs/todo/14_perf.md - "Generic Functions Scaling (3.84x → 1.31x degradation)"
+        if types.len() > BCT_BAILOUT_THRESHOLD {
             return None;
         }
 
