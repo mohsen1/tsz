@@ -9122,10 +9122,8 @@ const arrow = (...items) => items;
 }
 
 #[test]
-#[ignore = "TODO: Lib file loading infrastructure - global types not found. The embedded_libs feature should provide Array, Boolean, etc. but SHARED_LIB_CONTEXTS may not be initialized correctly in tests."]
 fn test_checker_lowers_element_access_array() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 const arr: number[] = [1, 2];
@@ -9135,19 +9133,8 @@ const value = arr[0];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types (Array, etc.)
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9158,17 +9145,7 @@ const value = arr[0];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9234,10 +9211,8 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
 }
 
 #[test]
-#[ignore = "TODO: Lib file loading infrastructure - global types not found. The embedded_libs feature should provide Array, Boolean, etc. but SHARED_LIB_CONTEXTS may not be initialized correctly in tests."]
 fn test_checker_lowers_element_access_tuple_literals() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 const tup: [string, number] = ["a", 1];
@@ -9248,19 +9223,8 @@ const second = tup[1];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types (Array, etc.)
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9271,17 +9235,7 @@ const second = tup[1];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9362,11 +9316,9 @@ const value = arr[0];
 }
 
 #[test]
-#[ignore = "TODO: Lib file loading infrastructure - global types not found. The embedded_libs feature should provide Array, Boolean, etc. but SHARED_LIB_CONTEXTS may not be initialized correctly in tests."]
 fn test_checker_tuple_optional_element_access_includes_undefined() {
     use crate::parser::ParserState;
     use crate::solver::{TypeId, TypeKey};
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 const tup: [string?] = ["a"];
@@ -9376,19 +9328,8 @@ const first = tup[0];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types (Array, etc.)
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9399,17 +9340,7 @@ const first = tup[0];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9431,10 +9362,8 @@ const first = tup[0];
 }
 
 #[test]
-#[ignore = "TODO: Lib file loading infrastructure - global types not found. The embedded_libs feature should provide Array, Boolean, etc. but SHARED_LIB_CONTEXTS may not be initialized correctly in tests."]
 fn test_checker_lowers_element_access_string_literal_property() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 const obj = { x: 1, y: "hi" };
@@ -9444,19 +9373,8 @@ const value = obj["x"];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9467,17 +9385,7 @@ const value = obj["x"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9554,10 +9462,8 @@ const length = arr["length"];
 }
 
 #[test]
-#[ignore = "TODO: Lib file loading infrastructure - global types not found. The embedded_libs feature should provide Array, Boolean, etc. but SHARED_LIB_CONTEXTS may not be initialized correctly in tests."]
 fn test_checker_lowers_element_access_numeric_string_index() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 const arr: number[] = [1, 2];
@@ -9567,19 +9473,8 @@ const value = arr["0"];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types (Array, etc.)
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9590,17 +9485,7 @@ const value = arr["0"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9614,10 +9499,8 @@ const value = arr["0"];
 }
 
 #[test]
-#[ignore = "TODO: Lib file loading infrastructure - global types not found. The embedded_libs feature should provide Array, Boolean, etc. but SHARED_LIB_CONTEXTS may not be initialized correctly in tests."]
 fn test_checker_lowers_element_access_string_index_signature() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 interface StringMap {
@@ -9630,19 +9513,8 @@ const value = map["foo"];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9653,17 +9525,7 @@ const value = map["foo"];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
@@ -9677,10 +9539,8 @@ const value = map["foo"];
 }
 
 #[test]
-#[ignore = "TODO: Lib file loading infrastructure - global types not found. The embedded_libs feature should provide Array, Boolean, etc. but SHARED_LIB_CONTEXTS may not be initialized correctly in tests."]
 fn test_checker_lowers_element_access_number_index_signature() {
     use crate::parser::ParserState;
-    use crate::test_fixtures::load_lib_files_for_test;
 
     let source = r#"
 interface NumberMap {
@@ -9693,19 +9553,8 @@ const value = map[1];
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    // Load lib files for global types
-    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
+    merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -9716,17 +9565,7 @@ const value = map[1];
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
-    // Set lib contexts for global type resolution
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
+    setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
     assert!(
         checker.ctx.diagnostics.is_empty(),
