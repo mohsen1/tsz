@@ -135,6 +135,19 @@ impl ParserState {
             }
         }
 
+        // TS1070: 'async' modifier cannot appear on a type member
+        // Check if async is being used as a modifier (not as a property name)
+        if self.is_token(SyntaxKind::AsyncKeyword) && !self.look_ahead_is_property_name_after_keyword() {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "'async' modifier cannot appear on a type member.",
+                diagnostic_codes::ASYNC_MODIFIER_CANNOT_APPEAR_ON_TYPE_MEMBER,
+            );
+            // Consume the async keyword and continue parsing
+            self.next_token();
+            // After async, we likely have a method signature - continue parsing normally
+        }
+
         // Handle generic call signature: <T>(): returnType
         if self.is_token(SyntaxKind::LessThanToken) {
             return self.parse_call_signature(start_pos);
