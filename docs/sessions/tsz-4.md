@@ -2,16 +2,20 @@
 
 ## Current Work
 
-**Investigating more ignored tests to fix**
+*No active work*
 
-Ran `cargo nextest run --run-ignored all` and found:
-- 7874 passing ignored tests (can be unignored!)
-- 192 failing ignored tests (need investigation/fixing)
+---
 
-Looking for tractable test failures to fix, particularly those related to:
-- Error reporting configuration issues
-- Simple test expectation updates
-- Missing flags or setup
+## Session Status
+
+**Latest ignored test count**: 7875 passing, 191 failing (up from 7874 passing, 192 failing)
+
+Most remaining ignored tests require:
+- Complex feature implementation (e.g., weak type detection - TS2559)
+- Control flow analysis fixes
+- Symbol resolution improvements
+
+The easy configuration/flag fixes have been addressed.
 
 ---
 
