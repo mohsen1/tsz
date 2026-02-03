@@ -2914,7 +2914,6 @@ declare module "foo" {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_missing_identifier_emits_2304() {
     use crate::parser::ParserState;
 
@@ -2938,6 +2937,7 @@ let x = MissingName;
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31885,7 +31885,6 @@ const numberBox: Box<number> = { value: "hello" };
 
 /// Test that TS2304 is emitted for an undeclared variable in a function call argument.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_var_in_function_call() {
     use crate::parser::ParserState;
 
@@ -31910,6 +31909,7 @@ foo(undeclaredArg);
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31922,7 +31922,6 @@ foo(undeclaredArg);
 
 /// Test that TS2304 is emitted for an undeclared variable in a binary expression.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_var_in_binary_expression() {
     use crate::parser::ParserState;
 
@@ -31946,6 +31945,7 @@ const result = undeclaredValue + 1;
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31958,7 +31958,6 @@ const result = undeclaredValue + 1;
 
 /// Test that TS2304 is emitted for a variable used outside its block scope.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_out_of_scope_block_variable() {
     use crate::parser::ParserState;
 
@@ -31987,6 +31986,7 @@ function test() {
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -31999,7 +31999,6 @@ function test() {
 
 /// Test that TS2304 is emitted for a typo in a variable name with suggestions (TS2552).
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_typo_with_suggestion() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -32025,6 +32024,7 @@ const result = myVarible + 1;
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -32040,7 +32040,6 @@ const result = myVarible + 1;
 
 /// Test that TS2304 is emitted for an undeclared variable in a return statement.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_var_in_return() {
     use crate::parser::ParserState;
 
@@ -32066,6 +32065,7 @@ function getValue(): number {
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -32078,7 +32078,6 @@ function getValue(): number {
 
 /// Test that TS2304 is emitted for undeclared variable in array spread.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_var_in_array_spread() {
     use crate::parser::ParserState;
 
@@ -32102,6 +32101,7 @@ const arr = [1, 2, ...undeclaredArray];
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -32114,7 +32114,6 @@ const arr = [1, 2, ...undeclaredArray];
 
 /// Test that TS2304 is emitted for undeclared variable in object property value.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_var_in_object_literal() {
     use crate::parser::ParserState;
 
@@ -32141,6 +32140,7 @@ const obj = {
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -32153,7 +32153,6 @@ const obj = {
 
 /// Test that TS2304 is emitted for undeclared variable in conditional (ternary) expression.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_var_in_conditional() {
     use crate::parser::ParserState;
 
@@ -32177,6 +32176,7 @@ const result = true ? undeclaredTrue : 0;
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -32189,7 +32189,6 @@ const result = true ? undeclaredTrue : 0;
 
 /// Test that TS2304 is emitted for undeclared class in extends clause.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_class_in_extends() {
     use crate::parser::ParserState;
 
@@ -32213,6 +32212,7 @@ class Child extends MissingParent {}
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -32225,7 +32225,6 @@ class Child extends MissingParent {}
 
 /// Test that TS2304 is emitted for undeclared interface in implements clause.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_interface_in_implements() {
     use crate::parser::ParserState;
 
@@ -32249,6 +32248,7 @@ class MyClass implements MissingInterface {}
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -32261,7 +32261,6 @@ class MyClass implements MissingInterface {}
 
 /// Test that TS2304 is emitted for undeclared variable in template literal expression.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_var_in_template_literal() {
     use crate::parser::ParserState;
 
@@ -32285,6 +32284,7 @@ const msg = `Hello ${undeclaredName}!`;
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -32297,7 +32297,6 @@ const msg = `Hello ${undeclaredName}!`;
 
 /// Test that TS2304 is emitted for undeclared variable in for-of loop.
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_ts2304_undeclared_var_in_for_of() {
     use crate::parser::ParserState;
 
@@ -32323,6 +32322,7 @@ for (const item of undeclaredIterable) {
         crate::checker::context::CheckerOptions::default(),
     );
     setup_lib_contexts(&mut checker);
+    checker.ctx.report_unresolved_imports = true;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
