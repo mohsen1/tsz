@@ -71,7 +71,7 @@ pub fn compile_test(
     let tsconfig_path = dir_path.join("tsconfig.json");
     let tsconfig_content = serde_json::json!({
         "compilerOptions": convert_options_to_tsconfig(options),
-        "include": ["./**/*.ts", "./**/*.tsx"],
+        "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
         "exclude": ["node_modules"]
     });
 
@@ -141,16 +141,18 @@ fn compile_tsz_with_binary(
         .arg("false")
         .output()?;
 
-    // Parse diagnostics from stderr
+    // Parse diagnostics from stderr and stdout
     // This is a simplified version - real implementation would need to parse
     // the error output to extract diagnostic codes
     if output.status.success() {
         Ok(Vec::new())
     } else {
-        // Parse error codes from stderr
+        // Parse error codes from both stdout and stderr
         // Format: "file.ts(1,1): error TS2304: Cannot find name 'foo'"
+        let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let diagnostics = parse_diagnostics_from_text(&stderr);
+        let combined = format!("{}\n{}", stdout, stderr);
+        let diagnostics = parse_diagnostics_from_text(&combined);
         Ok(diagnostics)
     }
 }
