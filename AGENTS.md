@@ -10,6 +10,21 @@ Use `./scripts/ask-gemini.mjs` to ask architecture and implementation questions.
 - if working on test, embed the failing test in your question
 - if Gemini requests more files, repeat the question with the requested files
 
+## CRITICAL: Keep working, don't get blocked or stop
+
+Your goal is to keep making progress. If you get stuck, do not stop. Instead:
+- Ask Gemini for help
+- Review related code and docs for insights
+- Make incremental improvements or refactors that move the project forward
+- Document your questions and findings for future reference
+
+## Use Skills
+- Use reasoning, planning, and coding skills
+- Use code analysis skills to understand existing code
+- Use debugging skills to trace and fix issues
+- Use testing skills to write effective tests
+- Use documentation skills to read and write docs
+
 ## Required Reading
 
 Before making changes, read these docs:
@@ -64,23 +79,16 @@ cargo nextest run
 # Quick test (fail-fast, 10s timeout)
 cargo nextest run --profile quick
 
-# Conformance tests (fast iteration)
+# Conformance tests 
 ./scripts/conformance/run.sh --server --max=1000
-
-# Conformance tests (verify WASM)
-./scripts/conformance/run.sh --wasm --max=1000
 
 # Linting
 cargo clippy -- -D warnings
+
+# Format code
+cargo fmt
 ```
 
-## Pre-commit Hooks
-
-Installed automatically on first `cargo build`. Run:
-1. TypeScript submodule check (blocks changes to `TypeScript/`)
-2. `cargo fmt`
-3. `cargo clippy --fix`
-4. Unit tests
 
 ## Testing Requirements
 
@@ -108,22 +116,16 @@ Installed automatically on first `cargo build`. Run:
 ## When Is Work Done?
 
 - All unit tests pass
-- Zero clippy warnings
+- Zero clippy warnings and `cargo fmt` compliance
 - Conformance doesn't drop significantly
-- Type logic is in Solver, not Checker
-- Visitor pattern used (no manual `TypeKey` matches)
 - **New code has corresponding tests**
 - **No new `#[ignore]` annotations added**
 
-## AI Tools
-
-For deep architecture questions: `./scripts/ask-gemini.mjs --solver "your question"`
-
-Available presets: `--solver`, `--checker`, `--binder`, `--parser`, `--emitter`, `--lsp`, `--types`, `--modules`
-
 ## Git
 
-- Only add files you touched 
+- Commit frequently with clear messages
+- Push branches to remote regularly and rebase from main before and after each comm`
+- Only add files you touched, do not `git add -A`
 - There is a chance another AI session is working on the same codebase. do not revert/delete
 - Make semantic and short commit headers
 
@@ -135,24 +137,3 @@ Available presets: `--solver`, `--checker`, `--binder`, `--parser`, `--emitter`,
 | TypeScript compatibility quirks | [docs/specs/TS_UNSOUNDNESS_CATALOG.md](docs/specs/TS_UNSOUNDNESS_CATALOG.md) |
 | Diagnostic guidelines | [docs/specs/DIAGNOSTICS.md](docs/specs/DIAGNOSTICS.md) |
 | Performance benchmarks | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
-
-
-Use the following sequence to get things done:
-
-1. Look at docs/todo for list to To-dos. 
-2. Run ./scripts/conformance/run.sh to get a good pictue of what's failing
-3. Pick the highest-impact task and execute it. Prefer "the biggest bang for the buck". Goal is to improve conformance pass rate
-4. Use scripts/ask-gemini.mjs to ask a few questions from various angles to help you write code
-5. Write code with full respect for the existing codebase and architecture. Always check with documentation and architecture.
-6. Use ask-gemini for a code review.
-7. Verify with `./scripts/conformance/run.sh`, mark done work in todo documents, commit and push.
-
-### IMPORTANT:
-- ALWAYS USE ask-gemini.mjs to ask questions. Non-negotiable.
-- DO NOT ask questions from me (the user) - make autonomous decisions and start working immediately
-- Read docs/architecture and docs/walkthrough to understand how things should be done
-- Do not let a file size get too large. If it does, split it into smaller files. Keep files under ~3000 lines.
-- Use Skills 
-  - rust-analyzer-lsp
-  - code-simplifier
-  - rust-skills
