@@ -737,6 +737,17 @@ impl ParserState {
                         diagnostic_codes::AWAIT_IN_STATIC_BLOCK,
                     );
                     // Fall through to parse as await expression
+                } else if !self.in_async_context()
+                    && has_following_expression
+                    && !self.in_parameter_default_context()
+                {
+                    // TS1359: await expression outside async function (general case)
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "An 'await' expression is only allowed within an async function.",
+                        diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
+                    );
+                    // Fall through to parse as await expression
                 } else if !self.in_async_context() || self.in_parameter_default_context() {
                     // In parameter default context of non-async functions, 'await' should always be treated as identifier
                     if self.in_parameter_default_context() && !self.in_async_context() {

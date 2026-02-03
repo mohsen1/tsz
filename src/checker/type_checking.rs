@@ -965,16 +965,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // If this is an await expression, check if we're in async context
-            if node.kind == syntax_kind_ext::AWAIT_EXPRESSION && !self.ctx.in_async_context() {
-                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    current_idx,
-                    diagnostic_messages::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
-                    diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
-                );
-            }
-
             // Push child expressions onto stack for iterative processing
             match node.kind {
                 syntax_kind_ext::BINARY_EXPRESSION => {
