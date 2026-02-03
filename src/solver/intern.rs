@@ -489,6 +489,7 @@ impl TypeInterner {
         self.mapped_types.get(id.0).unwrap_or_else(|| {
             Arc::new(MappedType {
                 type_param: TypeParamInfo {
+                    is_const: false,
                     name: self.intern_string("_"),
                     constraint: None,
                     default: None,
