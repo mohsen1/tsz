@@ -1528,3 +1528,80 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.allow_synthetic_default_imports
     }
 }
+
+// =============================================================================
+// TypeResolver Implementation for Lazy Type Resolution
+// =============================================================================
+
+/// Implement TypeResolver for CheckerContext to support Lazy type resolution.
+///
+/// This enables ApplicationEvaluator to resolve TypeKey::Lazy(DefId) references
+/// by looking up the cached type for a symbol. The cache is populated during
+/// type checking when get_type_of_symbol() is called.
+///
+/// **Architecture Note:**
+/// - resolve_lazy() is read-only (looks up from cache)
+/// - Cache is populated by CheckerState::get_type_of_symbol() before Application evaluation
+/// - This separation keeps the solver layer (ApplicationEvaluator) independent of checker logic
+impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
+    /// Resolve a symbol reference to its cached type (deprecated).
+    ///
+    /// Phase 4.2: TypeKey::Ref is removed, but we keep this for compatibility.
+    /// Converts SymbolRef to SymbolId and looks up in cache.
+    #[allow(deprecated)]
+    fn resolve_ref(
+        &self,
+        symbol: crate::solver::types::SymbolRef,
+        _interner: &dyn crate::solver::TypeDatabase,
+    ) -> Option<crate::solver::TypeId> {
+        let sym_id = crate::binder::SymbolId(symbol.0);
+        self.symbol_types.get(&sym_id).copied()
+    }
+
+    /// Resolve a DefId to its cached type.
+    ///
+    /// This looks up the type from the symbol_types cache, which is populated
+    /// during type checking. Returns None if the symbol hasn't been resolved yet.
+    ///
+    /// **Callers should ensure get_type_of_symbol() is called first** to populate
+    /// the cache before calling resolve_lazy().
+    fn resolve_lazy(
+        &self,
+        def_id: crate::solver::DefId,
+        _interner: &dyn crate::solver::TypeDatabase,
+    ) -> Option<crate::solver::TypeId> {
+        // Convert DefId to SymbolId using the reverse mapping
+        if let Some(sym_id) = self.def_to_symbol_id(def_id) {
+            // Look up the cached type for this symbol
+            self.symbol_types.get(&sym_id).copied()
+        } else {
+            None
+        }
+    }
+
+    /// Get type parameters for a symbol reference (deprecated).
+    ///
+    /// Type parameters are embedded in the type itself rather than stored separately.
+    #[allow(deprecated)]
+    fn get_type_params(
+        &self,
+        _symbol: crate::solver::types::SymbolRef,
+    ) -> Option<Vec<crate::solver::TypeParamInfo>> {
+        None
+    }
+
+    /// Get type parameters for a Lazy type.
+    ///
+    /// Type parameters are embedded in the type itself (Callable, Interface, etc.)
+    /// rather than stored separately. The ApplicationEvaluator extracts them from
+    /// the resolved body type, so this returns None.
+    fn get_lazy_type_params(
+        &self,
+        _def_id: crate::solver::DefId,
+    ) -> Option<Vec<crate::solver::TypeParamInfo>> {
+        // Type parameters are extracted from the resolved type's shape
+        // (Callable.type_params, Interface.type_params, etc.)
+        // rather than stored separately in the resolver.
+        None
+    }
+}
