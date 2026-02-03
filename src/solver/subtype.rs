@@ -14,6 +14,7 @@ use crate::limits;
 use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
 use crate::solver::db::QueryDatabase;
+use crate::binder::SymbolId;
 use crate::solver::def::DefId;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
@@ -92,6 +93,10 @@ impl AnyPropagationMode {
 pub trait TypeResolver {
     /// Resolve a symbol reference to its structural type.
     /// Returns None if the symbol cannot be resolved.
+    ///
+    /// **Phase 3.4**: Deprecated - use `resolve_lazy` with DefId instead.
+    /// This method is being phased out as part of the migration to DefId-based type identity.
+    #[deprecated(note = "Use resolve_lazy with DefId instead. This method is being phased out as part of Issue #12.")]
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId>;
 
     /// Resolve a DefId reference to its structural type.
@@ -117,6 +122,28 @@ pub trait TypeResolver {
     /// Returns None by default; implementations can override to support
     /// Application type expansion with Lazy types.
     fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        None
+    }
+
+    /// Get the SymbolId for a DefId (Phase 3.2: bridge for InheritanceGraph).
+    ///
+    /// This enables DefId-based types to use the existing O(1) InheritanceGraph
+    /// by mapping DefIds back to their corresponding SymbolIds. The mapping is
+    /// maintained by the Binder/Checker during type resolution.
+    ///
+    /// Returns None if the DefId doesn't have a corresponding SymbolId.
+    fn def_to_symbol_id(&self, _def_id: DefId) -> Option<SymbolId> {
+        None
+    }
+
+    /// Get the DefId for a SymbolRef (Phase 3.4: Ref -> Lazy migration).
+    ///
+    /// This enables migrating Ref(SymbolRef) types to Lazy(DefId) resolution logic.
+    /// When a SymbolRef has a corresponding DefId, we should use resolve_lazy instead
+    /// of resolve_ref for consistent type identity.
+    ///
+    /// Returns None if the SymbolRef doesn't have a corresponding DefId.
+    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
         None
     }
 
@@ -167,6 +194,10 @@ impl TypeResolver for NoopResolver {
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None
     }
+
+    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
+        None
+    }
 }
 
 /// A type environment that maps symbol refs to their resolved types.
@@ -190,6 +221,14 @@ pub struct TypeEnvironment {
     def_types: std::collections::HashMap<u32, TypeId>,
     /// Maps DefIds to their type parameters (for generic types with Lazy refs).
     def_type_params: std::collections::HashMap<u32, Vec<TypeParamInfo>>,
+    /// Maps DefIds back to SymbolIds for InheritanceGraph lookups (Phase 3.2).
+    /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
+    /// by mapping DefIds back to their corresponding SymbolIds.
+    def_to_symbol: std::collections::HashMap<u32, SymbolId>,
+    /// Maps SymbolIds to DefIds for Ref -> Lazy migration (Phase 3.4).
+    /// This reverse mapping enables migrating Ref(SymbolRef) types to use
+    /// DefId-based resolution via resolve_lazy instead of resolve_ref.
+    symbol_to_def: std::collections::HashMap<u32, DefId>,
 }
 
 impl TypeEnvironment {
@@ -202,6 +241,8 @@ impl TypeEnvironment {
             array_base_type_params: Vec::new(),
             def_types: std::collections::HashMap::new(),
             def_type_params: std::collections::HashMap::new(),
+            def_to_symbol: std::collections::HashMap::new(),
+            symbol_to_def: std::collections::HashMap::new(),
         }
     }
 
@@ -313,6 +354,23 @@ impl TypeEnvironment {
     pub fn contains_def(&self, def_id: DefId) -> bool {
         self.def_types.contains_key(&def_id.0)
     }
+
+    // =========================================================================
+    // DefId <-> SymbolId Bridge (Phase 3.2, 3.4)
+    // =========================================================================
+
+    /// Register a mapping from DefId to SymbolId for InheritanceGraph lookups.
+    ///
+    /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
+    /// by mapping DefIds back to their corresponding SymbolIds. The mapping
+    /// is maintained by the Binder/Checker during type resolution.
+    ///
+    /// Phase 3.4: Also registers the reverse mapping (SymbolId -> DefId) to support
+    /// migrating Ref types to DefId resolution.
+    pub fn register_def_symbol_mapping(&mut self, def_id: DefId, sym_id: SymbolId) {
+        self.def_to_symbol.insert(def_id.0, sym_id);
+        self.symbol_to_def.insert(sym_id.0, def_id); // Populate reverse map
+    }
 }
 
 impl TypeResolver for TypeEnvironment {
@@ -343,6 +401,14 @@ impl TypeResolver for TypeEnvironment {
     fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         TypeEnvironment::get_array_base_type_params(self)
     }
+
+    fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
+        self.def_to_symbol.get(&def_id.0).copied()
+    }
+
+    fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
+        self.symbol_to_def.get(&symbol.0).copied()
+    }
 }
 
 /// Maximum number of unique type pairs to track in cycle detection.
@@ -363,6 +429,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// This catches cycles in Ref types before they're resolved, preventing
     /// infinite expansion of recursive type aliases and interfaces.
     pub(crate) seen_refs: HashSet<(SymbolRef, SymbolRef)>,
+    /// Active DefId pairs being checked (for DefId-level cycle detection)
+    /// Phase 3.1: Catches cycles in Lazy(DefId) types before they're resolved.
+    /// This mirrors seen_refs but for the new DefId-based type identity system.
+    pub(crate) seen_defs: HashSet<(DefId, DefId)>,
     /// Current recursion depth (for stack overflow prevention)
     pub(crate) depth: u32,
     /// Total number of check_subtype calls (iteration limit)
@@ -415,6 +485,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             resolver: &NOOP,
             in_progress: HashSet::new(),
             seen_refs: HashSet::new(),
+            seen_defs: HashSet::new(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,
@@ -442,6 +513,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             resolver,
             in_progress: HashSet::new(),
             seen_refs: HashSet::new(),
+            seen_defs: HashSet::new(),
             depth: 0,
             total_checks: 0,
             depth_exceeded: false,
@@ -503,9 +575,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     pub(crate) fn resolve_ref_type(&self, type_id: TypeId) -> TypeId {
         if let Some(symbol) = ref_symbol(self.interner, type_id) {
-            self.resolver
-                .resolve_ref(symbol, self.interner)
-                .unwrap_or(type_id)
+            if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
+                self.resolver
+                    .resolve_lazy(def_id, self.interner)
+                    .unwrap_or(type_id)
+            } else {
+                #[allow(deprecated)]
+                self.resolver
+                    .resolve_ref(symbol, self.interner)
+                    .unwrap_or(type_id)
+            }
         } else {
             type_id
         }
@@ -1072,35 +1151,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_source_to_mapped_expansion(source, target, mapped_id);
         }
 
-        if let (Some(s_sym), Some(t_sym)) = (
-            ref_symbol(self.interner, source),
-            ref_symbol(self.interner, target),
-        ) {
-            return self.check_ref_ref_subtype(source, target, &s_sym, &t_sym);
-        }
-
-        if let Some(s_sym) = ref_symbol(self.interner, source) {
-            return self.check_ref_subtype(source, target, &s_sym);
-        }
-
-        if let Some(t_sym) = ref_symbol(self.interner, target) {
-            return self.check_to_ref_subtype(source, target, &t_sym);
-        }
+        // =======================================================================
+        // PHASE 3.2: PRIORITIZE DefId (Lazy) OVER SymbolRef (Ref)
+        // =======================================================================
+        // We now check Lazy(DefId) types before Ref(SymbolRef) types to establish
+        // DefId as the primary type identity system. The InheritanceGraph bridge
+        // enables Lazy types to use O(1) nominal subtype checking.
+        // =======================================================================
 
         if let (Some(s_def), Some(t_def)) = (
             lazy_def_id(self.interner, source),
             lazy_def_id(self.interner, target),
         ) {
-            if s_def == t_def {
-                return SubtypeResult::True;
-            }
-            let s_resolved = self.resolve_lazy_type(source);
-            let t_resolved = self.resolve_lazy_type(target);
-            return if s_resolved != source || t_resolved != target {
-                self.check_subtype(s_resolved, t_resolved)
-            } else {
-                SubtypeResult::False
-            };
+            // Phase 3.1: Use proper DefId-level cycle detection
+            // Phase 3.2: Now checked before Ref types (priority)
+            return self.check_lazy_lazy_subtype(source, target, &s_def, &t_def);
         }
 
         if lazy_def_id(self.interner, source).is_some() {
@@ -1119,6 +1184,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 SubtypeResult::False
             };
+        }
+
+        // =======================================================================
+        // Ref(SymbolRef) checks - now secondary to Lazy(DefId)
+        // =======================================================================
+
+        if let (Some(s_sym), Some(t_sym)) = (
+            ref_symbol(self.interner, source),
+            ref_symbol(self.interner, target),
+        ) {
+            return self.check_ref_ref_subtype(source, target, &s_sym, &t_sym);
+        }
+
+        if let Some(s_sym) = ref_symbol(self.interner, source) {
+            return self.check_ref_subtype(source, target, &s_sym);
+        }
+
+        if let Some(t_sym) = ref_symbol(self.interner, target) {
+            return self.check_to_ref_subtype(source, target, &t_sym);
         }
 
         if let (Some((s_obj, s_idx)), Some((t_obj, t_idx))) = (

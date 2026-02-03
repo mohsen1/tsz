@@ -15,6 +15,7 @@ use crate::checker::types::diagnostics::Diagnostic;
 use crate::common::ModuleKind;
 use crate::parser::NodeIndex;
 use crate::solver::def::{DefId, DefinitionStore};
+use crate::solver::types::SymbolRef;
 use crate::solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId};
 
 /// Compiler options for type checking.
@@ -1002,9 +1003,39 @@ impl<'a> CheckerContext<'a> {
         self.types.intern(TypeKey::Lazy(def_id))
     }
 
+    /// Convert TypeKey::Ref to TypeKey::Lazy(DefId) if needed (Phase 1 migration).
+    ///
+    /// This post-processes a TypeId created by TypeLowering. If the type is
+    /// TypeKey::Ref(SymbolRef), this creates a corresponding TypeKey::Lazy(DefId)
+    /// for the same symbol. This enables gradual migration from SymbolRef to DefId.
+    ///
+    /// **Pattern:** TypeLowering creates Ref → post-process → returns Lazy
+    ///
+    /// This avoids the Fn/FnMut problem with resolver closures by creating
+    /// DefIds after TypeLowering completes (when &mut self is available).
+    pub fn maybe_create_lazy_from_resolved(&mut self, type_id: TypeId) -> TypeId {
+        use crate::solver::TypeKey;
+
+        if let Some(TypeKey::Ref(SymbolRef(sym_ref))) = self.types.lookup(type_id) {
+            let sym_id = SymbolId(sym_ref);
+            let def_id = self.get_or_create_def_id(sym_id);
+            return self.types.intern(TypeKey::Lazy(def_id));
+        }
+        type_id
+    }
+
     /// Look up the SymbolId for a DefId (reverse mapping).
     pub fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
         self.def_to_symbol.get(&def_id).copied()
+    }
+
+    /// Look up an existing DefId for a symbol without creating a new one.
+    ///
+    /// Returns None if the symbol doesn't have a DefId yet.
+    /// This is used by the DefId resolver in TypeLowering to prefer
+    /// DefId when available but fall back to SymbolRef otherwise.
+    pub fn get_existing_def_id(&self, sym_id: SymbolId) -> Option<DefId> {
+        self.symbol_to_def.get(&sym_id).copied()
     }
 
     /// Register a resolved type in the TypeEnvironment for both SymbolRef and DefId.
@@ -1037,6 +1068,10 @@ impl<'a> CheckerContext<'a> {
                 } else {
                     env.insert_def_with_params(def_id, type_id, type_params);
                 }
+
+                // Register mapping for InheritanceGraph bridge (Phase 3.2)
+                // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
+                env.register_def_symbol_mapping(def_id, sym_id);
             }
         }
     }

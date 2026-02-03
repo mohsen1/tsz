@@ -11,6 +11,7 @@ use crate::parser::base::NodeIndex;
 use crate::parser::node::{IndexSignatureData, NodeArena, SignatureData, TypeAliasData};
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
+use crate::solver::def::DefId;
 use crate::solver::subtype::{SubtypeChecker, TypeResolver};
 use crate::solver::types::*;
 use crate::solver::{QueryDatabase, TypeDatabase};
@@ -31,6 +32,9 @@ pub struct TypeLowering<'a> {
     /// Optional type resolver - resolves identifier nodes to SymbolIds.
     /// If provided, this enables correct abstract class detection.
     type_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<u32>>,
+    /// Optional DefId resolver - resolves identifier nodes to DefIds.
+    /// Phase 1 migration path from SymbolRef to DefId for type identity.
+    def_id_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<DefId>>,
     /// Optional value resolver for typeof queries.
     value_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<u32>>,
     type_param_scopes: RefCell<Vec<Vec<(Atom, TypeId)>>>,
@@ -188,6 +192,7 @@ impl<'a> TypeLowering<'a> {
             arena,
             interner: interner.as_type_database(),
             type_resolver: None,
+            def_id_resolver: None,
             value_resolver: None,
             type_param_scopes: RefCell::new(Vec::new()),
             operations: RefCell::new(0),
@@ -206,6 +211,7 @@ impl<'a> TypeLowering<'a> {
             arena,
             interner: interner.as_type_database(),
             type_resolver: Some(resolver),
+            def_id_resolver: None,
             value_resolver: Some(resolver),
             type_param_scopes: RefCell::new(Vec::new()),
             operations: RefCell::new(0),
@@ -224,6 +230,53 @@ impl<'a> TypeLowering<'a> {
             arena,
             interner: interner.as_type_database(),
             type_resolver: Some(type_resolver),
+            def_id_resolver: None,
+            value_resolver: Some(value_resolver),
+            type_param_scopes: RefCell::new(Vec::new()),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
+        }
+    }
+
+    /// Create a TypeLowering with a DefId resolver (Phase 1 migration).
+    ///
+    /// This is the migration path from SymbolRef to DefId for type identity.
+    /// The DefId resolver resolves identifier nodes to Solver-owned DefIds
+    /// instead of Binder-owned SymbolIds.
+    pub fn with_def_id_resolver(
+        arena: &'a NodeArena,
+        interner: &'a dyn QueryDatabase,
+        def_id_resolver: &'a dyn Fn(NodeIndex) -> Option<DefId>,
+        value_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
+    ) -> Self {
+        TypeLowering {
+            arena,
+            interner: interner.as_type_database(),
+            type_resolver: None,
+            def_id_resolver: Some(def_id_resolver),
+            value_resolver: Some(value_resolver),
+            type_param_scopes: RefCell::new(Vec::new()),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
+        }
+    }
+
+    /// Create a TypeLowering with both type and DefId resolvers (Phase 2 migration).
+    ///
+    /// This allows TypeLowering to prefer DefId when available, but fall back
+    /// to SymbolId for types that don't have a DefId yet.
+    pub fn with_hybrid_resolver(
+        arena: &'a NodeArena,
+        interner: &'a dyn QueryDatabase,
+        type_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
+        def_id_resolver: &'a dyn Fn(NodeIndex) -> Option<DefId>,
+        value_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
+    ) -> Self {
+        TypeLowering {
+            arena,
+            interner: interner.as_type_database(),
+            type_resolver: Some(type_resolver),
+            def_id_resolver: Some(def_id_resolver),
             value_resolver: Some(value_resolver),
             type_param_scopes: RefCell::new(Vec::new()),
             operations: RefCell::new(0),
@@ -241,6 +294,7 @@ impl<'a> TypeLowering<'a> {
             arena,
             interner: self.interner,
             type_resolver: self.type_resolver,
+            def_id_resolver: self.def_id_resolver,
             value_resolver: self.value_resolver,
             // Clone the RefCells to share state across arenas
             type_param_scopes: self.type_param_scopes.clone(),
@@ -351,6 +405,14 @@ impl<'a> TypeLowering<'a> {
     /// Resolve a node to a type symbol ID if a resolver is provided.
     fn resolve_type_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         self.type_resolver.and_then(|resolver| resolver(node_idx))
+    }
+
+    /// Resolve a node to a DefId if a DefId resolver is provided.
+    ///
+    /// Phase 1: This is the migration path from SymbolRef to DefId.
+    /// DefIds are Solver-owned identifiers that don't require Binder context.
+    fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
+        self.def_id_resolver.and_then(|resolver| resolver(node_idx))
     }
 
     /// Resolve a node to a value symbol ID if a resolver is provided.
@@ -2230,6 +2292,11 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a qualified name type (A.B).
     fn lower_qualified_name_type(&self, node_idx: NodeIndex) -> TypeId {
+        // Phase 2: Prefer DefId over SymbolId for type identity
+        if let Some(def_id) = self.resolve_def_id(node_idx) {
+            return self.interner.intern(TypeKey::Lazy(def_id));
+        }
+        // Fall back to SymbolId for compatibility
         if let Some(symbol_id) = self.resolve_type_symbol(node_idx) {
             return self.interner.reference(SymbolRef(symbol_id));
         }
@@ -2250,6 +2317,11 @@ impl<'a> TypeLowering<'a> {
                 return type_param;
             }
 
+            // Phase 2: Prefer DefId over SymbolId for type identity
+            if let Some(def_id) = self.resolve_def_id(node_idx) {
+                return self.interner.intern(TypeKey::Lazy(def_id));
+            }
+            // Fall back to SymbolId for compatibility
             if let Some(symbol_id) = self.resolve_type_symbol(node_idx) {
                 return self.interner.reference(SymbolRef(symbol_id));
             }

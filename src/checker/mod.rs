@@ -31,6 +31,7 @@ pub mod class_type;
 pub mod conditional_type;
 pub mod constructor_checker;
 pub mod context;
+pub mod dispatch;
 pub mod control_flow;
 mod control_flow_narrowing;
 pub mod declarations;
@@ -136,6 +137,7 @@ mod value_usage_tests;
 // Re-export key types
 pub use arena::TypeArena;
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};
+pub use dispatch::ExpressionDispatcher;
 pub use control_flow::{FlowAnalyzer, FlowGraph as ControlFlowGraph};
 pub use declarations::DeclarationChecker;
 pub use expr::ExpressionChecker;

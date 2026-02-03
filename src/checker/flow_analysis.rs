@@ -1322,9 +1322,11 @@ impl<'a> CheckerState<'a> {
             None => return declared_type,
         };
 
-        // Check if we're inside a closure and if the variable is mutable
-        if self.is_inside_closure() && self.is_mutable_binding(sym_id) {
-            // Rule #42: Reset narrowing for mutable bindings in closures
+        // Bug #1.2: Check if this is a captured mutable variable
+        // Rule #42 only applies to variables captured from outer scope, not local variables
+        if self.is_inside_closure() && self.is_captured_variable(sym_id) && self.is_mutable_binding(sym_id) {
+            // Rule #42: Reset narrowing for captured mutable bindings in closures
+            // (const variables preserve narrowing, let/var reset to declared type)
             return declared_type;
         }
 
@@ -1378,23 +1380,23 @@ impl<'a> CheckerState<'a> {
         self.ctx.inside_closure_depth > 0
     }
 
-    /// Check if a binding is mutable (let/var) vs immutable (const).
+    /// Check if a symbol is a mutable binding (let or var) vs immutable (const).
     ///
-    /// This determines whether Rule #42 applies: mutable bindings lose narrowing
-    /// in closures, while const bindings maintain narrowing.
+    /// This is used to implement TypeScript's Rule #42 for type narrowing in closures:
+    /// - const variables preserve narrowing through closures (immutable)
+    /// - let/var variables lose narrowing when accessed from closures (mutable)
     ///
-    /// ## Detection Strategy:
-    ///
-    /// 1. Get the value declaration for the symbol
+    /// Implementation checks:
+    /// 1. Get the symbol's value declaration
     /// 2. Check if it's a VariableDeclaration
-    /// 3. Look at the parent VariableStatement's modifiers
-    /// 4. If ConstKeyword is present → const (immutable)
-    /// 5. If LetKeyword or no const modifier → let/var (mutable)
+    /// 3. Look at the parent VariableDeclarationList's NodeFlags
+    /// 4. If CONST flag is set → const (immutable)
+    /// 5. Otherwise → let/var (mutable)
     ///
     /// Returns true for let/var (mutable), false for const (immutable).
     fn is_mutable_binding(&self, sym_id: SymbolId) -> bool {
         use crate::parser::syntax_kind_ext;
-        use crate::scanner::SyntaxKind;
+        use crate::parser::node_flags;
 
         let symbol = match self.ctx.binder.get_symbol(sym_id) {
             Some(sym) => sym,
@@ -1412,53 +1414,82 @@ impl<'a> CheckerState<'a> {
             None => return true,
         };
 
-        // Check if this is a VariableDeclaration
-        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            // Not a variable declaration (e.g., parameter, import)
-            // Parameters are effectively mutable for narrowing purposes
-            return true;
-        }
-
-        // Check the parent VariableStatement for the ConstKeyword modifier
-        let parent = match self.ctx.arena.get_extended(decl_idx) {
-            Some(ext) => ext.parent,
-            None => return true,
-        };
-
-        if parent.is_none() {
-            return true;
-        }
-
-        let parent_node = match self.ctx.arena.get(parent) {
-            Some(node) => node,
-            None => return true,
-        };
-
-        // Check if the parent is a VariableStatement
-        if parent_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
-            // Could be a FOR_OF, FOR_IN, etc. - assume mutable
-            return true;
-        }
-
-        // Check the modifiers on the VariableStatement
-        let var_stmt = match self.ctx.arena.get_variable(parent_node) {
-            Some(stmt) => stmt,
-            None => return true,
-        };
-
-        if let Some(ref modifiers) = var_stmt.modifiers {
-            // Check if any modifier is ConstKeyword
-            for &mod_idx in &modifiers.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::ConstKeyword as u16 {
-                        return false; // const - immutable
+        // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
+        // The value_declaration points to VARIABLE_DECLARATION, we need to check its parent's flags
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
+            if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+                if !ext.parent.is_none() {
+                    if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                        let flags = parent_node.flags as u32;
+                        let is_const = (flags & node_flags::CONST) != 0;
+                        return !is_const; // Return true if NOT const (i.e., let or var)
                     }
                 }
             }
         }
 
-        // No const modifier found - it's let or var (mutable)
-        true
+        // For other node types, check the node's own flags
+        let flags = decl_node.flags as u32;
+        let is_const = (flags & node_flags::CONST) != 0;
+        !is_const // Return true if NOT const (i.e., let or var)
+    }
+
+    /// Check if a variable is captured from an outer scope (vs declared locally).
+    ///
+    /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
+    /// - Variables declared INSIDE the closure should narrow normally
+    /// - Variables captured from OUTER scope reset narrowing (for let/var)
+    ///
+    /// This is determined by checking if the variable's declaration is in an ancestor scope.
+    fn is_captured_variable(&self, sym_id: SymbolId) -> bool {
+        use crate::binder::ScopeId;
+
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(sym) => sym,
+            None => return false, // If no symbol, assume not captured
+        };
+
+        // Get the declaration node
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return false;
+        }
+
+        // Find the enclosing scope of the declaration
+        let decl_scope_id = match self.ctx.binder.find_enclosing_scope(self.ctx.arena, decl_idx) {
+            Some(scope_id) => scope_id,
+            None => return false, // No scope info, assume not captured
+        };
+
+        // Get the current scope (where the variable is being accessed)
+        // We need to get the current scope from the binder's state
+        let current_scope_id = self.ctx.binder.current_scope_id;
+
+        // If declared in current scope, not captured
+        if decl_scope_id == current_scope_id {
+            return false;
+        }
+
+        // Check if declaration scope is an ancestor of current scope
+        // Walk up the scope chain from current scope to see if we find the declaration scope
+        let mut scope_id = current_scope_id;
+        let mut iterations = 0;
+        while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
+            if scope_id == decl_scope_id {
+                // Found declaration scope in ancestor chain → captured variable
+                return true;
+            }
+
+            // Move to parent scope
+            scope_id = self.ctx.binder.scopes.get(scope_id.0 as usize)
+                .map(|scope| scope.parent)
+                .unwrap_or(ScopeId::NONE);
+
+            iterations += 1;
+        }
+
+        false
     }
 
     /// Check flow-aware usage of a variable (definite assignment + type narrowing).
