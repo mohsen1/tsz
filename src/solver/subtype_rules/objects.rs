@@ -64,25 +64,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check object subtyping (structural).
+    /// Check object subtyping (structural with nominal optimization).
     ///
     /// Validates that source object is a subtype of target object by checking:
-    /// 1. Private brand compatibility (for nominal class typing)
-    /// 2. For each target property, source must have a compatible property
+    /// 1. **Fast path**: Nominal inheritance check (O(1) for class instances)
+    /// 2. Private brand compatibility (for nominal class typing with private fields)
+    /// 3. For each target property, source must have a compatible property
     pub(crate) fn check_object_subtype(
         &mut self,
-        source: &[PropertyInfo],
-        source_shape_id: Option<ObjectShapeId>,
-        target: &[PropertyInfo],
+        source: &ObjectShape,
+        target: &ObjectShape,
     ) -> SubtypeResult {
+        // Fast path: Nominal inheritance check for class instances
+        // If both source and target are class instances with symbols,
+        // check if source is derived from target (O(1) lookup)
+        if let (Some(source_sym), Some(target_sym)) = (source.symbol, target.symbol) {
+            if let Some(graph) = self.inheritance_graph {
+                if graph.is_derived_from(source_sym, target_sym) {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         // Private brand checking for nominal typing of classes with private fields
-        if !self.check_private_brand_compatibility(source, target) {
+        if !self.check_private_brand_compatibility(&source.properties, &target.properties) {
             return SubtypeResult::False;
         }
 
         // For each property in target, source must have a compatible property
-        for t_prop in target {
-            let s_prop = self.lookup_property(source, source_shape_id, t_prop.name);
+        for t_prop in &target.properties {
+            let s_prop = source.properties.iter().find(|p| p.name == t_prop.name);
 
             let result = match s_prop {
                 Some(sp) => self.check_property_compatibility(sp, t_prop),
@@ -355,11 +366,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> SubtypeResult {
-        // First check named properties
-        if !self
-            .check_object_subtype(&source.properties, source_shape_id, &target.properties)
-            .is_true()
-        {
+        // First check named properties (nominal + structural)
+        // Note: We pass the full shapes to enable nominal inheritance check
+        if !self.check_object_subtype(source, target).is_true() {
             return SubtypeResult::False;
         }
 
@@ -589,10 +598,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
     ) -> SubtypeResult {
         // First check named properties match
-        if !self
-            .check_object_subtype(source, source_shape_id, &target.properties)
-            .is_true()
-        {
+        // Create temporary ObjectShape for source to enable nominal check
+        let source_shape = ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: source.to_vec(),
+            string_index: None,
+            number_index: None,
+            symbol: None, // Source doesn't have a symbol (just properties)
+        };
+        if !self.check_object_subtype(&source_shape, target).is_true() {
             return SubtypeResult::False;
         }
 

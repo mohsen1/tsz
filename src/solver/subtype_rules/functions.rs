@@ -452,8 +452,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .filter(|p| !self.interner.resolve_atom(p.name).starts_with('#'))
             .cloned()
             .collect();
+        // Create temporary ObjectShape instances for the property check
+        let source_shape = ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: source_props,
+            string_index: source.string_index.clone(),
+            number_index: source.number_index.clone(),
+            symbol: source.symbol,
+        };
+        let target_shape = ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: target_props,
+            string_index: target.string_index.clone(),
+            number_index: target.number_index.clone(),
+            symbol: target.symbol,
+        };
         if !self
-            .check_object_subtype(&source_props, None, &target_props)
+            .check_object_subtype(&source_shape, &target_shape)
             .is_true()
         {
             return SubtypeResult::False;
