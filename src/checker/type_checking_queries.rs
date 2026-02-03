@@ -2589,11 +2589,9 @@ impl<'a> CheckerState<'a> {
     /// This is used for merged class+namespace symbols where namespace exports
     /// are stored as properties on the Callable type.
     fn is_type_only_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::type_queries;
-
-        // Check if this is a Ref to a type-only symbol
-        if let Some(sym_ref) = type_queries::get_ref_symbol(self.ctx.types, type_id) {
-            if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_ref.0)) {
+        // Phase 4.2: Use resolve_type_to_symbol_id instead of get_ref_symbol
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                 let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
                 let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
                 return has_type && !has_value;
@@ -2621,10 +2619,9 @@ impl<'a> CheckerState<'a> {
     /// // get_namespace_name(typeof obj) → None
     /// ```
     pub(crate) fn get_namespace_name(&self, type_id: TypeId) -> Option<String> {
-        use crate::solver::type_queries;
-
-        if let Some(sym_ref) = type_queries::get_ref_symbol(self.ctx.types, type_id) {
-            if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_ref.0)) {
+        // Phase 4.2: Use resolve_type_to_symbol_id instead of get_ref_symbol
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                 // Check if this is a namespace/module symbol
                 if symbol.flags & (symbol_flags::MODULE | symbol_flags::NAMESPACE) != 0 {
                     return Some(symbol.escaped_name.clone());

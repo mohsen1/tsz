@@ -132,20 +132,13 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
             return ApplicationResult::NotApplication(type_id);
         };
 
-        // Check if the base is a Ref (symbol reference)
-        let Some(sym_ref) = type_queries::get_symbol_ref(self.interner, base) else {
+        // Phase 4.2: Get DefId from Lazy type instead of SymbolRef
+        let Some(def_id) = type_queries::get_lazy_def_id(self.interner, base) else {
             return ApplicationResult::NotApplication(type_id);
         };
 
-        // Resolve the symbol to get its body type
-        let body_type = if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            #[allow(deprecated)]
-            self.resolver.resolve_ref(sym_ref, self.interner)
-        };
-
-        let Some(body_type) = body_type else {
+        // Resolve the DefId to get its body type
+        let Some(body_type) = self.resolver.resolve_lazy(def_id, self.interner) else {
             return ApplicationResult::ResolutionFailed(type_id);
         };
 
@@ -153,8 +146,8 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
             return ApplicationResult::Resolved(type_id);
         }
 
-        // Get type parameters for this symbol
-        let type_params = self.resolver.get_type_params(sym_ref).unwrap_or_default();
+        // Get type parameters for this DefId
+        let type_params = self.resolver.get_lazy_type_params(def_id).unwrap_or_default();
 
         if type_params.is_empty() {
             return ApplicationResult::Resolved(body_type);
