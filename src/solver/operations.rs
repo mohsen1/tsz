@@ -214,13 +214,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     CallResult::NotCallable { type_id: func_type }
                 }
             }
-            TypeKey::Ref(_sym_ref) => {
-                // For Ref types, we need to look up the symbol's type
-                // However, in the CallEvaluator we don't have access to symbol resolution
-                // Return NotCallable - this case should be handled before calling resolve_call
-                // (e.g., by evaluate_application_type in the caller)
-                CallResult::NotCallable { type_id: func_type }
-            }
             _ => CallResult::NotCallable { type_id: func_type },
         }
     }

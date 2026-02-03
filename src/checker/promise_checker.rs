@@ -598,20 +598,22 @@ impl<'a> CheckerState<'a> {
     fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
 
-        // Fast path: Check for symbol references to known Generator-like types
+        // Fast path: Check for Lazy types to known Generator-like types
         if let Some(type_key) = self.ctx.types.lookup(type_id) {
-            if let TypeKey::Ref(sym_ref) = type_key {
-                // Use get_symbol_globally to find the symbol even if it's in a lib file
-                if let Some(symbol) = self.get_symbol_globally(SymbolId(sym_ref.0)) {
-                    if Self::is_generator_like_name(&symbol.escaped_name) {
-                        return true;
+            if let TypeKey::Lazy(def_id) = type_key {
+                // Use def_to_symbol_id to find the symbol
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    if let Some(symbol) = self.get_symbol_globally(sym_id) {
+                        if Self::is_generator_like_name(&symbol.escaped_name) {
+                            return true;
+                        }
                     }
                 }
             }
         }
 
         // Robust check: Resolve the global types and compare TypeIds
-        // This handles cases where the type is structural (Object/Callable) rather than a Ref
+        // This handles cases where the type is structural (Object/Callable) rather than a Lazy
         for name in &[
             "Generator",
             "AsyncGenerator",

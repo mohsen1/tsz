@@ -1367,9 +1367,9 @@ impl<'a> InferenceContext<'a> {
         // For now, we'll implement a simplified version that handles common cases
         // A full implementation would require access to the symbol table
 
-        // Check if this is a Ref type (class/interface reference)
-        if let Some(TypeKey::Ref(_)) = self.interner.lookup(ty) {
-            // For Ref types, we'd need to look up the symbol and check its extends clause
+        // Check if this is a Lazy type (class/interface reference)
+        if let Some(TypeKey::Lazy(_)) = self.interner.lookup(ty) {
+            // For Lazy types, we'd need to look up the symbol and check its extends clause
             // This is a placeholder - the full implementation requires more context
             None
         } else {
