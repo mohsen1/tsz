@@ -19,6 +19,7 @@ use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccess
 use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
+use crate::solver::type_queries_extended::classify_for_abstract_constructor;
 use crate::solver::TypeId;
 use crate::solver::type_queries::get_callable_shape;
 use rustc_hash::FxHashSet;
@@ -523,65 +524,49 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
-        // Check if source is an abstract constructor
-        let source_is_abstract = self.is_abstract_constructor_type(source, env);
+        use crate::solver::type_queries::AbstractConstructorKind;
 
-        // Additional check: if source_is_abstract is false, check symbol_types directly
-        let source_is_abstract_from_symbols = if !source_is_abstract {
-            let mut found_abstract = false;
-            for (&sym_id, &cached_type) in self.ctx.symbol_types.iter() {
-                if cached_type == source
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && symbol.flags & symbol_flags::CLASS != 0
-                    && symbol.flags & symbol_flags::ABSTRACT != 0
-                {
-                    found_abstract = true;
-                    break;
-                }
+        // Helper to check if a TypeId is abstract
+        // This handles both TypeQuery types (before resolution) and resolved Callable types
+        let is_abstract_type = |type_id: TypeId| -> bool {
+            // First check the cached set (handles resolved types)
+            if self.is_abstract_ctor(type_id) {
+                return true;
             }
-            found_abstract
-        } else {
-            false
+
+            // Then check TypeQuery types
+            match classify_for_abstract_constructor(self.ctx.types, type_id) {
+                AbstractConstructorKind::TypeQuery(sym_ref) => {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(crate::binder::SymbolId(sym_ref.0)) {
+                        symbol.flags & symbol_flags::ABSTRACT != 0
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
         };
 
-        let final_source_is_abstract = source_is_abstract || source_is_abstract_from_symbols;
+        let source_is_abstract = is_abstract_type(source);
+        let target_is_abstract = is_abstract_type(target);
 
-        if !final_source_is_abstract {
+        // Case 1: Source is concrete, target is abstract -> Allow (concrete can be assigned to abstract)
+        if !source_is_abstract && target_is_abstract {
+            // Let the structural subtype checker handle it
             return None;
         }
 
-        // Source is abstract - check if target is a non-abstract constructor type
-        let target_is_abstract = self.is_abstract_constructor_type(target, env);
-
-        // Also check target via symbol_types
-        let target_is_abstract_from_symbols = {
-            let mut found_abstract = false;
-            for (&sym_id, &cached_type) in self.ctx.symbol_types.iter() {
-                if cached_type == target
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && symbol.flags & symbol_flags::CLASS != 0
-                    && symbol.flags & symbol_flags::ABSTRACT != 0
-                {
-                    found_abstract = true;
-                    break;
-                }
-            }
-            found_abstract
-        };
-
-        let final_target_is_abstract = target_is_abstract || target_is_abstract_from_symbols;
-
-        // If target is also abstract, allow the assignment (abstract to abstract is OK)
-        if final_target_is_abstract {
+        // Case 2: Source is abstract, target is also abstract -> Let structural check handle it
+        if source_is_abstract && target_is_abstract {
             return None;
         }
 
-        // Check if target is a constructor type (has construct signatures)
-        let target_is_constructor = self.has_construct_sig(target);
-
-        // If target is a constructor type but not abstract, reject the assignment
-        if target_is_constructor {
-            return Some(false);
+        // Case 3: Source is abstract, target is NOT abstract -> Reject
+        if source_is_abstract && !target_is_abstract {
+            let target_is_constructor = self.has_construct_sig(target);
+            if target_is_constructor {
+                return Some(false);
+            }
         }
 
         None
