@@ -1,5 +1,6 @@
 use super::*;
 use crate::solver::{AssignabilityChecker, CompatChecker, ConditionalType, infer_generic_function};
+use crate::solver::def::DefId;
 
 #[test]
 fn test_inference_basic() {
@@ -4711,7 +4712,7 @@ fn test_resolve_bounds_application_subtype() {
     let mut ctx = InferenceContext::new(&interner);
 
     let var = ctx.fresh_type_param(interner.intern_string("T"));
-    let base = interner.reference(SymbolRef(1));
+    let base = interner.lazy(DefId(1));
     let upper = interner.application(base, vec![TypeId::STRING]);
     let lower = interner.application(base, vec![interner.literal_string("hello")]);
 

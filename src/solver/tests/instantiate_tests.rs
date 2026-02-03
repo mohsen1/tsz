@@ -1,5 +1,6 @@
 use super::*;
 use crate::solver::instantiate::MAX_INSTANTIATION_DEPTH;
+use crate::solver::def::DefId;
 
 #[test]
 fn test_substitution_basic() {
@@ -368,7 +369,7 @@ fn test_instantiate_application_promise() {
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
-    let promise_base = interner.reference(SymbolRef(1));
+    let promise_base = interner.lazy(DefId(1));
     let promise_t = interner.application(promise_base, vec![t_type]);
 
     let result = instantiate_generic(&interner, promise_t, &[t_param], &[TypeId::STRING]);
@@ -394,7 +395,7 @@ fn test_instantiate_application_map_nested() {
     let v_type = interner.intern(TypeKey::TypeParameter(v_param.clone()));
     let array_v = interner.array(v_type);
 
-    let map_base = interner.reference(SymbolRef(2));
+    let map_base = interner.lazy(DefId(2));
     let map_kv = interner.application(map_base, vec![k_type, array_v]);
 
     let result = instantiate_generic(
