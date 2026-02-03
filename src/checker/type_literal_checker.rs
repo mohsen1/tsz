@@ -524,6 +524,7 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
+                symbol: None,
             });
         }
 

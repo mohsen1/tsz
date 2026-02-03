@@ -1163,6 +1163,7 @@ fn make_array_test_env(
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol: None,
     });
 
     let array_interface = interner.object(vec![

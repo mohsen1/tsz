@@ -2952,6 +2952,7 @@ impl<'a> InferSubstitutor<'a> {
                         properties,
                         string_index,
                         number_index,
+                        symbol: None,
                     })
                 } else {
                     type_id
