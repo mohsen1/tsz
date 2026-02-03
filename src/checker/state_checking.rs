@@ -423,16 +423,22 @@ impl<'a> CheckerState<'a> {
                                     var_decl.initializer,
                                 );
                             }
+                        } else {
+                            // FIX: Only check excess properties when assignability SUCCEEDS.
+                            // This follows Solver-First architecture and prevents multiple TS2322 errors
+                            // for the same assignment. The Solver already determined compatibility, so we
+                            // only need to check for excess properties if types are assignable.
+                            //
+                            // Previously, excess properties were checked unconditionally, which violated
+                            // the separation of concerns between Solver (assignability) and Checker (freshness).
+                            // This caused tuples to be treated as objects with numeric index properties, leading
+                            // to multiple redundant errors instead of a single "Type not assignable" error.
+                            checker.check_object_literal_excess_properties(
+                                init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            );
                         }
-
-                        // For object literals, check excess properties
-                        // Freshness is determined by the TypeId flags inside
-                        // check_object_literal_excess_properties.
-                        checker.check_object_literal_excess_properties(
-                            init_type,
-                            declared_type,
-                            var_decl.initializer,
-                        );
                     }
 
                     // Note: Freshness is tracked by the TypeId flags.
