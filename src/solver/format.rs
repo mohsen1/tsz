@@ -207,15 +207,6 @@ impl<'a> TypeFormatter<'a> {
                 self.format_callable(shape.as_ref())
             }
             TypeKey::TypeParameter(info) => self.atom(info.name).to_string(),
-            TypeKey::Ref(sym) => {
-                // Try to look up the symbol name
-                if let Some(arena) = self.symbol_arena
-                    && let Some(symbol) = arena.get(SymbolId(sym.0))
-                {
-                    return symbol.escaped_name.to_string();
-                }
-                format!("Ref({})", sym.0)
-            }
             TypeKey::Lazy(def_id) => {
                 // Lazy types use DefId which doesn't have direct symbol access
                 // TODO: Look up definition name from DefinitionStore when available
