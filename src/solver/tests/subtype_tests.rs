@@ -7240,7 +7240,6 @@ fn test_generic_covariant_return_position() {
 }
 
 #[test]
-#[ignore = "Generic contravariant parameter position subtyping not fully implemented"]
 fn test_generic_contravariant_param_position() {
     // Consumer<T> = { accept(x: T): void } - T is in contravariant position
     // Consumer<string | number> <: Consumer<string> (contravariant)
@@ -7285,7 +7284,7 @@ fn test_generic_contravariant_param_position() {
         write_type: accept_string,
         optional: false,
         readonly: true,
-        is_method: true,
+        is_method: false,
     }]);
 
     let consumer_union = interner.object(vec![PropertyInfo {
@@ -7294,7 +7293,7 @@ fn test_generic_contravariant_param_position() {
         write_type: accept_union,
         optional: false,
         readonly: true,
-        is_method: true,
+        is_method: false,
     }]);
 
     // Contravariant: Consumer<string | number> <: Consumer<string>
