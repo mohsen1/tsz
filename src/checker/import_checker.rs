@@ -393,6 +393,11 @@ impl<'a> CheckerState<'a> {
         if ref_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.ctx.arena.get_identifier(ref_node) {
                 let name = &ident.escaped_text;
+                // Skip if identifier is empty (parse error created a placeholder)
+                // or if it's a reserved word that should be handled by TS1359
+                if name.is_empty() || name == "null" {
+                    return;
+                }
                 // Try to resolve the identifier as a namespace/module
                 if self.resolve_identifier_symbol(module_ref).is_none() {
                     let message = format_message(
