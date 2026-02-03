@@ -7,7 +7,7 @@
 Before starting work, check [docs/sessions/](docs/sessions/) to understand what other sessions are working on. Your session is determined by your directory name (tsz-1, tsz-2, tsz-3, tsz-4).
 
 1. Read all session files to avoid duplicate/conflicting work
-2. When starting work, update your session file immediately with the current task
+2. When starting work, update your session file immediately with the current task, commit and push so others see
 3. When finishing, move to history and note outcome
 
 ## CRITICAL: Always Ask Gemini
@@ -88,7 +88,7 @@ cargo nextest run
 cargo nextest run --profile quick
 
 # Conformance tests 
-./scripts/conformance/run.sh --server --max=1000
+./scripts/conformance.sh --max=1000
 
 # Linting
 cargo clippy -- -D warnings
