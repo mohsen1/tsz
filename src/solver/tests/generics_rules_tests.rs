@@ -78,6 +78,7 @@ fn test_try_get_keyof_keys_object_with_index_returns_properties() {
     let checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("x"),

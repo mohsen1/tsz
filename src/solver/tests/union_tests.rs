@@ -824,6 +824,7 @@ fn test_union_to_object_with_index_signature() {
 
     // Target has index signature, so the relaxed rule should NOT apply
     let target_with_index = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("a"),
