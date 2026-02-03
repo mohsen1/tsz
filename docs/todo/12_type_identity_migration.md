@@ -134,11 +134,16 @@ Update the Solver to understand and resolve `DefId`s exclusively.
 
 ---
 
-### Phase 4: Remove TypeKey::Ref (Final Phase) [IN PROGRESS]
+### Phase 4: Remove TypeKey::Ref (Final Phase) [BLOCKED]
 
-**Current Status**: Phase 4.1 complete, ready for Phase 4.2
+**Current Status**: Phase 4.1 complete, Phase 4.2 reverted due to regression
 
-**Gemini Strategic Recommendation**: Skip premature optimization (Phase 3.5). Instead, force TypeLowering to always produce `Lazy(DefId)`, which makes cleanup trivial.
+**Blocker**: Type expansion with Lazy(DefId) creates new TypeIds instead of reusing original Lazy wrapper
+
+**Gemini Strategic Recommendation**:
+- Keep both variants as transitional state ("Strangler Fig" pattern)
+- Incremental migration: Pick one category at a time
+- Manual recursion tracking during lowering required (4-8 hours estimated)
 
 #### ✅ Phase 4.1: Update TypeLowering to Always Use DefId (COMPLETED)
 
@@ -156,22 +161,92 @@ Update the Solver to understand and resolve `DefId`s exclusively.
    - Delete code that returns `TypeKey::Ref` when DefId lookup fails
    - Force DefId creation at type lowering time
 
-#### Phase 4.2: Remove TypeKey::Ref Variant
+#### ❌ Reverted: Phase 4.2 - Remove TypeKey::Ref Variant (Feb 3, 2026)
 
-**Goal**: Eliminate the Ref variant from the type system.
+**Status**: REVERTED - Significant regression in type expansion
 
-1. **Modify `TypeKey` enum** (`src/solver/types.rs`)
-   - Remove `Ref(SymbolRef)` variant
-   - This will cause compilation errors at all match sites
+**Attempted Changes:**
+1. **Modified `TypeKey` enum** (`src/solver/types.rs`)
+   - Removed `Ref(SymbolRef)` variant
+   - This caused compilation errors at all match sites
 
-2. **Clean up compilation errors**
-   - Remove `TypeKey::Ref` match arms in visitors
-   - Remove `ref_symbol` visitor calls that are now unused
-   - Update subtype checking to not handle Ref
+2. **Fixed compilation errors** (4 parallel teams)
+   - Team 1: Fixed visitor match arms (visitor.rs, format.rs)
+   - Team 2: Fixed type query evaluation (type_queries.rs, type_queries_extended.rs, evaluate.rs)
+   - Team 3: Fixed production sites (state_type_analysis.rs, intern.rs, lower.rs, context.rs)
+   - Team 4: Fixed consumer sites (judge.rs, infer.rs, operations.rs, etc.)
 
-3. **Remove deprecated methods**
-   - Remove `TypeResolver::resolve_ref()`
-   - Remove `symbol_to_def_id()` bridge (no longer needed)
+3. **Updated test files** to expect `TypeKey::Lazy` instead of `Ref`
+
+**Test Results - Regression Discovered:**
+- Before Phase 4.2: **7849 passed, 10 failed, 172 skipped**
+- After Phase 4.2: **7775 passed, 84 failed, 172 skipped**
+- **Net regression: -74 passed tests, +74 failed tests**
+
+**Root Cause Analysis:**
+The TypeKey::Ref removal broke recursive type expansion. When constructing type bodies with recursive `Lazy(def_id)` references, new TypeIds were created instead of reusing the original Lazy type.
+
+**Example of broken expansion:**
+```rust
+// Expected (working with Ref):
+type List<T> = { value: T, next: List<T> }
+Creates: TypeId 100 (Ref/Lazy) -> TypeId 200 (body) -> TypeId 100 (cycle) ✅
+
+// Actual (broken with Lazy only):
+Creates: TypeId 100 (Lazy) -> TypeId 200 (body) -> TypeId 201 (new Lazy, breaks cycle) ❌
+```
+
+**Problem Details:**
+- When constructing the body of `List<T>`, the `next: List<T>` field resolves to `Lazy(def_id)`
+- The type lowering creates a NEW Lazy TypeId instead of reusing the original wrapper TypeId
+- This breaks the cycle, causing incorrect type equality and infinite recursion in subtype checking
+
+**Gemini Strategic Recommendations:**
+1. **Revert the removal** of `TypeKey::Ref` ✅ (Completed)
+2. **Keep both variants** as transitional state ("Strangler Fig" pattern)
+3. **Incremental migration**: Pick one category at a time (e.g., recursive type aliases)
+4. **Manual recursion tracking** during lowering (4-8 hours estimated) needed for full Lazy migration
+
+**Why Salsa Cannot Help:**
+- Salsa is proof-of-concept in tsz
+- The problem is in Lowering/Interning phase, not query phase
+- Need manual tracking of "Lazy wrapper" vs "body" during type construction
+
+**Decision:** Reverted to commit `79bb869be` (Phase 4.1 baseline)
+- Both `TypeKey::Ref(SymbolRef)` and `TypeKey::Lazy(DefId)` now coexist
+- Tests restored to: **7849 passed, 10 failed, 172 skipped** ✅
+
+**Lessons Learned:**
+- Phase 4.2 work was NOT wasted - valuable "Discovery Phase"
+- Identified fundamental issue with recursive type expansion
+- Confirmed that incremental migration strategy is required
+- Both variants make sense as transitional state
+
+**Commits (Reverted):**
+- `6e118322f`: feat(phase-4.2): remove TypeKey::Ref variant - WIP with regression
+- `5283ae988`: fix: Add deprecation attributes to Ref variants in type query enums
+- `d4631d609`: fix: Remove TypeKey::Ref pattern matches from consumer sites
+- `1f55aaeb2`: fix: migrate TypeKey::Ref production sites to TypeKey::Lazy
+- `b883e5ba4`: fix: remove TypeKey::Ref match arms from visitor files
+
+---
+
+#### Phase 4.3: Remove TypeKey::Ref Variant (Future - BLOCKED)
+
+**Status**: BLOCKED - Requires manual recursion tracking implementation
+
+**Blocker**: Type expansion with Lazy(DefId) creates new TypeIds instead of reusing original Lazy wrapper
+
+**Required Solution:**
+1. Track which TypeId is the "Lazy wrapper" vs the "body" during lowering
+2. When constructing recursive types, reuse original Lazy TypeId instead of creating new ones
+3. Estimated effort: 4-8 hours for manual recursion tracking implementation
+
+**Alternative Approach (Recommended):**
+- Incremental migration: Pick one category (e.g., recursive type aliases)
+- Change production logic to emit `TypeKey::Lazy` only for that category
+- Test and verify before proceeding to next category
+- Use Gemini's "Strangler Fig" pattern guidance
 
 #### Phase 4.3: Cleanup TypeEnvironment
 
