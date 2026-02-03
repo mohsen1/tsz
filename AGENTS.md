@@ -2,6 +2,14 @@
 
 **Goal**: Match `tsc` behavior exactly. Every error, inference, and edge case must be identical to TypeScript's compiler.
 
+## CRITICAL: Check Session Coordination
+
+Before starting work, check [docs/sessions/](docs/sessions/) to understand what other sessions are working on. Your session is determined by your directory name (tsz-1, tsz-2, tsz-3, tsz-4).
+
+1. Read all session files to avoid duplicate/conflicting work
+2. When starting work, update your session file immediately with the current task
+3. When finishing, move to history and note outcome
+
 ## CRITICAL: Always Ask Gemini
 
 Use `./scripts/ask-gemini.mjs` to ask architecture and implementation questions. Always use this tool before making decisions.
