@@ -2399,7 +2399,7 @@ impl<'a> CheckerState<'a> {
     /// Note: This returns the enum type itself, not STRING or NUMBER,
     /// which allows proper enum assignability checking.
     pub(crate) fn enum_member_type_for_name(
-        &self,
+        &mut self,
         sym_id: SymbolId,
         property_name: &str,
     ) -> Option<TypeId> {
@@ -2426,10 +2426,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = self.get_property_name(member.name)
                     && name == property_name
                 {
-                    // Return the enum type itself using Lazy with DefId
-                    // This allows proper enum assignability checking
-                    let def_id = self.ctx.get_or_create_def_id(sym_id);
-                    return Some(self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id)));
+                    // Return the enum type itself by getting the computed type of the symbol
+                    // This returns TypeKey::Enum(def_id, structural_type) which allows proper
+                    // enum assignability checking with nominal identity
+                    return Some(self.get_type_of_symbol(sym_id));
                 }
             }
         }

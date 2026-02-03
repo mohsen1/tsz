@@ -259,6 +259,14 @@ impl<'a> TypeInstantiator<'a> {
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => self.interner.intern(key.clone()),
 
+            // Enum types: instantiate the member type (structural part)
+            // The DefId (nominal identity) stays the same
+            TypeKey::Enum(def_id, member_type) => {
+                let instantiated_member = self.instantiate(*member_type);
+                self.interner
+                    .intern(TypeKey::Enum(*def_id, instantiated_member))
+            }
+
             // Application: instantiate base and args
             TypeKey::Application(app_id) => {
                 let app = self.interner.type_application(*app_id);

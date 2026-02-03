@@ -1879,6 +1879,21 @@ pub fn get_type_identity(
     }
 }
 
+/// Get the enum components (DefId and member type) if the type is an Enum type.
+///
+/// Returns `Some((def_id, member_type))` where:
+/// - `def_id` is the unique identity of the enum for nominal checking
+/// - `member_type` is the structural union of member types (e.g., 0 | 1)
+pub fn get_enum_components(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(crate::solver::def::DefId, TypeId)> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Enum(def_id, member_type)) => Some((def_id, member_type)),
+        _ => None,
+    }
+}
+
 /// Get the mapped type ID if the type is a Mapped type.
 pub fn get_mapped_type_id(
     db: &dyn TypeDatabase,

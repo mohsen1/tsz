@@ -125,6 +125,11 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
+    /// Visit an enum type with nominal identity and structural member types.
+    fn visit_enum(&mut self, _def_id: u32, _member_type: TypeId) -> Self::Output {
+        Self::default_output()
+    }
+
     /// Visit a lazy type reference using DefId.
     fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
         Self::default_output()
@@ -236,6 +241,7 @@ pub trait TypeVisitor: Sized {
             TypeKey::Callable(id) => self.visit_callable(id.0),
             TypeKey::TypeParameter(info) => self.visit_type_parameter(info),
             TypeKey::Lazy(def_id) => self.visit_lazy(def_id.0),
+            TypeKey::Enum(def_id, member_type) => self.visit_enum(def_id.0, *member_type),
             TypeKey::Application(id) => self.visit_application(id.0),
             TypeKey::Conditional(id) => self.visit_conditional(id.0),
             TypeKey::Mapped(id) => self.visit_mapped(id.0),
@@ -330,6 +336,7 @@ impl TypeKindVisitor {
             TypeKey::TypeParameter(_) | TypeKey::Infer(_) => TypeKind::TypeParameter,
             TypeKey::Conditional(_) => TypeKind::Conditional,
             TypeKey::Lazy(_) => TypeKind::Reference,
+            TypeKey::Enum(_, _) => TypeKind::Primitive, // enums behave like primitives
             TypeKey::Mapped(_) => TypeKind::Mapped,
             TypeKey::IndexAccess(_, _) => TypeKind::IndexAccess,
             TypeKey::TemplateLiteral(_) => TypeKind::TemplateLiteral,
@@ -455,6 +462,12 @@ impl TypeVisitor for TypeCollectorVisitor {
     ) -> Self::Output {
         if self.max_depth > 0 {
             self.types.insert(type_arg);
+        }
+    }
+
+    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
+        if self.max_depth > 0 {
+            self.types.insert(member_type);
         }
     }
 
@@ -722,6 +735,23 @@ pub fn ref_symbol(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef
 pub fn lazy_def_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<DefId> {
     extract_type_data(types, type_id, |key| match key {
         TypeKey::Lazy(def_id) => Some(*def_id),
+        _ => None,
+    })
+}
+
+/// Check if this is an Enum type.
+pub fn is_enum_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(types.lookup(type_id), Some(TypeKey::Enum(_, _)))
+}
+
+/// Extract the enum components (DefId and member type) if this is an Enum type.
+///
+/// Returns `Some((def_id, member_type))` where:
+/// - `def_id` is the unique identity of the enum for nominal checking
+/// - `member_type` is the structural union of member types (e.g., 0 | 1)
+pub fn enum_components(types: &dyn TypeDatabase, type_id: TypeId) -> Option<(DefId, TypeId)> {
+    extract_type_data(types, type_id, |key| match key {
+        TypeKey::Enum(def_id, member_type) => Some((*def_id, *member_type)),
         _ => None,
     })
 }
@@ -1152,6 +1182,10 @@ impl<'a> RecursiveTypeCollector<'a> {
             TypeKey::StringIntrinsic { type_arg, .. } => {
                 self.visit(*type_arg);
             }
+            TypeKey::Enum(_def_id, member_type) => {
+                // Traverse into the structural member type
+                self.visit(*member_type);
+            }
         }
     }
 }
@@ -1328,6 +1362,7 @@ where
             }
             TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) => self.check(*inner),
             TypeKey::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
+            TypeKey::Enum(_def_id, member_type) => self.check(*member_type),
         }
     }
 }

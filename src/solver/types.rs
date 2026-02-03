@@ -383,6 +383,16 @@ pub enum TypeKey {
     /// Eventually all `Ref(SymbolRef)` usages will be replaced with `Lazy(DefId)`.
     Lazy(DefId),
 
+    /// Enum type with nominal identity and structural member types.
+    ///
+    /// Enums are nominal types - two different enums with the same member types
+    /// are NOT compatible (e.g., `enum E1 { A, B }` is not assignable to `enum E2 { A, B }`).
+    ///
+    /// - DefId: The unique identity of the enum (for E1 vs E2 nominal checking)
+    /// - TypeId: The structural union of member types (e.g., 0 | 1 for numeric enums),
+    ///   used for assignability to primitives (e.g., E1 assignable to number)
+    Enum(DefId, TypeId),
+
     /// Generic type application (Base<Args>)
     Application(TypeApplicationId),
 
