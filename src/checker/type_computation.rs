@@ -891,9 +891,37 @@ impl<'a> CheckerState<'a> {
             let result_type = match result {
                 BinaryOpResult::Success(result_type) => result_type,
                 BinaryOpResult::TypeError { left, right, op } => {
-                    // Emit appropriate error for arithmetic type mismatch
-                    self.emit_binary_operator_error(node_idx, left_idx, right_idx, left, right, op);
-                    TypeId::UNKNOWN
+                    // Check if this is actually valid because we have enum types
+                    // The evaluator doesn't have access to symbol information, so it can't
+                    // detect enum types. We need to check here at the checker layer.
+                    let left_is_enum = self.is_enum_type(left_type);
+                    let right_is_enum = self.is_enum_type(right_type);
+                    let is_arithmetic_op = matches!(op_str, "+" | "-" | "*" | "/" | "%" | "**");
+
+                    // If both operands are enum types and this is an arithmetic operation,
+                    // treat it as valid (enum members are numbers for numeric enums)
+                    if is_arithmetic_op && left_is_enum && right_is_enum {
+                        // For + operation, result is number; for other ops, also number
+                        TypeId::NUMBER
+                    } else if is_arithmetic_op
+                        && left_is_enum
+                        && evaluator.is_arithmetic_operand(right)
+                    {
+                        // Enum op number => number
+                        TypeId::NUMBER
+                    } else if is_arithmetic_op
+                        && right_is_enum
+                        && evaluator.is_arithmetic_operand(left)
+                    {
+                        // Number op enum => number
+                        TypeId::NUMBER
+                    } else {
+                        // Emit appropriate error for arithmetic type mismatch
+                        self.emit_binary_operator_error(
+                            node_idx, left_idx, right_idx, left, right, op,
+                        );
+                        TypeId::UNKNOWN
+                    }
                 }
             };
             type_stack.push(result_type);
