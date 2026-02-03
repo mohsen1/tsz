@@ -1179,6 +1179,13 @@ impl<'a> InferenceContext<'a> {
             return types[0];
         }
 
+        // HOMOGENEOUS FAST PATH: Zero-allocation check for arrays with identical types
+        // This is the most common case for array literals like [1, 2, 3] or ["a", "b", "c"]
+        let first = types[0];
+        if types.iter().all(|&t| t == first) {
+            return first;
+        }
+
         // Filter out duplicates and special types
         let mut seen = FxHashSet::default();
         let mut unique: Vec<TypeId> = Vec::new();
