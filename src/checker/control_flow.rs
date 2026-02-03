@@ -26,6 +26,7 @@ use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{NarrowingContext, ParamInfo, TypeDatabase, TypeId, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use std::collections::VecDeque;
 
 // =============================================================================
@@ -105,6 +106,8 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) interner: &'a dyn TypeDatabase,
     pub(crate) node_types: Option<&'a FxHashMap<u32, TypeId>>,
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
+    /// Optional cache for flow analysis results to avoid redundant graph traversals
+    pub(crate) flow_cache: Option<&'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +144,7 @@ impl<'a> FlowAnalyzer<'a> {
             interner,
             node_types: None,
             flow_graph,
+            flow_cache: None,
         }
     }
 
@@ -157,7 +161,17 @@ impl<'a> FlowAnalyzer<'a> {
             interner,
             node_types: Some(node_types),
             flow_graph,
+            flow_cache: None,
         }
+    }
+
+    /// Set the flow analysis cache to avoid redundant graph traversals.
+    pub fn with_flow_cache(
+        mut self,
+        cache: &'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>,
+    ) -> Self {
+        self.flow_cache = Some(cache);
+        self
     }
 
     /// Get a reference to the flow graph.
@@ -179,7 +193,16 @@ impl<'a> FlowAnalyzer<'a> {
             return initial_type;
         }
 
-        self.check_flow(reference, initial_type, flow_node, &mut Vec::new())
+        // Resolve symbol for caching purposes
+        let symbol_id = self.binder.resolve_identifier(self.arena, reference);
+
+        self.check_flow(
+            reference,
+            initial_type,
+            flow_node,
+            &mut Vec::new(),
+            symbol_id,
+        )
     }
 
     /// Check if a reference is definitely assigned at a specific flow node.
@@ -204,6 +227,7 @@ impl<'a> FlowAnalyzer<'a> {
         initial_type: TypeId,
         flow_id: FlowNodeId,
         _visited: &mut Vec<FlowNodeId>,
+        symbol_id: Option<SymbolId>,
     ) -> TypeId {
         // Work item: (flow_id, type_at_this_point)
         let mut worklist: VecDeque<(FlowNodeId, TypeId)> = VecDeque::new();
@@ -220,6 +244,19 @@ impl<'a> FlowAnalyzer<'a> {
         // Process worklist until empty
         while let Some((current_flow, current_type)) = worklist.pop_front() {
             in_worklist.remove(&current_flow);
+
+            // OPTIMIZATION: Check global cache first to avoid redundant traversals
+            if let Some(sym_id) = symbol_id {
+                if let Some(cache) = self.flow_cache {
+                    let key = (current_flow, sym_id, initial_type);
+                    if let Some(&cached_type) = cache.borrow().get(&key) {
+                        // Use cached result and skip processing this node
+                        results.insert(current_flow, cached_type);
+                        visited.insert(current_flow);
+                        continue;
+                    }
+                }
+            }
 
             // Skip if we've already finalized this node
             if visited.contains(&current_flow) {
@@ -505,6 +542,14 @@ impl<'a> FlowAnalyzer<'a> {
 
             results.insert(current_flow, final_type);
             visited.insert(current_flow);
+
+            // Store result in global cache for future calls
+            if let Some(sym_id) = symbol_id {
+                if let Some(cache) = self.flow_cache {
+                    let key = (current_flow, sym_id, initial_type);
+                    cache.borrow_mut().insert(key, final_type);
+                }
+            }
         }
 
         // Return the result for the initial flow_id
