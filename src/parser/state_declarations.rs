@@ -681,16 +681,6 @@ impl ParserState {
     pub(crate) fn parse_ambient_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
-        // TS1038: A 'declare' modifier cannot be used in an already ambient context
-        // Check if we're already inside a declare namespace/module
-        if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'declare' modifier cannot be used in an already ambient context.",
-                diagnostic_codes::DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
-            );
-        }
-
         // Create declare modifier node
         let declare_start = self.token_pos();
         self.parse_expected(SyntaxKind::DeclareKeyword);
@@ -815,12 +805,19 @@ impl ParserState {
         };
 
         // Parse body
+        // Check if this is a declare namespace/module (has declare modifier)
+        let is_declare = modifiers.as_ref()
+            .and_then(|m| m.nodes.first())
+            .map_or(false, |&node| {
+                self.arena.get(node)
+                    .map_or(false, |n| n.kind == SyntaxKind::DeclareKeyword as u16)
+            });
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_module_block()
+            self.parse_module_block(is_declare)
         } else if self.is_token(SyntaxKind::DotToken) {
             // Nested module: module A.B.C { }
             self.next_token();
-            self.parse_nested_module_declaration(None)
+            self.parse_nested_module_declaration(modifiers.clone(), is_declare)
         } else {
             NodeIndex::NONE
         };
@@ -902,12 +899,13 @@ impl ParserState {
         };
 
         // Parse body
+        // Declare module blocks are always ambient
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_module_block()
+            self.parse_module_block(true)
         } else if self.is_token(SyntaxKind::DotToken) {
             // Nested module: module A.B.C { }
             self.next_token();
-            self.parse_nested_module_declaration(modifiers.clone())
+            self.parse_nested_module_declaration(modifiers.clone(), true)
         } else {
             NodeIndex::NONE
         };
@@ -935,6 +933,7 @@ impl ParserState {
     pub(crate) fn parse_nested_module_declaration(
         &mut self,
         modifiers: Option<NodeList>,
+        is_ambient: bool,
     ) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -946,10 +945,10 @@ impl ParserState {
         };
 
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_module_block()
+            self.parse_module_block(is_ambient)
         } else if self.is_token(SyntaxKind::DotToken) {
             self.next_token();
-            self.parse_nested_module_declaration(modifiers.clone())
+            self.parse_nested_module_declaration(modifiers.clone(), is_ambient)
         } else {
             NodeIndex::NONE
         };
@@ -995,13 +994,16 @@ impl ParserState {
     }
 
     /// Parse module block: { statements }
-    pub(crate) fn parse_module_block(&mut self) -> NodeIndex {
+    /// is_ambient: true if this is a declare namespace/module, false for regular namespace
+    pub(crate) fn parse_module_block(&mut self, is_ambient: bool) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
-        // Set ambient context flag for declare namespace/module body
+        // Set ambient context flag for declare namespace/module body only
         let saved_flags = self.context_flags;
-        self.context_flags |= crate::parser::state::CONTEXT_FLAG_AMBIENT;
+        if is_ambient {
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_AMBIENT;
+        }
 
         let statements = self.parse_statements();
 
