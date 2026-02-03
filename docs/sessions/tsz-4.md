@@ -2,28 +2,30 @@
 
 ## Current Work
 
-**Task**: Investigating and fixing TS2339 errors for catch clause destructuring
-
-Working on fixing ignored tests related to property-not-exist (TS2339) errors when destructuring catch clause variables. The issue is that tsz suppresses property access errors on `unknown` types, but TypeScript (with `useUnknownInCatchVariables=true`, which is default in strict mode) should report TS2339 when destructuring catch variables like `catch ({ x })` because the catch variable type is `unknown`.
-
-**Test case**:
-```typescript
-// @strict: true
-function f() {
-    try {
-    } catch ({ x }) {
-    }
-}
-```
-
-Expected: TS2339 error "Property 'x' does not exist on type '{}'"
-Actual: No error (suppressed because type is `unknown`)
+*No active work*
 
 ---
 
 ## History (Last 20)
 
-### 2025-02-03: Investigating TS2339 catch clause destructuring issue
+### 2025-02-03: Fixed TS2339 property access on unknown types
+
+Fixed error reporting for property access on `unknown` types to match TypeScript behavior. Previously, tsz was suppressing TS2339 errors when accessing properties on `unknown` types, but TypeScript correctly reports these errors.
+
+**Root cause**: `error_property_not_exist_at` in `src/checker/error_reporter.rs` was suppressing errors on `TypeId::UNKNOWN`. The suppression was intended to prevent cascading errors from unresolved types, but `unknown` is a valid type that should error on arbitrary property access.
+
+**Changes made**:
+- `src/checker/error_reporter.rs`: Removed `TypeId::UNKNOWN` from the error suppression list in `error_property_not_exist_at`
+- `src/tests/checker_state_tests.rs`: Fixed and unignored `test_ts2339_catch_binding_unknown` (destructuring catch variables with `useUnknownInCatchVariables=true`)
+- `src/tests/checker_state_tests.rs`: Fixed expectation in `test_ts2339_unknown_property_access_after_narrowing` (from 1 to 2 errors to match tsc)
+
+**Tests fixed** (2 tests):
+- test_ts2339_catch_binding_unknown (no longer ignored)
+- test_ts2339_unknown_property_access_after_narrowing (fixed test expectation)
+
+**Impact**: +2 tests passing (510 passed vs 508 before)
+
+---
 
 ### 2025-02-03: Fixed 13 TS2304 (Cannot find name) ignored tests
 
