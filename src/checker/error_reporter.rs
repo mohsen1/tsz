@@ -668,14 +668,14 @@ impl<'a> CheckerState<'a> {
             type_queries::is_error_type(self.ctx.types, type_id)
         );
 
-        // Suppress error if type is ERROR/UNKNOWN/ANY or an Error type wrapper
+        // Suppress error if type is ERROR/ANY or an Error type wrapper
         // This prevents cascading errors when accessing properties on error types
+        // NOTE: We do NOT suppress for UNKNOWN - accessing properties on unknown should error (TS2339)
         if type_id == TypeId::ERROR
             || type_id == TypeId::ANY
-            || type_id == TypeId::UNKNOWN
             || type_queries::is_error_type(self.ctx.types, type_id)
         {
-            eprintln!("[PROP-NOT-EXIST] SUPPRESSED: type is error/any/unknown");
+            eprintln!("[PROP-NOT-EXIST] SUPPRESSED: type is error/any");
             return;
         }
 

@@ -5533,14 +5533,13 @@ obj.foo;
         .filter(|d| d.code == 2339)
         .count();
     assert_eq!(
-        count, 1,
-        "Expected one 2339 after narrowing unknown to object, got: {:?}",
+        count, 2,
+        "Expected two 2339 errors (one for unknown.foo, one for object.foo), got: {:?}",
         checker.ctx.diagnostics
     );
 }
 
 #[test]
-#[ignore]
 fn test_ts2339_catch_binding_unknown() {
     use crate::parser::ParserState;
 
