@@ -351,6 +351,22 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Phase 4.2.1: Create DefIds for type aliases (but not classes/interfaces)
+            // This enables type_reference_symbol_type to use DefId-based resolution
+            match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
+                TypeSymbolResolution::Type(sym_id) => {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                    {
+                        // Create DefId for type alias
+                        let _def_id = self.ctx.get_or_create_def_id(sym_id);
+                        // Fall through to resolve_named_type_reference below
+                    }
+                }
+                TypeSymbolResolution::ValueOnly(_) => {}
+                TypeSymbolResolution::NotFound => {}
+            }
+
             if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
                 return type_id;
             }
