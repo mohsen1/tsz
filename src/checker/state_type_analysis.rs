@@ -1410,6 +1410,11 @@ impl<'a> CheckerState<'a> {
                     // If there are augmentations for this module+interface, merge them in
                     result = self.apply_module_augmentations(module_name, export_name, result);
 
+                    // CRITICAL: Update the symbol type cache with the augmented type
+                    // This ensures that when the type annotation uses the symbol (e.g., `let x: Observable<number>`),
+                    // it gets the augmented type with all merged members
+                    self.ctx.symbol_types.insert(export_sym_id, result);
+
                     if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
                         debug!(
                             export_name = %export_name,
