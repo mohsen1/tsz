@@ -257,6 +257,7 @@ pub mod diagnostic_messages {
     pub const CANNOT_FIND_NAME_CHANGE_LIB: &str = "Cannot find name '{0}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.";
     /// TS2584: Cannot find name - suggest including 'dom' lib
     pub const CANNOT_FIND_NAME_CHANGE_TARGET_LIB: &str = "Cannot find name '{0}'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.";
+    pub const ASYNC_MODIFIER_CANNOT_APPEAR_ON_TYPE_MEMBER: &str = "'async' modifier cannot appear on a type member.";
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: &str =
         "An 'await' expression is only allowed within an async function.";
     pub const AWAIT_IN_PARAMETER_DEFAULT: &str =
@@ -323,6 +324,7 @@ pub mod diagnostic_codes {
     pub const DECLARE_MODIFIER_IN_AMBIENT_CONTEXT: u32 = 1038; // A 'declare' modifier cannot be used in an already ambient context.
     pub const INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS: u32 = 1039; // Initializers are not allowed in ambient contexts.
     pub const ASYNC_MODIFIER_IN_AMBIENT_CONTEXT: u32 = 1040; // 'async' modifier cannot be used in an ambient context.
+    pub const ASYNC_MODIFIER_CANNOT_APPEAR_ON_TYPE_MEMBER: u32 = 1070; // 'async' modifier cannot appear on a type member.
     pub const ASYNC_MODIFIER_CANNOT_BE_USED_HERE: u32 = 1042; // 'async' modifier cannot be used here.
     pub const SETTER_MUST_HAVE_EXACTLY_ONE_PARAMETER: u32 = 1049;
     pub const SETTER_PARAMETER_CANNOT_HAVE_INITIALIZER: u32 = 1052; // A 'set' accessor parameter cannot have an initializer.
