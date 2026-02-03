@@ -1276,6 +1276,7 @@ pub fn classify_for_contains_traversal(db: &dyn TypeDatabase, type_id: TypeId) -
 pub enum NamespaceMemberKind {
     #[deprecated(note = "Lazy types don't use SymbolRef")]
     SymbolRef(crate::solver::types::SymbolRef),
+    Lazy(DefId),
     Callable(crate::solver::types::CallableShapeId),
     Other,
 }
@@ -1284,6 +1285,7 @@ pub enum NamespaceMemberKind {
 pub fn classify_namespace_member(db: &dyn TypeDatabase, type_id: TypeId) -> NamespaceMemberKind {
     match db.lookup(type_id) {
         Some(TypeKey::Callable(shape_id)) => NamespaceMemberKind::Callable(shape_id),
+        Some(TypeKey::Lazy(def_id)) => NamespaceMemberKind::Lazy(def_id),
         _ => NamespaceMemberKind::Other,
     }
 }

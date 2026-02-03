@@ -669,6 +669,26 @@ impl<'a> CheckerState<'a> {
                     // (e.g., in test setup that doesn't go through full lowering)
                     let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
                     if let Some(sym_id) = sym_id_opt {
+                        // Enums in value position behave like objects (runtime enum object).
+                        // For numeric enums, this includes a number index signature for reverse mapping.
+                        // This is the same logic as Ref branch above - check for ENUM flags
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            if symbol.flags & symbol_flags::ENUM != 0 {
+                                if let Some(enum_object) = self.enum_object_type(sym_id) {
+                                    if enum_object != type_id {
+                                        let r = self.resolve_type_for_property_access_inner(
+                                            enum_object,
+                                            visited,
+                                        );
+                                        self.ctx.leave_recursion();
+                                        return r;
+                                    }
+                                    self.ctx.leave_recursion();
+                                    return enum_object;
+                                }
+                            }
+                        }
+
                         let resolved = self.get_type_of_symbol(sym_id);
                         if resolved == type_id {
                             type_id
