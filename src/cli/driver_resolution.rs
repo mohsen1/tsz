@@ -201,6 +201,11 @@ pub(crate) fn collect_module_specifiers(
         return specifiers;
     };
 
+    // Helper to strip surrounding quotes from a module specifier
+    let strip_quotes = |s: &str| -> String {
+        s.trim_matches(|c| c == '"' || c == '\'').to_string()
+    };
+
     for &stmt_idx in &source.statements.nodes {
         if stmt_idx.is_none() {
             continue;
@@ -208,25 +213,85 @@ pub(crate) fn collect_module_specifiers(
         let Some(stmt) = arena.get(stmt_idx) else {
             continue;
         };
-        if let Some(import_decl) = arena.get_import_decl(stmt)
-            && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
-        {
-            specifiers.push((text.to_string(), import_decl.module_specifier));
+
+        // Handle ES6 imports: import { x } from './module'
+        // and import equals with require: import x = require('./module')
+        if let Some(import_decl) = arena.get_import_decl(stmt) {
+            // Try to get literal text directly (ES6 import)
+            if let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
+                specifiers.push((strip_quotes(text), import_decl.module_specifier));
+            } else {
+                // Handle import equals declaration: import x = require('./module')
+                // The module_specifier might be a CallExpression for require()
+                if let Some(spec_text) =
+                    extract_require_specifier(arena, import_decl.module_specifier)
+                {
+                    specifiers.push((spec_text, import_decl.module_specifier));
+                }
+            }
         }
+
+        // Handle exports: export { x } from './module'
         if let Some(export_decl) = arena.get_export_decl(stmt) {
             if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
-                specifiers.push((text.to_string(), export_decl.module_specifier));
+                specifiers.push((strip_quotes(text), export_decl.module_specifier));
             } else if !export_decl.export_clause.is_none()
                 && let Some(clause_node) = arena.get(export_decl.export_clause)
                 && let Some(import_decl) = arena.get_import_decl(clause_node)
                 && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
             {
-                specifiers.push((text.to_string(), import_decl.module_specifier));
+                specifiers.push((strip_quotes(text), import_decl.module_specifier));
             }
         }
     }
 
     specifiers
+}
+
+/// Extract module specifier from a require() call expression
+/// e.g., `require('./module')` -> `./module` (without quotes)
+fn extract_require_specifier(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    use crate::parser::syntax_kind_ext;
+    use crate::scanner::SyntaxKind;
+
+    let node = arena.get(idx)?;
+
+    // Helper to strip surrounding quotes from a string
+    let strip_quotes = |s: &str| -> String {
+        s.trim_matches(|c| c == '"' || c == '\'').to_string()
+    };
+
+    // If it's directly a string literal, return it (without quotes)
+    if let Some(text) = arena.get_literal_text(idx) {
+        return Some(strip_quotes(text));
+    }
+
+    // Check if it's a require() call expression
+    if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+        return None;
+    }
+
+    let call = arena.get_call_expr(node)?;
+
+    // Check that the callee is 'require' (an identifier)
+    let callee_node = arena.get(call.expression)?;
+    if callee_node.kind != SyntaxKind::Identifier as u16 {
+        return None;
+    }
+    let callee_text = arena.get_identifier_text(call.expression)?;
+    if callee_text != "require" {
+        return None;
+    }
+
+    // Get the first argument (the module specifier)
+    let args = call.arguments.as_ref()?;
+    let arg_idx = args.nodes.first()?;
+    if arg_idx.is_none() {
+        return None;
+    }
+
+    // Get the literal text of the argument (without quotes)
+    arena.get_literal_text(*arg_idx).map(|s| strip_quotes(s))
 }
 
 pub(crate) fn collect_import_bindings(
