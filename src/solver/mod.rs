@@ -17,7 +17,7 @@ mod apparent;
 mod application;
 pub mod binary_ops;
 mod class_hierarchy;
-mod compat;
+pub mod compat;
 mod contextual;
 mod db;
 pub mod def;

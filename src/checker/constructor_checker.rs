@@ -522,7 +522,7 @@ impl<'a> CheckerState<'a> {
         &self,
         source: TypeId,
         target: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
+        _env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
         use crate::solver::type_queries::AbstractConstructorKind;
 
@@ -720,89 +720,5 @@ impl<'a> CheckerState<'a> {
         }
         let env_ref = self.ctx.type_env.borrow();
         env_ref.get(symbol)
-    }
-
-    fn is_abstract_constructor_type(
-        &self,
-        type_id: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> bool {
-        use crate::binder::SymbolId;
-        use crate::solver::type_queries::{
-            AbstractConstructorKind, classify_for_abstract_constructor,
-        };
-
-        // First check the cached set
-        if self.is_abstract_ctor(type_id) {
-            return true;
-        }
-
-        match classify_for_abstract_constructor(self.ctx.types, type_id) {
-            AbstractConstructorKind::TypeQuery(symbol) => {
-                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(symbol.0)) {
-                    // Check if the symbol is marked as abstract
-                    if symbol.flags & symbol_flags::ABSTRACT != 0 {
-                        return true;
-                    }
-                    // Also check if this is an abstract class by examining its declaration
-                    // The ABSTRACT flag might not be set on the symbol, so check the class modifiers
-                    if symbol.flags & symbol_flags::CLASS != 0 {
-                        // Get the class declaration and check if it has the abstract modifier
-                        let decl_idx = if !symbol.value_declaration.is_none() {
-                            symbol.value_declaration
-                        } else {
-                            symbol
-                                .declarations
-                                .first()
-                                .copied()
-                                .unwrap_or(NodeIndex::NONE)
-                        };
-                        if !decl_idx.is_none()
-                            && let Some(node) = self.ctx.arena.get(decl_idx)
-                            && let Some(class) = self.ctx.arena.get_class(node)
-                        {
-                            return self.has_abstract_modifier(&class.modifiers);
-                        }
-                    }
-                    false
-                } else {
-                    false
-                }
-            }
-            AbstractConstructorKind::Ref(symbol) => self
-                .resolve_type_env_symbol(symbol, env)
-                .map(|resolved| {
-                    resolved != type_id && self.is_abstract_constructor_type(resolved, env)
-                })
-                .unwrap_or(false),
-            AbstractConstructorKind::Callable(_shape_id) => {
-                // For Callable types (constructor types), check if they're in the abstract set
-                // This handles `typeof AbstractClass` which returns a Callable type
-                if self.is_abstract_ctor(type_id) {
-                    return true;
-                }
-                // Additional check: iterate through symbol_types to find matching class symbols
-                // This handles cases where the type wasn't added to abstract_constructor_types
-                // or the type is being compared before being cached
-                for (&sym_id, &cached_type) in self.ctx.symbol_types.iter() {
-                    if cached_type == type_id {
-                        // Found a symbol with this type, check if it's an abstract class
-                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                            && symbol.flags & symbol_flags::CLASS != 0
-                            && symbol.flags & symbol_flags::ABSTRACT != 0
-                        {
-                            return true;
-                        }
-                    }
-                }
-                false
-            }
-            AbstractConstructorKind::Application(app_id) => {
-                // For generic type applications, check the base type
-                let app = self.ctx.types.type_application(app_id);
-                self.is_abstract_constructor_type(app.base, env)
-            }
-            AbstractConstructorKind::NotAbstract => false,
-        }
     }
 }
