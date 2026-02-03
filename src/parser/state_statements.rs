@@ -626,6 +626,14 @@ impl ParserState {
 
     /// Parse async function declaration
     pub(crate) fn parse_async_function_declaration(&mut self) -> NodeIndex {
+        // TS1040: 'async' modifier cannot be used in an ambient context
+        if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "'async' modifier cannot be used in an ambient context.",
+                diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+            );
+        }
         self.parse_expected(SyntaxKind::AsyncKeyword);
         self.parse_function_declaration_with_async(true, None)
     }
@@ -913,7 +921,21 @@ impl ParserState {
         let start_pos = self.token_pos();
 
         // Check for async modifier if not already parsed
-        let is_async = is_async || self.parse_optional(SyntaxKind::AsyncKeyword);
+        // TS1040: 'async' modifier cannot be used in an ambient context
+        let async_token_pos = self.token_pos();
+        let is_async = if !is_async && self.is_token(SyntaxKind::AsyncKeyword) {
+            if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "'async' modifier cannot be used in an ambient context.",
+                    diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+                );
+            }
+            self.next_token(); // consume async
+            true
+        } else {
+            is_async
+        };
 
         self.parse_expected(SyntaxKind::FunctionKeyword);
 
@@ -2249,6 +2271,14 @@ impl ParserState {
                         .create_modifier(SyntaxKind::OverrideKeyword, start_pos)
                 }
                 SyntaxKind::AsyncKeyword => {
+                    // TS1040: 'async' modifier cannot be used in an ambient context
+                    if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'async' modifier cannot be used in an ambient context.",
+                            diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+                        );
+                    }
                     self.next_token();
                     self.arena
                         .create_modifier(SyntaxKind::AsyncKeyword, start_pos)
