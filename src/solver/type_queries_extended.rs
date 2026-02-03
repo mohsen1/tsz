@@ -130,6 +130,8 @@ pub enum SpreadTypeKind {
     ObjectWithIndex(crate::solver::types::ObjectShapeId),
     /// String literal - can be spread as characters
     StringLiteral(crate::interner::Atom),
+    /// Lazy reference (DefId) - needs resolution to actual spreadable type
+    Lazy(DefId),
     /// Type that needs further checks for iterability
     Other,
     /// Type that cannot be spread
@@ -161,6 +163,7 @@ pub fn classify_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> SpreadTyp
         TypeKey::Literal(crate::solver::LiteralValue::String(atom)) => {
             SpreadTypeKind::StringLiteral(atom)
         }
+        TypeKey::Lazy(def_id) => SpreadTypeKind::Lazy(def_id),
         _ => SpreadTypeKind::Other,
     }
 }
@@ -1466,6 +1469,8 @@ pub enum PropertyAccessResolutionKind {
     /// Ref type - resolve the symbol (deprecated)
     #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
+    /// Lazy type (DefId) - needs resolution to actual type
+    Lazy(DefId),
     /// TypeQuery (typeof) - resolve the symbol
     TypeQuery(crate::solver::types::SymbolRef),
     /// Application - needs evaluation
@@ -1497,6 +1502,7 @@ pub fn classify_for_property_access_resolution(
 
     match key {
         TypeKey::TypeQuery(sym_ref) => PropertyAccessResolutionKind::TypeQuery(sym_ref),
+        TypeKey::Lazy(def_id) => PropertyAccessResolutionKind::Lazy(def_id),
         TypeKey::Application(app_id) => PropertyAccessResolutionKind::Application(app_id),
         TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
             PropertyAccessResolutionKind::TypeParameter {

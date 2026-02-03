@@ -8,6 +8,7 @@ use crate::checker::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
+use crate::solver::visitor::lazy_def_id;
 use crate::solver::{TypeId, TypeKey};
 
 impl<'a> CheckerState<'a> {
@@ -654,6 +655,31 @@ impl<'a> CheckerState<'a> {
                     self.resolve_type_for_property_access_inner(resolved, visited)
                 }
             }
+            PropertyAccessResolutionKind::Lazy(def_id) => {
+                // Resolve lazy type from definition store
+                if let Some(body) = self.ctx.definition_store.get_body(def_id) {
+                    if body == type_id {
+                        type_id
+                    } else {
+                        self.resolve_type_for_property_access_inner(body, visited)
+                    }
+                } else {
+                    // Definition not found in store - try to resolve via symbol lookup
+                    // This handles cases where the definition hasn't been registered yet
+                    // (e.g., in test setup that doesn't go through full lowering)
+                    let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
+                    if let Some(sym_id) = sym_id_opt {
+                        let resolved = self.get_type_of_symbol(sym_id);
+                        if resolved == type_id {
+                            type_id
+                        } else {
+                            self.resolve_type_for_property_access_inner(resolved, visited)
+                        }
+                    } else {
+                        type_id
+                    }
+                }
+            }
             PropertyAccessResolutionKind::TypeQuery(sym_ref) => {
                 let resolved = self.get_type_of_symbol(SymbolId(sym_ref.0));
                 if resolved == type_id {
@@ -716,6 +742,44 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.leave_recursion();
         result
+    }
+
+    /// Resolve a lazy type (type alias) to its body type.
+    ///
+    /// This function resolves `TypeKey::Lazy(DefId)` types by looking up the
+    /// definition's body in the definition store. This is necessary for
+    /// type aliases like `type Tuple = [string, number]` where the reference
+    /// to `Tuple` is stored as a lazy type.
+    ///
+    /// The function handles recursive type aliases by checking if the body
+    /// is itself a lazy type and resolving it recursively.
+    pub(crate) fn resolve_lazy_type(&mut self, type_id: TypeId) -> TypeId {
+        use rustc_hash::FxHashSet;
+
+        let mut visited = FxHashSet::default();
+        self.resolve_lazy_type_inner(type_id, &mut visited)
+    }
+
+    fn resolve_lazy_type_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> TypeId {
+        // Prevent infinite loops in circular type aliases
+        if !visited.insert(type_id) {
+            return type_id;
+        }
+
+        // Check if this is a lazy type
+        if let Some(def_id) = lazy_def_id(self.ctx.types, type_id) {
+            // Look up the definition's body
+            if let Some(body) = self.ctx.definition_store.get_body(def_id) {
+                // Recursively resolve in case the body is also a lazy type
+                return self.resolve_lazy_type_inner(body, visited);
+            }
+        }
+
+        type_id
     }
 
     /// Get keyof a type - extract the keys of an object type.
