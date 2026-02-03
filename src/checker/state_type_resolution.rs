@@ -10,8 +10,8 @@ use crate::interner::Atom;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::solver::def::DefId;
 use crate::solver::TypeId;
+use crate::solver::def::DefId;
 
 impl<'a> CheckerState<'a> {
     /// Get type from a type reference node (e.g., "number", "string", "MyType").
@@ -310,7 +310,8 @@ impl<'a> CheckerState<'a> {
                     TypeSymbolResolution::Type(sym_id) => {
                         // TS2314: Check if this generic type requires type arguments
                         let type_params = self.get_type_params_for_symbol(sym_id);
-                        let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
+                        let required_count =
+                            type_params.iter().filter(|p| p.default.is_none()).count();
 
                         if required_count > 0 {
                             self.error_generic_type_requires_type_arguments_at(
@@ -323,7 +324,11 @@ impl<'a> CheckerState<'a> {
 
                         // Apply default type arguments if no explicit args were provided
                         // This handles cases like: type Box<T = string> = ...; let x: Box;
-                        if type_ref.type_arguments.as_ref().map_or(true, |args| args.nodes.is_empty()) {
+                        if type_ref
+                            .type_arguments
+                            .as_ref()
+                            .map_or(true, |args| args.nodes.is_empty())
+                        {
                             // No explicit type arguments provided
                             let has_defaults = type_params.iter().any(|p| p.default.is_some());
 
@@ -336,7 +341,8 @@ impl<'a> CheckerState<'a> {
 
                                 // Create a Lazy type with DefId for proper type parameter substitution
                                 let def_id = self.ctx.get_or_create_def_id(sym_id);
-                                let base_type_id = self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id));
+                                let base_type_id =
+                                    self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id));
 
                                 // Create TypeApplication with defaults
                                 return self.ctx.types.application(base_type_id, default_args);
@@ -759,10 +765,14 @@ impl<'a> CheckerState<'a> {
                         |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
 
                     // Phase 4.2: Add def_id_resolver for DefId-based resolution
-                    let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
-                        self.resolve_type_symbol_for_lowering(node_idx)
-                            .map(|sym_id| self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id)))
-                    };
+                    let def_id_resolver =
+                        |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
+                            self.resolve_type_symbol_for_lowering(node_idx)
+                                .map(|sym_id| {
+                                    self.ctx
+                                        .get_or_create_def_id(crate::binder::SymbolId(sym_id))
+                                })
+                        };
 
                     let lowering = TypeLowering::with_hybrid_resolver(
                         symbol_arena,
@@ -1114,8 +1124,10 @@ impl<'a> CheckerState<'a> {
         };
 
         use crate::checker::types::diagnostics::{diagnostic_messages, format_message};
-        let message =
-            format_message(diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT, &[module_specifier]);
+        let message = format_message(
+            diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
+            &[module_specifier],
+        );
         self.error(
             start,
             length,

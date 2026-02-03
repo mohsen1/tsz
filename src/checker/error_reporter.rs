@@ -201,7 +201,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag = builder.type_not_assignable(source, target, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -640,7 +641,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag = builder.property_missing(prop_name, source, target, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -666,7 +668,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag = builder.property_not_exist(prop_name, type_id, loc.start, loc.length());
             // Use push_diagnostic for deduplication
             self.ctx
@@ -686,7 +689,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag = builder.excess_property(prop_name, target, loc.start, loc.length());
             // Use push_diagnostic for deduplication
             self.ctx
@@ -701,7 +705,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag = builder.readonly_property(prop_name, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -802,7 +807,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag = builder.cannot_find_name(name, loc.start, loc.length());
             self.ctx
                 .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
@@ -1128,7 +1134,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag =
                 builder.argument_not_assignable(arg_type, param_type, loc.start, loc.length());
             self.ctx
@@ -1150,7 +1157,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag = builder.argument_count_mismatch(expected, got, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -1241,7 +1249,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 &self.ctx.binder.symbols,
                 self.ctx.file_name.as_str(),
-            ).with_def_store(&self.ctx.definition_store);
+            )
+            .with_def_store(&self.ctx.definition_store);
             let diag = builder.not_callable(type_id, loc.start, loc.length());
             self.ctx
                 .diagnostics
@@ -1489,7 +1498,9 @@ impl<'a> CheckerState<'a> {
             };
 
             // Emit TS2469 for symbol operands
-            if let (Some(loc), Some(type_str)) = (self.get_source_location(left_idx), left_type_str.as_deref()) {
+            if let (Some(loc), Some(type_str)) =
+                (self.get_source_location(left_idx), left_type_str.as_deref())
+            {
                 let message = format_message(
                     diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
                     &[op, type_str],
@@ -1505,7 +1516,10 @@ impl<'a> CheckerState<'a> {
                 });
             }
 
-            if let (Some(loc), Some(type_str)) = (self.get_source_location(right_idx), right_type_str.as_deref()) {
+            if let (Some(loc), Some(type_str)) = (
+                self.get_source_location(right_idx),
+                right_type_str.as_deref(),
+            ) {
                 let message = format_message(
                     diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
                     &[op, type_str],

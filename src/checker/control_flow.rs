@@ -421,14 +421,18 @@ impl<'a> FlowAnalyzer<'a> {
                         // Try to get the flow node where this function was declared
                         if let Some(&outer_flow) = self.binder.node_flow.get(&flow.node.0) {
                             // Bug #1.2 fix: Check if the reference is a CAPTURED mutable variable
-                            if self.is_mutable_variable(reference) && self.is_captured_variable(reference) {
+                            if self.is_mutable_variable(reference)
+                                && self.is_captured_variable(reference)
+                            {
                                 // Captured mutable variable - cannot use narrowing from outer scope
                                 // Return the initial (declared) type
                                 initial_type
                             } else {
                                 // Const or immutable - preserve narrowing from outer scope
                                 // Add outer flow to worklist and continue traversal
-                                if !in_worklist.contains(&outer_flow) && !visited.contains(&outer_flow) {
+                                if !in_worklist.contains(&outer_flow)
+                                    && !visited.contains(&outer_flow)
+                                {
                                     worklist.push_back((outer_flow, current_type));
                                     in_worklist.insert(outer_flow);
                                 }

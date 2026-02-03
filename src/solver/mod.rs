@@ -25,6 +25,7 @@ mod diagnostics;
 pub mod element_access;
 mod evaluate;
 pub mod evaluate_rules;
+pub mod expression_ops;
 mod flow_analysis;
 mod format;
 pub mod freshness;
@@ -40,7 +41,6 @@ mod narrowing;
 mod object_literal;
 pub mod operations;
 pub mod operations_property;
-pub mod expression_ops;
 // salsa_db is feature-gated until salsa API is updated
 #[cfg(feature = "experimental_salsa")]
 pub mod salsa_db;

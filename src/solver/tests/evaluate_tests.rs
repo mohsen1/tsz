@@ -1,6 +1,6 @@
 use super::*;
-use crate::solver::{SubtypeChecker, TypeSubstitution, instantiate_type};
 use crate::solver::def::DefId;
+use crate::solver::{SubtypeChecker, TypeSubstitution, instantiate_type};
 
 #[test]
 fn test_conditional_true_branch() {
@@ -9994,8 +9994,8 @@ fn test_index_access_object_with_number_index_signature_no_unchecked() {
 
 #[test]
 fn test_index_access_resolves_ref() {
-    use crate::solver::def::DefId;
     use crate::solver::TypeEnvironment;
+    use crate::solver::def::DefId;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -10905,8 +10905,8 @@ fn test_keyof_type_param_no_constraint_deferred() {
 
 #[test]
 fn test_keyof_resolves_ref() {
-    use crate::solver::def::DefId;
     use crate::solver::TypeEnvironment;
+    use crate::solver::def::DefId;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();

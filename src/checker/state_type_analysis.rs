@@ -1069,10 +1069,7 @@ impl<'a> CheckerState<'a> {
             use crate::solver::TypeKey;
             // Create DefId and use Lazy type
             let def_id = self.ctx.get_or_create_def_id(sym_id);
-            return (
-                self.ctx.types.intern(TypeKey::Lazy(def_id)),
-                Vec::new(),
-            );
+            return (self.ctx.types.intern(TypeKey::Lazy(def_id)), Vec::new());
         }
 
         // Enum - return a Lazy type with DefId for nominal identity checking.
@@ -1082,10 +1079,7 @@ impl<'a> CheckerState<'a> {
             use crate::solver::TypeKey;
             // Create DefId and use Lazy type
             let def_id = self.ctx.get_or_create_def_id(sym_id);
-            return (
-                self.ctx.types.intern(TypeKey::Lazy(def_id)),
-                Vec::new(),
-            );
+            return (self.ctx.types.intern(TypeKey::Lazy(def_id)), Vec::new());
         }
 
         // Enum member - determine type from parent enum
@@ -1676,7 +1670,11 @@ impl<'a> CheckerState<'a> {
                     // Property not found, emit error if appropriate
                     if saw_class_scope {
                         // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                        self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
+                        self.error_property_not_exist_at(
+                            &property_name,
+                            original_object_type,
+                            name_idx,
+                        );
                     }
                     return TypeId::ERROR;
                 }

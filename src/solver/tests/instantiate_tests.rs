@@ -1,6 +1,6 @@
 use super::*;
-use crate::solver::instantiate::MAX_INSTANTIATION_DEPTH;
 use crate::solver::def::DefId;
+use crate::solver::instantiate::MAX_INSTANTIATION_DEPTH;
 
 #[test]
 fn test_substitution_basic() {

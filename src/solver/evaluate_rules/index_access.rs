@@ -3,19 +3,19 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
-use crate::solver::{ApparentMemberKind, TypeDatabase};
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::{
     TypeVisitor, array_element_type, literal_number, literal_string, tuple_list_id, union_list_id,
 };
+use crate::solver::{ApparentMemberKind, TypeDatabase};
 
-use super::apparent::make_apparent_method_type;
 use super::super::evaluate::{
     ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
     ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
+use super::apparent::make_apparent_method_type;
 
 fn is_member(name: &str, list: &[&str]) -> bool {
     list.contains(&name)
@@ -171,7 +171,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
         let symbol_ref = SymbolRef(symbol_ref);
-        let resolved = if let Some(def_id) = self.evaluator.resolver().symbol_to_def_id(symbol_ref) {
+        let resolved = if let Some(def_id) = self.evaluator.resolver().symbol_to_def_id(symbol_ref)
+        {
             self.evaluator
                 .resolver()
                 .resolve_lazy(def_id, self.evaluator.interner())?
@@ -251,17 +252,18 @@ impl<'a> ArrayKeyVisitor<'a> {
     }
 
     fn get_array_member_types(&mut self) -> Vec<TypeId> {
-        self.array_member_types_cache.get_or_insert_with(|| {
-            vec![
-                TypeId::NUMBER,
-                make_apparent_method_type(self.db, TypeId::ANY),
-                make_apparent_method_type(self.db, TypeId::BOOLEAN),
-                make_apparent_method_type(self.db, TypeId::NUMBER),
-                make_apparent_method_type(self.db, TypeId::VOID),
-                make_apparent_method_type(self.db, TypeId::STRING),
-            ]
-        })
-        .clone()
+        self.array_member_types_cache
+            .get_or_insert_with(|| {
+                vec![
+                    TypeId::NUMBER,
+                    make_apparent_method_type(self.db, TypeId::ANY),
+                    make_apparent_method_type(self.db, TypeId::BOOLEAN),
+                    make_apparent_method_type(self.db, TypeId::NUMBER),
+                    make_apparent_method_type(self.db, TypeId::VOID),
+                    make_apparent_method_type(self.db, TypeId::STRING),
+                ]
+            })
+            .clone()
     }
 }
 
@@ -415,17 +417,18 @@ impl<'a> TupleKeyVisitor<'a> {
 
     /// Get array member types (cached)
     fn get_array_member_types(&mut self) -> Vec<TypeId> {
-        self.array_member_types_cache.get_or_insert_with(|| {
-            vec![
-                TypeId::NUMBER,
-                make_apparent_method_type(self.db, TypeId::ANY),
-                make_apparent_method_type(self.db, TypeId::BOOLEAN),
-                make_apparent_method_type(self.db, TypeId::NUMBER),
-                make_apparent_method_type(self.db, TypeId::VOID),
-                make_apparent_method_type(self.db, TypeId::STRING),
-            ]
-        })
-        .clone()
+        self.array_member_types_cache
+            .get_or_insert_with(|| {
+                vec![
+                    TypeId::NUMBER,
+                    make_apparent_method_type(self.db, TypeId::ANY),
+                    make_apparent_method_type(self.db, TypeId::BOOLEAN),
+                    make_apparent_method_type(self.db, TypeId::NUMBER),
+                    make_apparent_method_type(self.db, TypeId::VOID),
+                    make_apparent_method_type(self.db, TypeId::STRING),
+                ]
+            })
+            .clone()
     }
 
     /// Check for known array members (length, methods)
@@ -504,8 +507,7 @@ impl<'a> TypeVisitor for TupleKeyVisitor<'a> {
                     return Some(TypeId::UNDEFINED);
                 }
                 let idx = value as usize;
-                self.tuple_index_literal(idx)
-                    .or(Some(TypeId::UNDEFINED))
+                self.tuple_index_literal(idx).or(Some(TypeId::UNDEFINED))
             }
             LiteralValue::String(atom) => {
                 // Check if it's a numeric property name (e.g., "0", "1", "42")
@@ -514,8 +516,7 @@ impl<'a> TypeVisitor for TupleKeyVisitor<'a> {
                     if let Ok(idx) = name.as_ref().parse::<i64>()
                         && let Ok(idx) = usize::try_from(idx)
                     {
-                        return self.tuple_index_literal(idx)
-                            .or(Some(TypeId::UNDEFINED));
+                        return self.tuple_index_literal(idx).or(Some(TypeId::UNDEFINED));
                     }
                     return Some(TypeId::UNDEFINED);
                 }

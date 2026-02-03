@@ -3,11 +3,11 @@
 //! This module provides utilities for working with apparent types of primitives.
 //! Apparent types define the shape of primitive values (e.g., string has .length, .charAt(), etc.)
 
-use crate::solver::{ApparentMemberKind, TypeDatabase};
 use crate::solver::apparent::apparent_primitive_members;
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::*;
 use crate::solver::visitor::{intrinsic_kind, literal_value, template_literal_id};
+use crate::solver::{ApparentMemberKind, TypeDatabase};
 
 use super::super::evaluate::TypeEvaluator;
 

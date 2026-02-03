@@ -10,11 +10,11 @@
 //! - TypeResolver trait for lazy symbol resolution
 //! - Tracer pattern for zero-cost diagnostic abstraction
 
+use crate::binder::SymbolId;
 use crate::limits;
 use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
 use crate::solver::db::QueryDatabase;
-use crate::binder::SymbolId;
 use crate::solver::def::DefId;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
@@ -96,7 +96,9 @@ pub trait TypeResolver {
     ///
     /// **Phase 3.4**: Deprecated - use `resolve_lazy` with DefId instead.
     /// This method is being phased out as part of the migration to DefId-based type identity.
-    #[deprecated(note = "Use resolve_lazy with DefId instead. This method is being phased out as part of Issue #12.")]
+    #[deprecated(
+        note = "Use resolve_lazy with DefId instead. This method is being phased out as part of Issue #12."
+    )]
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId>;
 
     /// Resolve a DefId reference to its structural type.
@@ -603,7 +605,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn resolve_ref_type(&self, type_id: TypeId) -> TypeId {
         // Handle DefId-based Lazy types (new API)
         if let Some(def_id) = lazy_def_id(self.interner, type_id) {
-            return self.resolver
+            return self
+                .resolver
                 .resolve_lazy(def_id, self.interner)
                 .unwrap_or(type_id);
         }

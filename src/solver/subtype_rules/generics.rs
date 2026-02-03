@@ -470,7 +470,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let app = self.interner.type_application(app_id);
 
         // Try to get type params and resolved body from either Ref or Lazy base
-        let (type_params, resolved_body) = if let Some(symbol) = ref_symbol(self.interner, app.base) {
+        let (type_params, resolved_body) = if let Some(symbol) = ref_symbol(self.interner, app.base)
+        {
             let params = self.resolver.get_type_params(symbol)?;
             let body = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
                 self.resolver.resolve_lazy(def_id, self.interner)?

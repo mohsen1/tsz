@@ -6582,7 +6582,7 @@ type Qux = { [key: string]: Foo };
                 .lookup(string_index.value_type)
                 .expect("Index value type should exist");
             match value_key {
-                TypeKey::Lazy(_def_id) => {}, // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                TypeKey::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                 _ => panic!("Expected Foo lazy type, got {:?}", value_key),
             }
         }
@@ -33028,7 +33028,7 @@ const x: UserId = "user123";
 
     // After Phase 4.2.1, type aliases should have DefIds created
     let def_id = checker.ctx.get_existing_def_id(user_id_sym);
-    
+
     assert!(
         def_id.is_some(),
         "Type alias should have DefId created after Phase 4.2.1"
@@ -33073,7 +33073,7 @@ const obj: Foo = new Foo();
 
     // During Phase 4.2.1, classes should NOT have DefIds created
     let def_id = checker.ctx.get_existing_def_id(foo_sym);
-    
+
     assert!(
         def_id.is_none(),
         "Class should NOT have DefId during Phase 4.2.1 (deferred to later phase)"
@@ -33119,7 +33119,7 @@ const p: Point = { x: 1, y: 2 };
 
     // During Phase 4.2.1, interfaces should NOT have DefIds created
     let def_id = checker.ctx.get_existing_def_id(point_sym);
-    
+
     assert!(
         def_id.is_none(),
         "Interface should NOT have DefId during Phase 4.2.1 (deferred to later phase)"
@@ -33161,7 +33161,7 @@ const x: Box<string> = { value: "hello" };
 
     // After Phase 4.2.1, generic type aliases should have DefIds
     let def_id = checker.ctx.get_existing_def_id(box_sym);
-    
+
     assert!(
         def_id.is_some(),
         "Generic type alias should have DefId created after Phase 4.2.1"

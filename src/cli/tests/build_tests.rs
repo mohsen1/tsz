@@ -1,8 +1,8 @@
 //! Tests for build mode orchestrator and project references
 
+use clap::Parser;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
-use clap::Parser;
 
 use crate::cli::args::CliArgs;
 use crate::cli::build;
@@ -90,7 +90,8 @@ fn test_is_project_up_to_date_with_buildinfo() {
     // Create a minimal .tsbuildinfo file
     let buildinfo_path = project_dir.join("tsconfig.tsbuildinfo");
     let compiler_version = env!("CARGO_PKG_VERSION");
-    let buildinfo_content = format!(r#"{{
+    let buildinfo_content = format!(
+        r#"{{
   "version": "0.1.0",
   "compilerVersion": "{}",
   "rootFiles": [],
@@ -101,7 +102,9 @@ fn test_is_project_up_to_date_with_buildinfo() {
   "latestChangedDtsFile": null,
   "options": {{}},
   "buildTime": 1234567890
-}}"#, compiler_version);
+}}"#,
+        compiler_version
+    );
     std::fs::write(&buildinfo_path, buildinfo_content).unwrap();
 
     let project = ResolvedProject {
@@ -164,11 +167,7 @@ fn test_is_project_up_to_date_force_rebuild() {
 fn test_get_build_info_path() {
     let temp_dir = TempDir::new().unwrap();
 
-    let project_dir = create_test_project(
-        temp_dir.path(),
-        "myproject",
-        "{}",
-    );
+    let project_dir = create_test_project(temp_dir.path(), "myproject", "{}");
 
     let project = ResolvedProject {
         config_path: project_dir.join("tsconfig.json"),
@@ -183,10 +182,7 @@ fn test_get_build_info_path() {
     // This is an internal test, so we need to make get_build_info_path public or test indirectly
     // For now, we'll just verify the project structure
     assert!(project.config_path.exists());
-    assert_eq!(
-        project.config_path.file_name().unwrap(),
-        "tsconfig.json"
-    );
+    assert_eq!(project.config_path.file_name().unwrap(), "tsconfig.json");
 }
 
 #[test]
@@ -215,7 +211,8 @@ fn test_is_project_up_to_date_with_source_changes() {
     // Create a .tsbuildinfo that lists the source file
     let buildinfo_path = project_dir.join("tsconfig.tsbuildinfo");
     let compiler_version = env!("CARGO_PKG_VERSION");
-    let buildinfo_content = format!(r#"{{
+    let buildinfo_content = format!(
+        r#"{{
   "version": "0.1.0",
   "compilerVersion": "{}",
   "rootFiles": ["src/index.ts"],
@@ -231,7 +228,9 @@ fn test_is_project_up_to_date_with_source_changes() {
   "latestChangedDtsFile": null,
   "options": {{}},
   "buildTime": 1234567890
-}}"#, compiler_version);
+}}"#,
+        compiler_version
+    );
     std::fs::write(&buildinfo_path, buildinfo_content).unwrap();
 
     let project = ResolvedProject {
@@ -275,7 +274,8 @@ fn test_is_project_up_to_date_with_new_source_files() {
     // Create .tsbuildinfo that doesn't list the new file
     let buildinfo_path = project_dir.join("tsconfig.tsbuildinfo");
     let compiler_version = env!("CARGO_PKG_VERSION");
-    let buildinfo_content = format!(r#"{{
+    let buildinfo_content = format!(
+        r#"{{
   "version": "0.1.0",
   "compilerVersion": "{}",
   "rootFiles": [],
@@ -286,7 +286,9 @@ fn test_is_project_up_to_date_with_new_source_files() {
   "latestChangedDtsFile": null,
   "options": {{}},
   "buildTime": 1234567890
-}}"#, compiler_version);
+}}"#,
+        compiler_version
+    );
     std::fs::write(&buildinfo_path, buildinfo_content).unwrap();
 
     let project = ResolvedProject {
@@ -354,7 +356,8 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
         .unwrap()
         .as_secs();
     let compiler_version = env!("CARGO_PKG_VERSION");
-    let ref_buildinfo_content = format!(r#"{{
+    let ref_buildinfo_content = format!(
+        r#"{{
   "version": "0.1.0",
   "compilerVersion": "{}",
   "rootFiles": [],
@@ -365,13 +368,16 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
   "latestChangedDtsFile": "dist/index.d.ts",
   "options": {{}},
   "buildTime": {}
-}}"#, compiler_version, current_time);
+}}"#,
+        compiler_version, current_time
+    );
     std::fs::write(&ref_buildinfo_path, ref_buildinfo_content).unwrap();
 
     // Create .tsbuildinfo for main project with older timestamp
     let main_buildinfo_path = main_dir.join("tsconfig.tsbuildinfo");
     let old_time = current_time - 3600; // 1 hour ago
-    let main_buildinfo_content = format!(r#"{{
+    let main_buildinfo_content = format!(
+        r#"{{
   "version": "0.1.0",
   "compilerVersion": "{}",
   "rootFiles": [],
@@ -382,11 +388,13 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
   "latestChangedDtsFile": null,
   "options": {{}},
   "buildTime": {}
-}}"#, compiler_version, old_time);
+}}"#,
+        compiler_version, old_time
+    );
     std::fs::write(&main_buildinfo_path, main_buildinfo_content).unwrap();
 
     // Create resolved reference
-    use crate::cli::project_refs::{ResolvedProjectReference, ProjectReference};
+    use crate::cli::project_refs::{ProjectReference, ResolvedProjectReference};
     let resolved_ref = ResolvedProjectReference {
         config_path: ref_dir.join("tsconfig.json"),
         original: ProjectReference {

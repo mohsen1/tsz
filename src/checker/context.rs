@@ -1050,11 +1050,7 @@ impl<'a> CheckerContext<'a> {
     /// let params = vec![TypeParamInfo { name: "T", ... }];
     /// ctx.insert_def_type_params(def_id, params);
     /// ```
-    pub fn insert_def_type_params(
-        &self,
-        def_id: DefId,
-        params: Vec<crate::solver::TypeParamInfo>,
-    ) {
+    pub fn insert_def_type_params(&self, def_id: DefId, params: Vec<crate::solver::TypeParamInfo>) {
         if !params.is_empty() {
             self.def_type_params.borrow_mut().insert(def_id, params);
         }

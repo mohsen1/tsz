@@ -4,7 +4,7 @@ use crate::solver::db::QueryDatabase;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::solver::types::{PropertyInfo, TypeId, TypeKey};
-use crate::solver::visitor::{is_empty_object_type_db, TypeVisitor};
+use crate::solver::visitor::{TypeVisitor, is_empty_object_type_db};
 use crate::solver::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 
@@ -451,7 +451,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             None => return false,
         };
 
-        let target_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(target_shape_id));
+        let target_shape = self
+            .interner
+            .object_shape(crate::solver::types::ObjectShapeId(target_shape_id));
 
         // ObjectWithIndex with index signatures is not a weak type
         if let Some(TypeKey::ObjectWithIndex(_)) = self.interner.lookup(target) {
@@ -490,7 +492,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 None => continue,
             };
 
-            let member_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(member_shape_id));
+            let member_shape = self
+                .interner
+                .object_shape(crate::solver::types::ObjectShapeId(member_shape_id));
 
             if member_shape.properties.is_empty()
                 || member_shape.string_index.is_some()
@@ -534,7 +538,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             None => return false,
         };
 
-        let source_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(source_shape_id));
+        let source_shape = self
+            .interner
+            .object_shape(crate::solver::types::ObjectShapeId(source_shape_id));
         let source_props = source_shape.properties.as_slice();
 
         // Empty objects are assignable to weak types (all optional properties).
@@ -560,7 +566,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Handle TypeParameter explicitly
         if let Some(TypeKey::TypeParameter(param)) = self.interner.lookup(source) {
             return match param.constraint {
-                Some(constraint) => self.source_lacks_union_common_property(constraint, target_members),
+                Some(constraint) => {
+                    self.source_lacks_union_common_property(constraint, target_members)
+                }
                 None => false,
             };
         }
@@ -572,7 +580,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             None => return false,
         };
 
-        let source_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(source_shape_id));
+        let source_shape = self
+            .interner
+            .object_shape(crate::solver::types::ObjectShapeId(source_shape_id));
         if source_shape.string_index.is_some() || source_shape.number_index.is_some() {
             return false;
         }
@@ -589,7 +599,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 None => continue,
             };
 
-            let member_shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(member_shape_id));
+            let member_shape = self
+                .interner
+                .object_shape(crate::solver::types::ObjectShapeId(member_shape_id));
             if member_shape.string_index.is_some() || member_shape.number_index.is_some() {
                 return false;
             }
@@ -786,7 +798,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Use visitor for Object types
         let mut extractor = ShapeExtractor::new(self.interner);
         let shape_id = extractor.extract(type_id)?;
-        let shape = self.interner.object_shape(crate::solver::types::ObjectShapeId(shape_id));
+        let shape = self
+            .interner
+            .object_shape(crate::solver::types::ObjectShapeId(shape_id));
 
         for prop in shape.properties.iter() {
             let name = self.interner.resolve_atom(prop.name);

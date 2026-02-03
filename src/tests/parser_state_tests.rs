@@ -4061,11 +4061,9 @@ outer: for (;;) {
 // ============================================================================
 
 #[test]
-
 // ============================================================================
 // TS1038 Tests: 'declare' modifier in ambient contexts
 // ============================================================================
-
 #[test]
 fn test_ts1038_declare_inside_declare_namespace() {
     let source = r#"declare namespace X { declare var y: number; }"#;

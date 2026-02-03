@@ -757,8 +757,8 @@ fn handle_all() -> Result<()> {
 
 fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use wasm::checker::types::diagnostics::DiagnosticCategory;
-    use wasm::cli::project_refs::ProjectReferenceGraph;
     use wasm::cli::build;
+    use wasm::cli::project_refs::ProjectReferenceGraph;
 
     let tsconfig_path = args
         .project

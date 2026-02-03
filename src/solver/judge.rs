@@ -716,9 +716,7 @@ impl<'a> Judge for DefaultJudge<'a> {
 
         match key {
             TypeKey::TypeParameter(ref info) => info.constraint.unwrap_or(type_id),
-            TypeKey::Lazy(def_id) => {
-                self.env.get_def(def_id).unwrap_or(type_id)
-            }
+            TypeKey::Lazy(def_id) => self.env.get_def(def_id).unwrap_or(type_id),
             _ => type_id,
         }
     }

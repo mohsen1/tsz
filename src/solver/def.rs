@@ -498,9 +498,10 @@ impl DefinitionStore {
     /// When an Object type matches an interface's instance shape, we use the interface name
     /// instead of expanding the object literal.
     pub fn find_def_by_shape(&self, shape: &ObjectShape) -> Option<DefId> {
-        self.definitions.iter().find(|entry| {
-            entry.value().instance_shape.as_ref().map(|s| s.as_ref()) == Some(shape)
-        }).map(|entry| *entry.key())
+        self.definitions
+            .iter()
+            .find(|entry| entry.value().instance_shape.as_ref().map(|s| s.as_ref()) == Some(shape))
+            .map(|entry| *entry.key())
     }
 }
 

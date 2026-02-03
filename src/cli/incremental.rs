@@ -44,7 +44,10 @@ pub struct BuildInfo {
     pub emit_signatures: BTreeMap<String, EmitSignature>,
     /// Path to the most recently changed .d.ts file
     /// Used by project references for fast invalidation checking
-    #[serde(rename = "latestChangedDtsFile", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "latestChangedDtsFile",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub latest_changed_dts_file: Option<String>,
     /// Options that affect compilation
     #[serde(default)]
@@ -187,8 +190,8 @@ impl BuildInfo {
                 .with_context(|| format!("failed to create directory: {}", parent.display()))?;
         }
 
-        let content = serde_json::to_string_pretty(self)
-            .context("failed to serialize build info")?;
+        let content =
+            serde_json::to_string_pretty(self).context("failed to serialize build info")?;
 
         std::fs::write(path, content)
             .with_context(|| format!("failed to write build info: {}", path.display()))?;
@@ -265,9 +268,7 @@ impl ChangeTracker {
         current_files: &[PathBuf],
     ) -> Result<()> {
         let current_set: FxHashSet<_> = current_files.iter().collect();
-        let _previous_set: FxHashSet<_> = build_info.file_infos.keys()
-            .map(PathBuf::from)
-            .collect();
+        let _previous_set: FxHashSet<_> = build_info.file_infos.keys().map(PathBuf::from).collect();
 
         // Find new files
         for file in current_files {
@@ -338,18 +339,12 @@ impl ChangeTracker {
         // Normalize absolute paths to relative paths for BuildInfo comparison
         let current_files_relative: Vec<PathBuf> = current_files
             .iter()
-            .filter_map(|path| {
-                path.strip_prefix(base_dir)
-                    .ok()
-                    .map(|p| p.to_path_buf())
-            })
+            .filter_map(|path| path.strip_prefix(base_dir).ok().map(|p| p.to_path_buf()))
             .collect();
 
         // Compute changes using relative paths, but store absolute paths in results
         let current_set: FxHashSet<_> = current_files_relative.iter().collect();
-        let _previous_set: FxHashSet<_> = build_info.file_infos.keys()
-            .map(PathBuf::from)
-            .collect();
+        let _previous_set: FxHashSet<_> = build_info.file_infos.keys().map(PathBuf::from).collect();
 
         // Find new files
         for (i, file_rel) in current_files_relative.iter().enumerate() {
@@ -426,8 +421,8 @@ pub fn compute_file_version(path: &Path) -> Result<String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    let content = std::fs::read(path)
-        .with_context(|| format!("failed to read file: {}", path.display()))?;
+    let content =
+        std::fs::read(path).with_context(|| format!("failed to read file: {}", path.display()))?;
 
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
@@ -488,12 +483,15 @@ impl BuildInfoBuilder {
             Some(compute_export_signature(exports))
         };
 
-        self.build_info.set_file_info(&relative_path, FileInfo {
-            version,
-            signature,
-            affected_files_pending_emit: false,
-            implied_format: None,
-        });
+        self.build_info.set_file_info(
+            &relative_path,
+            FileInfo {
+                version,
+                signature,
+                affected_files_pending_emit: false,
+                implied_format: None,
+            },
+        );
 
         Ok(self)
     }
@@ -501,23 +499,29 @@ impl BuildInfoBuilder {
     /// Set dependencies for a file
     pub fn set_file_dependencies(&mut self, path: &Path, deps: Vec<PathBuf>) -> &mut Self {
         let relative_path = self.relative_path(path);
-        let relative_deps: Vec<String> = deps
-            .iter()
-            .map(|d| self.relative_path(d))
-            .collect();
+        let relative_deps: Vec<String> = deps.iter().map(|d| self.relative_path(d)).collect();
 
-        self.build_info.set_dependencies(&relative_path, relative_deps);
+        self.build_info
+            .set_dependencies(&relative_path, relative_deps);
         self
     }
 
     /// Set emit signature for a file
-    pub fn set_file_emit(&mut self, path: &Path, js_hash: Option<&str>, dts_hash: Option<&str>) -> &mut Self {
+    pub fn set_file_emit(
+        &mut self,
+        path: &Path,
+        js_hash: Option<&str>,
+        dts_hash: Option<&str>,
+    ) -> &mut Self {
         let relative_path = self.relative_path(path);
-        self.build_info.set_emit_signature(&relative_path, EmitSignature {
-            js: js_hash.map(String::from),
-            dts: dts_hash.map(String::from),
-            map: None,
-        });
+        self.build_info.set_emit_signature(
+            &relative_path,
+            EmitSignature {
+                js: js_hash.map(String::from),
+                dts: dts_hash.map(String::from),
+                map: None,
+            },
+        );
         self
     }
 
@@ -547,7 +551,8 @@ impl BuildInfoBuilder {
 
 /// Determine the default .tsbuildinfo path based on configuration
 pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> PathBuf {
-    let config_name = config_path.file_stem()
+    let config_name = config_path
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("tsconfig");
 
@@ -556,7 +561,8 @@ pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> Pa
     if let Some(out) = out_dir {
         out.join(&build_info_name)
     } else {
-        config_path.parent()
+        config_path
+            .parent()
             .unwrap_or(Path::new("."))
             .join(&build_info_name)
     }
@@ -574,12 +580,15 @@ mod tests {
 
         let mut build_info = BuildInfo::new();
         build_info.root_files = vec!["src/index.ts".to_string()];
-        build_info.set_file_info("src/index.ts", FileInfo {
-            version: "abc123".to_string(),
-            signature: Some("sig456".to_string()),
-            affected_files_pending_emit: false,
-            implied_format: None,
-        });
+        build_info.set_file_info(
+            "src/index.ts",
+            FileInfo {
+                version: "abc123".to_string(),
+                signature: Some("sig456".to_string()),
+                affected_files_pending_emit: false,
+                implied_format: None,
+            },
+        );
         build_info.set_dependencies("src/index.ts", vec!["src/utils.ts".to_string()]);
 
         // Save
@@ -597,12 +606,15 @@ mod tests {
     #[test]
     fn test_file_change_detection() {
         let mut build_info = BuildInfo::new();
-        build_info.set_file_info("src/index.ts", FileInfo {
-            version: "v1".to_string(),
-            signature: None,
-            affected_files_pending_emit: false,
-            implied_format: None,
-        });
+        build_info.set_file_info(
+            "src/index.ts",
+            FileInfo {
+                version: "v1".to_string(),
+                signature: None,
+                affected_files_pending_emit: false,
+                implied_format: None,
+            },
+        );
 
         // Same version - not changed
         assert!(!build_info.has_file_changed("src/index.ts", "v1"));
@@ -642,16 +654,21 @@ mod tests {
         // Build info with file1
         let mut build_info = BuildInfo::new();
         let version1 = compute_file_version(&file1).unwrap();
-        build_info.set_file_info("file1.ts", FileInfo {
-            version: version1,
-            signature: None,
-            affected_files_pending_emit: false,
-            implied_format: None,
-        });
+        build_info.set_file_info(
+            "file1.ts",
+            FileInfo {
+                version: version1,
+                signature: None,
+                affected_files_pending_emit: false,
+                implied_format: None,
+            },
+        );
 
         // Track changes - file2 is new
         let mut tracker = ChangeTracker::new();
-        tracker.compute_changes(&build_info, &[file1.clone(), file2.clone()]).unwrap();
+        tracker
+            .compute_changes(&build_info, &[file1.clone(), file2.clone()])
+            .unwrap();
 
         assert!(tracker.new_files().contains(&file2));
         assert!(!tracker.changed_files().contains(&file1));
@@ -667,14 +684,22 @@ mod tests {
         let mut builder = BuildInfoBuilder::new(temp.path().to_path_buf());
         builder
             .set_root_files(vec!["test.ts".to_string()])
-            .add_file(&file, &["x".to_string()]).unwrap()
+            .add_file(&file, &["x".to_string()])
+            .unwrap()
             .set_file_dependencies(&file, vec![]);
 
         let build_info = builder.build();
 
         assert_eq!(build_info.root_files, vec!["test.ts"]);
         assert!(build_info.file_infos.contains_key("test.ts"));
-        assert!(build_info.file_infos.get("test.ts").unwrap().signature.is_some());
+        assert!(
+            build_info
+                .file_infos
+                .get("test.ts")
+                .unwrap()
+                .signature
+                .is_some()
+        );
     }
 
     #[test]
@@ -727,7 +752,10 @@ mod tests {
 
         // Loading should return Ok(None) for compiler version mismatch
         let result = BuildInfo::load(&path).unwrap();
-        assert!(result.is_none(), "Compiler version mismatch should return None");
+        assert!(
+            result.is_none(),
+            "Compiler version mismatch should return None"
+        );
     }
 
     #[test]

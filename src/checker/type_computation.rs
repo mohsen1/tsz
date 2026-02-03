@@ -15,7 +15,7 @@ use crate::checker::state::CheckerState;
 use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::solver::{expression_ops, ContextualTypeContext, TupleElement, TypeId};
+use crate::solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
 
 // =============================================================================
 // Type Computation Methods
