@@ -1896,9 +1896,17 @@ impl TypeInterner {
         self.intern(TypeKey::Mapped(mapped_id))
     }
 
-    /// Intern a type reference
+    /// Intern a type reference (deprecated - use lazy() with DefId instead).
+    ///
+    /// This method is kept for backward compatibility with tests and legacy code.
+    /// It converts SymbolRef to DefId and creates TypeKey::Lazy.
+    ///
+    /// **Phase 1 migration**: New code should use `lazy(def_id)` instead.
     pub fn reference(&self, symbol: SymbolRef) -> TypeId {
-        self.intern(TypeKey::Ref(symbol))
+        // Convert SymbolRef to DefId by wrapping the raw u32 value
+        // This maintains the same identity while using the new TypeKey::Lazy variant
+        let def_id = DefId(symbol.0);
+        self.intern(TypeKey::Lazy(def_id))
     }
 
     /// Intern a lazy type reference (DefId-based).
