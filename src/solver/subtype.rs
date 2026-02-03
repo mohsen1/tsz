@@ -93,6 +93,10 @@ impl AnyPropagationMode {
 pub trait TypeResolver {
     /// Resolve a symbol reference to its structural type.
     /// Returns None if the symbol cannot be resolved.
+    ///
+    /// **Phase 3.4**: Deprecated - use `resolve_lazy` with DefId instead.
+    /// This method is being phased out as part of the migration to DefId-based type identity.
+    #[deprecated(note = "Use resolve_lazy with DefId instead. This method is being phased out as part of Issue #12.")]
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId>;
 
     /// Resolve a DefId reference to its structural type.
@@ -129,6 +133,17 @@ pub trait TypeResolver {
     ///
     /// Returns None if the DefId doesn't have a corresponding SymbolId.
     fn def_to_symbol_id(&self, _def_id: DefId) -> Option<SymbolId> {
+        None
+    }
+
+    /// Get the DefId for a SymbolRef (Phase 3.4: Ref -> Lazy migration).
+    ///
+    /// This enables migrating Ref(SymbolRef) types to Lazy(DefId) resolution logic.
+    /// When a SymbolRef has a corresponding DefId, we should use resolve_lazy instead
+    /// of resolve_ref for consistent type identity.
+    ///
+    /// Returns None if the SymbolRef doesn't have a corresponding DefId.
+    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
         None
     }
 
@@ -179,6 +194,10 @@ impl TypeResolver for NoopResolver {
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None
     }
+
+    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
+        None
+    }
 }
 
 /// A type environment that maps symbol refs to their resolved types.
@@ -206,6 +225,10 @@ pub struct TypeEnvironment {
     /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
     /// by mapping DefIds back to their corresponding SymbolIds.
     def_to_symbol: std::collections::HashMap<u32, SymbolId>,
+    /// Maps SymbolIds to DefIds for Ref -> Lazy migration (Phase 3.4).
+    /// This reverse mapping enables migrating Ref(SymbolRef) types to use
+    /// DefId-based resolution via resolve_lazy instead of resolve_ref.
+    symbol_to_def: std::collections::HashMap<u32, DefId>,
 }
 
 impl TypeEnvironment {
@@ -219,6 +242,7 @@ impl TypeEnvironment {
             def_types: std::collections::HashMap::new(),
             def_type_params: std::collections::HashMap::new(),
             def_to_symbol: std::collections::HashMap::new(),
+            symbol_to_def: std::collections::HashMap::new(),
         }
     }
 
@@ -332,7 +356,7 @@ impl TypeEnvironment {
     }
 
     // =========================================================================
-    // DefId <-> SymbolId Bridge (Phase 3.2)
+    // DefId <-> SymbolId Bridge (Phase 3.2, 3.4)
     // =========================================================================
 
     /// Register a mapping from DefId to SymbolId for InheritanceGraph lookups.
@@ -340,8 +364,12 @@ impl TypeEnvironment {
     /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
     /// by mapping DefIds back to their corresponding SymbolIds. The mapping
     /// is maintained by the Binder/Checker during type resolution.
+    ///
+    /// Phase 3.4: Also registers the reverse mapping (SymbolId -> DefId) to support
+    /// migrating Ref types to DefId resolution.
     pub fn register_def_symbol_mapping(&mut self, def_id: DefId, sym_id: SymbolId) {
         self.def_to_symbol.insert(def_id.0, sym_id);
+        self.symbol_to_def.insert(sym_id.0, def_id); // Populate reverse map
     }
 }
 
@@ -376,6 +404,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
         self.def_to_symbol.get(&def_id.0).copied()
+    }
+
+    fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
+        self.symbol_to_def.get(&symbol.0).copied()
     }
 }
 
