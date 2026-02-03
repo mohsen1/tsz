@@ -652,13 +652,35 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(NodeIndex::NONE)
                 };
                 if !decl_idx.is_none() {
-                    // For type aliases, the type_node is in the lib file's arena
-                    // We need to resolve it by fetching the type alias node and getting its type_node
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+                    // Get the correct arena for the symbol (lib arena or current arena)
+                    let symbol_arena = self
+                        .ctx
+                        .binder
+                        .symbol_arenas
+                        .get(&sym_id)
+                        .map(|arena| arena.as_ref())
+                        .unwrap_or(self.ctx.arena);
+
+                    // Use the correct arena to get the node
+                    if let Some(node) = symbol_arena.get(decl_idx)
+                        && let Some(type_alias) = symbol_arena.get_type_alias(node)
                     {
+                        let type_param_bindings = self.get_type_param_bindings();
+                        let type_resolver =
+                            |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                        let value_resolver =
+                            |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+
+                        let lowering = TypeLowering::with_resolvers(
+                            symbol_arena,
+                            self.ctx.types,
+                            &type_resolver,
+                            &value_resolver,
+                        )
+                        .with_type_param_bindings(type_param_bindings);
+
                         self.ctx.leave_recursion();
-                        return self.get_type_from_type_node(type_alias.type_node);
+                        return lowering.lower_type(type_alias.type_node);
                     }
                 }
             }
