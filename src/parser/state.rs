@@ -471,6 +471,38 @@ impl ParserState {
         }
     }
 
+    /// Check if current token is a reserved word that cannot be used as an identifier
+    /// Reserved words: null, true, false (and void when not in type position)
+    #[inline]
+    pub(crate) fn is_reserved_word(&self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::NullKeyword | SyntaxKind::TrueKeyword | SyntaxKind::FalseKeyword
+        )
+    }
+
+    /// Error: TS1359 - Identifier expected. '{0}' is a reserved word that cannot be used here.
+    pub(crate) fn error_reserved_word_identifier(&mut self) {
+        if self.token_pos() != self.last_error_pos {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            let word = match self.current_token {
+                SyntaxKind::NullKeyword => "null",
+                SyntaxKind::TrueKeyword => "true",
+                SyntaxKind::FalseKeyword => "false",
+                _ => "reserved word",
+            };
+            self.parse_error_at_current_token(
+                &format!(
+                    "Identifier expected. '{}' is a reserved word that cannot be used here.",
+                    word
+                ),
+                diagnostic_codes::RESERVED_WORD_IDENTIFIER,
+            );
+            // Consume the reserved word token to prevent cascading errors
+            self.next_token();
+        }
+    }
+
     /// Error: '{token}' expected (TS1005)
     pub(crate) fn error_token_expected(&mut self, token: &str) {
         // Only emit error if we haven't already emitted one at this position

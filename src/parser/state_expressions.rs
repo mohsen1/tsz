@@ -1384,6 +1384,24 @@ impl ParserState {
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
 
+        // Check for reserved words that cannot be used as identifiers
+        // These should emit TS1359 "Identifier expected. '{0}' is a reserved word that cannot be used here."
+        if self.is_reserved_word() {
+            self.error_reserved_word_identifier();
+            // Create a missing identifier placeholder
+            return self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                start_pos,
+                end_pos,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            );
+        }
+
         // Check if current token is an identifier or keyword that can be used as identifier
         // This allows contextual keywords (type, interface, package, etc.) to be used as identifiers
         // in appropriate contexts (e.g., type aliases, interface names)

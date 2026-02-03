@@ -605,7 +605,8 @@ pub mod diagnostic_codes {
     pub const INFER_CAN_ONLY_BE_USED_IN_EXTENDS_CLAUSE: u32 = 1338;
 
     // Reserved word errors
-    pub const AWAIT_IDENTIFIER_ILLEGAL: u32 = 1359; // Identifier expected. 'await' is a reserved word that cannot be used here.
+    pub const RESERVED_WORD_IDENTIFIER: u32 = 1359; // Identifier expected. '{0}' is a reserved word that cannot be used here.
+    pub const AWAIT_IDENTIFIER_ILLEGAL: u32 = 1359; // Alias for backwards compatibility
 
     // Target version errors (18xxx)
     pub const ACCESSOR_MODIFIER_ONLY_ES2015_PLUS: u32 = 18045; // Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher.
