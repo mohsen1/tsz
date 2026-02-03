@@ -24,6 +24,7 @@
 
 use crate::binder::SymbolId;
 use crate::interner::Atom;
+use crate::solver::def::DefinitionStore;
 use crate::solver::TypeDatabase;
 use crate::solver::TypeFormatter;
 use crate::solver::types::*;
@@ -642,6 +643,15 @@ impl<'a> DiagnosticBuilder<'a> {
         }
     }
 
+    /// Create a diagnostic builder with access to definition store.
+    ///
+    /// This prevents "Lazy(N)" fallback strings in diagnostic messages by
+    /// resolving DefIds to their type names.
+    pub fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
+        self.formatter = self.formatter.with_def_store(def_store);
+        self
+    }
+
     /// Create a "Type X is not assignable to type Y" diagnostic.
     pub fn type_not_assignable(&mut self, source: TypeId, target: TypeId) -> TypeDiagnostic {
         let source_str = self.formatter.format(source);
@@ -1212,6 +1222,15 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
             builder: DiagnosticBuilder::with_symbols(interner, symbol_arena),
             file: file.into(),
         }
+    }
+
+    /// Add access to definition store for DefId name resolution.
+    ///
+    /// This prevents "Lazy(N)" fallback strings in diagnostic messages by
+    /// resolving DefIds to their type names.
+    pub fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
+        self.builder = self.builder.with_def_store(def_store);
+        self
     }
 
     /// Create a span for this file.
