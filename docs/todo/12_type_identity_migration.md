@@ -91,6 +91,31 @@ Update the Solver to understand and resolve `DefId`s exclusively.
 
 ### Phase 4: Remove TypeKey::Ref (Final Phase)
 
+**Status**: BLOCKED on Fn vs FnMut API incompatibility
+
+**Problem Discovered** (Feb 3, 2026):
+Phase 4.1 attempt revealed fundamental API incompatibility:
+- `TypeLowering::with_hybrid_resolver()` accepts `&dyn Fn` (immutable closures)
+- `get_or_create_def_id()` requires `&mut self` (mutable access)
+- Cannot call mutable method from immutable closure → compilation error
+
+**Required Changes** (significant API refactoring):
+1. Change `TypeLowering` API from `Fn` to `FnMut` for all resolver closures
+2. Update TypeLowering construction: `with_hybrid_resolver` → `with_hybrid_resolver_mut`
+3. Update all TypeLowering usage sites (2 locations in state_type_resolution.rs)
+4. Ensure all closure captures support mutable access
+
+**Alternative Approaches**:
+- Accept TypeKey::Ref as permanent legacy (not recommended)
+- Redesign TypeLowering to decouple from CheckerContext mutability
+- Create DefIds earlier (before TypeLowering) via pre-scan
+
+**Strategic Question**: Should we invest in this API refactoring or accept mixed identity?
+
+---
+
+### Phase 4: Remove TypeKey::Ref (Final Phase) [BLOCKED]
+
 **Revised Strategy** (Feb 3, 2026): Focus on eliminating `Ref` production at the source.
 
 **Gemini Strategic Recommendation**: Skip premature optimization (Phase 3.5). Instead, force TypeLowering to always produce `Lazy(DefId)`, which makes cleanup trivial.
