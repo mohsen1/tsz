@@ -1730,10 +1730,9 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::ENUM_DECLARATION {
                 // Find the symbol for this enum declaration
                 if let Some(sym_id) = self.ctx.binder.get_node_symbol(current) {
-                    // Return the enum type itself
-                    return self.ctx.types.intern(crate::solver::TypeKey::Ref(
-                        crate::solver::SymbolRef(sym_id.0),
-                    ));
+                    // Return the enum type itself using Lazy with DefId
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    return self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id));
                 }
                 break;
             }
@@ -2420,11 +2419,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = self.get_property_name(member.name)
                     && name == property_name
                 {
-                    // Return the enum type itself
+                    // Return the enum type itself using Lazy with DefId
                     // This allows proper enum assignability checking
-                    return Some(self.ctx.types.intern(crate::solver::TypeKey::Ref(
-                        crate::solver::SymbolRef(sym_id.0),
-                    )));
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    return Some(self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id)));
                 }
             }
         }
