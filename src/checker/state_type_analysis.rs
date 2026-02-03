@@ -875,10 +875,83 @@ impl<'a> CheckerState<'a> {
                         env.insert_def_with_params(def_id, result, type_params);
                     }
                 }
+
+                // Register numeric enums for Rule #7 (Open Numeric Enums)
+                if let Some(def_id) = def_id {
+                    self.maybe_register_numeric_enum(&mut env, sym_id, def_id);
+                }
             }
         }
 
         result
+    }
+
+    /// Check if a symbol is a numeric enum and register it in the TypeEnvironment.
+    ///
+    /// This is used for Rule #7 (Open Numeric Enums) where number types are
+    /// assignable to/from numeric enums.
+    fn maybe_register_numeric_enum(
+        &self,
+        env: &mut crate::solver::TypeEnvironment,
+        sym_id: SymbolId,
+        def_id: crate::solver::def::DefId,
+    ) {
+        // Check if the symbol is an enum
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+        if symbol.flags & symbol_flags::ENUM == 0 {
+            return;
+        }
+
+        // Get the enum declaration to check if it's numeric
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            match symbol.declarations.first() {
+                Some(&idx) => idx,
+                None => return,
+            }
+        };
+
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return;
+        };
+        let Some(enum_decl) = self.ctx.arena.get_enum(node) else {
+            return;
+        };
+
+        // Check enum members to determine if it's numeric
+        let mut saw_string = false;
+        let mut saw_numeric = false;
+
+        for &member_idx in &enum_decl.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+                continue;
+            };
+
+            if !member.initializer.is_none() {
+                let Some(init_node) = self.ctx.arena.get(member.initializer) else {
+                    continue;
+                };
+                match init_node.kind {
+                    k if k == SyntaxKind::StringLiteral as u16 => saw_string = true,
+                    k if k == SyntaxKind::NumericLiteral as u16 => saw_numeric = true,
+                    _ => {}
+                }
+            } else {
+                // Members without initializers are auto-incremented numbers
+                saw_numeric = true;
+            }
+        }
+
+        // Register as numeric enum if it's numeric (not string-only)
+        if saw_numeric && !saw_string {
+            env.register_numeric_enum(def_id);
+        }
     }
 
     /// Get a symbol from the current binder, lib binders, or other file binders.

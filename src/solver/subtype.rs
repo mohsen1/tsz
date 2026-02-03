@@ -184,6 +184,14 @@ pub trait TypeResolver {
     fn get_lazy_enum_member(&self, _def_id: DefId, _name: crate::interner::Atom) -> Option<TypeId> {
         None
     }
+
+    /// Check if a DefId corresponds to a numeric enum (not a string enum).
+    ///
+    /// Used for TypeScript's unsound Rule #7 (Open Numeric Enums) where
+    /// number types are assignable to/from numeric enums.
+    fn is_numeric_enum(&self, _def_id: DefId) -> bool {
+        false
+    }
 }
 
 /// A no-op resolver that doesn't resolve any references.
@@ -229,6 +237,9 @@ pub struct TypeEnvironment {
     /// This reverse mapping enables migrating Ref(SymbolRef) types to use
     /// DefId-based resolution via resolve_lazy instead of resolve_ref.
     symbol_to_def: std::collections::HashMap<u32, DefId>,
+    /// Set of DefIds that correspond to numeric enums.
+    /// Used for Rule #7 (Open Numeric Enums) where number types are assignable to/from numeric enums.
+    numeric_enums: std::collections::HashSet<u32>,
 }
 
 impl TypeEnvironment {
@@ -243,6 +254,7 @@ impl TypeEnvironment {
             def_type_params: std::collections::HashMap::new(),
             def_to_symbol: std::collections::HashMap::new(),
             symbol_to_def: std::collections::HashMap::new(),
+            numeric_enums: std::collections::HashSet::new(),
         }
     }
 
@@ -371,6 +383,17 @@ impl TypeEnvironment {
         self.def_to_symbol.insert(def_id.0, sym_id);
         self.symbol_to_def.insert(sym_id.0, def_id); // Populate reverse map
     }
+
+    /// Register a DefId as a numeric enum.
+    /// Used for Rule #7 (Open Numeric Enums) where number types are assignable to/from numeric enums.
+    pub fn register_numeric_enum(&mut self, def_id: DefId) {
+        self.numeric_enums.insert(def_id.0);
+    }
+
+    /// Check if a DefId is a numeric enum.
+    pub fn is_numeric_enum(&self, def_id: DefId) -> bool {
+        self.numeric_enums.contains(&def_id.0)
+    }
 }
 
 impl TypeResolver for TypeEnvironment {
@@ -408,6 +431,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
         self.symbol_to_def.get(&symbol.0).copied()
+    }
+
+    fn is_numeric_enum(&self, def_id: DefId) -> bool {
+        TypeEnvironment::is_numeric_enum(self, def_id)
     }
 }
 
@@ -868,6 +895,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
 
+            // Rule #7: Open Numeric Enums - number is assignable to unions containing numeric enums
+            if source == TypeId::NUMBER {
+                let member_list = self.interner.type_list(members);
+                for &member in member_list.iter() {
+                    if let Some(def_id) = lazy_def_id(self.interner, member) {
+                        if self.resolver.is_numeric_enum(def_id) {
+                            return SubtypeResult::True;
+                        }
+                    }
+                }
+            }
+
             let member_list = self.interner.type_list(members);
             for &member in member_list.iter() {
                 if self.check_subtype(source, member).is_true() {
@@ -1174,6 +1213,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Phase 3.1: Use proper DefId-level cycle detection
             // Phase 3.2: Now checked before Ref types (priority)
             return self.check_lazy_lazy_subtype(source, target, &s_def, &t_def);
+        }
+
+        // =======================================================================
+        // Rule #7: Open Numeric Enums - Number <-> Numeric Enum Assignability
+        // =======================================================================
+        // In TypeScript, numeric enums are "open" - they allow bidirectional
+        // assignability with the number type. This is unsound but matches tsc behavior.
+        // See docs/specs/TS_UNSOUNDNESS_CATALOG.md Item #7.
+
+        // Check: source is numeric enum, target is Number
+        if let Some(s_def) = lazy_def_id(self.interner, source) {
+            if target == TypeId::NUMBER && self.resolver.is_numeric_enum(s_def) {
+                return SubtypeResult::True;
+            }
+        }
+
+        // Check: source is Number, target is numeric enum
+        if let Some(t_def) = lazy_def_id(self.interner, target) {
+            if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def) {
+                return SubtypeResult::True;
+            }
         }
 
         if lazy_def_id(self.interner, source).is_some() {

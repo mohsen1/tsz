@@ -24,7 +24,6 @@ COMMIT=false
 MAX_TESTS="--all"
 FOURSLASH_MAX=""
 EMIT_MAX=""
-WORKERS=8
 RUN_CONFORMANCE=true
 RUN_FOURSLASH=true
 RUN_EMIT=true
@@ -36,7 +35,6 @@ for arg in "$@"; do
         --max=*) MAX_TESTS="--max=${arg#*=}" ;;
         --fourslash-max=*) FOURSLASH_MAX="--max=${arg#*=}" ;;
         --emit-max=*) EMIT_MAX="--max=${arg#*=}" ;;
-        --workers=*) WORKERS="${arg#*=}" ;;
         --conformance-only) RUN_FOURSLASH=false; RUN_EMIT=false ;;
         --fourslash-only) RUN_CONFORMANCE=false; RUN_EMIT=false ;;
         --emit-only) RUN_CONFORMANCE=false; RUN_FOURSLASH=false ;;
@@ -51,7 +49,6 @@ for arg in "$@"; do
             echo "  --max=N             Limit conformance tests (default: all)"
             echo "  --fourslash-max=N   Limit fourslash tests (default: all)"
             echo "  --emit-max=N        Limit emit tests (default: 500)"
-            echo "  --workers=N         Number of conformance workers (default: 8)"
             echo "  --conformance-only  Only run conformance tests"
             echo "  --fourslash-only    Only run fourslash tests"
             echo "  --emit-only         Only run emit tests"
@@ -132,7 +129,7 @@ if [ "$RUN_CONFORMANCE" = true ]; then
     echo ""
 
     echo "Running conformance tests..."
-    OUTPUT=$(./scripts/conformance.sh run $MAX_TESTS --workers $WORKERS 2>&1) || true
+    OUTPUT=$(./scripts/conformance.sh run $MAX_TESTS 2>&1) || true
     echo "$OUTPUT"
 
     # Parse new format: "FINAL RESULTS: N/N passed (N%)"

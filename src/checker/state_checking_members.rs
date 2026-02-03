@@ -104,8 +104,9 @@ impl<'a> CheckerState<'a> {
         // Report errors for duplicates
         for (name, indices) in seen_properties {
             if indices.len() > 1 {
-                // Report TS2300 for each occurrence (including the first one, matching tsc behavior)
-                for &idx in &indices {
+                // Report TS2300 for subsequent occurrences only (matching tsc behavior)
+                // Skip the first declaration as it's valid
+                for &idx in indices.iter().skip(1) {
                     let message =
                         format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
                     // Get the name node for precise error location
@@ -302,8 +303,8 @@ impl<'a> CheckerState<'a> {
             // Case 4: Method overloads (signatures + 1 implementation) -> Valid, no error
 
             if property_count > 0 {
-                // If any properties are involved, it's TS2300 for all
-                for &idx in &info.indices {
+                // If any properties are involved, it's TS2300 for subsequent declarations
+                for &idx in info.indices.iter().skip(1) {
                     let member_node = self.ctx.arena.get(idx);
                     let (name, error_node) = match member_node.map(|n| n.kind) {
                         Some(k) if k == syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -368,7 +369,8 @@ impl<'a> CheckerState<'a> {
             if indices.len() <= 1 {
                 continue;
             }
-            for &idx in &indices {
+            // Skip the first occurrence - only emit errors for subsequent declarations
+            for &idx in indices.iter().skip(1) {
                 let Some(member_node) = self.ctx.arena.get(idx) else {
                     continue;
                 };
