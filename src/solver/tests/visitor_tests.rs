@@ -606,9 +606,11 @@ fn test_type_param_ref_and_lazy_extractors() {
     let param_type = interner.intern(TypeKey::TypeParameter(param_info.clone()));
     assert_eq!(type_param_info(&interner, param_type), Some(param_info));
 
+    // After SymbolRef to DefId migration, interner.reference() creates TypeKey::Lazy(DefId)
+    // The ref_symbol function now returns None for Lazy types since they use DefId
     let symbol = SymbolRef(42);
     let ref_type = interner.reference(symbol);
-    assert_eq!(ref_symbol(&interner, ref_type), Some(symbol));
+    assert_eq!(ref_symbol(&interner, ref_type), None);
 
     let def_id = DefId(7);
     let lazy_type = interner.intern(TypeKey::Lazy(def_id));

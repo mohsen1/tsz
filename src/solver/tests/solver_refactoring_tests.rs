@@ -778,13 +778,13 @@ mod integration {
         let mut env = TypeEnvironment::new();
 
         // Register a type alias: type MyNumber = number
-        let sym = SymbolRef(1);
-        env.insert(sym, TypeId::NUMBER);
+        let def_id = DefId(1);
+        env.insert_def(def_id, TypeId::NUMBER);
 
         let judge = DefaultJudge::with_defaults(&interner, &env);
 
         // The judge can resolve references through the environment
-        let ref_type = interner.reference(sym);
+        let ref_type = interner.lazy(def_id);
 
         // After evaluation, should be number
         let evaluated = judge.evaluate(ref_type);
