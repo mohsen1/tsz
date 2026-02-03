@@ -668,6 +668,16 @@ impl ParserState {
     pub(crate) fn parse_ambient_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
+        // TS1038: A 'declare' modifier cannot be used in an already ambient context
+        // Check if we're already inside a declare namespace/module
+        if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "A 'declare' modifier cannot be used in an already ambient context.",
+                diagnostic_codes::DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+            );
+        }
+
         // Create declare modifier node
         let declare_start = self.token_pos();
         self.parse_expected(SyntaxKind::DeclareKeyword);
@@ -976,7 +986,14 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
+        // Set ambient context flag for declare namespace/module body
+        let saved_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_AMBIENT;
+
         let statements = self.parse_statements();
+
+        // Restore context flags
+        self.context_flags = saved_flags;
 
         self.parse_expected(SyntaxKind::CloseBraceToken);
         let end_pos = self.token_end();

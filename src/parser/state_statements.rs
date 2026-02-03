@@ -2174,6 +2174,14 @@ impl ParserState {
                         .create_modifier(SyntaxKind::AsyncKeyword, start_pos)
                 }
                 SyntaxKind::DeclareKeyword => {
+                    // TS1038: A 'declare' modifier cannot be used in an already ambient context
+                    if (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) != 0 {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "A 'declare' modifier cannot be used in an already ambient context.",
+                            diagnostic_codes::DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+                        );
+                    }
                     self.next_token();
                     self.arena
                         .create_modifier(SyntaxKind::DeclareKeyword, start_pos)
