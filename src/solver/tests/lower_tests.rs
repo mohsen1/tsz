@@ -1502,23 +1502,34 @@ fn test_lower_function_rest_parameter() {
 
 #[test]
 fn test_lower_generic_type_reference_uses_type_parameter_args() {
+    use crate::solver::def::DefId;
+
     let (arena, func_type_idx) = parse_type_alias("type F = <T>(x: T) => Box<T>;");
     let interner = TypeInterner::new();
 
-    let resolver = |node_idx: NodeIndex| {
+    // Phase 4.2: Use def_id_resolver instead of type_resolver
+    let def_id_resolver = |node_idx: NodeIndex| {
         arena
             .get(node_idx)
             .and_then(|node| arena.get_identifier(node))
             .and_then(|ident| {
                 if ident.escaped_text == "Box" {
-                    Some(1)
+                    Some(DefId(1))
                 } else {
                     None
                 }
             })
     };
 
-    let lowering = TypeLowering::with_resolver(&arena, &interner, &resolver);
+    // Use with_hybrid_resolver to provide def_id_resolver
+    let lowering = TypeLowering::with_hybrid_resolver(
+        &arena,
+        &interner,
+        &|_| None, // type_resolver not needed
+        &def_id_resolver,
+        &|_| None, // value_resolver not needed
+    );
+
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
@@ -1554,23 +1565,34 @@ fn test_lower_generic_type_reference_uses_type_parameter_args() {
 
 #[test]
 fn test_lower_type_reference_with_arguments() {
+    use crate::solver::def::DefId;
+
     let (arena, type_ref_idx) = parse_type_reference("type T = Box<string>;", "Box");
     let interner = TypeInterner::new();
 
-    let resolver = |node_idx: NodeIndex| {
+    // Phase 4.2: Use def_id_resolver instead of type_resolver
+    let def_id_resolver = |node_idx: NodeIndex| {
         arena
             .get(node_idx)
             .and_then(|node| arena.get_identifier(node))
             .and_then(|ident| {
                 if ident.escaped_text == "Box" {
-                    Some(1)
+                    Some(DefId(1))
                 } else {
                     None
                 }
             })
     };
 
-    let lowering = TypeLowering::with_resolver(&arena, &interner, &resolver);
+    // Use with_hybrid_resolver to provide def_id_resolver
+    let lowering = TypeLowering::with_hybrid_resolver(
+        &arena,
+        &interner,
+        &|_| None, // type_resolver not needed
+        &def_id_resolver,
+        &|_| None, // value_resolver not needed
+    );
+
     let type_id = lowering.lower_type(type_ref_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
