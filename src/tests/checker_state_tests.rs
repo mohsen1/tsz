@@ -16232,7 +16232,6 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
 /// Verifies that while T is assignable to its constraint,
 /// the constraint itself cannot be assigned back to T.
 #[test]
-#[ignore]
 fn test_generic_constraint_rejection() {
     use crate::parser::ParserState;
 

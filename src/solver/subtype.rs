@@ -1051,6 +1051,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(t_info) = type_param_info(self.interner, target) {
             if let Some(constraint) = t_info.constraint {
+                // Special case: if source is EXACTLY the constraint, it's NOT assignable to T
+                // This prevents `constraint <: T` from being True (T is a type parameter)
+                // But structural subtypes of the constraint should still be assignable
+                if source == constraint {
+                    return SubtypeResult::False;
+                }
                 return self.check_subtype(source, constraint);
             }
             return SubtypeResult::False;
