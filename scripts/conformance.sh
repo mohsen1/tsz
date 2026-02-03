@@ -8,10 +8,10 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Default values (relative to repo root)
-TEST_DIR="$REPO_ROOT/TypeScript/tests/cases/conformance"
+TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
 CACHE_FILE="$REPO_ROOT/tsc-cache-full.json"
 TSZ_BIN="$REPO_ROOT/.target/release/tsz"
-CACHE_GEN_BIN="$REPO_ROOT/.target/release/generate-tsc-cache"
+CACHE_GEN_BIN="$REPO_ROOT/.target/release/generate-tsc-cache-tsserver"
 RUNNER_BIN="$REPO_ROOT/.target/release/tsz-conformance"
 WORKERS=16
 
@@ -73,16 +73,13 @@ check_binaries() {
 }
 
 generate_cache() {
-    echo -e "${GREEN}🔨 Generating TSC cache...${NC}"
+    echo -e "${GREEN}🔨 Generating TSC cache (using tsserver)...${NC}"
     echo "Test directory: $TEST_DIR"
-    echo "Workers: $WORKERS"
     echo ""
 
     cd "$REPO_ROOT"
     $CACHE_GEN_BIN \
         --test-dir "$TEST_DIR" \
-        --tsc-binary "npx tsc" \
-        --workers $WORKERS \
         --output "$CACHE_FILE"
 
     echo ""
@@ -144,6 +141,12 @@ case "$COMMAND" in
         ;;
     run)
         check_binaries
+        if [ ! -f "$CACHE_FILE" ]; then
+            echo -e "${YELLOW}Cache not found, generating first...${NC}"
+            echo ""
+            generate_cache
+            echo ""
+        fi
         run_tests "$@"
         ;;
     all)

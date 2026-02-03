@@ -20,7 +20,7 @@ use walkdir::WalkDir;
 #[command(about = "Generate TSC cache using tsserver (faster)", long_about = None)]
 struct Args {
     /// Test directory path
-    #[arg(long, default_value = "./TypeScript/tests/cases/conformance")]
+    #[arg(long, default_value = "./TypeScript/tests/cases")]
     test_dir: String,
 
     /// Output cache file path
@@ -276,12 +276,16 @@ fn main() -> Result<()> {
     println!("\n🔨 Processing {} tests...", test_files.len());
     let start = Instant::now();
 
+    // Create temp directory for tsserver to write to
+    let temp_dir = std::env::temp_dir().join(format!("tsz-tsserver-{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir)?;
+
     let mut cache = HashMap::new();
     let mut processed = 0;
     let mut errors = 0;
 
     for path in &test_files {
-        match process_test_file(&mut client, path) {
+        match process_test_file(&mut client, path, &temp_dir) {
             Ok(Some((hash, entry))) => {
                 cache.insert(hash, entry);
             }
@@ -315,6 +319,9 @@ fn main() -> Result<()> {
     println!("\n🛑 Shutting down tsserver...");
     client.shutdown()?;
 
+    // Clean up temp directory
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
     println!("\n💾 Writing cache to: {}", args.output);
     write_cache(&args.output, &cache)?;
     println!("✓ Cache written with {} entries", cache.len());
@@ -336,11 +343,17 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
             continue;
         }
 
+        // Skip fourslash tests (language service tests with special format)
+        let path_str = path.to_string_lossy();
+        if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
+            continue;
+        }
+
         if path.extension().map_or(false, |ext| {
             ext == "ts" || ext == "tsx"
         }) {
             // Skip .d.ts files
-            if path.to_string_lossy().ends_with(".d.ts") {
+            if path_str.ends_with(".d.ts") {
                 continue;
             }
             files.push(path.to_path_buf());
@@ -359,8 +372,12 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
 fn process_test_file(
     client: &mut TsServerClient,
     path: &Path,
+    temp_dir: &Path,
 ) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
+    use std::sync::atomic::AtomicU64;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     // Read file content
     let content = fs::read_to_string(path)?;
@@ -384,21 +401,65 @@ fn process_test_file(
     // Calculate hash
     let hash = tsz_conformance::cache::calculate_test_hash(&content, &parsed.directives.options);
 
-    // Get absolute path for tsserver
-    let abs_path = path.canonicalize()?.to_string_lossy().to_string();
+    // Create unique subdirectory for this test (for multi-file support)
+    let unique_id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_dir = temp_dir.join(format!("test_{}", unique_id));
+    fs::create_dir_all(&test_dir)?;
 
-    // Open file in tsserver
-    client.open_file(&abs_path, &content)?;
+    // Track all files we open
+    let mut opened_files: Vec<String> = Vec::new();
 
-    // Get diagnostics
-    let mut error_codes = client.get_syntactic_diagnostics(&abs_path)?;
-    let semantic_codes = client.get_semantic_diagnostics(&abs_path)?;
-    error_codes.extend(semantic_codes);
+    // Write and open additional files from @filename directives first
+    for (filename, file_content) in &parsed.directives.filenames {
+        // Sanitize filename to prevent path traversal
+        let sanitized = filename
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .to_string();
+        let file_path = test_dir.join(&sanitized);
+        
+        // Skip if path would escape test directory
+        if !file_path.starts_with(&test_dir) {
+            continue;
+        }
+        
+        // Create parent directories if needed
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        fs::write(&file_path, file_content)?;
+        let file_path_str = file_path.to_string_lossy().to_string();
+        client.open_file(&file_path_str, file_content)?;
+        opened_files.push(file_path_str);
+    }
+
+    // Write main file
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("ts");
+    let main_file = test_dir.join(format!("main.{}", ext));
+    fs::write(&main_file, &content)?;
+    let main_path = main_file.to_string_lossy().to_string();
+    client.open_file(&main_path, &content)?;
+    opened_files.push(main_path.clone());
+
+    // Get diagnostics from all files
+    let mut error_codes = Vec::new();
+    for file_path in &opened_files {
+        let syntactic = client.get_syntactic_diagnostics(file_path)?;
+        let semantic = client.get_semantic_diagnostics(file_path)?;
+        error_codes.extend(syntactic);
+        error_codes.extend(semantic);
+    }
     error_codes.sort();
     error_codes.dedup();
 
-    // Close file
-    client.close_file(&abs_path)?;
+    // Close all files
+    for file_path in &opened_files {
+        client.close_file(file_path)?;
+    }
+
+    // Clean up test directory
+    let _ = fs::remove_dir_all(&test_dir);
 
     Ok(Some((
         hash,
