@@ -563,10 +563,9 @@ bitflags::bitflags! {
 
 /// Object type with properties and optional index signatures
 ///
-/// NOTE: The `symbol` field affects Hash (for interning) but NOT PartialEq (for structural comparison).
-/// This ensures that:
-/// - Different classes with identical structures get different TypeIds (via Hash in interner)
-/// - Structural type checking still works correctly (via PartialEq ignoring symbol)
+/// NOTE: The `symbol` field affects BOTH Hash and PartialEq for nominal discrimination.
+/// This ensures that different classes get different TypeIds in the interner.
+/// Structural subtyping is computed explicitly in the Solver, not via PartialEq.
 #[derive(Clone, Debug)]
 pub struct ObjectShape {
     /// Object-level flags (e.g. fresh literal tracking).
@@ -583,11 +582,13 @@ pub struct ObjectShape {
 
 impl PartialEq for ObjectShape {
     fn eq(&self, other: &Self) -> bool {
-        // Structural equality: ignore the `symbol` field for type comparison
+        // Include symbol in equality check to ensure different classes get different TypeIds
+        // The Solver does structural subtyping explicitly, not via PartialEq
         self.flags == other.flags
             && self.properties == other.properties
             && self.string_index == other.string_index
             && self.number_index == other.number_index
+            && self.symbol == other.symbol
     }
 }
 
@@ -675,10 +676,9 @@ pub struct CallSignature {
 ///   (x: number): string;
 /// }
 /// ```
-/// NOTE: The `symbol` field affects Hash (for interning) but NOT PartialEq (for structural comparison).
-/// This ensures that:
-/// - Different classes with identical structures get different TypeIds (via Hash in interner)
-/// - Structural type checking still works correctly (via PartialEq ignoring symbol)
+/// NOTE: The `symbol` field affects BOTH Hash and PartialEq for nominal discrimination.
+/// This ensures that different classes get different TypeIds in the interner.
+/// Structural subtyping is computed explicitly in the Solver, not via PartialEq.
 #[derive(Clone, Debug)]
 pub struct CallableShape {
     /// Call signatures (order matters for overload resolution)
@@ -697,12 +697,14 @@ pub struct CallableShape {
 
 impl PartialEq for CallableShape {
     fn eq(&self, other: &Self) -> bool {
-        // Structural equality: ignore the `symbol` field for type comparison
+        // Include symbol in equality check to ensure different classes get different TypeIds
+        // The Solver does structural subtyping explicitly, not via PartialEq
         self.call_signatures == other.call_signatures
             && self.construct_signatures == other.construct_signatures
             && self.properties == other.properties
             && self.string_index == other.string_index
             && self.number_index == other.number_index
+            && self.symbol == other.symbol
     }
 }
 
