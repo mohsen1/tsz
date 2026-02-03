@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod state;
 mod state_binding;
-pub use state::{BinderOptions, BinderState, LibContext, ValidationError};
+pub use state::{BinderOptions, BinderState, LibContext, ModuleAugmentation, ValidationError};
 
 // =============================================================================
 // Symbol Flags

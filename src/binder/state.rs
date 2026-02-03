@@ -48,6 +48,66 @@ pub struct LibContext {
     pub binder: Arc<BinderState>,
 }
 
+/// Represents a module augmentation with arena context.
+///
+/// This structure ensures that NodeIndex values remain valid across files by
+/// storing the source arena along with the augmentation declaration.
+///
+/// # Arena Context
+///
+/// NodeIndex is only valid within its specific NodeArena. When augmentations from
+/// multiple files are merged, we need to preserve which arena each NodeIndex belongs to.
+///
+/// # Example
+///
+/// ```ignore
+/// // File A: observable.d.ts
+/// declare module "observable" {
+///     interface Observable<T> {
+///         filter(pred: (e:T) => boolean): Observable<T>;
+///     }
+/// }
+///
+/// // File B: map.ts
+/// declare module "observable" {
+///     interface Observable<T> {
+///         map<U>(proj: (e:T) => U): Observable<U>;
+///     }
+/// }
+/// ```
+///
+/// The augmentation for "Observable" should include both `filter` from File A's arena
+/// and `map` from File B's arena.
+#[derive(Clone, Debug)]
+pub struct ModuleAugmentation {
+    /// Name of the augmented interface/type member (e.g., "map", "filter")
+    pub name: String,
+    /// Declaration node for this augmentation
+    pub node: NodeIndex,
+    /// The arena containing this declaration (None during binding, populated during merge)
+    pub arena: Option<Arc<NodeArena>>,
+}
+
+impl ModuleAugmentation {
+    /// Create a new module augmentation without arena context (during binding).
+    pub fn new(name: String, node: NodeIndex) -> Self {
+        Self {
+            name,
+            node,
+            arena: None,
+        }
+    }
+
+    /// Create a new module augmentation with arena context (during merge).
+    pub fn with_arena(name: String, node: NodeIndex, arena: Arc<NodeArena>) -> Self {
+        Self {
+            name,
+            node,
+            arena: Some(arena),
+        }
+    }
+}
+
 /// Binder state using NodeArena.
 pub struct BinderState {
     /// Binder options (ES target, etc.)
@@ -116,8 +176,8 @@ pub struct BinderState {
 
     // ===== Module Augmentations (Rule #44) =====
     /// Tracks interface/type declarations inside `declare module 'x'` blocks that should
-    /// merge with the target module's symbols. Maps module specifier to (decl_name, NodeIndex).
-    pub module_augmentations: FxHashMap<String, Vec<(String, NodeIndex)>>,
+    /// merge with the target module's symbols. Maps module specifier to augmentations.
+    pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
 
     /// Flag indicating we're currently binding inside a module augmentation block
     pub(crate) in_module_augmentation: bool,
@@ -434,7 +494,7 @@ impl BinderState {
         scopes: Vec<Scope>,
         node_scope_ids: FxHashMap<u32, ScopeId>,
         global_augmentations: FxHashMap<String, Vec<crate::parser::NodeIndex>>,
-        module_augmentations: FxHashMap<String, Vec<(String, crate::parser::NodeIndex)>>,
+        module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
         module_exports: FxHashMap<String, SymbolTable>,
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
         wildcard_reexports: FxHashMap<String, Vec<String>>,

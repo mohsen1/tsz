@@ -690,7 +690,7 @@ impl<'a> CheckerState<'a> {
         &self,
         module_spec: &str,
         interface_name: &str,
-    ) -> Vec<NodeIndex> {
+    ) -> Vec<crate::binder::ModuleAugmentation> {
         self.ctx
             .binder
             .module_augmentations
@@ -698,8 +698,8 @@ impl<'a> CheckerState<'a> {
             .map(|augmentations| {
                 augmentations
                     .iter()
-                    .filter(|(name, _)| name == interface_name)
-                    .map(|(_, idx)| *idx)
+                    .filter(|aug| aug.name == interface_name)
+                    .cloned()
                     .collect()
             })
             .unwrap_or_default()
@@ -728,25 +728,30 @@ impl<'a> CheckerState<'a> {
             self.get_module_augmentation_declarations(module_spec, interface_name);
         let mut members = Vec::new();
 
-        for decl_idx in augmentation_decls {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
+        for augmentation in augmentation_decls {
+            // Use the stored arena from the augmentation (cross-file resolution)
+            let Some(arena) = augmentation.arena.as_ref() else {
                 continue;
             };
 
-            let Some(interface) = self.ctx.arena.get_interface(node) else {
+            let Some(node) = arena.get(augmentation.node) else {
+                continue;
+            };
+
+            let Some(interface) = arena.get_interface(node) else {
                 continue;
             };
 
             // Extract members from the augmentation interface
             for &member_idx in &interface.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                let Some(member_node) = arena.get(member_idx) else {
                     continue;
                 };
 
                 if member_node.kind == PROPERTY_SIGNATURE || member_node.kind == METHOD_SIGNATURE {
-                    if let Some(sig) = self.ctx.arena.get_signature(member_node)
-                        && let Some(name_node) = self.ctx.arena.get(sig.name)
-                        && let Some(id_data) = self.ctx.arena.get_identifier(name_node)
+                    if let Some(sig) = arena.get_signature(member_node)
+                        && let Some(name_node) = arena.get(sig.name)
+                        && let Some(id_data) = arena.get_identifier(name_node)
                     {
                         let type_id = if !sig.type_annotation.is_none() {
                             self.get_type_of_node(sig.type_annotation)

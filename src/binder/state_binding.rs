@@ -431,7 +431,10 @@ impl BinderState {
                     self.module_augmentations
                         .entry(module_spec.clone())
                         .or_default()
-                        .push((name.to_string(), idx));
+                        .push(crate::binder::state::ModuleAugmentation::new(
+                            name.to_string(),
+                            idx,
+                        ));
                 }
             }
 
@@ -466,7 +469,10 @@ impl BinderState {
                     self.module_augmentations
                         .entry(module_spec.clone())
                         .or_default()
-                        .push((name.to_string(), idx));
+                        .push(crate::binder::state::ModuleAugmentation::new(
+                            name.to_string(),
+                            idx,
+                        ));
                 }
             }
 

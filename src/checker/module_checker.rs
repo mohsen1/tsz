@@ -447,10 +447,10 @@ impl<'a> CheckerState<'a> {
             // Module augmentations add interfaces/types to existing modules
             // e.g., declare module 'express' { interface Request { user?: User; } }
             if let Some(augmentations) = self.ctx.binder.module_augmentations.get(module_name) {
-                for (decl_name, decl_idx) in augmentations {
+                for aug in augmentations {
                     // Get the type of the augmentation declaration
-                    let aug_type = self.get_type_of_node(*decl_idx);
-                    let name_atom = self.ctx.types.intern_string(decl_name);
+                    let aug_type = self.get_type_of_node(aug.node);
+                    let name_atom = self.ctx.types.intern_string(&aug.name);
 
                     // Check if this augments an existing export
                     if let Some(existing) = props.iter_mut().find(|p| p.name == name_atom) {

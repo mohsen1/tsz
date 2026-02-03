@@ -2575,6 +2575,22 @@ fn create_binder_from_bound_file(
         }
     }
 
+    // Merge module augmentations from all files
+    // When checking a file, we need access to augmentations from all other files
+    let mut merged_module_augmentations: rustc_hash::FxHashMap<
+        String,
+        Vec<crate::binder::ModuleAugmentation>,
+    > = rustc_hash::FxHashMap::default();
+
+    for other_file in &program.files {
+        for (spec, augs) in &other_file.module_augmentations {
+            merged_module_augmentations
+                .entry(spec.clone())
+                .or_default()
+                .extend(augs.clone());
+        }
+    }
+
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
@@ -2583,7 +2599,7 @@ fn create_binder_from_bound_file(
         file.scopes.clone(),
         file.node_scope_ids.clone(),
         file.global_augmentations.clone(),
-        file.module_augmentations.clone(),
+        merged_module_augmentations,
         program.module_exports.clone(),
         program.reexports.clone(),
         program.wildcard_reexports.clone(),

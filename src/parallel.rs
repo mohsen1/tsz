@@ -186,8 +186,8 @@ pub struct BindResult {
     /// Global augmentations (interface declarations inside `declare global` blocks)
     pub global_augmentations: FxHashMap<String, Vec<NodeIndex>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
-    /// Maps module specifier -> [(interface_name, declaration_node_index)]
-    pub module_augmentations: FxHashMap<String, Vec<(String, NodeIndex)>>,
+    /// Maps module specifier -> [ModuleAugmentation]
+    pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
@@ -474,7 +474,7 @@ pub struct BoundFile {
     /// Global augmentations (interface declarations inside `declare global` blocks)
     pub global_augmentations: FxHashMap<String, Vec<NodeIndex>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
-    pub module_augmentations: FxHashMap<String, Vec<(String, NodeIndex)>>,
+    pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Flow nodes for control flow analysis
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
@@ -970,6 +970,28 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         file_locals_list.push(remapped_file_locals);
 
+        // Populate arena context for module augmentations
+        let module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>> =
+            result
+                .module_augmentations
+                .iter()
+                .map(|(spec, augs)| {
+                    let arena = Arc::clone(&result.arena);
+                    (
+                        spec.clone(),
+                        augs.iter()
+                            .map(|aug| {
+                                crate::binder::ModuleAugmentation::with_arena(
+                                    aug.name.clone(),
+                                    aug.node,
+                                    Arc::clone(&arena),
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+
         files.push(BoundFile {
             file_name: result.file_name.clone(),
             source_file: result.source_file,
@@ -979,7 +1001,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             node_scope_ids: result.node_scope_ids.clone(),
             parse_diagnostics: result.parse_diagnostics.clone(),
             global_augmentations: result.global_augmentations.clone(),
-            module_augmentations: result.module_augmentations.clone(),
+            module_augmentations,
             flow_nodes: result.flow_nodes.clone(),
             node_flow: result.node_flow.clone(),
         });
@@ -1350,6 +1372,22 @@ pub(crate) fn create_binder_from_bound_file(
         }
     }
 
+    // Merge module augmentations from all files
+    // When checking a file, we need access to augmentations from all other files
+    let mut merged_module_augmentations: rustc_hash::FxHashMap<
+        String,
+        Vec<crate::binder::ModuleAugmentation>,
+    > = rustc_hash::FxHashMap::default();
+
+    for other_file in &program.files {
+        for (spec, augs) in &other_file.module_augmentations {
+            merged_module_augmentations
+                .entry(spec.clone())
+                .or_default()
+                .extend(augs.clone());
+        }
+    }
+
     let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
@@ -1358,7 +1396,7 @@ pub(crate) fn create_binder_from_bound_file(
         file.scopes.clone(),
         file.node_scope_ids.clone(),
         file.global_augmentations.clone(),
-        file.module_augmentations.clone(),
+        merged_module_augmentations,
         program.module_exports.clone(),
         program.reexports.clone(),
         program.wildcard_reexports.clone(),
