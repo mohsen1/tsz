@@ -748,13 +748,32 @@ impl<'a> CheckerState<'a> {
         use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
         use crate::solver::PropertyInfo;
 
+        eprintln!(
+            "[GET-MEMBERS] Getting members for module={}, interface={}",
+            module_spec, interface_name
+        );
+
         let augmentation_decls =
             self.get_module_augmentation_declarations(module_spec, interface_name);
+
+        eprintln!(
+            "[GET-MEMBERS] Got {} augmentation declaration(s)",
+            augmentation_decls.len()
+        );
+
         let mut members = Vec::new();
 
         for augmentation in augmentation_decls {
+            eprintln!(
+                "[GET-MEMBERS] Processing augmentation: name={}, node={:?}, has_arena={}",
+                augmentation.name,
+                augmentation.node,
+                augmentation.arena.is_some()
+            );
+
             // Use the stored arena from the augmentation (cross-file resolution)
             let Some(arena) = augmentation.arena.as_ref() else {
+                eprintln!("[GET-MEMBERS]   SKIP: No arena!");
                 continue;
             };
 

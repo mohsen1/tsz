@@ -657,9 +657,25 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress error if type is ERROR/UNKNOWN/ANY - prevents cascading errors
-        // e.g., if Promise is undefined (TS2583), don't also emit TS2339 for Promise.then
-        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+        use crate::solver::type_queries;
+
+        let type_key = self.ctx.types.lookup(type_id);
+        eprintln!(
+            "[PROP-NOT-EXIST] prop_name={}, type_id={:?}, type_key={:?}, is_error_type={}",
+            prop_name,
+            type_id,
+            type_key,
+            type_queries::is_error_type(self.ctx.types, type_id)
+        );
+
+        // Suppress error if type is ERROR/UNKNOWN/ANY or an Error type wrapper
+        // This prevents cascading errors when accessing properties on error types
+        if type_id == TypeId::ERROR
+            || type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || type_queries::is_error_type(self.ctx.types, type_id)
+        {
+            eprintln!("[PROP-NOT-EXIST] SUPPRESSED: type is error/any/unknown");
             return;
         }
 
