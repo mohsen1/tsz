@@ -186,7 +186,11 @@ fn normalize_patterns(patterns: &[String]) -> Vec<String> {
             if trimmed.is_empty() {
                 return None;
             }
-            Some(trimmed.replace('\\', "/"))
+            // Normalize path separators and strip leading "./" prefix
+            // TypeScript treats "./**/*.ts" the same as "**/*.ts"
+            let normalized = trimmed.replace('\\', "/");
+            let stripped = normalized.strip_prefix("./").unwrap_or(&normalized);
+            Some(stripped.to_string())
         })
         .collect()
 }
