@@ -35,7 +35,7 @@ Commands:
 Options:
   --workers N     Number of parallel workers (default: 16)
   --max N         Maximum number of tests to run (default: all)
-  --verbose       Show per-test results (✓ for pass, ✗ for fail)
+  --verbose       Show per-test results
   --filter PAT    Filter test files by pattern
 
 Examples:
@@ -96,7 +96,7 @@ ensure_binaries() {
 }
 
 generate_cache() {
-    echo -e "${GREEN}🔨 Generating TSC cache (using tsserver)...${NC}"
+    echo -e "${GREEN}Generating TSC cache (using tsserver)...${NC}"
     echo "Test directory: $TEST_DIR"
     echo ""
 
@@ -106,11 +106,11 @@ generate_cache() {
         --output "$CACHE_FILE"
 
     echo ""
-    echo -e "${GREEN}✓ Cache generated: $CACHE_FILE${NC}"
+    echo -e "${GREEN}Cache generated: $CACHE_FILE${NC}"
 }
 
 run_tests() {
-    echo -e "${GREEN}🧪 Running conformance tests...${NC}"
+    echo -e "${GREEN}Running conformance tests...${NC}"
     echo "Cache file: $CACHE_FILE"
     echo "Workers: $WORKERS"
     echo ""
@@ -144,13 +144,13 @@ run_tests() {
         "${extra_args[@]}"
 
     echo ""
-    echo -e "${GREEN}✓ Tests completed${NC}"
+    echo -e "${GREEN}Tests completed${NC}"
 }
 
 clean_cache() {
     echo "Removing cache file: $CACHE_FILE"
     rm -f "$CACHE_FILE"
-    echo -e "${GREEN}✓ Cache cleaned${NC}"
+    echo -e "${GREEN}Cache cleaned${NC}"
 }
 
 # Parse arguments
