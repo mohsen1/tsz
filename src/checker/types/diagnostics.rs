@@ -237,6 +237,7 @@ pub mod diagnostic_messages {
     pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: &str =
         "Ambient module declaration cannot specify relative module name.";
     pub const MODULE_HAS_NO_EXPORTED_MEMBER: &str = "Module '{0}' has no exported member '{1}'.";
+    pub const MODULE_HAS_NO_DEFAULT_EXPORT: &str = "Module '{0}' has no default export.";
     pub const CANNOT_FIND_MODULE: &str =
         "Cannot find module '{0}' or its corresponding type declarations.";
     pub const INVALID_MODULE_NAME_IN_AUGMENTATION: &str =
@@ -389,6 +390,7 @@ pub mod diagnostic_codes {
     pub const RIGHT_SIDE_OF_IN_NOT_OBJECT: u32 = 2361; // The right-hand side of an 'in' expression must be of type 'any', an object type or a type parameter.
 
     // Import/Export errors
+    pub const MODULE_HAS_NO_DEFAULT_EXPORT: u32 = 1192; // Module '{0}' has no default export.
     pub const IMPORT_ASSIGNMENT_CANNOT_BE_USED_WITH_ESM: u32 = 1202; // Import assignment cannot be used when targeting ECMAScript modules.
 
     // Function/call errors

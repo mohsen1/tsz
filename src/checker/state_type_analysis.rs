@@ -1320,6 +1320,10 @@ impl<'a> CheckerState<'a> {
                 // Use import_name if set (for renamed imports), otherwise use escaped_name
                 let export_name = import_name.as_ref().unwrap_or(&escaped_name);
 
+                // Check if the module exists first (for proper error differentiation)
+                let module_exists = self.ctx.binder.module_exports.contains_key(module_name)
+                    || self.module_exists_cross_file(module_name);
+
                 // First, try local binder's module_exports
                 let export_sym_id = self
                     .ctx
@@ -1348,11 +1352,52 @@ impl<'a> CheckerState<'a> {
                     }
                     return (result, Vec::new());
                 }
-                // Module not found in exports - emit TS2307 error and return ERROR to expose type errors
-                // Returning ANY would suppress downstream errors (poisoning)
-                // TSC emits TS2307 for missing module and allows property access, but returning ERROR
-                // gives better error detection for conformance
-                self.emit_module_not_found_error(module_name, value_decl);
+
+                // Export not found - emit appropriate error based on what's missing
+                if module_exists {
+                    // Module exists but export not found
+                    if export_name == "default" {
+                        // For default imports without a default export:
+                        // If allowSyntheticDefaultImports is enabled, return namespace type
+                        if self.ctx.allow_synthetic_default_imports() {
+                            // Create a namespace type from all module exports
+                            let exports_table = self
+                                .ctx
+                                .binder
+                                .module_exports
+                                .get(module_name)
+                                .cloned()
+                                .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
+
+                            if let Some(exports_table) = exports_table {
+                                use crate::solver::PropertyInfo;
+                                let mut props: Vec<PropertyInfo> = Vec::new();
+                                for (name, &export_sym_id) in exports_table.iter() {
+                                    let prop_type = self.get_type_of_symbol(export_sym_id);
+                                    let name_atom = self.ctx.types.intern_string(name);
+                                    props.push(PropertyInfo {
+                                        name: name_atom,
+                                        type_id: prop_type,
+                                        write_type: prop_type,
+                                        optional: false,
+                                        readonly: false,
+                                        is_method: false,
+                                    });
+                                }
+                                let module_type = self.ctx.types.object(props);
+                                return (module_type, Vec::new());
+                            }
+                        }
+                        // TS1192: Module '{0}' has no default export.
+                        self.emit_no_default_export_error(module_name, value_decl);
+                    } else {
+                        // TS2305: Module '{0}' has no exported member '{1}'.
+                        self.emit_no_exported_member_error(module_name, export_name, value_decl);
+                    }
+                } else {
+                    // Module not found at all - emit TS2307
+                    self.emit_module_not_found_error(module_name, value_decl);
+                }
                 return (TypeId::ERROR, Vec::new());
             }
 
