@@ -141,3 +141,31 @@ git add TypeScript
 - Run `cargo clippy` before committing to catch common issues
 - Use `cargo fmt` to auto-format code
 - The conformance test cache speeds up repeated runs - generate it with `npm run cache:generate`
+
+## Disk Space Management
+
+The `target/` directory can grow to multi-GB sizes during builds. Protect your disk:
+
+```bash
+# Check disk space and target size
+./scripts/clean.sh --check
+
+# Safe cleanup (removes release artifacts, keeps debug for faster iteration)
+./scripts/clean.sh --safe
+
+# Full cleanup (removes all build artifacts)
+./scripts/clean.sh --full
+
+# Or use cargo directly
+cargo clean          # Full clean
+cargo clean --release  # Release artifacts only
+```
+
+**Recommended schedule:**
+- Before starting work: Clean if disk space < 10GB
+- After finishing work: Run `cargo clean --release` to free space
+- Before large test runs: Check disk space and clean if needed
+
+**Warning signs:**
+- Target directory > 2GB: Consider cleanup
+- Available disk space < 5GB: Must clean before building
