@@ -993,24 +993,24 @@ impl<'a> CheckerState<'a> {
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
             && flags & symbol_flags::FUNCTION == 0
         {
-            use crate::solver::{SymbolRef, TypeKey};
-            // Also create DefId mapping for future migration
-            let _ = self.ctx.get_or_create_def_id(sym_id);
+            use crate::solver::TypeKey;
+            // Create DefId and use Lazy type
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
             return (
-                self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0))),
+                self.ctx.types.intern(TypeKey::Lazy(def_id)),
                 Vec::new(),
             );
         }
 
-        // Enum - return a Ref type AND register DefId mapping for gradual migration.
-        // The Ref type is needed because enum subtype checking depends on extracting
-        // SymbolRef to check symbol flags and nominal identity.
+        // Enum - return a Lazy type with DefId for nominal identity checking.
+        // The Lazy type provides proper enum subtype checking via DefId-based
+        // symbol resolution and type equality.
         if flags & symbol_flags::ENUM != 0 {
-            use crate::solver::{SymbolRef, TypeKey};
-            // Also create DefId mapping for future migration
-            let _ = self.ctx.get_or_create_def_id(sym_id);
+            use crate::solver::TypeKey;
+            // Create DefId and use Lazy type
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
             return (
-                self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0))),
+                self.ctx.types.intern(TypeKey::Lazy(def_id)),
                 Vec::new(),
             );
         }

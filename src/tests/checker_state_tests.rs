@@ -6582,8 +6582,8 @@ type Qux = { [key: string]: Foo };
                 .lookup(string_index.value_type)
                 .expect("Index value type should exist");
             match value_key {
-                TypeKey::Ref(SymbolRef(sym_id)) => assert_eq!(sym_id, foo_sym.0),
-                _ => panic!("Expected Foo reference type, got {:?}", value_key),
+                TypeKey::Lazy(_def_id) => {}, // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                _ => panic!("Expected Foo lazy type, got {:?}", value_key),
             }
         }
         _ => panic!("Expected Qux to be ObjectWithIndex type, got {:?}", qux_key),

@@ -100,9 +100,9 @@ pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a named type reference.
 ///
-/// Returns true for TypeKey::Ref (interfaces, classes, type aliases).
+/// Returns true for TypeKey::Lazy(DefId) (interfaces, classes, type aliases).
 pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeKey::Ref(_)))
+    matches!(db.lookup(type_id), Some(TypeKey::Lazy(_)))
 }
 
 /// Check if a type is a conditional type (T extends U ? X : Y).
@@ -409,8 +409,7 @@ where
                 info.constraint.map(|c| self.check(c)).unwrap_or(false)
                     || info.default.map(|d| self.check(d)).unwrap_or(false)
             }
-            TypeKey::Ref(_)
-            | TypeKey::Lazy(_)
+            TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => false,
@@ -710,17 +709,48 @@ pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> 
     }
 }
 
-/// Get the symbol reference from a Ref type.
+/// Get the DefId from a Lazy type.
 ///
-/// Returns None if the type is not a Ref.
+/// Returns None if the type is not a Lazy type.
+pub fn get_lazy_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::def::DefId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Lazy(def_id)) => Some(def_id),
+        _ => None,
+    }
+}
+
+/// Get the SymbolRef from a Lazy type by converting DefId to SymbolId.
+///
+/// This is a compatibility helper for code that expects SymbolRef from type references.
+/// Returns None if the type is not a Lazy type or if DefId cannot be converted to SymbolId.
+///
+/// Note: This requires access to a TypeResolver to perform the conversion.
+/// Callers should prefer using get_lazy_def_id() and working with DefId directly.
+#[deprecated(note = "Use get_lazy_def_id() and work with DefId directly")]
 pub fn get_ref_symbol(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::solver::types::SymbolRef> {
     match db.lookup(type_id) {
-        Some(TypeKey::Ref(sym_ref)) => Some(sym_ref),
+        Some(TypeKey::Lazy(_)) => {
+            // Cannot convert DefId to SymbolRef without a TypeResolver
+            // Callers need to migrate to using DefId directly
+            None
+        }
         _ => None,
     }
+}
+
+/// Get the SymbolRef from a Lazy type - alias for get_ref_symbol.
+#[deprecated(note = "Use get_lazy_def_id() and work with DefId directly")]
+pub fn get_symbol_ref(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::types::SymbolRef> {
+    get_ref_symbol(db, type_id)
 }
 
 // =============================================================================
@@ -821,7 +851,6 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         | TypeKey::ObjectWithIndex(_)
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
-        | TypeKey::Ref(_)
         | TypeKey::Lazy(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
@@ -935,15 +964,15 @@ pub fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     }
 }
 
-/// Get the symbol reference from a Ref or TypeQuery type.
+/// Get the symbol reference from a TypeQuery type.
 ///
-/// Returns None if the type is not a Ref or TypeQuery.
+/// Returns None if the type is not a TypeQuery.
 pub fn get_symbol_ref_from_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<crate::solver::types::SymbolRef> {
     match db.lookup(type_id) {
-        Some(TypeKey::Ref(sym_ref)) | Some(TypeKey::TypeQuery(sym_ref)) => Some(sym_ref),
+        Some(TypeKey::TypeQuery(sym_ref)) => Some(sym_ref),
         _ => None,
     }
 }
@@ -1008,7 +1037,6 @@ pub fn classify_for_constructability(
             }
         }
         TypeKey::Function(_) => ConstructableTypeKind::Function,
-        TypeKey::Ref(sym_ref) => ConstructableTypeKind::SymbolRef(sym_ref),
         TypeKey::TypeQuery(sym_ref) => ConstructableTypeKind::TypeQueryRef(sym_ref),
         TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
             if let Some(constraint) = info.constraint {
@@ -1100,7 +1128,6 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
             let members = db.type_list(list_id);
             ConstraintTypeKind::Intersection(members.to_vec())
         }
-        TypeKey::Ref(sym_ref) => ConstraintTypeKind::SymbolRef(sym_ref),
         TypeKey::Application(app_id) => ConstraintTypeKind::Application { app_id: app_id.0 },
         TypeKey::Mapped(mapped_id) => ConstraintTypeKind::Mapped {
             mapped_id: mapped_id.0,
@@ -1208,7 +1235,6 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         | TypeKey::ObjectWithIndex(_)
         | TypeKey::Array(_)
         | TypeKey::Tuple(_)
-        | TypeKey::Ref(_)
         | TypeKey::Lazy(_)
         | TypeKey::Application(_)
         | TypeKey::TemplateLiteral(_)
@@ -1334,7 +1360,6 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
         // All other types are not directly iterable
         TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
-        | TypeKey::Ref(_)
         | TypeKey::Lazy(_)
         | TypeKey::TemplateLiteral(_)
         | TypeKey::UniqueSymbol(_)
@@ -1519,7 +1544,6 @@ pub fn classify_for_property_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> P
         | TypeKey::Callable(_)
         | TypeKey::TypeParameter(_)
         | TypeKey::Infer(_)
-        | TypeKey::Ref(_)
         | TypeKey::Lazy(_)
         | TypeKey::Application(_)
         | TypeKey::Conditional(_)
@@ -1587,7 +1611,6 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
     };
 
     match key {
-        TypeKey::Ref(sym_ref) => EvaluationNeeded::SymbolRef(sym_ref),
         TypeKey::TypeQuery(sym_ref) => EvaluationNeeded::TypeQuery(sym_ref),
         TypeKey::Application(app_id) => EvaluationNeeded::Application { app_id },
         TypeKey::IndexAccess(object, index) => EvaluationNeeded::IndexAccess { object, index },
@@ -1676,7 +1699,6 @@ pub fn classify_for_property_access(
         TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => {
             PropertyAccessClassification::Direct(type_id)
         }
-        TypeKey::Ref(sym_ref) => PropertyAccessClassification::SymbolRef(sym_ref),
         TypeKey::TypeQuery(sym_ref) => PropertyAccessClassification::TypeQuery(sym_ref),
         TypeKey::Application(app_id) => PropertyAccessClassification::Application { app_id },
         TypeKey::Union(list_id) => {
@@ -1786,7 +1808,6 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
                 args: app.args.clone(),
             }
         }
-        TypeKey::Ref(sym_ref) => TypeTraversalKind::SymbolRef(sym_ref),
         TypeKey::TypeParameter(info) => TypeTraversalKind::TypeParameter {
             constraint: info.constraint,
             default: info.default,
@@ -1825,17 +1846,26 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
     }
 }
 
-/// Check if a type is a symbol reference and return the symbol ref.
+/// Check if a type is a lazy type and return the DefId.
 ///
-/// This is a helper for checking if the base of an Application is a Ref.
+/// This is a helper for checking if the base of an Application is a Lazy type.
+pub fn get_lazy_if_def(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<crate::solver::def::DefId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Lazy(def_id)) => Some(def_id),
+        _ => None,
+    }
+}
+
+/// Compatibility alias for get_lazy_if_def.
+#[deprecated(note = "Use get_lazy_if_def() instead")]
 pub fn get_ref_if_symbol(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<crate::solver::types::SymbolRef> {
-    match db.lookup(type_id) {
-        Some(TypeKey::Ref(sym_ref)) => Some(sym_ref),
-        _ => None,
-    }
+) -> Option<crate::solver::def::DefId> {
+    get_lazy_if_def(db, type_id)
 }
 
 // =============================================================================
@@ -1911,7 +1941,6 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         | TypeKey::Function(_)
         | TypeKey::TypeParameter(_)
         | TypeKey::Infer(_)
-        | TypeKey::Ref(_)
         | TypeKey::Lazy(_)
         | TypeKey::Application(_)
         | TypeKey::Conditional(_)

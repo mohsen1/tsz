@@ -103,24 +103,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     TypeId::ERROR
                 }
             }
-            TypeKey::Ref(sym) => {
-                let resolved = if let Some(def_id) = self.resolver().symbol_to_def_id(sym) {
-                    self.resolver().resolve_lazy(def_id, self.interner())
-                } else {
-                    #[allow(deprecated)]
-                    let r = self.resolver().resolve_ref(sym, self.interner());
-                    r
-                };
-                if let Some(resolved) = resolved {
-                    if resolved == evaluated_operand {
-                        self.interner().intern(TypeKey::KeyOf(operand))
-                    } else {
-                        self.recurse_keyof(resolved)
-                    }
-                } else {
-                    TypeId::ERROR
-                }
-            }
             TypeKey::TypeParameter(param) | TypeKey::Infer(param) => {
                 if let Some(constraint) = param.constraint {
                     if constraint == evaluated_operand {

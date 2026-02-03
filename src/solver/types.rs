@@ -364,7 +364,8 @@ pub enum TypeKey {
     /// Uses SymbolId to break infinite recursion
     /// DEPRECATED: Use `Lazy(DefId)` for new code. This is kept for backward compatibility
     /// during the migration from SymbolRef to DefId.
-    Ref(SymbolRef),
+    /// PHASE 4.2: REMOVED - Migration complete, all types now use Lazy(DefId)
+    // Ref(SymbolRef),
 
     /// Lazy reference to a type definition.
     ///

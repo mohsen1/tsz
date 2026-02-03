@@ -41,14 +41,6 @@ impl<'a> CheckerState<'a> {
         };
 
         match type_key {
-            // For Ref types, resolve the symbol to ensure it's in type_env
-            TypeKey::Ref(symbol_ref) => {
-                let sym_id = crate::binder::SymbolId(symbol_ref.0);
-                // Call get_type_of_symbol which will resolve and cache in type_env
-                // This is LAZY resolution - only resolve when needed for checking
-                let _ = self.get_type_of_symbol(sym_id);
-            }
-
             // For Lazy(DefId) types, resolve via the reverse DefId→SymbolId mapping
             TypeKey::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {

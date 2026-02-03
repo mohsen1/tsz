@@ -348,24 +348,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.cache.insert(type_id, result);
                 result
             }
-            // Resolve Ref types to their structural form
-            TypeKey::Ref(symbol) => {
-                let result = if let Some(def_id) = self.resolver.symbol_to_def_id(*symbol) {
-                    match self.resolver.resolve_lazy(def_id, self.interner) {
-                        Some(resolved) => resolved,
-                        None => TypeId::ERROR,
-                    }
-                } else {
-                    #[allow(deprecated)]
-                    match self.resolver.resolve_ref(*symbol, self.interner) {
-                        Some(resolved) => resolved,
-                        None => TypeId::ERROR,
-                    }
-                };
-                self.visiting.remove(&type_id);
-                self.cache.insert(type_id, result);
-                result
-            }
             // Resolve Lazy(DefId) types to their structural form (Phase 4.3)
             TypeKey::Lazy(def_id) => {
                 let result =
@@ -412,50 +394,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(k) => k,
             None => return self.interner.application(app.base, app.args.clone()),
         };
-
-        // If the base is a Ref, try to resolve and instantiate
-        if let TypeKey::Ref(symbol) = base_key {
-            // Try to get the type parameters for this symbol
-            let type_params = self.resolver.get_type_params(symbol);
-            let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
-                match self.resolver.resolve_lazy(def_id, self.interner) {
-                    Some(r) => Some(r),
-                    None => None,
-                }
-            } else {
-                #[allow(deprecated)]
-                self.resolver.resolve_ref(symbol, self.interner)
-            };
-
-            if let Some(type_params) = type_params {
-                // Resolve the base type to get the body
-                if let Some(resolved) = resolved {
-                    // Pre-expand type arguments that are TypeQuery or Application
-                    let expanded_args = self.expand_type_args(&app.args);
-
-                    // Instantiate the resolved type with the type arguments
-                    let instantiated =
-                        instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
-                    // Recursively evaluate the result
-                    return self.evaluate(instantiated);
-                }
-            } else if let Some(resolved) = resolved {
-                // Fallback: try to extract type params from the resolved type's properties
-                let extracted_params = self.extract_type_params_from_type(resolved);
-                if !extracted_params.is_empty() && extracted_params.len() == app.args.len() {
-                    // Pre-expand type arguments
-                    let expanded_args = self.expand_type_args(&app.args);
-
-                    let instantiated = instantiate_generic(
-                        self.interner,
-                        resolved,
-                        &extracted_params,
-                        &expanded_args,
-                    );
-                    return self.evaluate(instantiated);
-                }
-            }
-        }
 
         // If the base is a Lazy(DefId), try to resolve and instantiate (Phase 4.3)
         if let TypeKey::Lazy(def_id) = base_key {
@@ -641,24 +579,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Use evaluate() to ensure depth limits are enforced
                 self.evaluate(arg)
             }
-            TypeKey::Ref(sym_ref) => {
-                // Also try to resolve Ref types in type arguments
-                // This helps with generic instantiation accuracy
-                if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
-                    match self.resolver.resolve_lazy(def_id, self.interner) {
-                        Some(resolved) => resolved,
-                        None => arg,
-                    }
-                } else {
-                    #[allow(deprecated)]
-                    match self.resolver.resolve_ref(sym_ref, self.interner) {
-                        Some(resolved) => resolved,
-                        None => arg,
-                    }
-                }
-            }
             TypeKey::Lazy(def_id) => {
-                // Also try to resolve Lazy types in type arguments (Phase 4.3)
+                // Resolve Lazy types in type arguments (Phase 4.3)
                 // This helps with generic instantiation accuracy
                 self.resolver
                     .resolve_lazy(def_id, self.interner)
