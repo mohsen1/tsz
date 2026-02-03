@@ -21,9 +21,29 @@ The easy configuration/flag fixes have been addressed.
 
 ## Session Summary
 
-**Total tests fixed/unignored: 16**
+**Total tests fixed/unignored: 17**
 - 14 TS2304 (Cannot find name) tests - fixed missing `report_unresolved_imports` flag
 - 2 TS2339 (Property not exist) tests - fixed unknown type error suppression
+- 1 Type inference test - fixed Object vs Object comparison and optional property bounds checking
+
+---
+
+### 2025-02-04: Fixed type inference for optional properties in object bounds
+
+Fixed two issues in the type inference system in `src/solver/infer.rs`:
+
+**Issue 1: Object vs Object comparison**
+- The `is_subtype` method didn't handle `TypeKey::Object` vs `TypeKey::Object` comparison
+- Objects created with `interner.object()` would fall through the match and return false
+- Added a new case to handle Object vs Object comparison using `object_subtype_of`
+
+**Issue 2: Optional property write type checking**
+- When source property is non-optional and target is optional, the write type check was failing
+- The check `union(STRING, UNDEFINED) <: STRING` was incorrectly required
+- Fixed by skipping write type check when source is non-optional and target is optional
+
+**Tests fixed** (1 test):
+- test_resolve_bounds_optional_property_compatible (no longer ignored)
 
 ---
 
