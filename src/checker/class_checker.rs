@@ -686,21 +686,36 @@ impl<'a> CheckerState<'a> {
                 String::from("<anonymous>")
             };
 
-            // Format: "Non-abstract class 'C' is missing implementations for the following members of 'B': 'prop', 'readonlyProp', 'm', 'mismatch'."
-            let missing_list = missing_members
-                .iter()
-                .map(|s| format!("'{}'", s))
-                .collect::<Vec<_>>()
-                .join(", ");
+            // TypeScript uses different error codes based on the number of missing members:
+            // - TS2515: Single missing member: "Non-abstract class 'C' does not implement inherited abstract member 'bar' from class 'B'."
+            // - TS2654: Multiple missing members: "Non-abstract class 'C' is missing implementations for the following members of 'B': 'foo', 'bar'."
+            if missing_members.len() == 1 {
+                // TS2515: Single missing member
+                self.error_at_node(
+                    class_idx,
+                    &format!(
+                        "Non-abstract class '{}' does not implement inherited abstract member '{}' from class '{}'.",
+                        derived_class_name, missing_members[0], base_class_name
+                    ),
+                    diagnostic_codes::ABSTRACT_MEMBER_IN_NON_ABSTRACT_CLASS, // TS2515
+                );
+            } else {
+                // TS2654: Multiple missing members
+                let missing_list = missing_members
+                    .iter()
+                    .map(|s| format!("'{}'", s))
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
-            self.error_at_node(
-                class_idx,
-                &format!(
-                    "Non-abstract class '{}' is missing implementations for the following members of '{}': {}.",
-                    derived_class_name, base_class_name, missing_list
-                ),
-                diagnostic_codes::NON_ABSTRACT_CLASS_MISSING_IMPLEMENTATIONS,
-            );
+                self.error_at_node(
+                    class_idx,
+                    &format!(
+                        "Non-abstract class '{}' is missing implementations for the following members of '{}': {}.",
+                        derived_class_name, base_class_name, missing_list
+                    ),
+                    diagnostic_codes::NON_ABSTRACT_CLASS_MISSING_IMPLEMENTATIONS,
+                );
+            }
         }
     }
 
