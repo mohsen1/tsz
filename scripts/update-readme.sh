@@ -17,6 +17,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+README="$ROOT_DIR/README.md"
 
 # Defaults
 COMMIT=false
@@ -63,20 +64,51 @@ done
 
 cd "$ROOT_DIR"
 
-# Get TypeScript version
-TS_VERSION=$(node -e "const v = require('./scripts/conformance/typescript-versions.json'); const m = Object.values(v.mappings)[0]; console.log(m?.npm || v.default?.npm || 'unknown')")
+# ── Helper functions ─────────────────────────────────────────────────
+
+# Generate a progress bar: generate_bar <percent> <width>
+generate_bar() {
+    local percent=$1
+    local width=${2:-15}
+    local filled=$(echo "$percent * $width / 100" | bc)
+    local empty=$((width - filled))
+    local bar=""
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+    echo "$bar"
+}
+
+# Format number with commas: format_num 12345 -> 12,345
+format_num() {
+    echo "$1" | sed ':a;s/\B[0-9]\{3\}\>$/,&/;ta'
+}
+
+# Update a section in README between markers
+# update_section <start_marker> <end_marker> <new_content>
+update_section() {
+    local start_marker="$1"
+    local end_marker="$2"
+    local new_content="$3"
+    local tmpfile=$(mktemp)
+    
+    awk -v start="$start_marker" -v end="$end_marker" -v content="$new_content" '
+        $0 ~ start { print; print content; skip=1; next }
+        $0 ~ end { skip=0 }
+        !skip { print }
+    ' "$README" > "$tmpfile"
+    
+    mv "$tmpfile" "$README"
+}
+
+# ── Get TypeScript version ───────────────────────────────────────────
+
+TS_VERSION=$(node -e "const v = require('./scripts/typescript-versions.json'); const m = Object.values(v.mappings)[0]; console.log(m?.npm || v.default?.npm || 'unknown')")
 echo "TypeScript version: $TS_VERSION"
 echo ""
 
-# Build update-readme tool
-echo "Building update-readme tool..."
-cd scripts/conformance
-npm run build --silent 2>/dev/null || npm run build
-cd "$ROOT_DIR"
-
-# Update TypeScript version once (shown at top of Progress section)
+# Update TypeScript version in README
 echo "Updating TypeScript version in README..."
-node scripts/conformance/dist/update-readme.js --ts-version="$TS_VERSION"
+update_section "<!-- TS_VERSION_START -->" "<!-- TS_VERSION_END -->" "Currently targeting \`TypeScript\`@\`$TS_VERSION\`"
 echo ""
 
 # Track what was updated for commit message
@@ -88,6 +120,7 @@ FS_TOTAL=""
 FS_PASS_RATE=""
 EMIT_JS_PASSED=""
 EMIT_JS_TOTAL=""
+EMIT_JS_RATE=""
 EMIT_DTS_PASSED=""
 EMIT_DTS_TOTAL=""
 
@@ -99,17 +132,17 @@ if [ "$RUN_CONFORMANCE" = true ]; then
     echo ""
 
     echo "Running conformance tests..."
-    OUTPUT=$(./scripts/conformance/run.sh $MAX_TESTS --workers=$WORKERS 2>&1) || true
+    OUTPUT=$(./scripts/conformance.sh run $MAX_TESTS --workers $WORKERS 2>&1) || true
     echo "$OUTPUT"
 
-    if echo "$OUTPUT" | grep -q "Pass Rate:"; then
+    # Parse new format: "FINAL RESULTS: N/N passed (N%)"
+    if echo "$OUTPUT" | grep -q "FINAL RESULTS:"; then
         # Strip ANSI color codes before parsing
-        # Use head -1 to get the first "Pass Rate:" line which has format: "Pass Rate: X% (passed/total)"
-        # (The Summary section has a different format without passed/total in parentheses)
-        PASS_LINE=$(echo "$OUTPUT" | grep "Pass Rate:" | head -1 | sed 's/\x1b\[[0-9;]*m//g')
-        CONF_PASS_RATE=$(echo "$PASS_LINE" | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
-        CONF_PASSED=$(echo "$PASS_LINE" | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\1/' | tr -d ',')
-        CONF_TOTAL=$(echo "$PASS_LINE" | sed -E 's/.*\(([0-9,]+)\/([0-9,]+)\).*/\2/' | tr -d ',')
+        RESULTS_LINE=$(echo "$OUTPUT" | grep "FINAL RESULTS:" | head -1 | sed 's/\x1b\[[0-9;]*m//g')
+        # Format: "FINAL RESULTS: 568/1200 passed (47.3%)"
+        CONF_PASSED=$(echo "$RESULTS_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+).*/\1/')
+        CONF_TOTAL=$(echo "$RESULTS_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+).*/\2/')
+        CONF_PASS_RATE=$(echo "$RESULTS_LINE" | sed -E 's/.*\(([0-9.]+)%\).*/\1/')
 
         # Validate parsed values are numbers
         if ! [[ "$CONF_PASS_RATE" =~ ^[0-9]+\.?[0-9]*$ ]] || ! [[ "$CONF_PASSED" =~ ^[0-9]+$ ]] || ! [[ "$CONF_TOTAL" =~ ^[0-9]+$ ]]; then
@@ -121,12 +154,44 @@ if [ "$RUN_CONFORMANCE" = true ]; then
             echo ""
             echo "Conformance: $CONF_PASSED/$CONF_TOTAL tests passed ($CONF_PASS_RATE%)"
 
-            cd scripts/conformance
-            node dist/update-readme.js \
-                --passed="$CONF_PASSED" \
-                --total="$CONF_TOTAL" \
-                --pass-rate="$CONF_PASS_RATE"
-            cd "$ROOT_DIR"
+            # Parse time from output: "Time: 14.7s"
+            TIME_LINE=$(echo "$OUTPUT" | grep "Time:" | head -1 | sed 's/\x1b\[[0-9;]*m//g')
+            CONF_TIME=$(echo "$TIME_LINE" | sed -E 's/.*Time:[[:space:]]*([0-9.]+)s.*/\1/')
+            
+            # Calculate tests/sec
+            if [[ "$CONF_TIME" =~ ^[0-9.]+$ ]] && [ "$(echo "$CONF_TIME > 0" | bc)" -eq 1 ]; then
+                TESTS_PER_SEC=$(echo "scale=0; $CONF_TOTAL / $CONF_TIME" | bc)
+            else
+                TESTS_PER_SEC="N/A"
+                CONF_TIME="N/A"
+            fi
+
+            # Generate progress bar and update README
+            BAR=$(generate_bar "$CONF_PASS_RATE")
+            PASSED_FMT=$(format_num "$CONF_PASSED")
+            TOTAL_FMT=$(format_num "$CONF_TOTAL")
+            
+            CONF_CONTENT="\`\`\`
+Progress: [$BAR] ${CONF_PASS_RATE}% ($PASSED_FMT / $TOTAL_FMT tests)
+Performance: $TESTS_PER_SEC tests/sec (${CONF_TIME}s for full suite)
+\`\`\`
+
+**Quick Start:**
+\`\`\`bash
+# Generate TSC cache (one-time setup)
+./scripts/conformance.sh generate
+
+# Run conformance tests
+./scripts/conformance.sh run
+
+# See details
+./scripts/conformance.sh run --verbose --max 100
+\`\`\`
+
+**Implementation:** High-performance Rust runner with parallel execution
+**Documentation:** [conformance-rust/README.md](conformance-rust/README.md) | [docs/CONFORMANCE_DEEP_DIVE.md](docs/CONFORMANCE_DEEP_DIVE.md)"
+
+            update_section "<!-- CONFORMANCE_START -->" "<!-- CONFORMANCE_END -->" "$CONF_CONTENT"
         fi
     else
         echo "Failed to parse conformance test output"
@@ -163,13 +228,16 @@ if [ "$RUN_FOURSLASH" = true ]; then
         echo ""
         echo "Fourslash: $FS_PASSED/$FS_TOTAL tests ($FS_PASS_RATE%)"
 
-        cd scripts/conformance
-        node dist/update-readme.js \
-            --fourslash \
-            --passed="$FS_PASSED" \
-            --total="$FS_TOTAL" \
-            --pass-rate="$FS_PASS_RATE"
-        cd "$ROOT_DIR"
+        # Generate progress bar and update README
+        BAR=$(generate_bar "$FS_PASS_RATE" 20)
+        PASSED_FMT=$(format_num "$FS_PASSED")
+        TOTAL_FMT=$(format_num "$FS_TOTAL")
+        
+        FS_CONTENT="\`\`\`
+Progress: [$BAR] ${FS_PASS_RATE}% ($PASSED_FMT / $TOTAL_FMT tests)
+\`\`\`"
+
+        update_section "<!-- FOURSLASH_START -->" "<!-- FOURSLASH_END -->" "$FS_CONTENT"
     else
         echo "Failed to parse fourslash test output"
         if [ "$RUN_CONFORMANCE" = false ]; then
@@ -203,14 +271,17 @@ if [ "$RUN_EMIT" = true ]; then
         echo ""
         echo "Emit JS: $EMIT_JS_PASSED/$EMIT_JS_TOTAL ($EMIT_JS_RATE%)"
 
-        cd scripts/conformance
-        node dist/update-readme.js \
-            --emit \
-            --js-passed="$EMIT_JS_PASSED" \
-            --js-total="$EMIT_JS_TOTAL" \
-            --dts-passed="$EMIT_DTS_PASSED" \
-            --dts-total="$EMIT_DTS_TOTAL"
-        cd "$ROOT_DIR"
+        # Generate progress bars and update README
+        JS_BAR=$(generate_bar "$EMIT_JS_RATE" 20)
+        JS_PASSED_FMT=$(format_num "$EMIT_JS_PASSED")
+        JS_TOTAL_FMT=$(format_num "$EMIT_JS_TOTAL")
+        
+        EMIT_CONTENT="\`\`\`
+JavaScript:  [$JS_BAR] ${EMIT_JS_RATE}% ($JS_PASSED_FMT / $JS_TOTAL_FMT tests)
+Declaration: [░░░░░░░░░░░░░░░░░░░░] 0.0% (0 / 0 tests)
+\`\`\`"
+
+        update_section "<!-- EMIT_START -->" "<!-- EMIT_END -->" "$EMIT_CONTENT"
     else
         echo "Failed to parse emit test output"
     fi
