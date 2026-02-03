@@ -89,6 +89,59 @@ cargo clippy -- -D warnings
 cargo fmt
 ```
 
+## Disk Space Protection
+
+**CRITICAL**: The `.target` directory can grow to multi-GB sizes during builds and testing. Protect the disk from filling up:
+
+### Check Disk Usage Before Builds
+
+```bash
+# Check target directory size
+du -sh target/
+
+# Check available disk space
+df -h .
+```
+
+### Regular Cleanup Commands
+
+```bash
+# Clean all build artifacts (most aggressive)
+cargo clean
+
+# Clean only release artifacts (keep debug builds for faster iteration)
+cargo clean --release
+
+# Clean specific crate's artifacts
+cargo clean -p tsz
+
+# Remove old test binaries (nextest stores these)
+rm -rf target/nextest
+```
+
+### Recommended Cleanup Schedule
+
+1. **Before starting work**: Run `cargo clean --release` if disk space < 10GB
+2. **After finishing work**: Run `cargo clean --release` to free up space
+3. **Before large test runs**: Check `df -h .` and clean if needed
+4. **Weekly**: Full `cargo clean` if working heavily
+
+### Automatic Cleanup Script
+
+Use the provided cleanup script for safe automatic cleanup:
+
+```bash
+./scripts/clean.sh --safe    # Remove release artifacts, keep debug
+./scripts/clean.sh --full    # Full clean (cargo clean)
+./scripts/clean.sh --check   # Check sizes before cleaning
+```
+
+### Warning Signs
+
+- Target directory > 2GB: Consider `cargo clean --release`
+- Available disk space < 5GB: **Must clean before building**
+- Build failures with "No space left on device": Run `cargo clean` immediately
+
 
 ## Testing Requirements
 

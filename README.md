@@ -71,6 +71,36 @@ Declaration: [░░░░░░░░░░░░░░░░░░░░] 0.0%
 - [Testing Guide](docs/TESTING.md) - Testing infrastructure details
 - [Benchmarks](docs/BENCHMARKS.md) - Performance benchmarking
 
+## AI Assistant Integration
+
+This project includes a [Claude Code skill](.claude/skills/tsz-gemini/SKILL.md) that integrates with Gemini AI to help you understand the codebase. The skill automatically gathers relevant files and code context to answer questions about architecture and implementation.
+
+**Quick Start:**
+```bash
+# Ask about type inference (uses --solver preset)
+./scripts/ask-gemini.mjs --solver "How does type inference work for generic functions?"
+
+# Ask about error reporting (uses --checker preset)
+./scripts/ask-gemini.mjs --checker "How are diagnostics reported?"
+
+# Ask about specific files
+./scripts/ask-gemini.mjs --include=src/solver/infer.rs "How does this file handle type inference?"
+
+# List all available presets
+./scripts/ask-gemini.mjs --list
+```
+
+**Environment Setup:**
+```bash
+# For Vertex AI Express (default)
+export GCP_VERTEX_EXPRESS_API_KEY="your-key-here"
+
+# OR for direct Gemini API (fallback)
+export GEMINI_API_KEY="your-key-here"
+```
+
+See [`.claude/skills/tsz-gemini/SKILL.md`](.claude/skills/tsz-gemini/SKILL.md) for detailed usage instructions and examples.
+
 ---
 
 <a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".
