@@ -11495,10 +11495,10 @@ fn test_object_trifecta_keyof_object_interface() {
         },
     ]);
 
-    let sym = SymbolRef(1);
-    env.insert(sym, object_interface);
+    let def_id = DefId(1);
+    env.insert_def(def_id, object_interface);
 
-    let ref_type = interner.reference(sym);
+    let ref_type = interner.lazy(def_id);
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate_keyof(ref_type);
     let key = interner
@@ -15516,8 +15516,8 @@ fn test_application_ref_expansion_with_defaults() {
 
     // Set up resolver with type parameters (including defaults)
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(
-        SymbolRef(1),
+    env.insert_def_with_params(
+        DefId(1),
         optional_body,
         vec![t_param.clone(), d_param.clone()],
     );
