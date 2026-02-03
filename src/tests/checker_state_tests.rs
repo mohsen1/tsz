@@ -10428,7 +10428,11 @@ const value: Merge.B = { y: 1 };
 
     let alias_sym = binder.file_locals.get("Alias").expect("Alias should exist");
     let alias_type = checker.get_type_of_symbol(alias_sym);
-    let alias_key = types.lookup(alias_type).expect("Alias type should exist");
+    // Phase 4.2: Type aliases are now represented as Lazy types, need to resolve them
+    let resolved_type = checker.resolve_lazy_type(alias_type);
+    let alias_key = types
+        .lookup(resolved_type)
+        .expect("Alias type should exist");
     match alias_key {
         TypeKey::Object(shape_id) => {
             let shape = types.object_shape(shape_id);
