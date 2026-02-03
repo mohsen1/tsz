@@ -1068,6 +1068,10 @@ impl<'a> CheckerContext<'a> {
                 } else {
                     env.insert_def_with_params(def_id, type_id, type_params);
                 }
+
+                // Register mapping for InheritanceGraph bridge (Phase 3.2)
+                // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
+                env.register_def_symbol_mapping(def_id, sym_id);
             }
         }
     }

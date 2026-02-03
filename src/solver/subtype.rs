@@ -14,6 +14,7 @@ use crate::limits;
 use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
 use crate::solver::db::QueryDatabase;
+use crate::binder::SymbolId;
 use crate::solver::def::DefId;
 use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
@@ -120,6 +121,17 @@ pub trait TypeResolver {
         None
     }
 
+    /// Get the SymbolId for a DefId (Phase 3.2: bridge for InheritanceGraph).
+    ///
+    /// This enables DefId-based types to use the existing O(1) InheritanceGraph
+    /// by mapping DefIds back to their corresponding SymbolIds. The mapping is
+    /// maintained by the Binder/Checker during type resolution.
+    ///
+    /// Returns None if the DefId doesn't have a corresponding SymbolId.
+    fn def_to_symbol_id(&self, _def_id: DefId) -> Option<SymbolId> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic (Rule #33).
     /// For example, IntrinsicKind::Number -> TypeId of the Number interface.
     /// This enables primitives to be subtypes of their boxed interfaces.
@@ -190,6 +202,10 @@ pub struct TypeEnvironment {
     def_types: std::collections::HashMap<u32, TypeId>,
     /// Maps DefIds to their type parameters (for generic types with Lazy refs).
     def_type_params: std::collections::HashMap<u32, Vec<TypeParamInfo>>,
+    /// Maps DefIds back to SymbolIds for InheritanceGraph lookups (Phase 3.2).
+    /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
+    /// by mapping DefIds back to their corresponding SymbolIds.
+    def_to_symbol: std::collections::HashMap<u32, SymbolId>,
 }
 
 impl TypeEnvironment {
@@ -202,6 +218,7 @@ impl TypeEnvironment {
             array_base_type_params: Vec::new(),
             def_types: std::collections::HashMap::new(),
             def_type_params: std::collections::HashMap::new(),
+            def_to_symbol: std::collections::HashMap::new(),
         }
     }
 
@@ -313,6 +330,19 @@ impl TypeEnvironment {
     pub fn contains_def(&self, def_id: DefId) -> bool {
         self.def_types.contains_key(&def_id.0)
     }
+
+    // =========================================================================
+    // DefId <-> SymbolId Bridge (Phase 3.2)
+    // =========================================================================
+
+    /// Register a mapping from DefId to SymbolId for InheritanceGraph lookups.
+    ///
+    /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
+    /// by mapping DefIds back to their corresponding SymbolIds. The mapping
+    /// is maintained by the Binder/Checker during type resolution.
+    pub fn register_def_symbol_mapping(&mut self, def_id: DefId, sym_id: SymbolId) {
+        self.def_to_symbol.insert(def_id.0, sym_id);
+    }
 }
 
 impl TypeResolver for TypeEnvironment {
@@ -342,6 +372,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         TypeEnvironment::get_array_base_type_params(self)
+    }
+
+    fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
+        self.def_to_symbol.get(&def_id.0).copied()
     }
 }
 
@@ -1078,26 +1112,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_source_to_mapped_expansion(source, target, mapped_id);
         }
 
-        if let (Some(s_sym), Some(t_sym)) = (
-            ref_symbol(self.interner, source),
-            ref_symbol(self.interner, target),
-        ) {
-            return self.check_ref_ref_subtype(source, target, &s_sym, &t_sym);
-        }
-
-        if let Some(s_sym) = ref_symbol(self.interner, source) {
-            return self.check_ref_subtype(source, target, &s_sym);
-        }
-
-        if let Some(t_sym) = ref_symbol(self.interner, target) {
-            return self.check_to_ref_subtype(source, target, &t_sym);
-        }
+        // =======================================================================
+        // PHASE 3.2: PRIORITIZE DefId (Lazy) OVER SymbolRef (Ref)
+        // =======================================================================
+        // We now check Lazy(DefId) types before Ref(SymbolRef) types to establish
+        // DefId as the primary type identity system. The InheritanceGraph bridge
+        // enables Lazy types to use O(1) nominal subtype checking.
+        // =======================================================================
 
         if let (Some(s_def), Some(t_def)) = (
             lazy_def_id(self.interner, source),
             lazy_def_id(self.interner, target),
         ) {
             // Phase 3.1: Use proper DefId-level cycle detection
+            // Phase 3.2: Now checked before Ref types (priority)
             return self.check_lazy_lazy_subtype(source, target, &s_def, &t_def);
         }
 
@@ -1117,6 +1145,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 SubtypeResult::False
             };
+        }
+
+        // =======================================================================
+        // Ref(SymbolRef) checks - now secondary to Lazy(DefId)
+        // =======================================================================
+
+        if let (Some(s_sym), Some(t_sym)) = (
+            ref_symbol(self.interner, source),
+            ref_symbol(self.interner, target),
+        ) {
+            return self.check_ref_ref_subtype(source, target, &s_sym, &t_sym);
+        }
+
+        if let Some(s_sym) = ref_symbol(self.interner, source) {
+            return self.check_ref_subtype(source, target, &s_sym);
+        }
+
+        if let Some(t_sym) = ref_symbol(self.interner, target) {
+            return self.check_to_ref_subtype(source, target, &t_sym);
         }
 
         if let (Some((s_obj, s_idx)), Some((t_obj, t_idx))) = (

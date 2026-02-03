@@ -170,11 +170,83 @@ Measure memory usage. `DefId` migration should slightly reduce memory by dedupli
 
 ## Immediate Next Step
 
-Execute **Phase 3.2**: Unify Type Resolution to standardize on DefId-first resolution.
+Execute **Phase 3.3**: Unify Generic Application to support Lazy(DefId) in type expansion.
 
 ---
 
 ## Progress Updates
+
+### ✅ Completed: Phase 3.2 - Unify Type Resolution (Feb 3, 2026)
+
+**Approach**: Bridge InheritanceGraph for Lazy(DefId) + Reorder Checks
+- **Problem**: Reordering checks to prioritize Lazy caused regression (7796→7795 passed)
+- **Root Cause**: Lazy checks lacked InheritanceGraph fast path for class inheritance
+- **Solution**: Add `def_to_symbol` bridge to map DefIds back to SymbolIds for InheritanceGraph
+
+**Implementation:**
+1. Added `def_to_symbol: HashMap<u32, SymbolId>` to `TypeEnvironment` struct
+   - Stores DefId → SymbolId mappings
+   - Populated during type registration in `CheckerContext`
+
+2. Added `register_def_symbol_mapping()` method to `TypeEnvironment`
+   - Registers bidirectional mapping between DefId and SymbolId
+   - Enables InheritanceGraph lookups from Lazy checks
+
+3. Implemented `def_to_symbol_id()` in `TypeResolver` trait
+   - Returns SymbolId for a given DefId
+   - Used by `check_lazy_lazy_subtype` to access InheritanceGraph
+
+4. Updated `check_lazy_lazy_subtype()` with InheritanceGraph fast path
+   - Mirrors `check_ref_ref_subtype` exactly
+   - Maps DefIds to SymbolIds
+   - Checks if both symbols are classes
+   - Uses `InheritanceGraph::is_derived_from` for O(1) nominal subtyping
+
+5. Updated `CheckerContext::register_resolved_type()` to populate bridge
+   - Calls `register_def_symbol_mapping` when DefId exists
+   - Ensures bridge is populated during type resolution
+
+6. Reordered checks in `check_subtype_inner()` to prioritize Lazy over Ref
+   - Lazy(DefId) checks now execute before Ref(SymbolRef) checks
+   - Establishes DefId as primary type identity system
+
+**Benefits:**
+- DefId is now the primary type identity (checked before SymbolRef)
+- Lazy types have same O(1) class inheritance checking as Ref types
+- No regression: test count stable at 7796 passed, 12 failed
+- Foundation for Phase 3.3 (unified generic application)
+
+**Testing:**
+- Before Phase 3.2 reordering: 7796 passed, 12 failed, 170 ignored
+- After Phase 3.2 reordering (regression): 7795 passed, 13 failed, 170 ignored
+- After Phase 3.2 bridge fix: 7796 passed, 12 failed, 170 ignored ✅
+- Sequential tests confirm stable result: 7796 passed, 12 failed
+
+**Files Modified:**
+- `src/solver/subtype.rs`: Added def_to_symbol HashMap, register method, reordered checks
+- `src/solver/subtype_rules/generics.rs`: Added InheritanceGraph fast path to check_lazy_lazy_subtype
+- `src/checker/context.rs`: Updated register_resolved_type to populate bridge
+
+**Commits:**
+- (To be committed)
+
+**Acceptance Criteria Progress:**
+- [x] Phase 1 infrastructure in place
+- [x] Phase 2: TypeLowering prefers DefId
+- [x] Phase 3.1: DefId cycle detection added
+- [x] Phase 3.2: Unified type resolution (Lazy prioritized, bridge working)
+- [ ] Phase 3.3: Unified generic application
+- [ ] Phase 3.4: resolve_ref() deprecated
+- [ ] Phase 3.5: TypeEnvironment optimized
+- [ ] `TypeKey::Ref(SymbolRef)` removed
+- [ ] `TypeKey::Lazy(DefId)` renamed to `TypeKey::Ref(DefId)`
+- [ ] All type references use `DefId`
+- [ ] O(1) equality preserved
+- [ ] Cycle detection uses `DefId`
+- [x] Conformance tests pass with no regressions
+- [ ] Memory usage reduced
+
+---
 
 ### ✅ Completed: Phase 3.1 - Add DefId Cycle Detection (Feb 3, 2026)
 
