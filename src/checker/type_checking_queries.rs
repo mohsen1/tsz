@@ -15,6 +15,58 @@ use crate::solver::{TypeId, TypePredicateTarget};
 #[allow(dead_code)]
 impl<'a> CheckerState<'a> {
     // =========================================================================
+    // Helper Functions
+    // =========================================================================
+
+    /// Resolve a type annotation node to its type, handling class references correctly.
+    /// For direct class references in type position (e.g., `a: A` where A is a class),
+    /// this returns the instance type. For `typeof A`, returns the constructor type.
+    fn resolve_type_annotation(&mut self, type_node: NodeIndex) -> TypeId {
+        use crate::solver::types::TypeKey;
+
+        let type_id = self.get_type_of_node(type_node);
+
+        // Check if this is a direct Lazy reference to a class symbol
+        let is_class_lazy = if let Some(TypeKey::Lazy(def_id)) = self.ctx.types.lookup(type_id) {
+            if let Some(sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id).copied() {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    symbol.flags & symbol_flags::CLASS != 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if is_class_lazy {
+            // This is a direct class reference - get the instance type
+            let resolved = self.resolve_lazy_type(type_id);
+
+            // Extract instance type from constructor type
+            if let Some(shape) =
+                crate::solver::type_queries::get_callable_shape(self.ctx.types, resolved)
+            {
+                if !shape.construct_signatures.is_empty() {
+                    if let Some(first_sig) = shape.construct_signatures.first() {
+                        return first_sig.return_type;
+                    }
+                }
+            }
+
+            return resolved;
+        }
+
+        // For non-class references or already-resolved types, use default resolution
+        self.resolve_lazy_type(type_id)
+    }
+
+    // =========================================================================
+    // Section 27: Modifier and Member Access Utilities
+    // =========================================================================
+    // =========================================================================
     // Section 27: Modifier and Member Access Utilities
     // =========================================================================
 
@@ -1451,7 +1503,7 @@ impl<'a> CheckerState<'a> {
 
                     // Get the return type - check explicit annotation first
                     let return_type = if !accessor.type_annotation.is_none() {
-                        self.get_type_of_node(accessor.type_annotation)
+                        self.resolve_type_annotation(accessor.type_annotation)
                     } else {
                         // Infer from return statements in body
                         self.infer_getter_return_type(accessor.body)
@@ -1482,7 +1534,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(param_node) = self.ctx.arena.get(first_param_idx) {
                         if let Some(param) = self.ctx.arena.get_parameter(param_node) {
                             if !param.type_annotation.is_none() {
-                                self.get_type_of_node(param.type_annotation)
+                                self.resolve_type_annotation(param.type_annotation)
                             } else {
                                 TypeId::ANY
                             }
