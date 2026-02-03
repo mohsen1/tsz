@@ -8,7 +8,8 @@ use crate::checker::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::solver::TypeId;
+use crate::solver::def::DefId;
+use crate::solver::{TypeId, TypeKey};
 
 impl<'a> CheckerState<'a> {
     /// Get type of object literal.
@@ -389,6 +390,50 @@ impl<'a> CheckerState<'a> {
             // Instantiate the template without recursively expanding nested applications.
             let property_type = instantiate_type(self.ctx.types, mapped.template, &subst);
 
+            // CRITICAL: Evaluate the property type to resolve index access types.
+            // For mapped types like { [K in keyof T]?: T[K] }, after instantiation
+            // we get T["host"] which is an IndexAccess type that needs to be evaluated
+            // to get the actual property type (e.g., "string" for T["host"]).
+            //
+            // We handle this specially by directly resolving Lazy(DefId) index access
+            // types, because the TypeEvaluator might not have access to the type
+            // environment's def_types map during evaluation.
+            use crate::solver::TypeKey;
+            let property_type = if let Some(TypeKey::IndexAccess(obj, idx)) =
+                self.ctx.types.lookup(property_type)
+            {
+                // For IndexAccess types, we need to resolve the object type and get the property
+                // First, check if obj is a Lazy type that needs resolution
+                let obj_type = if let Some(TypeKey::Lazy(def_id)) = self.ctx.types.lookup(obj) {
+                    // Resolve the Lazy type to get the actual object type
+                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                        self.get_type_of_symbol(sym_id)
+                    } else {
+                        obj
+                    }
+                } else {
+                    obj
+                };
+
+                // Now get the property type from the object
+                if let Some(TypeKey::Object(shape_id)) = self.ctx.types.lookup(obj_type) {
+                    let shape = self.ctx.types.object_shape(shape_id);
+                    // Look for the property by name (key_name is already an Atom)
+                    if let Some(prop) = shape.properties.iter().find(|p| p.name == key_name) {
+                        prop.type_id
+                    } else {
+                        // Property not found, fall back to evaluate_type_with_env
+                        self.evaluate_type_with_env(property_type)
+                    }
+                } else {
+                    // Not an object type, fall back to evaluate_type_with_env
+                    self.evaluate_type_with_env(property_type)
+                }
+            } else {
+                // Not an IndexAccess, evaluate normally
+                self.evaluate_type_with_env(property_type)
+            };
+
             let optional = matches!(
                 mapped.optional_modifier,
                 Some(crate::solver::MappedModifier::Add)
@@ -430,14 +475,27 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Evaluate a type with symbol resolution (Refs resolved to their concrete types).
+    /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
-        use crate::binder::SymbolId;
         use crate::solver::type_queries::{TypeResolutionKind, classify_for_type_resolution};
 
         match classify_for_type_resolution(self.ctx.types, type_id) {
-            TypeResolutionKind::Ref(sym_ref) => {
-                self.type_reference_symbol_type(SymbolId(sym_ref.0))
+            TypeResolutionKind::Lazy(def_id) => {
+                // Resolve Lazy(DefId) types by looking up the symbol and getting its concrete type
+                // Use get_type_of_symbol instead of type_reference_symbol_type because:
+                // - type_reference_symbol_type returns Lazy types (for error message formatting)
+                // - get_type_of_symbol returns the actual cached concrete type
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    let resolved = self.get_type_of_symbol(sym_id);
+                    // Recursively resolve if still Lazy (handles Lazy chains)
+                    if let Some(TypeKey::Lazy(_)) = self.ctx.types.lookup(resolved) {
+                        self.evaluate_type_with_resolution(resolved)
+                    } else {
+                        resolved
+                    }
+                } else {
+                    type_id
+                }
             }
             TypeResolutionKind::Application => self.evaluate_application_type(type_id),
             TypeResolutionKind::Resolved => type_id,

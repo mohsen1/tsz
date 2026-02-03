@@ -7,6 +7,7 @@
 //! type-checking scenarios, allowing the checker layer to handle types
 //! without directly matching on TypeKey.
 
+use crate::solver::def::DefId;
 use crate::solver::{TypeDatabase, TypeId, TypeKey};
 
 // =============================================================================
@@ -1602,9 +1603,8 @@ pub fn classify_mapped_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Map
 /// Classification for evaluating types with symbol resolution.
 #[derive(Debug, Clone)]
 pub enum TypeResolutionKind {
-    /// Ref - resolve to symbol type (deprecated)
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    Ref(crate::solver::types::SymbolRef),
+    /// Lazy - resolve to symbol type via DefId
+    Lazy(DefId),
     /// Application - evaluate the application
     Application,
     /// Already resolved
@@ -1618,6 +1618,7 @@ pub fn classify_for_type_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> T
     };
 
     match key {
+        TypeKey::Lazy(def_id) => TypeResolutionKind::Lazy(def_id),
         TypeKey::Application(_) => TypeResolutionKind::Application,
         _ => TypeResolutionKind::Resolved,
     }
