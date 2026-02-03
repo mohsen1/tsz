@@ -600,8 +600,6 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
-        use crate::solver::TypeLowering;
-
         // Recursion depth check: prevents stack overflow from circular
         // interface/class type references (e.g. I<T extends I<T>>)
         if !self.ctx.enter_recursion() {
@@ -609,14 +607,23 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            // For merged class+namespace symbols, return the constructor type (with namespace exports)
-            // instead of the instance type. This allows accessing namespace members via Foo.Bar.
+            // Phase 4.3: For classes, return Lazy(DefId) to preserve class names in error messages
+            // (e.g., "type MyClass" instead of expanded object shape)
+            //
+            // Special case: For merged class+namespace symbols, we still need the constructor type
+            // to access namespace members via Foo.Bar. But we should still return Lazy for consistency.
             if symbol.flags & symbol_flags::CLASS != 0
                 && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
-                && let Some(instance_type) = self.class_instance_type_from_symbol(sym_id)
             {
+                // Step 1: Ensure the instance type is computed and cached
+                let _instance_type = self.class_instance_type_from_symbol(sym_id);
+
+                // Step 2: Return a Lazy type reference for the class
+                // This allows error formatting to look up the class name by DefId
+                let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+
                 self.ctx.leave_recursion();
-                return instance_type;
+                return lazy_type;
             }
             if symbol.flags & symbol_flags::INTERFACE != 0 {
                 if !symbol.declarations.is_empty() {
@@ -662,42 +669,22 @@ impl<'a> CheckerState<'a> {
                 };
                 if !decl_idx.is_none() {
                     // Get the correct arena for the symbol (lib arena or current arena)
-                    let symbol_arena = self
-                        .ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .map(|arena| arena.as_ref())
-                        .unwrap_or(self.ctx.arena);
+                    // Phase 4.3: Return Lazy(DefId) for type alias type references
+                    // This preserves type alias names in error messages (e.g., "type MyAlias" instead of expanded type)
+                    //
+                    // IMPORTANT: We must still compute and cache the structural type first so that:
+                    // 1. resolve_lazy() can return the cached type when needed for type checking
+                    // 2. The DefinitionStore can be populated with the alias information
 
-                    // Use the correct arena to get the node
-                    if let Some(node) = symbol_arena.get(decl_idx)
-                        && let Some(type_alias) = symbol_arena.get_type_alias(node)
-                    {
-                        let type_param_bindings = self.get_type_param_bindings();
-                        let type_resolver =
-                            |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                        let value_resolver =
-                            |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                    // Step 1: Ensure the structural type is computed and cached
+                    let _structural_type = self.get_type_of_symbol(sym_id);
 
-                        // Phase 4.2: Add def_id_resolver for DefId-based resolution
-                        let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
-                            self.resolve_type_symbol_for_lowering(node_idx)
-                                .map(|sym_id| self.ctx.get_or_create_def_id(crate::binder::SymbolId(sym_id)))
-                        };
+                    // Step 2: Return a Lazy type reference for the type alias
+                    // This allows error formatting to look up the alias name by DefId
+                    let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
 
-                        let lowering = TypeLowering::with_hybrid_resolver(
-                            symbol_arena,
-                            self.ctx.types,
-                            &type_resolver,
-                            &def_id_resolver,
-                            &value_resolver,
-                        )
-                        .with_type_param_bindings(type_param_bindings);
-
-                        self.ctx.leave_recursion();
-                        return lowering.lower_type(type_alias.type_node);
-                    }
+                    self.ctx.leave_recursion();
+                    return lazy_type;
                 }
             }
         }
