@@ -409,37 +409,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Try to expand an Application type to its structural form.
     /// Returns None if the application cannot be expanded (missing type params or body).
+    ///
+    /// Phase 3.3: Now supports both Ref(SymbolRef) and Lazy(DefId) bases for unified
+    /// generic type expansion.
     pub(crate) fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
         use crate::solver::{TypeSubstitution, instantiate_type};
 
         let app = self.interner.type_application(app_id);
 
-        // If the base is a Ref, try to resolve and instantiate
-        if let Some(symbol) = ref_symbol(self.interner, app.base) {
-            // Get type parameters for this symbol
-            let type_params = self.resolver.get_type_params(symbol)?;
-
-            // Resolve the base type to get the body
-            let resolved = self.resolver.resolve_ref(symbol, self.interner)?;
-
-            // Skip expansion if the resolved type is just this Application
-            // (prevents infinite recursion on self-referential types)
-            if let Some(resolved_app_id) = application_id(self.interner, resolved)
-                && resolved_app_id == app_id
-            {
-                return None;
-            }
-
-            // Create substitution and instantiate
-            let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
-            let instantiated = instantiate_type(self.interner, resolved, &substitution);
-
-            // Return the instantiated type for recursive checking
-            Some(instantiated)
+        // Try to get type params and resolved body from either Ref or Lazy base
+        let (type_params, resolved_body) = if let Some(symbol) = ref_symbol(self.interner, app.base) {
+            let params = self.resolver.get_type_params(symbol)?;
+            let body = self.resolver.resolve_ref(symbol, self.interner)?;
+            (params, body)
+        } else if let Some(def_id) = lazy_def_id(self.interner, app.base) {
+            let params = self.resolver.get_lazy_type_params(def_id)?;
+            let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+            (params, body)
         } else {
-            // Base is not a Ref - can't expand
-            None
+            return None;
+        };
+
+        // Skip expansion if the resolved type is just this Application
+        // (prevents infinite recursion on self-referential types)
+        if let Some(resolved_app_id) = application_id(self.interner, resolved_body)
+            && resolved_app_id == app_id
+        {
+            return None;
         }
+
+        // Create substitution and instantiate
+        let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
+        let instantiated = instantiate_type(self.interner, resolved_body, &substitution);
+
+        // Return the instantiated type for recursive checking
+        Some(instantiated)
     }
 
     /// Try to expand a Mapped type to its structural form.
