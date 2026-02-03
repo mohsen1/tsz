@@ -40,6 +40,10 @@ pub struct CheckerOptions {
     /// This corresponds to the --noLib compiler flag.
     /// TS2318 errors are emitted when referencing global types with this option enabled.
     pub no_lib: bool,
+    /// When true, do not automatically inject built-in type declarations.
+    /// This corresponds to the --noTypesAndSymbols compiler flag.
+    /// Prevents loading default lib.d.ts files which provide types like Array, Object, etc.
+    pub no_types_and_symbols: bool,
     /// Target ECMAScript version (ES3, ES5, ES2015, ES2016, etc.)
     /// Controls which built-in types are available (e.g., Promise requires ES2015)
     /// Defaults to ES3 for maximum compatibility

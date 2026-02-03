@@ -1,6 +1,14 @@
-# Agent Rules for Project Zang
+# GOAL
 
 **Goal**: Match `tsc` behavior exactly. Every error, inference, and edge case must be identical to TypeScript's compiler.
+
+## CRITICAL: Always Ask Gemini
+
+Use `./scripts/ask-gemini.mjs` to ask architecture and implementation questions. Always use this tool before making decisions.
+
+- pack the context with related files using `--include`
+- if working on test, embed the failing test in your question
+- if Gemini requests more files, repeat the question with the requested files
 
 ## Required Reading
 

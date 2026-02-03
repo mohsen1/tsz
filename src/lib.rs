@@ -580,6 +580,7 @@ impl CompilerOptions {
             strict_bind_call_apply: false,
             exact_optional_property_types: false,
             no_lib: self.no_lib.unwrap_or(false),
+            no_types_and_symbols: false,
             target: self.resolve_target(),
             module: crate::common::ModuleKind::None, // WASM API: use self.module if available
             es_module_interop: false,

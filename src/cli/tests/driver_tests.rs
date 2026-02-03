@@ -6015,3 +6015,67 @@ fn compile_incremental_creates_tsbuildinfo() {
         .expect("parse buildinfo third time");
     assert_eq!(build_info3["version"], crate::cli::incremental::BUILD_INFO_VERSION);
 }
+
+// Tests for @noTypesAndSymbols parsing
+
+use crate::cli::driver::has_no_types_and_symbols_directive;
+
+#[test]
+fn test_has_no_types_and_symbols_directive_true() {
+    let source = r#"// @noTypesAndSymbols: true
+async function f(x, y = z) {}"#;
+    assert!(has_no_types_and_symbols_directive(source));
+}
+
+#[test]
+fn test_has_no_types_and_symbols_directive_false() {
+    let source = r#"// @noTypesAndSymbols: false
+async function f(x, y = z) {}"#;
+    assert!(!has_no_types_and_symbols_directive(source));
+}
+
+#[test]
+fn test_has_no_types_and_symbols_directive_not_present() {
+    let source = r#"// @strict: true
+async function f(x, y = z) {}"#;
+    assert!(!has_no_types_and_symbols_directive(source));
+}
+
+#[test]
+fn test_has_no_types_and_symbols_directive_case_insensitive() {
+    let source = r#"// @NOTYPESANDSYMBOLS: true
+async function f(x, y = z) {}"#;
+    assert!(has_no_types_and_symbols_directive(source));
+}
+
+#[test]
+fn test_has_no_types_and_symbols_directive_with_other_options() {
+    let source = r#"// @strict: false
+// @target: es2015
+// @noTypesAndSymbols: true
+async function f(x, y = z) {}"#;
+    assert!(has_no_types_and_symbols_directive(source));
+}
+
+#[test]
+fn test_has_no_types_and_symbols_directive_comma_separated() {
+    let source = r#"// @noTypesAndSymbols: true, false
+async function f(x, y = z) {}"#;
+    // First value is true, so should return true
+    assert!(has_no_types_and_symbols_directive(source));
+}
+
+#[test]
+fn test_has_no_types_and_symbols_directive_after_32_lines() {
+    // Comments after 32 lines should not be parsed
+    let source = format!("{}\n// @noTypesAndSymbols: true", "\n".repeat(35));
+    assert!(!has_no_types_and_symbols_directive(&source));
+}
+
+#[test]
+fn test_has_no_types_and_symbols_directive_semicolon_terminated() {
+    let source = r#"// @noTypesAndSymbols: true;
+async function f(x, y = z) {}"#;
+    assert!(has_no_types_and_symbols_directive(source));
+}
+

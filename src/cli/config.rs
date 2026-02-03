@@ -80,6 +80,8 @@ pub struct CompilerOptions {
     pub lib: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_lib: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_types_and_symbols: Option<bool>,
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
@@ -308,10 +310,14 @@ pub fn resolve_compiler_options(
         resolved.checker.no_lib = no_lib;
     }
 
+    if let Some(no_types_and_symbols) = options.no_types_and_symbols {
+        resolved.checker.no_types_and_symbols = no_types_and_symbols;
+    }
+
     if let Some(lib_list) = options.lib.as_ref() {
         resolved.lib_files = resolve_lib_files(lib_list)?;
         resolved.lib_is_default = false;
-    } else if !resolved.checker.no_lib {
+    } else if !resolved.checker.no_lib && !resolved.checker.no_types_and_symbols {
         resolved.lib_files = resolve_default_lib_files(resolved.printer.target)?;
         resolved.lib_is_default = true;
     }
@@ -514,6 +520,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         jsx: child.jsx.or(base.jsx),
         lib: child.lib.or(base.lib),
         no_lib: child.no_lib.or(base.no_lib),
+        no_types_and_symbols: child.no_types_and_symbols.or(base.no_types_and_symbols),
         base_url: child.base_url.or(base.base_url),
         paths: child.paths.or(base.paths),
         root_dir: child.root_dir.or(base.root_dir),

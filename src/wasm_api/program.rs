@@ -80,6 +80,7 @@ impl TsCompilerOptions {
             strict_bind_call_apply: false,
             exact_optional_property_types: false,
             no_lib: self.no_lib.unwrap_or(false),
+            no_types_and_symbols: false,
             target: crate::checker::context::ScriptTarget::default(),
             module: crate::common::ModuleKind::None,
             es_module_interop: false,
