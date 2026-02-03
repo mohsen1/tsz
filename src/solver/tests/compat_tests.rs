@@ -1,6 +1,7 @@
 use super::*;
 use crate::solver::SubtypeFailureReason;
 use crate::solver::db::QueryDatabase;
+use crate::solver::def::DefId;
 use crate::solver::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
     ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
@@ -1085,12 +1086,12 @@ fn test_weak_union_rejects_no_common_properties_with_refs() {
         is_method: false,
     }]);
 
-    let sym_a = SymbolRef(1);
-    let sym_b = SymbolRef(2);
-    env.insert(sym_a, weak_a);
-    env.insert(sym_b, weak_b);
+    let def_id_a = DefId(1);
+    let def_id_b = DefId(2);
+    env.insert_def(def_id_a, weak_a);
+    env.insert_def(def_id_b, weak_b);
 
-    let target = interner.union(vec![interner.reference(sym_a), interner.reference(sym_b)]);
+    let target = interner.union(vec![interner.lazy(def_id_a), interner.lazy(def_id_b)]);
     let source = interner.object(vec![PropertyInfo {
         name: c,
         type_id: TypeId::NUMBER,
@@ -2651,8 +2652,8 @@ fn test_apparent_number_member_rejects_mismatch() {
 #[test]
 fn test_number_interface_boxing_assignability() {
     let interner = TypeInterner::new();
-    let symbol = SymbolRef(1);
-    let number_interface = interner.reference(symbol);
+    let def_id = DefId(1);
+    let number_interface = interner.lazy(def_id);
 
     let to_fixed = interner.intern_string("toFixed");
     let to_fixed_type = interner.function(FunctionShape {
@@ -2674,7 +2675,7 @@ fn test_number_interface_boxing_assignability() {
     }]);
 
     let mut env = TypeEnvironment::new();
-    env.insert(symbol, number_object);
+    env.insert_def(def_id, number_object);
 
     let mut checker = CompatChecker::with_resolver(&interner, &env);
     assert!(checker.is_assignable(TypeId::NUMBER, number_interface));

@@ -1,4 +1,5 @@
 use super::*;
+use crate::solver::def::DefId;
 use crate::solver::{TypeSubstitution, instantiate_type};
 
 #[test]
@@ -554,9 +555,9 @@ fn test_object_trifecta_object_interface_accepts_primitives() {
         is_method: true,
     }]);
 
-    let sym = SymbolRef(1);
-    env.insert(sym, object_interface);
-    let object_ref = interner.reference(sym);
+    let def_id = DefId(1);
+    env.insert_def(def_id, object_interface);
+    let object_ref = interner.lazy(def_id);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
     let empty_object = interner.object(Vec::new());
@@ -589,9 +590,9 @@ fn test_object_trifecta_nullish_rejection() {
         readonly: false,
         is_method: true,
     }]);
-    let sym = SymbolRef(99);
-    env.insert(sym, object_interface);
-    let object_ref = interner.reference(sym);
+    let def_id = DefId(99);
+    env.insert_def(def_id, object_interface);
+    let object_ref = interner.lazy(def_id);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
     let empty_object = interner.object(Vec::new());
@@ -627,9 +628,9 @@ fn test_primitive_boxing_assignability() {
         is_method: true,
     }]);
 
-    let sym = SymbolRef(2);
-    env.insert(sym, number_interface);
-    let number_ref = interner.reference(sym);
+    let def_id = DefId(2);
+    env.insert_def(def_id, number_interface);
+    let number_ref = interner.lazy(def_id);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
@@ -660,9 +661,9 @@ fn test_primitive_boxing_bigint_assignability() {
         is_method: true,
     }]);
 
-    let sym = SymbolRef(3);
-    env.insert(sym, bigint_interface);
-    let bigint_ref = interner.reference(sym);
+    let def_id = DefId(3);
+    env.insert_def(def_id, bigint_interface);
+    let bigint_ref = interner.lazy(def_id);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
@@ -693,9 +694,9 @@ fn test_primitive_boxing_boolean_assignability() {
         is_method: true,
     }]);
 
-    let sym = SymbolRef(4);
-    env.insert(sym, boolean_interface);
-    let boolean_ref = interner.reference(sym);
+    let def_id = DefId(4);
+    env.insert_def(def_id, boolean_interface);
+    let boolean_ref = interner.lazy(def_id);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
@@ -726,9 +727,9 @@ fn test_primitive_boxing_string_assignability() {
         is_method: true,
     }]);
 
-    let sym = SymbolRef(5);
-    env.insert(sym, string_interface);
-    let string_ref = interner.reference(sym);
+    let def_id = DefId(5);
+    env.insert_def(def_id, string_interface);
+    let string_ref = interner.lazy(def_id);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
@@ -751,9 +752,9 @@ fn test_primitive_boxing_symbol_assignability() {
         is_method: false,
     }]);
 
-    let sym = SymbolRef(6);
-    env.insert(sym, symbol_interface);
-    let symbol_ref = interner.reference(sym);
+    let def_id = DefId(6);
+    env.insert_def(def_id, symbol_interface);
+    let symbol_ref = interner.lazy(def_id);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 

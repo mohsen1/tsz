@@ -1,4 +1,5 @@
 use super::*;
+use crate::solver::def::DefId;
 use crate::solver::visitor::application_id;
 
 fn atom_names(interner: &TypeInterner, atoms: &[crate::interner::Atom]) -> Vec<String> {
@@ -113,7 +114,7 @@ fn test_try_get_keyof_keys_empty_object_returns_none() {
 fn test_try_get_keyof_keys_resolves_reference() {
     let interner = TypeInterner::new();
 
-    let symbol = SymbolRef(10);
+    let def_id = DefId(10);
     let resolved = interner.object(vec![PropertyInfo {
         name: interner.intern_string("value"),
         type_id: TypeId::STRING,
@@ -124,10 +125,10 @@ fn test_try_get_keyof_keys_resolves_reference() {
     }]);
 
     let mut env = TypeEnvironment::new();
-    env.insert(symbol, resolved);
+    env.insert_def(def_id, resolved);
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
-    let ref_type = interner.reference(symbol);
+    let ref_type = interner.lazy(def_id);
     let keys = checker
         .try_get_keyof_keys(ref_type)
         .expect("expected resolved keys");
@@ -146,7 +147,7 @@ fn test_try_expand_application_instantiates_type_params() {
     };
     let param_type = interner.intern(TypeKey::TypeParameter(param_info.clone()));
 
-    let symbol = SymbolRef(20);
+    let def_id = DefId(20);
     let box_struct = interner.object(vec![PropertyInfo {
         name: interner.intern_string("value"),
         type_id: param_type,
@@ -157,10 +158,10 @@ fn test_try_expand_application_instantiates_type_params() {
     }]);
 
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(symbol, box_struct, vec![param_info]);
+    env.insert_def_with_params(def_id, box_struct, vec![param_info]);
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
-    let base_ref = interner.reference(symbol);
+    let base_ref = interner.lazy(def_id);
     let app_type = interner.application(base_ref, vec![TypeId::STRING]);
     let app_id = application_id(&interner, app_type).expect("expected app id");
 

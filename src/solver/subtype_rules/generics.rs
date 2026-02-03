@@ -642,6 +642,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return Some(shape.properties.iter().map(|p| p.name).collect());
         }
 
+        // Handle DefId-based Lazy types (new API)
+        if let Some(def_id) = lazy_def_id(self.interner, operand) {
+            let resolved = self.resolver.resolve_lazy(def_id, self.interner)?;
+            if resolved == operand {
+                return None; // Avoid infinite recursion
+            }
+            return self.try_get_keyof_keys(resolved);
+        }
+
+        // Handle legacy SymbolRef-based types (old API)
         if let Some(symbol) = ref_symbol(self.interner, operand) {
             // Try to resolve the ref and get keys from the resolved type
             let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
