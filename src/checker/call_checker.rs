@@ -59,6 +59,7 @@ impl<'a> CheckerState<'a> {
             {
                 let spread_type = self.get_type_of_node(spread_data.expression);
                 let spread_type = self.resolve_type_for_property_access(spread_type);
+                let spread_type = self.resolve_lazy_type(spread_type);
                 if let Some(elems) = get_tuple_elements(self.ctx.types, spread_type) {
                     expanded_count += elems.len();
                     continue;
@@ -78,6 +79,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let spread_type = self.get_type_of_node(spread_data.expression);
                     let spread_type = self.resolve_type_for_property_access(spread_type);
+                    let spread_type = self.resolve_lazy_type(spread_type);
 
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_type, spread_data.expression);

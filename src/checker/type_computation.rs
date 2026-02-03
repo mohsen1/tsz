@@ -179,6 +179,7 @@ impl<'a> CheckerState<'a> {
             if elem_is_spread {
                 if let Some(spread_data) = self.ctx.arena.get_spread(elem_node) {
                     let spread_expr_type = self.get_type_of_node(spread_data.expression);
+                    let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_expr_type, spread_data.expression);
 
@@ -1621,6 +1622,7 @@ impl<'a> CheckerState<'a> {
         use rustc_hash::FxHashMap;
 
         let resolved = self.resolve_type_for_property_access(type_id);
+        let resolved = self.resolve_lazy_type(resolved);
         if let Some(cached) = self.ctx.object_spread_property_cache.get(&resolved) {
             return cached.clone();
         }
