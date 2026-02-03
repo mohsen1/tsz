@@ -138,18 +138,27 @@ run_tests() {
     local filtered_args=()
     local extra_args=()
     local verbose=false
+    local has_error_code=false
+    local prev_arg=""
     for arg in "$@"; do
         if [[ "$arg" == --workers* ]]; then
             # Skip --workers argument (we use our own)
+            prev_arg=""
             continue
         fi
         if [ "$arg" = "--no-cache" ]; then
             # Skip --no-cache (already handled)
+            prev_arg=""
             continue
         fi
         if [[ "$arg" == --verbose ]]; then
             verbose=true
         fi
+        # Check for --error-code (either --error-code N or --error-code=N)
+        if [[ "$arg" == --error-code* ]] || [ "$prev_arg" = "--error-code" ]; then
+            has_error_code=true
+        fi
+        prev_arg="$arg"
         extra_args+=("$arg")
     done
 
@@ -158,12 +167,78 @@ run_tests() {
         extra_args+=(--print-test)
     fi
 
-    $RUNNER_BIN \
-        --test-dir "$TEST_DIR" \
-        --cache-file "$CACHE_FILE" \
-        --tsz-binary "$TSZ_BIN" \
-        --workers $WORKERS \
-        "${extra_args[@]}"
+    # If --error-code is present, capture output and print test file contents before FINAL RESULTS
+    if [ "$has_error_code" = true ]; then
+        # Capture output
+        local output
+        output=$($RUNNER_BIN \
+            --test-dir "$TEST_DIR" \
+            --cache-file "$CACHE_FILE" \
+            --tsz-binary "$TSZ_BIN" \
+            --workers $WORKERS \
+            "${extra_args[@]}" 2>&1)
+        
+        # Extract failing test paths (up to 10)
+        local failing_tests=()
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^FAIL[[:space:]]+(.+) ]]; then
+                local rel_path="${BASH_REMATCH[1]}"
+                # Paths are relative to repo root
+                local test_path="$REPO_ROOT/$rel_path"
+                # Check if file exists
+                if [ -f "$test_path" ]; then
+                    failing_tests+=("$test_path")
+                    if [ ${#failing_tests[@]} -ge 10 ]; then
+                        break
+                    fi
+                fi
+            fi
+        done <<< "$output"
+        
+        # Print everything before FINAL RESULTS
+        local final_results_line
+        final_results_line=$(echo "$output" | grep -n "FINAL RESULTS:" | head -1 | cut -d: -f1)
+        
+        if [ -n "$final_results_line" ] && [ "$final_results_line" -gt 1 ]; then
+            # Print everything before FINAL RESULTS
+            echo "$output" | head -n $((final_results_line - 1))
+            
+            # Print test file contents if we have any
+            if [ ${#failing_tests[@]} -gt 0 ]; then
+                echo ""
+                echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+                echo -e "${YELLOW}Test File Contents (${#failing_tests[@]} failing tests)${NC}"
+                echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+                echo ""
+                
+                for test_file in "${failing_tests[@]}"; do
+                    local rel_path="${test_file#$REPO_ROOT/}"
+                    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                    echo -e "${GREEN}File: $rel_path${NC}"
+                    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                    cat "$test_file"
+                    echo ""
+                done
+                
+                echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+                echo ""
+            fi
+            
+            # Print FINAL RESULTS and everything after
+            echo "$output" | tail -n +$final_results_line
+        else
+            # No FINAL RESULTS found, just print everything
+            echo "$output"
+        fi
+    else
+        # No --error-code, run normally
+        $RUNNER_BIN \
+            --test-dir "$TEST_DIR" \
+            --cache-file "$CACHE_FILE" \
+            --tsz-binary "$TSZ_BIN" \
+            --workers $WORKERS \
+            "${extra_args[@]}"
+    fi
 
     echo ""
     echo -e "${GREEN}Tests completed${NC}"
@@ -176,8 +251,17 @@ clean_cache() {
 }
 
 # Parse arguments
-COMMAND="${1:-all}"
-shift || true
+# Check for help flags first
+if [[ "${1:-}" == "help" ]] || [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    COMMAND="help"
+    shift || true
+# If first argument starts with --, assume user meant 'run' command
+elif [[ "${1:-}" == --* ]]; then
+    COMMAND="run"
+else
+    COMMAND="${1:-all}"
+    shift || true
+fi
 
 # Check for --no-cache flag
 NO_CACHE=false

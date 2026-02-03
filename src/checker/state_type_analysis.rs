@@ -1250,8 +1250,9 @@ impl<'a> CheckerState<'a> {
                         self.emit_module_not_found_error(&module_specifier, value_decl);
                         return (TypeId::ANY, Vec::new());
                     }
-                    // Fall back to get_type_of_node for simple identifiers
-                    return (self.get_type_of_node(import.module_specifier), Vec::new());
+                    // Namespace import failed to resolve (e.g., import m = no where 'no' doesn't exist)
+                    // Return ANY to prevent cascading errors - TS2503 will be emitted by check_import_equals_declaration
+                    return (TypeId::ANY, Vec::new());
                 }
                 // Handle ES6 named imports (import { X } from './module')
                 // Use the import_module field to resolve to the actual export
