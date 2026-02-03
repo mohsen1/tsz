@@ -7,7 +7,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
 use crate::binder::BinderState;
-use crate::binder::SymbolId;
 use crate::checker::TypeCache;
 use crate::checker::state::CheckerState;
 use crate::lsp::jsdoc::jsdoc_for_node;
