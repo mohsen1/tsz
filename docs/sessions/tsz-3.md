@@ -2,7 +2,16 @@
 
 ## Current Work
 
-*No active work*
+**Task**: Complex Types Implementation
+
+Working on understanding and improving complex type handling in the tsz compiler.
+Focusing on:
+- Intersection types
+- Union types
+- Conditional types
+- Mapped types
+- Template literal types
+- Generic type inference
 
 ---
 
