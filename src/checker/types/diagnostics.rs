@@ -316,6 +316,7 @@ pub mod diagnostic_codes {
     pub const REST_PARAMETER_MUST_BE_LAST: u32 = 1014;
     pub const PARAMETER_CANNOT_HAVE_INITIALIZER: u32 = 1015;
     pub const REQUIRED_PARAMETER_AFTER_OPTIONAL: u32 = 1016; // A required parameter cannot follow an optional parameter.
+    pub const DECLARE_MODIFIER_IN_AMBIENT_CONTEXT: u32 = 1038; // A 'declare' modifier cannot be used in an already ambient context.
     pub const INITIALIZERS_NOT_ALLOWED_IN_AMBIENT_CONTEXTS: u32 = 1039; // Initializers are not allowed in ambient contexts.
     pub const ASYNC_MODIFIER_IN_AMBIENT_CONTEXT: u32 = 1040; // 'async' modifier cannot be used in an ambient context.
     pub const ASYNC_MODIFIER_CANNOT_BE_USED_HERE: u32 = 1042; // 'async' modifier cannot be used here.

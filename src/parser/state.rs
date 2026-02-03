@@ -34,6 +34,8 @@ pub(crate) const CONTEXT_FLAG_STATIC_BLOCK: u32 = 4;
 pub(crate) const CONTEXT_FLAG_PARAMETER_DEFAULT: u32 = 8;
 /// Context flag: disallow 'in' as a binary operator (for for-statement initializers)
 pub(crate) const CONTEXT_FLAG_DISALLOW_IN: u32 = 16;
+/// Context flag: inside an ambient context (declare namespace/module)
+pub(crate) const CONTEXT_FLAG_AMBIENT: u32 = 32;
 
 // =============================================================================
 // Parse Diagnostic
