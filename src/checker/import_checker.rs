@@ -291,8 +291,10 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Only check for unresolved modules if this is a require() style import
+        // Handle namespace imports: import x = Namespace or import x = Namespace.Member
+        // These need to emit TS2503 ("Cannot find namespace") if not found
         if ref_node.kind != SyntaxKind::StringLiteral as u16 {
+            self.check_namespace_import(import.module_specifier);
             return;
         }
 
@@ -370,6 +372,93 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::CANNOT_FIND_MODULE,
         );
+    }
+
+    // =========================================================================
+    // Namespace Import Validation (TS2503)
+    // =========================================================================
+
+    /// Check a namespace import (import x = Namespace or import x = Namespace.Member).
+    /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
+    fn check_namespace_import(&mut self, module_ref: NodeIndex) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        let Some(ref_node) = self.ctx.arena.get(module_ref) else {
+            return;
+        };
+
+        // Handle simple identifier: import x = Namespace
+        if ref_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.ctx.arena.get_identifier(ref_node) {
+                let name = &ident.escaped_text;
+                // Try to resolve the identifier as a namespace/module
+                if self.resolve_identifier_symbol(module_ref).is_none() {
+                    let message = format_message(
+                        diagnostic_messages::CANNOT_FIND_NAMESPACE,
+                        &[name],
+                    );
+                    self.error_at_node(
+                        module_ref,
+                        &message,
+                        diagnostic_codes::CANNOT_FIND_NAMESPACE,
+                    );
+                }
+            }
+            return;
+        }
+
+        // Handle qualified name: import x = Namespace.Member
+        if ref_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            if let Some(qn) = self.ctx.arena.get_qualified_name(ref_node) {
+                // Check the leftmost part first - this is what determines TS2503 vs TS2694
+                let left_name = self.get_leftmost_identifier_name(qn.left);
+                if let Some(name) = left_name {
+                    // Try to resolve the left identifier
+                    let left_resolved = self.resolve_leftmost_qualified_name(qn.left);
+                    if left_resolved.is_none() {
+                        let message = format_message(
+                            diagnostic_messages::CANNOT_FIND_NAMESPACE,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            qn.left,
+                            &message,
+                            diagnostic_codes::CANNOT_FIND_NAMESPACE,
+                        );
+                    }
+                    // TODO: If left is resolved, check if right member exists (TS2694)
+                }
+            }
+        }
+    }
+
+    /// Get the leftmost identifier name from a node (handles nested QualifiedNames).
+    fn get_leftmost_identifier_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let ident = self.ctx.arena.get_identifier(node)?;
+            return Some(ident.escaped_text.clone());
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            return self.get_leftmost_identifier_name(qn.left);
+        }
+        None
+    }
+
+    /// Resolve the leftmost identifier in a potentially nested QualifiedName.
+    fn resolve_leftmost_qualified_name(&self, idx: NodeIndex) -> Option<crate::binder::SymbolId> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.resolve_identifier_symbol(idx);
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            return self.resolve_leftmost_qualified_name(qn.left);
+        }
+        None
     }
 
     // =========================================================================
