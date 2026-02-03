@@ -876,10 +876,17 @@ impl<'a> CheckerState<'a> {
                 properties: props,
                 string_index,
                 number_index,
-                symbol: None,
+                symbol: current_sym,
             })
         } else {
-            self.ctx.types.object(props)
+            // Use object_with_index even without index signatures to set the symbol for nominal typing
+            self.ctx.types.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: props,
+                string_index: None,
+                number_index: None,
+                symbol: current_sym,
+            })
         };
 
         // Final interface merging pass
