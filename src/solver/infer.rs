@@ -1597,6 +1597,19 @@ impl<'a> InferenceContext<'a> {
                 .any(|&member| self.is_subtype(source, member));
         }
 
+        // Object vs Object comparison
+        if let (Some(TypeKey::Object(s_props)), Some(TypeKey::Object(t_props))) =
+            (source_key.as_ref(), target_key.as_ref())
+        {
+            let s_shape = self.interner.object_shape(*s_props);
+            let t_shape = self.interner.object_shape(*t_props);
+            return self.object_subtype_of(
+                &s_shape.properties,
+                Some(*s_props),
+                &t_shape.properties,
+            );
+        }
+
         false
     }
 
@@ -1747,14 +1760,20 @@ impl<'a> InferenceContext<'a> {
                         if sp.readonly {
                             return false;
                         }
-                        let source_write = self.optional_property_write_type(sp);
-                        let target_write = self.optional_property_write_type(t_prop);
-                        if !self.is_subtype_with_method_variance(
-                            target_write,
-                            source_write,
-                            t_prop.is_method,
-                        ) {
-                            return false;
+                        // If source is non-optional and target is optional, skip write type check
+                        // Non-optional source can always satisfy optional target for writing
+                        if !sp.optional && t_prop.optional {
+                            // Skip write type check - non-optional source satisfies optional target
+                        } else {
+                            let source_write = self.optional_property_write_type(sp);
+                            let target_write = self.optional_property_write_type(t_prop);
+                            if !self.is_subtype_with_method_variance(
+                                target_write,
+                                source_write,
+                                t_prop.is_method,
+                            ) {
+                                return false;
+                            }
                         }
                     }
                 }
