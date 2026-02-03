@@ -8,7 +8,6 @@ use crate::checker::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::solver::def::DefId;
 use crate::solver::{TypeId, TypeKey};
 
 impl<'a> CheckerState<'a> {
@@ -398,7 +397,6 @@ impl<'a> CheckerState<'a> {
             // We handle this specially by directly resolving Lazy(DefId) index access
             // types, because the TypeEvaluator might not have access to the type
             // environment's def_types map during evaluation.
-            use crate::solver::TypeKey;
             let property_type = if let Some(TypeKey::IndexAccess(obj, idx)) =
                 self.ctx.types.lookup(property_type)
             {
