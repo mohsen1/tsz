@@ -1,112 +1,181 @@
 # Performance Analysis Summary
 
-1. Generic Functions Scaling (3.84x → 1.31x degradation)
+> using `./scripts/bench-vs-tsgo.sh`
 
-Root Causes:
+Complete Performance Analysis & Action Plan
 
-- Eager Structural Interning: Every generic instantiation requires hashing the entire type structure for deduplication in TypeInterner. For 200 generics, this means hashing all 200 TypeIds in every combination.
-- "Lawyer" Variance Checks: Linear scan through all type arguments for variance rules (Covariant/Contravariant/Bivariant) during unification.
-- Coinductive Cycle Detection: Deep generic nesting increases cycle_stack scans, approaching the MAX_SUBTYPE_DEPTH limit.
+Summary of Benchmark Results
 
-File: src/solver/instantiate.rs, src/solver/lawyer.rs
+✅ Tests Passing 2x Target
+
+- Constraint conflicts N=200: 1.99x (BARELY passing)
+- 200 union members: 1.96x (BARELY passing)
+
+⚠️ Tests Below 2x Target (Need Improvement)
+
+```
+┌───────────────────────────────────┬─────────┬─────────────────────────────────┬──────────┐
+│               Test                │ Speedup │              Issue              │ Priority │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ manyConstExports.ts               │ 1.94x   │ Const exports binding           │ Medium   │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ BCT candidates=200                │ 1.90x   │ get_extends_clause STUB!        │ CRITICAL │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ 100 classes                       │ 1.90x   │ Missing homogeneous fast path   │ High     │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ binderBinaryExpressionStressJs.ts │ 1.73x   │ Deep recursion                  │ High     │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ 200 classes                       │ 1.53x   │ Class hierarchy overhead        │ Medium   │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ 200 generic functions             │ 1.52x   │ Generic instantiation           │ Medium   │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ Mapped complex template keys=200  │ 1.46x   │ Eager conditional instantiation │ High     │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ Deep subtype depth=90             │ 1.44x   │ Slow HashSet + probing          │ High     │
+├───────────────────────────────────┼─────────┼─────────────────────────────────┼──────────┤
+│ typedArrays.ts                    │ 1.38x   │ Type checking overhead          │ Low      │
+└───────────────────────────────────┴─────────┴─────────────────────────────────┴──────────┘
+```
+
+❌ Tests Where tsz LOSES (Unacceptable!)
+
+```
+┌──────────────────────────────────────────────────────┬───────────────────┬────────────────────────────┬──────────┐
+│                         Test                         │      Speedup      │           Issue            │ Priority │
+├──────────────────────────────────────────────────────┼───────────────────┼────────────────────────────┼──────────┤
+│ binaryArithmeticControlFlowGraphNotTooLarge.ts       │ tsgo 1.88x faster │ Redundant CFA traversals   │ CRITICAL │
+├──────────────────────────────────────────────────────┼───────────────────┼────────────────────────────┼──────────┤
+│ resolvingClassDeclarationWhenInBaseTypeResolution.ts │ tsgo 1.53x faster │ find_enclosing_scope O(N²) │ CRITICAL │
+└──────────────────────────────────────────────────────┴───────────────────┴────────────────────────────┴──────────┘
+```
 
 ---
 
-2. BCT Algorithm (2.54x → 1.27x degradation)
+Critical Issues & Fixes
 
-Root Cause - O(N·D²) Complexity:
+1. 🚨 BCT: get_extends_clause is a STUB
 
-The find_common_base_class function in src/solver/infer.rs (lines 1060-1062):
+File: src/solver/infer.rs:1165
 
-for &ty in types.iter().skip(1) { // O(N)
-if let Some(ty_bases) = self.get_class_hierarchy(ty) {
-// O(D) \* O(D) = O(D²) operation
-base_candidates.retain(|&base| ty_bases.contains(&base));
+Impact: The solver NEVER finds common base classes, falling back to massive unions.
 
-- N = number of candidates (50, 100, 200)
-- D = depth of inheritance hierarchy
-- Each retain call performs contains() which is O(D)
-- Nested inside the loop makes it O(N·D²)
-
----
-
-3. Constraint Conflicts (2.77x → 1.57x degradation)
-
-Root Causes:
-
-A. Quadratic Conflict Detection (src/solver/infer.rs):
-
-for (i, &u1) in self.upper_bounds.iter().enumerate() {
-for &u2 in &self.upper_bounds[i + 1..] { // O(N²)
-if are_disjoint(interner, u1, u2) { ... }
+// CURRENT (BROKEN):
+fn get_extends_clause(&self, \_class_id: TypeId) -> Option<TypeId> {
+None // STUB!
 }
-}
-for &lower in &self.lower_bounds {
-for &upper in &self.upper_bounds { // O(M\*N)
-if !is_subtype_of(interner, lower, upper) { ... }
-}
-}
 
-B. Constraint Propagation Growth:
-
-- strengthen_constraints iterates type_params.len() times
-- unify_values appends without deduplication
-- Constraint lists grow significantly during propagation
+Fix: Implement the function to resolve base types.
 
 ---
 
-4. Mapped Type Templates (2.67x → 1.63x degradation)
+2. 🚨 CFA: Redundant Graph Traversals
 
-Root Causes:
+File: src/checker/context.rs
 
-A. Allocation Overhead (src/checker/state_type_analysis.rs):
+Impact: Re-computes same flow types for shared flow nodes → O(N²).
 
-- Creates a new TypeSubstitution map for every key in the iteration loop
-- For 200+ union keys, this allocation becomes significant
+Fix: Add flow type cache:
 
-B. Missing Key Remapping:
-
-- Currently ignores the name_type field (the as clause)
-- Key remapping (e.g., as Exclude<K, "id">) is not applied
-
----
-
-5. Why Parallelization Benefits Diminish
-
-A. Interner Contention (src/solver/intern.rs):
-
-- TypeInterner uses DashMap with 64 shards
-- Complex types hash to the same shard (statistically)
-- Threads lock on hot shards instead of computing
-
-B. Memory Bandwidth Saturation:
-
-- High generic counts create massive TypeKey data
-- CPU cache thrashes from random access into DashMap
-- Bottleneck moves from CPU cycles to RAM latency
-
-C. Global Cache Locking (src/solver/db.rs):
-
-- QueryCache uses RwLock<FxHashMap>
-- Inference is write-heavy on the interner
-- Threads block on write lock when caching new results
+pub struct CheckerContext<'a> {
+// ... existing fields
+pub flow_analysis_cache: RefCell<FxHashMap<(FlowNodeId, SymbolId), TypeId>>,
+}
 
 ---
 
-Recommended Solutions
+3. 🚨 Binder: find_enclosing_scope O(N²)
 
-Short-term (Quick Wins):
+File: src/binder/state.rs:666
 
-1. BCT Optimization: Implement heuristic to bail out of O(N²) checks for large arrays
-2. Constraint Deduplication: Add deduplication to unify_values
-3. Reuse Substitutions: Allocate single TypeSubstitution for mapped types
+Impact: Linear walk up AST for EVERY identifier resolution.
 
-Medium-term (Architecture):
+Fix: Maintain current_scope during descent instead of walking up.
 
-1. Thread-Local Interning: Use local interner for temporary inference types, merge to global only when resolved
-2. Fix Mapped Type Remapping: Implement proper as clause handling
+---
 
-Long-term (North Star):
+4. ⚠️ Subtype Checking: Slow HashSet
 
-1. Full Salsa Integration: Migrate to salsa_db.rs for fine-grained dependency tracking
-2. Profile-Guided Optimization: Use cargo flamegraph to identify exact hotspots
+File: src/solver/subtype.rs
+
+Impact: Uses std::collections::HashSet with SipHash (slow).
+
+Fix: Switch to rustc_hash::FxHashSet:
+
+use rustc_hash::FxHashSet; // Instead of std::collections::HashSet
+
+---
+
+5. ⚠️ Mapped Types: Eager Conditional Instantiation
+
+File: src/solver/evaluate_rules/mapped.rs:147
+
+Impact: Instantiates entire conditional tree (including dead branches) for every key.
+
+Fix: Lazy conditional instantiation - only instantiate the winning branch.
+
+---
+
+6. ⚠️ BCT: Missing Homogeneous Fast Path
+
+File: src/solver/infer.rs
+
+Impact: Allocates HashSet even for arrays with identical types.
+
+Fix:
+
+// Insert at start of best_common_type
+if types.iter().all(|&t| t == first) {
+return first; // Zero allocation
+}
+
+---
+
+7. ⚠️ Flow Graph Builder: Deep Recursion
+
+File: src/checker/flow_graph_builder.rs
+
+Impact: Deep left-associative expressions create depth N trees → stack overflow risk.
+
+Fix: Convert to iterative worklist algorithm using a Vec.
+
+---
+
+Recommended Implementation Order
+
+Phase 1: Quick Wins (1-2 hours each)
+
+1. ✅ Fix get_extends_clause stub - Highest impact
+2. ✅ Add homogeneous fast path to BCT
+3. ✅ Switch HashSet → FxHashSet in subtype checker
+4. ✅ Add flow analysis cache to CheckerContext
+
+Phase 2: Medium Effort (2-4 hours each)
+
+5. Implement lazy conditional instantiation for mapped types
+6. Convert recursive flow graph builder to iterative
+7. Optimize find_enclosing_scope - maintain current_scope state
+
+Phase 3: Higher Effort (4+ hours each)
+
+8. Single lookup dispatch in subtype checker
+9. Optimize hierarchy intersection for base class finding
+10. Add "Has Generics" flag to skip unnecessary instantiation
+
+---
+
+Expected Impact
+┌───────────────────────┬───────────────────────────────┬────────────────────┐
+│ Fix │ Tests Affected │ Expected Speedup │
+├───────────────────────┼───────────────────────────────┼────────────────────┤
+│ get_extends_clause │ BCT, 100/200 classes │ 1.9x → 2.5x+ │
+├───────────────────────┼───────────────────────────────┼────────────────────┤
+│ FxHashSet │ Deep subtype, all type checks │ 1.44x → 1.8x+ │
+├───────────────────────┼───────────────────────────────┼────────────────────┤
+│ Flow cache │ binaryArithmetic CFG │ REVERSE regression │
+├───────────────────────┼───────────────────────────────┼────────────────────┤
+│ Homogeneous fast path │ All array inference │ 5-10% boost │
+├───────────────────────┼───────────────────────────────┼────────────────────┤
+│ Lazy conditional │ Mapped complex template │ 1.46x → 2.0x+ │
+├───────────────────────┼───────────────────────────────┼────────────────────┤
+│ Current_scope │ Class resolution test │ REVERSE regression │
+└───────────────────────┴───────────────────────────────┴────────────────────┘
