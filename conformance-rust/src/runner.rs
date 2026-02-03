@@ -17,6 +17,13 @@ use std::time::Instant;
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
+/// Format a path relative to a base directory for display
+fn relative_display(path: &Path, base: &Path) -> String {
+    path.strip_prefix(base)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
 /// Test runner
 pub struct Runner {
     args: Args,
@@ -73,6 +80,9 @@ impl Runner {
         // Process tests in parallel
         let start = Instant::now();
 
+        // Base path for relative display (current working directory)
+        let base_path: PathBuf = std::env::current_dir().unwrap_or_default();
+
         stream::iter(test_files)
             .for_each_concurrent(Some(concurrency_limit), |path| {
                 let permit = semaphore.clone();
@@ -82,9 +92,11 @@ impl Runner {
                 let tsz_binary = self.tsz_binary.clone();
                 let verbose = self.args.verbose;
                 let print_test = self.args.print_test;
+                let base = base_path.clone();
 
                 async move {
                     let _permit = permit.acquire().await.unwrap();
+                    let rel_path = relative_display(&path, &base);
 
                     match Self::run_test(&path, cache, tsz_binary, verbose).await {
                         Ok(result) => {
@@ -97,7 +109,7 @@ impl Runner {
                                 }
                                 TestResult::Fail { expected, actual, missing, extra, options } => {
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
-                                    println!("✗ {}", path.display());
+                                    println!("FAIL {}", rel_path);
 
                                     if print_test {
                                         let expected_str: Vec<String> = expected.iter().map(|c| format!("TS{}", c)).collect();
@@ -127,19 +139,19 @@ impl Runner {
                                 TestResult::Skipped(reason) => {
                                     stats.skipped.fetch_add(1, Ordering::SeqCst);
                                     if verbose {
-                                        println!("⊘ {} ({})", path.display(), reason);
+                                        println!("SKIP {} ({})", rel_path, reason);
                                     }
                                 }
                                 TestResult::Crashed => {
                                     stats.crashed.fetch_add(1, Ordering::SeqCst);
-                                    println!("💥 {} (CRASHED)", path.display());
+                                    println!("CRASH {} (CRASHED)", rel_path);
                                 }
                             }
                         }
                         Err(e) => {
                             stats.total.fetch_add(1, Ordering::SeqCst);
                             stats.failed.fetch_add(1, Ordering::SeqCst);
-                            eprintln!("✗ {} (ERROR: {})", path.display(), e);
+                            eprintln!("FAIL {} (ERROR: {})", rel_path, e);
                         }
                     }
                 }
