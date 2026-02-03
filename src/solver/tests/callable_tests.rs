@@ -25,6 +25,7 @@ fn test_callable_same_signature() {
     };
 
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig.clone()],
         construct_signatures: vec![],
         properties: vec![],
@@ -32,6 +33,7 @@ fn test_callable_same_signature() {
     });
 
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -75,6 +77,7 @@ fn test_callable_more_overloads() {
     };
 
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig1.clone(), sig2],
         construct_signatures: vec![],
         properties: vec![],
@@ -82,6 +85,7 @@ fn test_callable_more_overloads() {
     });
 
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig1],
         construct_signatures: vec![],
         properties: vec![],
@@ -125,6 +129,7 @@ fn test_callable_missing_overload() {
     };
 
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig1.clone()],
         construct_signatures: vec![],
         properties: vec![],
@@ -132,6 +137,7 @@ fn test_callable_missing_overload() {
     });
 
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig1, sig2],
         construct_signatures: vec![],
         properties: vec![],
@@ -165,6 +171,7 @@ fn test_callable_with_construct() {
     };
 
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![],
         construct_signatures: vec![sig.clone()],
         properties: vec![],
@@ -172,6 +179,7 @@ fn test_callable_with_construct() {
     });
 
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![],
         construct_signatures: vec![sig],
         properties: vec![],
@@ -207,6 +215,7 @@ fn test_callable_covariant_return() {
     };
 
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![source_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -214,6 +223,7 @@ fn test_callable_covariant_return() {
     });
 
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![target_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -244,6 +254,7 @@ fn test_function_to_callable() {
     });
 
     let callable = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
@@ -272,6 +283,7 @@ fn test_callable_to_function() {
     // { (x: string): number } <: (x: string) => number
     // At least one signature must match
     let callable = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![ParamInfo {
@@ -314,6 +326,7 @@ fn test_callable_with_properties() {
 
     // { (): void; length: number } <: { (): void; length: number }
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![],
@@ -335,6 +348,7 @@ fn test_callable_with_properties() {
     });
 
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![],
@@ -364,6 +378,7 @@ fn test_callable_missing_property() {
 
     // { (): void } NOT <: { (): void; length: number }
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![],
@@ -378,6 +393,7 @@ fn test_callable_missing_property() {
     });
 
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             type_params: vec![],
             params: vec![],
@@ -439,6 +455,7 @@ fn test_overload_signature_exact_match() {
     };
 
     let overloaded = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_string_to_number.clone(), sig_number_to_string],
         construct_signatures: vec![],
         properties: vec![],
@@ -446,6 +463,7 @@ fn test_overload_signature_exact_match() {
     });
 
     let string_only = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_string_to_number],
         construct_signatures: vec![],
         properties: vec![],
@@ -492,6 +510,7 @@ fn test_overload_signature_order_priority() {
     };
 
     let overloaded = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_special.clone(), sig_general],
         construct_signatures: vec![],
         properties: vec![],
@@ -499,6 +518,7 @@ fn test_overload_signature_order_priority() {
     });
 
     let specific = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_special],
         construct_signatures: vec![],
         properties: vec![],
@@ -559,6 +579,7 @@ fn test_overload_multiple_arities() {
     };
 
     let overloaded = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_0.clone(), sig_1.clone(), sig_2.clone()],
         construct_signatures: vec![],
         properties: vec![],
@@ -566,18 +587,21 @@ fn test_overload_multiple_arities() {
     });
 
     let only_sig0 = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_0],
         construct_signatures: vec![],
         properties: vec![],
         ..Default::default()
     });
     let only_sig1 = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_1],
         construct_signatures: vec![],
         properties: vec![],
         ..Default::default()
     });
     let only_sig2 = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_2],
         construct_signatures: vec![],
         properties: vec![],
@@ -625,6 +649,7 @@ fn test_generic_overload_simple() {
     };
 
     let generic_fn = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![generic_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -679,6 +704,7 @@ fn test_generic_overload_with_constraint() {
     };
 
     let generic_fn = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![constrained_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -764,6 +790,7 @@ fn test_generic_overload_multiple_type_params() {
     };
 
     let generic_fn = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![multi_param_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -827,6 +854,7 @@ fn test_optional_param_overload_matching() {
     };
 
     let overloaded = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_required.clone(), sig_optional.clone()],
         construct_signatures: vec![],
         properties: vec![],
@@ -834,12 +862,14 @@ fn test_optional_param_overload_matching() {
     });
 
     let only_required = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_required],
         construct_signatures: vec![],
         properties: vec![],
         ..Default::default()
     });
     let only_optional = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig_optional],
         construct_signatures: vec![],
         properties: vec![],
@@ -878,6 +908,7 @@ fn test_all_optional_params_overload() {
     };
 
     let fn_with_optional = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![all_optional_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -894,6 +925,7 @@ fn test_all_optional_params_overload() {
     };
 
     let no_params = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![no_params_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -934,6 +966,7 @@ fn test_optional_and_rest_param_overload() {
     };
 
     let fn_with_rest = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![rest_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -955,6 +988,7 @@ fn test_optional_and_rest_param_overload() {
     };
 
     let single_param = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![single_param_sig],
         construct_signatures: vec![],
         properties: vec![],

@@ -11173,6 +11173,7 @@ fn test_index_signature_at_solver_level() {
 
     // Create object type with only index signature
     let shape = ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![],
         string_index: Some(IndexSignature {

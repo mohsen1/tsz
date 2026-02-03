@@ -498,6 +498,7 @@ fn test_object_shape_extractors() {
     assert!(object_with_index_shape_id(&interner, obj).is_none());
 
     let obj_with_index = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: interner.intern_string("y"),
@@ -696,6 +697,7 @@ fn test_function_and_callable_extractors() {
     assert_eq!(func_shape.return_type, TypeId::VOID);
 
     let callable = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: Vec::new(),
@@ -708,7 +710,6 @@ fn test_function_and_callable_extractors() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
-        symbol: None,
     });
     let callable_id = callable_shape_id(&interner, callable).expect("expected callable shape id");
     let callable_shape = interner.callable_shape(callable_id);

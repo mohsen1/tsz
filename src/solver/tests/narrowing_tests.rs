@@ -842,6 +842,7 @@ fn test_narrow_by_typeof_function_includes_callable() {
         is_method: false,
     };
     let callable = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![sig],
         construct_signatures: vec![],
         properties: vec![],

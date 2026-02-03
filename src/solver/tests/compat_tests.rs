@@ -771,6 +771,7 @@ fn test_construct_signature_void_return_assignability() {
     }]);
 
     let returns_instance = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             params: Vec::new(),
@@ -785,6 +786,7 @@ fn test_construct_signature_void_return_assignability() {
     });
 
     let returns_void = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             params: Vec::new(),
@@ -808,6 +810,7 @@ fn test_call_signature_void_return_assignability() {
     let mut checker = CompatChecker::new(&interner);
 
     let returns_number = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -822,6 +825,7 @@ fn test_call_signature_void_return_assignability() {
     });
 
     let returns_void = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -845,6 +849,7 @@ fn test_call_signature_void_undefined_return_assignability() {
     let mut checker = CompatChecker::new(&interner);
 
     let returns_void = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -859,6 +864,7 @@ fn test_call_signature_void_undefined_return_assignability() {
     });
 
     let returns_undefined = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -1886,6 +1892,7 @@ fn test_no_unchecked_indexed_access_toggle() {
     let mut checker = CompatChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -1946,6 +1953,7 @@ fn test_no_unchecked_object_index_signature_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let indexed = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -2165,6 +2173,7 @@ fn test_function_type_accepts_callables() {
     let mut checker = CompatChecker::new(&interner);
 
     let function_top = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: Vec::new(),
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -2188,6 +2197,7 @@ fn test_function_type_accepts_callables() {
     assert!(checker.is_assignable(function, function_top));
 
     let callable = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -2214,6 +2224,7 @@ fn test_function_type_rejects_non_callables() {
     let mut checker = CompatChecker::new(&interner);
 
     let function_top = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: Vec::new(),
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -2238,6 +2249,7 @@ fn test_function_type_not_assignable_to_specific_callable() {
     let mut checker = CompatChecker::new(&interner);
 
     let function_top = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: Vec::new(),
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -2245,6 +2257,7 @@ fn test_function_type_not_assignable_to_specific_callable() {
     });
 
     let specific_callable = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -2784,6 +2797,7 @@ fn test_apparent_string_number_index_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
@@ -2803,6 +2817,7 @@ fn test_apparent_string_rejects_string_index_signature() {
     let mut checker = CompatChecker::new(&interner);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -2884,6 +2899,7 @@ fn test_optional_property_rejects_string_index_signature() {
     }]);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -2941,6 +2957,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
     }]);
 
     let target = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -2962,6 +2979,7 @@ fn test_rest_any_callable_target_from_function() {
 
     let rest_any = interner.array(TypeId::ANY);
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -3006,6 +3024,7 @@ fn test_rest_unknown_callable_target_from_callable() {
 
     let rest_unknown = interner.array(TypeId::UNKNOWN);
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -3025,6 +3044,7 @@ fn test_rest_unknown_callable_target_from_callable() {
     });
 
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -3311,6 +3331,7 @@ fn test_keyof_union_index_signature_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let string_index = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -3321,6 +3342,7 @@ fn test_keyof_union_index_signature_assignable() {
         number_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: None,
@@ -3513,6 +3535,7 @@ fn test_weak_type_with_index_signature_not_weak() {
 
     // Target with optional property + index signature - NOT weak
     let target = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: vec![PropertyInfo {
             name: a,
@@ -4437,6 +4460,7 @@ fn test_compiler_options_independent_toggles() {
 
     // Toggle no_unchecked_indexed_access
     let indexed = interner.object_with_index(ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: Vec::new(),
         string_index: Some(IndexSignature {
@@ -4498,6 +4522,7 @@ fn test_function_intrinsic_accepts_callable() {
 
     // Create a callable with multiple signatures
     let callable = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
@@ -4515,7 +4540,6 @@ fn test_function_intrinsic_accepts_callable() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
-        symbol: None,
     });
 
     // Function intrinsic should accept callable types
@@ -5555,6 +5579,7 @@ fn test_private_brand_callable_with_brand() {
     let brand2 = interner.intern_string("__private_brand_Bar");
 
     let source = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             params: Vec::new(),
@@ -5576,6 +5601,7 @@ fn test_private_brand_callable_with_brand() {
     });
 
     let target = interner.callable(CallableShape {
+        symbol: None,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             params: Vec::new(),

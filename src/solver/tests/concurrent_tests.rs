@@ -209,6 +209,7 @@ fn test_concurrent_property_map_building() {
         .collect();
 
     let shape = ObjectShape {
+        symbol: None,
         flags: ObjectFlags::empty(),
         properties: props,
         string_index: None,
@@ -275,6 +276,7 @@ fn test_concurrent_callable_creation() {
         .into_par_iter()
         .map(|_| {
             let shape = CallableShape {
+                symbol: None,
                 call_signatures: vec![],
                 construct_signatures: vec![],
                 properties: vec![PropertyInfo {
@@ -286,7 +288,6 @@ fn test_concurrent_callable_creation() {
                     is_method: false,
                 }],
                 number_index: None,
-        symbol: None,
                 string_index: None,
             };
             interner.callable(shape)
