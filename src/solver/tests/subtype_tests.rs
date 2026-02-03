@@ -1418,7 +1418,7 @@ fn test_ref_resolution_with_environment() {
     let mut env = TypeEnvironment::new();
 
     // Create a Ref type for symbol 1
-    let ref_type = interner.reference(SymbolRef(1));
+    let ref_type = interner.lazy(DefId(1));
 
     // Without resolution, Ref to anything should fail (no noop resolution)
     let mut checker = SubtypeChecker::new(&interner);
@@ -1426,7 +1426,7 @@ fn test_ref_resolution_with_environment() {
     assert!(!checker.is_subtype_of(ref_type, TypeId::STRING));
 
     // Add resolution: symbol 1 = string
-    env.insert(SymbolRef(1), TypeId::STRING);
+    env.insert_def(DefId(1), TypeId::STRING);
 
     // With environment, Ref(1) resolves to string
     let mut checker_with_env = SubtypeChecker::with_resolver(&interner, &env);
@@ -1440,12 +1440,12 @@ fn test_ref_to_ref_resolution() {
     let mut env = TypeEnvironment::new();
 
     // Two refs that should be equal when resolved
-    let ref1 = interner.reference(SymbolRef(1));
-    let ref2 = interner.reference(SymbolRef(2));
+    let ref1 = interner.lazy(DefId(1));
+    let ref2 = interner.lazy(DefId(2));
 
     // Both resolve to string
-    env.insert(SymbolRef(1), TypeId::STRING);
-    env.insert(SymbolRef(2), TypeId::STRING);
+    env.insert_def(DefId(1), TypeId::STRING);
+    env.insert_def(DefId(2), TypeId::STRING);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
     assert!(checker.is_subtype_of(ref1, ref2));
@@ -1487,8 +1487,8 @@ fn test_ref_to_object_resolution() {
         },
     ]);
 
-    let ref_type = interner.reference(SymbolRef(100));
-    env.insert(SymbolRef(100), obj_xy);
+    let ref_type = interner.lazy(DefId(100));
+    env.insert_def(DefId(100), obj_xy);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
@@ -1501,7 +1501,7 @@ fn test_unresolved_ref_behavior() {
     let interner = TypeInterner::new();
     let env = TypeEnvironment::new(); // Empty environment
 
-    let ref_type = interner.reference(SymbolRef(999));
+    let ref_type = interner.lazy(DefId(999));
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
 
@@ -23770,7 +23770,7 @@ fn test_this_type_fluent_builder() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let result_type = interner.reference(SymbolRef(100));
+    let result_type = interner.lazy(DefId(100));
 
     let set_name = interner.function(FunctionShape {
         type_params: vec![],
@@ -23848,7 +23848,7 @@ fn test_this_type_with_explicit_this_parameter() {
     // method(this: MyClass): void
     let interner = TypeInterner::new();
 
-    let my_class = interner.reference(SymbolRef(1));
+    let my_class = interner.lazy(DefId(1));
 
     let method_with_this = interner.function(FunctionShape {
         type_params: vec![],
@@ -23871,14 +23871,14 @@ fn test_this_type_with_this_constraint() {
 
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
-        constraint: Some(interner.reference(SymbolRef(1))),
+        constraint: Some(interner.lazy(DefId(1))),
         default: None,
     }));
 
     let constrained_method = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
             name: interner.intern_string("T"),
-            constraint: Some(interner.reference(SymbolRef(1))),
+            constraint: Some(interner.lazy(DefId(1))),
             default: None,
         }],
         params: vec![],
@@ -23898,7 +23898,7 @@ fn test_this_type_in_callback() {
     // callback: (this: Context) => void
     let interner = TypeInterner::new();
 
-    let context_type = interner.reference(SymbolRef(1));
+    let context_type = interner.lazy(DefId(1));
 
     let callback = interner.function(FunctionShape {
         type_params: vec![],
@@ -23974,7 +23974,7 @@ fn test_this_type_with_generic_method() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let t_ref = interner.reference(SymbolRef(50));
+    let t_ref = interner.lazy(DefId(50));
 
     let generic_fluent = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -24117,7 +24117,7 @@ fn test_this_type_with_promise() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let promise_this = interner.application(interner.reference(SymbolRef(100)), vec![this_type]);
+    let promise_this = interner.application(interner.lazy(DefId(100)), vec![this_type]);
 
     let async_method = interner.function(FunctionShape {
         type_params: vec![],
@@ -24162,7 +24162,7 @@ fn test_this_type_map_method() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let u_ref = interner.reference(SymbolRef(50));
+    let u_ref = interner.lazy(DefId(50));
 
     let mapper_fn = interner.function(FunctionShape {
         type_params: vec![],
@@ -24209,7 +24209,7 @@ fn test_this_type_with_readonly() {
     let this_type = interner.intern(TypeKey::ThisType);
 
     // Simulated Readonly<this> as application
-    let readonly_this = interner.application(interner.reference(SymbolRef(100)), vec![this_type]);
+    let readonly_this = interner.application(interner.lazy(DefId(100)), vec![this_type]);
 
     assert!(readonly_this != TypeId::ERROR);
 }
@@ -24221,7 +24221,7 @@ fn test_this_type_partial() {
 
     let this_type = interner.intern(TypeKey::ThisType);
 
-    let partial_this = interner.application(interner.reference(SymbolRef(101)), vec![this_type]);
+    let partial_this = interner.application(interner.lazy(DefId(101)), vec![this_type]);
 
     assert!(partial_this != TypeId::ERROR);
 }
@@ -24243,7 +24243,7 @@ fn test_this_type_indexed_access() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let k_ref = interner.reference(SymbolRef(50));
+    let k_ref = interner.lazy(DefId(50));
 
     let indexed = interner.intern(TypeKey::IndexAccess(this_type, k_ref));
 
@@ -24256,7 +24256,7 @@ fn test_this_type_with_extends() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let some_interface = interner.reference(SymbolRef(1));
+    let some_interface = interner.lazy(DefId(1));
 
     let cond = ConditionalType {
         check_type: this_type,
@@ -24573,9 +24573,9 @@ fn test_this_type_query_builder() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let result_array = interner.array(interner.reference(SymbolRef(100)));
+    let result_array = interner.array(interner.lazy(DefId(100)));
     let promise_results =
-        interner.application(interner.reference(SymbolRef(101)), vec![result_array]);
+        interner.application(interner.lazy(DefId(101)), vec![result_array]);
 
     let where_method = interner.function(FunctionShape {
         type_params: vec![],
@@ -25148,7 +25148,7 @@ fn test_readonly_in_generic_context() {
     // Container<T> = { readonly value: T }
     let interner = TypeInterner::new();
 
-    let t_ref = interner.reference(SymbolRef(50));
+    let t_ref = interner.lazy(DefId(50));
 
     let container = interner.object(vec![PropertyInfo {
         name: interner.intern_string("value"),
@@ -28599,7 +28599,7 @@ fn test_this_type_explicit_this_parameter_inheritance() {
     let mut checker = SubtypeChecker::new(&interner);
 
     // Base class reference
-    let base_class_ref = interner.reference(SymbolRef(100));
+    let base_class_ref = interner.lazy(DefId(100));
 
     // Base.method(this: Base)
     let base_method = interner.function(FunctionShape {
@@ -28622,7 +28622,7 @@ fn test_this_type_explicit_this_parameter_inheritance() {
     }]);
 
     // Derived class reference
-    let derived_class_ref = interner.reference(SymbolRef(101));
+    let derived_class_ref = interner.lazy(DefId(101));
 
     // Derived.method(this: Derived)
     let derived_method = interner.function(FunctionShape {
@@ -28720,7 +28720,7 @@ fn test_this_type_polymorphic_method_chain() {
     let interner = TypeInterner::new();
 
     let this_type = interner.intern(TypeKey::ThisType);
-    let result_type = interner.reference(SymbolRef(1));
+    let result_type = interner.lazy(DefId(1));
 
     let set_name = interner.function(FunctionShape {
         type_params: vec![],
@@ -28963,7 +28963,7 @@ fn test_this_type_with_constrained_generic() {
     // }
     let interner = TypeInterner::new();
 
-    let base_ref = interner.reference(SymbolRef(100));
+    let base_ref = interner.lazy(DefId(100));
     let t_param = TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(base_ref),

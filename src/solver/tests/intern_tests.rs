@@ -394,7 +394,7 @@ fn test_interner_object_property_lookup_cache() {
 fn test_interner_application_deduplication() {
     let interner = TypeInterner::new();
 
-    let base = interner.reference(SymbolRef(1));
+    let base = interner.lazy(DefId(1));
     let app1 = interner.application(base, vec![TypeId::STRING]);
     let app2 = interner.application(base, vec![TypeId::STRING]);
     let app3 = interner.application(base, vec![TypeId::NUMBER]);

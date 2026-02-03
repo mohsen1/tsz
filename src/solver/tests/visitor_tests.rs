@@ -619,7 +619,7 @@ fn test_type_param_ref_and_lazy_extractors() {
 fn test_application_mapped_and_conditional_extractors() {
     let interner = TypeInterner::new();
 
-    let app_base = interner.reference(SymbolRef(7));
+    let app_base = interner.lazy(DefId(7));
     let app = interner.application(app_base, vec![TypeId::STRING]);
     let app_id = application_id(&interner, app).expect("expected application id");
     let app_data = interner.type_application(app_id);

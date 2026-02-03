@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::solver::CompatChecker;
+use crate::solver::def::DefId;
 use crate::solver::intern::TypeInterner;
 use crate::solver::types::TypeKey;
 
@@ -3080,7 +3081,7 @@ fn test_infer_generic_constructor_instantiation() {
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
-    let box_base = interner.reference(SymbolRef(42));
+    let box_base = interner.lazy(DefId(42));
     let box_t = interner.application(box_base, vec![t_type]);
 
     let ctor = FunctionShape {
@@ -3115,7 +3116,7 @@ fn test_infer_generic_application_param() {
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
-    let promise_base = interner.reference(SymbolRef(77));
+    let promise_base = interner.lazy(DefId(77));
     let promise_t = interner.application(promise_base, vec![t_type]);
 
     let func = FunctionShape {

@@ -9968,7 +9968,8 @@ fn test_index_access_object_with_number_index_signature_no_unchecked() {
 
 #[test]
 fn test_index_access_resolves_ref() {
-    use crate::solver::{SymbolRef, TypeEnvironment};
+    use crate::solver::def::DefId;
+    use crate::solver::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -9982,10 +9983,10 @@ fn test_index_access_resolves_ref() {
         is_method: false,
     }]);
 
-    let sym = SymbolRef(1);
-    env.insert(sym, obj);
+    let def_id = DefId(1);
+    env.insert_def(def_id, obj);
 
-    let ref_type = interner.reference(sym);
+    let ref_type = interner.lazy(def_id);
     let key_x = interner.literal_string("x");
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
@@ -10878,7 +10879,8 @@ fn test_keyof_type_param_no_constraint_deferred() {
 
 #[test]
 fn test_keyof_resolves_ref() {
-    use crate::solver::{SymbolRef, TypeEnvironment};
+    use crate::solver::def::DefId;
+    use crate::solver::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -10902,10 +10904,10 @@ fn test_keyof_resolves_ref() {
         },
     ]);
 
-    let sym = SymbolRef(2);
-    env.insert(sym, obj);
+    let def_id = DefId(2);
+    env.insert_def(def_id, obj);
 
-    let ref_type = interner.reference(sym);
+    let ref_type = interner.lazy(def_id);
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate_keyof(ref_type);
 
