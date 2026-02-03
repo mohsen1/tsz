@@ -857,7 +857,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                return self.check_object_subtype(&shape.properties, None, &t_shape.properties);
+                return self.check_object_subtype(&shape, &t_shape);
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
@@ -1109,11 +1109,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
-            return self.check_object_subtype(
-                &s_shape.properties,
-                Some(s_shape_id),
-                &t_shape.properties,
-            );
+            return self.check_object_subtype(&s_shape, &t_shape);
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
