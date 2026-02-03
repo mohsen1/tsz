@@ -15241,15 +15241,15 @@ fn test_application_ref_expansion_box_string() {
         is_method: false,
     }]);
 
-    // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    // Create Lazy(DefId(1)) for Box type alias (Phase 4.3: use DefId instead of SymbolRef)
+    let box_ref = interner.lazy(DefId(1));
 
-    // Create Application: Box<string> = Application(Ref(1), [string])
+    // Create Application: Box<string> = Application(Lazy(DefId(1)), [string])
     let box_string = interner.application(box_ref, vec![TypeId::STRING]);
 
-    // Set up resolver with both body type and type parameters
+    // Set up resolver with both body type and type parameters (Phase 4.3: use DefId API)
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     // Evaluate the Application type
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
@@ -15330,7 +15330,7 @@ fn test_application_ref_expansion_reducer_function() {
     });
 
     // Create Ref(1) for Reducer type alias
-    let reducer_ref = interner.reference(SymbolRef(1));
+    let reducer_ref = interner.lazy(DefId(1));
 
     // Create AnyAction type: { type: string }
     let type_name = interner.intern_string("type");
@@ -15348,7 +15348,7 @@ fn test_application_ref_expansion_reducer_function() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), reducer_body, vec![s_param, a_param]);
+    env.insert_def_with_params(DefId(1), reducer_body, vec![s_param, a_param]);
 
     // Evaluate the Application type
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
@@ -15429,8 +15429,8 @@ fn test_application_ref_expansion_nested() {
     }]);
 
     // Create Refs
-    let box_ref = interner.reference(SymbolRef(1));
-    let promise_ref = interner.reference(SymbolRef(2));
+    let box_ref = interner.lazy(DefId(1));
+    let promise_ref = interner.lazy(DefId(2));
 
     // Create: Box<string>
     let box_string = interner.application(box_ref, vec![TypeId::STRING]);
@@ -15440,8 +15440,8 @@ fn test_application_ref_expansion_nested() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param.clone()]);
-    env.insert_with_params(SymbolRef(2), promise_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param.clone()]);
+    env.insert_def_with_params(DefId(2), promise_body, vec![t_param]);
 
     // Evaluate
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
@@ -15503,7 +15503,7 @@ fn test_application_ref_expansion_with_defaults() {
     let optional_body = interner.union(vec![t_type, d_type]);
 
     // Create Ref(1) for Optional type alias
-    let optional_ref = interner.reference(SymbolRef(1));
+    let optional_ref = interner.lazy(DefId(1));
 
     // Case 1: Optional<string> - only one arg, should use default for D
     let optional_string = interner.application(optional_ref, vec![TypeId::STRING]);
@@ -15577,7 +15577,7 @@ fn test_application_ref_expansion_with_constraints() {
     }]);
 
     // Create Ref(1) for NumericBox type alias
-    let numeric_box_ref = interner.reference(SymbolRef(1));
+    let numeric_box_ref = interner.lazy(DefId(1));
 
     // Valid case: NumericBox<42> (literal number satisfies constraint)
     let lit_42 = interner.literal_number(42.0);
@@ -15588,7 +15588,7 @@ fn test_application_ref_expansion_with_constraints() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), numeric_box_body, vec![t_param.clone()]);
+    env.insert_def_with_params(DefId(1), numeric_box_body, vec![t_param.clone()]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
 
@@ -15666,14 +15666,14 @@ fn test_application_ref_expansion_with_never_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create Application: Box<never>
     let box_never = interner.application(box_ref, vec![TypeId::NEVER]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_never);
@@ -15726,14 +15726,14 @@ fn test_application_ref_expansion_with_unknown_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create Application: Box<unknown>
     let box_unknown = interner.application(box_ref, vec![TypeId::UNKNOWN]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_unknown);
@@ -15786,14 +15786,14 @@ fn test_application_ref_expansion_with_any_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create Application: Box<any>
     let box_any = interner.application(box_ref, vec![TypeId::ANY]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_any);
@@ -15846,7 +15846,7 @@ fn test_application_ref_expansion_with_union_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create Application: Box<string | number>
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -15854,7 +15854,7 @@ fn test_application_ref_expansion_with_union_arg() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_union);
@@ -16027,7 +16027,7 @@ fn test_application_ref_expansion_with_intersection_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create intersection: string & { length: number }
     let length_name = interner.intern_string("length");
@@ -16046,7 +16046,7 @@ fn test_application_ref_expansion_with_intersection_arg() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_intersection);
@@ -16118,14 +16118,14 @@ fn test_application_ref_expansion_multi_param() {
     ]);
 
     // Create Ref(1) for Map type alias
-    let map_ref = interner.reference(SymbolRef(1));
+    let map_ref = interner.lazy(DefId(1));
 
     // Create Application: Map<string, number>
     let map_string_number = interner.application(map_ref, vec![TypeId::STRING, TypeId::NUMBER]);
 
     // Set up resolver with type parameters (K, V in order)
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), map_body, vec![k_param, v_param]);
+    env.insert_def_with_params(DefId(1), map_body, vec![k_param, v_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(map_string_number);
@@ -16191,7 +16191,7 @@ fn test_application_ref_expansion_with_conditional_body() {
     });
 
     // Create Ref(1) for IsString type alias
-    let is_string_ref = interner.reference(SymbolRef(1));
+    let is_string_ref = interner.lazy(DefId(1));
 
     // Create Application: IsString<string>
     let is_string_string = interner.application(is_string_ref, vec![TypeId::STRING]);
@@ -16201,7 +16201,7 @@ fn test_application_ref_expansion_with_conditional_body() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), conditional_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), conditional_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
 
@@ -16253,7 +16253,7 @@ fn test_application_ref_expansion_with_tuple_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create tuple: [string, number]
     let tuple_type = interner.tuple(vec![
@@ -16276,7 +16276,7 @@ fn test_application_ref_expansion_with_tuple_arg() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_tuple);
@@ -16320,14 +16320,14 @@ fn test_application_ref_expansion_with_array_body() {
     let array_body = interner.array(t_type);
 
     // Create Ref(1) for ArrayOf type alias
-    let array_of_ref = interner.reference(SymbolRef(1));
+    let array_of_ref = interner.lazy(DefId(1));
 
     // Create Application: ArrayOf<string>
     let array_of_string = interner.application(array_of_ref, vec![TypeId::STRING]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), array_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), array_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(array_of_string);
@@ -16373,14 +16373,14 @@ fn test_application_ref_expansion_with_readonly_property() {
     }]);
 
     // Create Ref(1) for ReadonlyBox type alias
-    let readonly_box_ref = interner.reference(SymbolRef(1));
+    let readonly_box_ref = interner.lazy(DefId(1));
 
     // Create Application: ReadonlyBox<number>
     let readonly_box_number = interner.application(readonly_box_ref, vec![TypeId::NUMBER]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), readonly_box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), readonly_box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(readonly_box_number);
@@ -16433,14 +16433,14 @@ fn test_application_ref_expansion_with_optional_property() {
     }]);
 
     // Create Ref(1) for OptionalBox type alias
-    let optional_box_ref = interner.reference(SymbolRef(1));
+    let optional_box_ref = interner.lazy(DefId(1));
 
     // Create Application: OptionalBox<string>
     let optional_box_string = interner.application(optional_box_ref, vec![TypeId::STRING]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), optional_box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), optional_box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(optional_box_string);
@@ -16504,14 +16504,14 @@ fn test_application_ref_expansion_with_method() {
     }]);
 
     // Create Ref(1) for WithMethod type alias
-    let with_method_ref = interner.reference(SymbolRef(1));
+    let with_method_ref = interner.lazy(DefId(1));
 
     // Create Application: WithMethod<boolean>
     let with_method_boolean = interner.application(with_method_ref, vec![TypeId::BOOLEAN]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), with_method_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), with_method_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(with_method_boolean);
@@ -16583,14 +16583,14 @@ fn test_application_ref_expansion_with_rest_param() {
     });
 
     // Create Ref(1) for VarArgs type alias
-    let varargs_ref = interner.reference(SymbolRef(1));
+    let varargs_ref = interner.lazy(DefId(1));
 
     // Create Application: VarArgs<string>
     let varargs_string = interner.application(varargs_ref, vec![TypeId::STRING]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), varargs_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), varargs_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(varargs_string);
@@ -16651,14 +16651,14 @@ fn test_application_ref_expansion_with_index_signature() {
     });
 
     // Create Ref(1) for Dict type alias
-    let dict_ref = interner.reference(SymbolRef(1));
+    let dict_ref = interner.lazy(DefId(1));
 
     // Create Application: Dict<number>
     let dict_number = interner.application(dict_ref, vec![TypeId::NUMBER]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), dict_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), dict_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(dict_number);
@@ -16714,14 +16714,14 @@ fn test_application_ref_expansion_with_number_index_signature() {
     });
 
     // Create Ref(1) for NumericDict type alias
-    let numeric_dict_ref = interner.reference(SymbolRef(1));
+    let numeric_dict_ref = interner.lazy(DefId(1));
 
     // Create Application: NumericDict<string>
     let numeric_dict_string = interner.application(numeric_dict_ref, vec![TypeId::STRING]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), numeric_dict_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), numeric_dict_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(numeric_dict_string);
@@ -16776,7 +16776,7 @@ fn test_application_ref_expansion_with_literal_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create literal type "hello"
     let hello_literal = interner.literal_string("hello");
@@ -16786,7 +16786,7 @@ fn test_application_ref_expansion_with_literal_arg() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_hello);
@@ -16839,7 +16839,7 @@ fn test_application_ref_expansion_with_numeric_literal_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create literal type 42
     let lit_42 = interner.literal_number(42.0);
@@ -16849,7 +16849,7 @@ fn test_application_ref_expansion_with_numeric_literal_arg() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_42);
@@ -16910,14 +16910,14 @@ fn test_application_ref_expansion_with_multiple_refs_to_same_param() {
     ]);
 
     // Create Ref(1) for Pair type alias
-    let pair_ref = interner.reference(SymbolRef(1));
+    let pair_ref = interner.lazy(DefId(1));
 
     // Create Application: Pair<string>
     let pair_string = interner.application(pair_ref, vec![TypeId::STRING]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), pair_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), pair_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(pair_string);
@@ -16980,7 +16980,7 @@ fn test_application_ref_expansion_with_boolean_literal_arg() {
     }]);
 
     // Create Ref(1) for Box type alias
-    let box_ref = interner.reference(SymbolRef(1));
+    let box_ref = interner.lazy(DefId(1));
 
     // Create literal type true
     let lit_true = interner.literal_boolean(true);
@@ -16990,7 +16990,7 @@ fn test_application_ref_expansion_with_boolean_literal_arg() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), box_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(box_true);
@@ -17042,7 +17042,7 @@ fn test_application_ref_expansion_with_union_body() {
     let either_body = interner.union(vec![l_type, r_type]);
 
     // Create Ref(1) for Either type alias
-    let either_ref = interner.reference(SymbolRef(1));
+    let either_ref = interner.lazy(DefId(1));
 
     // Create Application: Either<string, number>
     let either_string_number =
@@ -17050,7 +17050,7 @@ fn test_application_ref_expansion_with_union_body() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), either_body, vec![l_param, r_param]);
+    env.insert_def_with_params(DefId(1), either_body, vec![l_param, r_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(either_string_number);
@@ -17095,7 +17095,7 @@ fn test_application_ref_expansion_with_intersection_body() {
     let both_body = interner.intersection(vec![a_type, b_type]);
 
     // Create Ref(1) for Both type alias
-    let both_ref = interner.reference(SymbolRef(1));
+    let both_ref = interner.lazy(DefId(1));
 
     // Create object types: {x: number} and {y: string}
     let x_name = interner.intern_string("x");
@@ -17122,7 +17122,7 @@ fn test_application_ref_expansion_with_intersection_body() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), both_body, vec![a_param, b_param]);
+    env.insert_def_with_params(DefId(1), both_body, vec![a_param, b_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(both_xy);
@@ -17168,7 +17168,7 @@ fn test_application_ref_expansion_with_this_param() {
     });
 
     // Create Ref(1) for BoundMethod type alias
-    let bound_method_ref = interner.reference(SymbolRef(1));
+    let bound_method_ref = interner.lazy(DefId(1));
 
     // Create object type: {x: number}
     let x_name = interner.intern_string("x");
@@ -17186,7 +17186,7 @@ fn test_application_ref_expansion_with_this_param() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), bound_method_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), bound_method_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(bound_method_obj);
@@ -17246,14 +17246,14 @@ fn test_application_ref_expansion_with_optional_param() {
     });
 
     // Create Ref(1) for OptionalFn type alias
-    let optional_fn_ref = interner.reference(SymbolRef(1));
+    let optional_fn_ref = interner.lazy(DefId(1));
 
     // Create Application: OptionalFn<string>
     let optional_fn_string = interner.application(optional_fn_ref, vec![TypeId::STRING]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), optional_fn_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), optional_fn_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(optional_fn_string);
@@ -17305,14 +17305,14 @@ fn test_application_ref_expansion_with_readonly_array_body() {
     let readonly_array_body = interner.intern(TypeKey::ReadonlyType(t_array));
 
     // Create Ref(1) for ReadonlyArrayOf type alias
-    let readonly_array_ref = interner.reference(SymbolRef(1));
+    let readonly_array_ref = interner.lazy(DefId(1));
 
     // Create Application: ReadonlyArrayOf<number>
     let readonly_array_number = interner.application(readonly_array_ref, vec![TypeId::NUMBER]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), readonly_array_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), readonly_array_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(readonly_array_number);
@@ -17370,14 +17370,14 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
     ]);
 
     // Create Ref(1) for Config type alias
-    let config_ref = interner.reference(SymbolRef(1));
+    let config_ref = interner.lazy(DefId(1));
 
     // Create Application: Config<number>
     let config_number = interner.application(config_ref, vec![TypeId::NUMBER]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), config_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), config_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(config_number);
@@ -17458,7 +17458,7 @@ fn test_application_ref_expansion_with_callable_body() {
     });
 
     // Create Ref(1) for Callback type alias
-    let callback_ref = interner.reference(SymbolRef(1));
+    let callback_ref = interner.lazy(DefId(1));
 
     // Create Application: Callback<string, boolean>
     let callback_string_bool =
@@ -17466,7 +17466,7 @@ fn test_application_ref_expansion_with_callable_body() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), callback_body, vec![t_param, r_param]);
+    env.insert_def_with_params(DefId(1), callback_body, vec![t_param, r_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(callback_string_bool);
@@ -17535,7 +17535,7 @@ fn test_application_ref_expansion_with_construct_signature() {
     });
 
     // Create Ref(1) for Constructor type alias
-    let constructor_ref = interner.reference(SymbolRef(1));
+    let constructor_ref = interner.lazy(DefId(1));
 
     // Create object type: {x: number}
     let x_name = interner.intern_string("x");
@@ -17553,7 +17553,7 @@ fn test_application_ref_expansion_with_construct_signature() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), constructor_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), constructor_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(constructor_obj);
@@ -17623,14 +17623,14 @@ fn test_application_ref_expansion_with_deeply_nested_param() {
     }]);
 
     // Create Ref(1) for Wrapper type alias
-    let wrapper_ref = interner.reference(SymbolRef(1));
+    let wrapper_ref = interner.lazy(DefId(1));
 
     // Create Application: Wrapper<string>
     let wrapper_string = interner.application(wrapper_ref, vec![TypeId::STRING]);
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), wrapper_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), wrapper_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(wrapper_string);
@@ -28134,7 +28134,7 @@ fn test_recursive_type_simple_tree() {
     let interner = TypeInterner::new();
 
     // Create Ref(1) for Tree type alias (self-reference)
-    let tree_ref = interner.reference(SymbolRef(1));
+    let tree_ref = interner.lazy(DefId(1));
 
     // Define: type Tree = { left?: Tree, right?: Tree, value: number }
     let left_name = interner.intern_string("left");
@@ -28170,7 +28170,7 @@ fn test_recursive_type_simple_tree() {
 
     // Set up resolver with type definition
     let mut env = TypeEnvironment::new();
-    env.insert(SymbolRef(1), tree_body);
+    env.insert_def(DefId(1), tree_body);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(tree_ref);
@@ -28207,7 +28207,7 @@ fn test_recursive_type_linked_list() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     // Create Ref(1) for List type alias
-    let list_ref = interner.reference(SymbolRef(1));
+    let list_ref = interner.lazy(DefId(1));
 
     // Create Application: List<T>
     let list_t = interner.application(list_ref, vec![t_type]);
@@ -28242,7 +28242,7 @@ fn test_recursive_type_linked_list() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), list_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), list_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(list_string);
@@ -28270,7 +28270,7 @@ fn test_recursive_type_json_value() {
     let interner = TypeInterner::new();
 
     // Create Ref(1) for JsonValue type alias
-    let json_ref = interner.reference(SymbolRef(1));
+    let json_ref = interner.lazy(DefId(1));
 
     // Create JsonValue[] array
     let json_array = interner.array(json_ref);
@@ -28315,7 +28315,7 @@ fn test_recursive_type_expression_ast() {
     let interner = TypeInterner::new();
 
     // Create Ref(1) for Expr type alias
-    let expr_ref = interner.reference(SymbolRef(1));
+    let expr_ref = interner.lazy(DefId(1));
 
     // Define Literal type
     let literal_kind = interner.literal_string("literal");
@@ -28394,7 +28394,7 @@ fn test_recursive_type_dom_node() {
     let interner = TypeInterner::new();
 
     // Create Ref(1) for Node type alias
-    let node_ref = interner.reference(SymbolRef(1));
+    let node_ref = interner.lazy(DefId(1));
 
     // Create Node[] array for children
     let children_array = interner.array(node_ref);
@@ -28463,8 +28463,8 @@ fn test_mutually_recursive_types_a_b() {
     let interner = TypeInterner::new();
 
     // Create refs for A and B
-    let a_ref = interner.reference(SymbolRef(1));
-    let b_ref = interner.reference(SymbolRef(2));
+    let a_ref = interner.lazy(DefId(1));
+    let b_ref = interner.lazy(DefId(2));
 
     // Define A = { value: number, b?: B }
     let a_body = interner.object(vec![
@@ -28537,8 +28537,8 @@ fn test_mutually_recursive_types_parent_child() {
     let interner = TypeInterner::new();
 
     // Create refs
-    let parent_ref = interner.reference(SymbolRef(1));
-    let child_ref = interner.reference(SymbolRef(2));
+    let parent_ref = interner.lazy(DefId(1));
+    let child_ref = interner.lazy(DefId(2));
 
     // Create Child[] array
     let children_array = interner.array(child_ref);
@@ -28608,9 +28608,9 @@ fn test_mutually_recursive_types_three_way() {
     //       type Z = { x: X }
     let interner = TypeInterner::new();
 
-    let x_ref = interner.reference(SymbolRef(1));
-    let y_ref = interner.reference(SymbolRef(2));
-    let z_ref = interner.reference(SymbolRef(3));
+    let x_ref = interner.lazy(DefId(1));
+    let y_ref = interner.lazy(DefId(2));
+    let z_ref = interner.lazy(DefId(3));
 
     let x_body = interner.object(vec![PropertyInfo {
         name: interner.intern_string("y"),
@@ -28661,9 +28661,9 @@ fn test_mutually_recursive_types_state_machine() {
     //       type StateC = { type: "c", next: StateA | StateB }
     let interner = TypeInterner::new();
 
-    let state_a_ref = interner.reference(SymbolRef(1));
-    let state_b_ref = interner.reference(SymbolRef(2));
-    let state_c_ref = interner.reference(SymbolRef(3));
+    let state_a_ref = interner.lazy(DefId(1));
+    let state_b_ref = interner.lazy(DefId(2));
+    let state_c_ref = interner.lazy(DefId(3));
 
     let type_a = interner.literal_string("a");
     let type_b = interner.literal_string("b");
@@ -28762,8 +28762,8 @@ fn test_mutually_recursive_types_request_response() {
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
-    let request_ref = interner.reference(SymbolRef(1));
-    let response_ref = interner.reference(SymbolRef(2));
+    let request_ref = interner.lazy(DefId(1));
+    let response_ref = interner.lazy(DefId(2));
 
     // Response<T> application
     let response_t = interner.application(response_ref, vec![t_type]);
@@ -28813,8 +28813,8 @@ fn test_mutually_recursive_types_request_response() {
 
     // Set up resolver
     let mut env = TypeEnvironment::new();
-    env.insert_with_params(SymbolRef(1), request_body, vec![t_param.clone()]);
-    env.insert_with_params(SymbolRef(2), response_body, vec![t_param]);
+    env.insert_def_with_params(DefId(1), request_body, vec![t_param.clone()]);
+    env.insert_def_with_params(DefId(2), response_body, vec![t_param]);
 
     // Evaluate Request<string>
     let request_string = interner.application(request_ref, vec![TypeId::STRING]);
@@ -29005,7 +29005,7 @@ fn test_depth_limited_recursion_level_1() {
     let interner = TypeInterner::new();
 
     // type Node = { value: number, child?: Node }
-    let node_ref = interner.reference(SymbolRef(1));
+    let node_ref = interner.lazy(DefId(1));
 
     let node_body = interner.object(vec![
         PropertyInfo {
@@ -29027,7 +29027,7 @@ fn test_depth_limited_recursion_level_1() {
     ]);
 
     let mut env = TypeEnvironment::new();
-    env.insert(SymbolRef(1), node_body);
+    env.insert_def(DefId(1), node_body);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(node_ref);
@@ -29152,7 +29152,7 @@ fn test_depth_limited_recursion_max_expansion() {
     let interner = TypeInterner::new();
 
     // type Infinite = { next: Infinite }
-    let infinite_ref = interner.reference(SymbolRef(1));
+    let infinite_ref = interner.lazy(DefId(1));
 
     let infinite_body = interner.object(vec![PropertyInfo {
         name: interner.intern_string("next"),
@@ -29164,7 +29164,7 @@ fn test_depth_limited_recursion_max_expansion() {
     }]);
 
     let mut env = TypeEnvironment::new();
-    env.insert(SymbolRef(1), infinite_body);
+    env.insert_def(DefId(1), infinite_body);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(infinite_ref);
@@ -29190,8 +29190,8 @@ fn test_depth_limited_recursion_path_tracking() {
 
     // type A = { b: B }
     // type B = { a: A }
-    let a_ref = interner.reference(SymbolRef(1));
-    let b_ref = interner.reference(SymbolRef(2));
+    let a_ref = interner.lazy(DefId(1));
+    let b_ref = interner.lazy(DefId(2));
 
     let a_body = interner.object(vec![PropertyInfo {
         name: interner.intern_string("b"),
@@ -29212,8 +29212,8 @@ fn test_depth_limited_recursion_path_tracking() {
     }]);
 
     let mut env = TypeEnvironment::new();
-    env.insert(SymbolRef(1), a_body);
-    env.insert(SymbolRef(2), b_body);
+    env.insert_def(DefId(1), a_body);
+    env.insert_def(DefId(2), b_body);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(a_ref);
