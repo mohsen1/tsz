@@ -1304,6 +1304,16 @@ impl ParserState {
         };
 
         let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+            // Check if parameter has both optional marker (?) and initializer (=)
+            // TS1015: Parameter cannot have question mark and initializer
+            if question_token {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "A parameter cannot have question mark and initializer.",
+                    diagnostic_codes::PARAMETER_CANNOT_HAVE_INITIALIZER,
+                );
+            }
+
             // Default parameter values are evaluated in the parent scope, not in the function body.
             // Set parameter default context flag to detect 'await' usage (TS1109).
             let saved_flags = self.context_flags;
