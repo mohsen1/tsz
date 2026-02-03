@@ -301,6 +301,14 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for element access type computation.
     pub element_access_type_set: FxHashSet<(TypeId, TypeId, Option<usize>)>,
 
+    /// Cache for control flow analysis results.
+    /// Key: (FlowNodeId, SymbolId, InitialTypeId) -> NarrowedTypeId
+    /// Prevents re-traversing the flow graph for the same symbol/flow combination.
+    /// Fixes performance regression on binaryArithmeticControlFlowGraphNotTooLarge.ts
+    /// where each operand in a + b + c was triggering fresh graph traversals.
+    pub flow_analysis_cache:
+        RefCell<FxHashMap<(crate::binder::FlowNodeId, crate::binder::SymbolId, TypeId), TypeId>>,
+
     /// Maps class instance TypeIds to their class declaration NodeIndex.
     /// Used by `get_class_decl_from_type` to correctly identify the class
     /// for derived classes that have no private/protected members (and thus no brand).
@@ -526,6 +534,7 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: FxHashSet::default(),
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
+            flow_analysis_cache: RefCell::new(FxHashMap::default()),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
@@ -610,6 +619,7 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: FxHashSet::default(),
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
+            flow_analysis_cache: RefCell::new(FxHashMap::default()),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: FxHashMap::default(),
@@ -696,6 +706,7 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: FxHashSet::default(),
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
+            flow_analysis_cache: RefCell::new(FxHashMap::default()),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: cache.symbol_dependencies,
@@ -781,6 +792,7 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: FxHashSet::default(),
             element_access_type_cache: FxHashMap::default(),
             element_access_type_set: FxHashSet::default(),
+            flow_analysis_cache: RefCell::new(FxHashMap::default()),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
             symbol_dependencies: cache.symbol_dependencies,
