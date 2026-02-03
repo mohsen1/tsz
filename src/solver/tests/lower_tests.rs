@@ -470,23 +470,34 @@ fn test_lower_readonly_array_type_reference() {
 
 #[test]
 fn test_lower_array_type_reference_respects_resolver() {
-    let (arena, type_idx) = parse_type_alias_type_node("type T = Array<string>;");
+    use crate::solver::def::DefId;
+
+    // Use a custom type name (not built-in) to test resolver behavior
+    let (arena, type_idx) = parse_type_alias_type_node("type T = MyArray<string>;");
     let interner = TypeInterner::new();
 
-    let type_resolver = |node_idx: NodeIndex| {
+    // Phase 4.2: Use def_id_resolver instead of type_resolver
+    let def_id_resolver = |node_idx: NodeIndex| {
         arena
             .get(node_idx)
             .and_then(|node| arena.get_identifier(node))
             .and_then(|ident| {
-                if ident.escaped_text == "Array" {
-                    Some(1)
+                if ident.escaped_text == "MyArray" {
+                    Some(DefId(1))
                 } else {
                     None
                 }
             })
     };
     let value_resolver = |_node_idx: NodeIndex| None;
-    let lowering = TypeLowering::with_resolvers(&arena, &interner, &type_resolver, &value_resolver);
+    // Use with_hybrid_resolver to provide def_id_resolver
+    let lowering = TypeLowering::with_hybrid_resolver(
+        &arena,
+        &interner,
+        &|_| None, // type_resolver not needed
+        &def_id_resolver,
+        &value_resolver,
+    );
 
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
@@ -505,23 +516,34 @@ fn test_lower_array_type_reference_respects_resolver() {
 
 #[test]
 fn test_lower_readonly_array_type_reference_respects_resolver() {
-    let (arena, type_idx) = parse_type_alias_type_node("type T = ReadonlyArray<string>;");
+    use crate::solver::def::DefId;
+
+    // Use a custom type name (not built-in) to test resolver behavior
+    let (arena, type_idx) = parse_type_alias_type_node("type T = MyReadonlyArray<string>;");
     let interner = TypeInterner::new();
 
-    let type_resolver = |node_idx: NodeIndex| {
+    // Phase 4.2: Use def_id_resolver instead of type_resolver
+    let def_id_resolver = |node_idx: NodeIndex| {
         arena
             .get(node_idx)
             .and_then(|node| arena.get_identifier(node))
             .and_then(|ident| {
-                if ident.escaped_text == "ReadonlyArray" {
-                    Some(2)
+                if ident.escaped_text == "MyReadonlyArray" {
+                    Some(DefId(2))
                 } else {
                     None
                 }
             })
     };
     let value_resolver = |_node_idx: NodeIndex| None;
-    let lowering = TypeLowering::with_resolvers(&arena, &interner, &type_resolver, &value_resolver);
+    // Use with_hybrid_resolver to provide def_id_resolver
+    let lowering = TypeLowering::with_hybrid_resolver(
+        &arena,
+        &interner,
+        &|_| None, // type_resolver not needed
+        &def_id_resolver,
+        &value_resolver,
+    );
 
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
