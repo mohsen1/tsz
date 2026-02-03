@@ -253,9 +253,8 @@ impl<'a> TypeInstantiator<'a> {
                 self.interner.intern(key.clone())
             }
 
-            // Ref/Lazy types might resolve to something that needs substitution
-            TypeKey::Ref(_)
-            | TypeKey::Lazy(_)
+            // Lazy types might resolve to something that needs substitution
+            TypeKey::Lazy(_)
             | TypeKey::TypeQuery(_)
             | TypeKey::UniqueSymbol(_)
             | TypeKey::ModuleNamespace(_) => self.interner.intern(key.clone()),
