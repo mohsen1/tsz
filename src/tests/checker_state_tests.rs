@@ -33341,3 +33341,52 @@ const x: Box<string> = { value: "hello" };
         "Generic type alias should have DefId created after Phase 4.2.1"
     );
 }
+
+/// Test generic recursive type alias (Phase 4.2.1 known issue)
+///
+/// This test verifies that generic recursive type aliases like:
+///   type List<T> = { value: T; next: List<T> | null }
+/// work correctly with DefId-based resolution.
+///
+/// KNOWN ISSUE (Phase 4.2.1):
+/// - The type is displayed as `Lazy(1)<number>` instead of `List<number>`
+/// - Type checking fails when it should succeed
+/// - Root cause: Application(Lazy(def_id), args) resolution needs fixing in checker pipeline
+/// - Solver unit test passes: test_application_ref_expansion_recursive
+/// - This is a separate issue from the solver evaluation logic
+#[test]
+#[ignore = "Phase 4.2.1: Generic recursive type resolution needs fixing in checker pipeline"]
+fn test_generic_recursive_type_alias() {
+    let source = r#"
+type List<T> = { value: T; next: List<T> | null };
+const list: List<number> = { value: 1, next: { value: 2, next: null } };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    // This should not produce any errors
+    checker.check_source_file(root);
+
+    let errors: Vec<_> = checker.ctx.diagnostics.iter()
+        .filter(|d| d.code == crate::checker::types::diagnostics::diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        errors.is_empty(),
+        "Generic recursive type alias should work, but got errors: {:?}",
+        errors
+    );
+}
