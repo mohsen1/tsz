@@ -190,10 +190,30 @@ impl<'a> TypeFormatter<'a> {
             TypeKey::Literal(lit) => self.format_literal(lit),
             TypeKey::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                // Try to find a matching interface/class definition to use its name
+                // instead of expanding the object literal
+                if let Some(def_store) = self.def_store {
+                    if let Some(def_id) = def_store.find_def_by_shape(&shape) {
+                        if let Some(def) = def_store.get(def_id) {
+                            // Use the definition name if available
+                            return self.atom(def.name).to_string();
+                        }
+                    }
+                }
                 self.format_object(shape.properties.as_slice())
             }
             TypeKey::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                // Try to find a matching interface/class definition to use its name
+                // instead of expanding the object literal
+                if let Some(def_store) = self.def_store {
+                    if let Some(def_id) = def_store.find_def_by_shape(&shape) {
+                        if let Some(def) = def_store.get(def_id) {
+                            // Use the definition name if available
+                            return self.atom(def.name).to_string();
+                        }
+                    }
+                }
                 self.format_object_with_index(shape.as_ref())
             }
             TypeKey::Union(members) => {
