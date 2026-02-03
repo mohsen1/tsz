@@ -2095,10 +2095,6 @@ impl<'a> Completions<'a> {
                     self.collect_properties_for_type(member, interner, checker, visited, props);
                 }
             }
-            TypeKey::Ref(symbol_ref) => {
-                let type_id = checker.get_type_of_symbol(SymbolId(symbol_ref.0));
-                self.collect_properties_for_type(type_id, interner, checker, visited, props);
-            }
             TypeKey::Application(app) => {
                 let app = interner.type_application(app);
                 self.collect_properties_for_type(app.base, interner, checker, visited, props);

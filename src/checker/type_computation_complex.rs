@@ -439,24 +439,24 @@ impl<'a> CheckerState<'a> {
     /// This is important for new expressions where we need the actual constructor type
     /// with construct signatures, not just a symbolic reference.
     pub(crate) fn resolve_ref_type(&mut self, type_id: TypeId) -> TypeId {
-        use crate::binder::SymbolId;
-        use crate::solver::type_queries::{RefTypeKind, classify_for_ref_resolution};
+        use crate::solver::type_queries::{LazyTypeKind, classify_for_lazy_resolution};
 
-        match classify_for_ref_resolution(self.ctx.types, type_id) {
-            RefTypeKind::Ref(sym_ref) => {
-                let symbol_id = SymbolId(sym_ref.0);
-                // Get the symbol's actual type
-                // This resolves the Ref to a Callable (for classes) or other concrete type
-                let symbol_type = self.get_type_of_symbol(symbol_id);
-                // If the resolved type is still a Ref (e.g., for namespaces or enums),
-                // return the original Ref to avoid infinite recursion
-                if symbol_type == type_id {
-                    type_id
+        match classify_for_lazy_resolution(self.ctx.types, type_id) {
+            LazyTypeKind::Lazy(def_id) => {
+                // New DefId-based case - resolve via DefId
+                if let Some(symbol_id) = self.ctx.def_to_symbol_id(def_id) {
+                    let symbol_type = self.get_type_of_symbol(symbol_id);
+                    if symbol_type == type_id {
+                        type_id
+                    } else {
+                        symbol_type
+                    }
                 } else {
-                    symbol_type
+                    type_id
                 }
             }
-            RefTypeKind::NotRef => type_id,
+            LazyTypeKind::NotLazy => type_id,
+            _ => type_id, // Handle deprecated variants for compatibility
         }
     }
 

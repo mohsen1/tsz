@@ -988,28 +988,6 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 }
             }
 
-            // Ref types: symbol references that need resolution to their structural form
-            TypeKey::Ref(_) => {
-                let evaluated = evaluate_type(self.interner, obj_type);
-                if evaluated != obj_type {
-                    // Successfully evaluated - resolve property on the concrete type
-                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
-                } else {
-                    // Evaluation didn't change the type - try apparent members
-                    let prop_atom =
-                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
-                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                        result
-                    } else {
-                        // Can't resolve symbol reference - return ANY to avoid false positives
-                        PropertyAccessResult::Success {
-                            type_id: TypeId::ANY,
-                            from_index_signature: false,
-                        }
-                    }
-                }
-            }
-
             // TypeQuery types: typeof queries that need resolution to their structural form
             TypeKey::TypeQuery(_) => {
                 let evaluated = evaluate_type(self.interner, obj_type);
@@ -1189,9 +1167,9 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             }
         };
 
-        // We only handle Ref types (symbol references)
-        let TypeKey::Ref(symbol) = base_key else {
-            // For non-Ref bases (e.g., TypeParameter), fall back to structural evaluation
+        // We only handle Lazy types (def_id references)
+        let TypeKey::Lazy(def_id) = base_key else {
+            // For non-Lazy bases (e.g., TypeParameter), fall back to structural evaluation
             let evaluated = evaluate_type(
                 self.interner,
                 self.interner.application(app.base, app.args.clone()),
@@ -1199,12 +1177,27 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
             return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
         };
 
+        // Resolve the def_id to get the SymbolId, then get the body type
+        let sym_id = match self.resolver.def_to_symbol_id(def_id) {
+            Some(id) => id,
+            None => {
+                // Can't convert def_id to symbol_id - fall back to structural evaluation
+                let evaluated = evaluate_type(
+                    self.interner,
+                    self.interner.application(app.base, app.args.clone()),
+                );
+                return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
+            }
+        };
+
+        let symbol_ref = crate::solver::SymbolRef(sym_id.0);
+
         // Resolve the symbol to get its body type
-        let body_type = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
-            self.resolver.resolve_lazy(def_id, self.interner)
+        let body_type = if let Some(inner_def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+            self.resolver.resolve_lazy(inner_def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(symbol, self.interner);
+            let r = self.resolver.resolve_ref(symbol_ref, self.interner);
             r
         };
 
@@ -1218,7 +1211,7 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
         };
 
         // Get type parameters for this symbol
-        let type_params = match self.resolver.get_type_params(symbol) {
+        let type_params = match self.resolver.get_type_params(symbol_ref) {
             Some(params) if !params.is_empty() => params,
             _ => {
                 // No type params - resolve on the body directly

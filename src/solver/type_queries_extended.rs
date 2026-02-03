@@ -333,6 +333,7 @@ pub enum PromiseTypeKind {
         args: Vec<TypeId>,
     },
     /// Symbol reference (like Promise or PromiseLike)
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     SymbolRef(crate::solver::types::SymbolRef),
     /// Object type (might be Promise interface from lib)
     Object(crate::solver::types::ObjectShapeId),
@@ -360,7 +361,6 @@ pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseT
                 args: app.args.clone(),
             }
         }
-        TypeKey::Ref(sym_ref) => PromiseTypeKind::SymbolRef(sym_ref),
         TypeKey::Object(shape_id) => PromiseTypeKind::Object(shape_id),
         TypeKey::Union(list_id) => {
             let members = db.type_list(list_id);
@@ -382,6 +382,7 @@ pub enum NewExpressionTypeKind {
     /// Function type - always constructable
     Function(crate::solver::types::FunctionShapeId),
     /// Symbol reference - resolve the symbol
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     SymbolRef(crate::solver::types::SymbolRef),
     /// TypeQuery (typeof X) - needs symbol resolution
     TypeQuery(crate::solver::types::SymbolRef),
@@ -407,7 +408,6 @@ pub fn classify_for_new_expression(
     match key {
         TypeKey::Callable(shape_id) => NewExpressionTypeKind::Callable(shape_id),
         TypeKey::Function(shape_id) => NewExpressionTypeKind::Function(shape_id),
-        TypeKey::Ref(sym_ref) => NewExpressionTypeKind::SymbolRef(sym_ref),
         TypeKey::TypeQuery(sym_ref) => NewExpressionTypeKind::TypeQuery(sym_ref),
         TypeKey::Intersection(list_id) => {
             let members = db.type_list(list_id);
@@ -491,7 +491,8 @@ pub fn classify_for_abstract_check(
 pub enum ConstructSignatureKind {
     /// Callable type with potential construct signatures
     Callable(crate::solver::types::CallableShapeId),
-    /// Symbol reference - may be a class
+    /// Symbol reference - may be a class (deprecated)
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
     /// TypeQuery (typeof X) - check if class
     TypeQuery(crate::solver::types::SymbolRef),
@@ -520,7 +521,6 @@ pub fn classify_for_construct_signature(
 
     match key {
         TypeKey::Callable(shape_id) => ConstructSignatureKind::Callable(shape_id),
-        TypeKey::Ref(sym_ref) => ConstructSignatureKind::Ref(sym_ref),
         TypeKey::TypeQuery(sym_ref) => ConstructSignatureKind::TypeQuery(sym_ref),
         TypeKey::Application(app_id) => ConstructSignatureKind::Application(app_id),
         TypeKey::Union(list_id) => {
@@ -834,25 +834,41 @@ pub fn classify_for_spread_properties(
 // Ref Type Resolution
 // =============================================================================
 
-/// Classification for Ref type resolution.
+/// Classification for Lazy type resolution.
 #[derive(Debug, Clone)]
-pub enum RefTypeKind {
-    /// Symbol reference - resolve to actual type
-    Ref(crate::solver::types::SymbolRef),
-    /// Not a Ref type
+pub enum LazyTypeKind {
+    /// DefId - resolve to actual type
+    Lazy(crate::solver::def::DefId),
+    /// Not a Lazy type
+    NotLazy,
+    /// Deprecated: SymbolRef - use Lazy instead
+    #[deprecated(note = "Use Lazy instead")]
+    Ref(crate::solver::def::DefId),
+    /// Deprecated: NotRef - use NotLazy instead
+    #[deprecated(note = "Use NotLazy instead")]
     NotRef,
 }
 
-/// Classify a type for Ref resolution.
-pub fn classify_for_ref_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> RefTypeKind {
+/// Classify a type for Lazy resolution.
+pub fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> LazyTypeKind {
     let Some(key) = db.lookup(type_id) else {
-        return RefTypeKind::NotRef;
+        return LazyTypeKind::NotLazy;
     };
 
     match key {
-        TypeKey::Ref(sym_ref) => RefTypeKind::Ref(sym_ref),
-        _ => RefTypeKind::NotRef,
+        TypeKey::Lazy(def_id) => LazyTypeKind::Lazy(def_id),
+        _ => LazyTypeKind::NotLazy,
     }
+}
+
+/// Compatibility alias for RefTypeKind.
+#[deprecated(note = "Use LazyTypeKind instead")]
+pub type RefTypeKind = LazyTypeKind;
+
+/// Compatibility alias for classify_for_lazy_resolution.
+#[deprecated(note = "Use classify_for_lazy_resolution instead")]
+pub fn classify_for_ref_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> RefTypeKind {
+    classify_for_lazy_resolution(db, type_id)
 }
 
 // =============================================================================
@@ -870,7 +886,8 @@ pub enum ConstructorCheckKind {
     Union(Vec<TypeId>),
     /// Application type - extract base and check
     Application { base: TypeId },
-    /// Symbol reference - check symbol flags for CLASS
+    /// Symbol reference - check symbol flags for CLASS (deprecated)
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     SymbolRef(crate::solver::types::SymbolRef),
     /// TypeQuery (typeof) - check referenced symbol
     TypeQuery(crate::solver::types::SymbolRef),
@@ -905,7 +922,6 @@ pub fn classify_for_constructor_check(
             let app = db.type_application(app_id);
             ConstructorCheckKind::Application { base: app.base }
         }
-        TypeKey::Ref(sym_ref) => ConstructorCheckKind::SymbolRef(sym_ref),
         TypeKey::TypeQuery(sym_ref) => ConstructorCheckKind::TypeQuery(sym_ref),
         _ => ConstructorCheckKind::Other,
     }
@@ -1162,6 +1178,7 @@ pub fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryK
 /// Classification for symbol reference types.
 #[derive(Debug, Clone)]
 pub enum SymbolRefKind {
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
     TypeQuery(crate::solver::types::SymbolRef),
     Other,
@@ -1170,7 +1187,6 @@ pub enum SymbolRefKind {
 /// Classify a type as a symbol reference.
 pub fn classify_symbol_ref(db: &dyn TypeDatabase, type_id: TypeId) -> SymbolRefKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Ref(sym_ref)) => SymbolRefKind::Ref(sym_ref),
         Some(TypeKey::TypeQuery(sym_ref)) => SymbolRefKind::TypeQuery(sym_ref),
         _ => SymbolRefKind::Other,
     }
@@ -1245,6 +1261,7 @@ pub fn classify_for_contains_traversal(db: &dyn TypeDatabase, type_id: TypeId) -
 /// Classification for namespace member resolution.
 #[derive(Debug, Clone)]
 pub enum NamespaceMemberKind {
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     SymbolRef(crate::solver::types::SymbolRef),
     Callable(crate::solver::types::CallableShapeId),
     Other,
@@ -1253,7 +1270,6 @@ pub enum NamespaceMemberKind {
 /// Classify a type for namespace member resolution.
 pub fn classify_namespace_member(db: &dyn TypeDatabase, type_id: TypeId) -> NamespaceMemberKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Ref(sym_ref)) => NamespaceMemberKind::SymbolRef(sym_ref),
         Some(TypeKey::Callable(shape_id)) => NamespaceMemberKind::Callable(shape_id),
         _ => NamespaceMemberKind::Other,
     }
@@ -1345,8 +1361,8 @@ pub fn classify_for_instance_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ins
         TypeKey::TypeParameter(info) | TypeKey::Infer(info) => InstanceTypeKind::TypeParameter {
             constraint: info.constraint,
         },
-        // Symbol references (class names, typeof expressions) need resolution to instance type
-        TypeKey::Ref(sym_ref) | TypeKey::TypeQuery(sym_ref) => InstanceTypeKind::SymbolRef(sym_ref),
+        // TypeQuery (typeof expressions) needs resolution to instance type
+        TypeKey::TypeQuery(sym_ref) => InstanceTypeKind::SymbolRef(sym_ref),
         TypeKey::Conditional(_)
         | TypeKey::Mapped(_)
         | TypeKey::IndexAccess(_, _)
@@ -1402,7 +1418,8 @@ pub fn classify_for_constructor_return_merge(
 pub enum AbstractConstructorKind {
     /// TypeQuery (typeof AbstractClass) - check if symbol is abstract
     TypeQuery(crate::solver::types::SymbolRef),
-    /// Ref - resolve and check
+    /// Ref - resolve and check (deprecated)
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
     /// Callable - check if marked as abstract
     Callable(crate::solver::types::CallableShapeId),
@@ -1423,7 +1440,6 @@ pub fn classify_for_abstract_constructor(
 
     match key {
         TypeKey::TypeQuery(sym_ref) => AbstractConstructorKind::TypeQuery(sym_ref),
-        TypeKey::Ref(sym_ref) => AbstractConstructorKind::Ref(sym_ref),
         TypeKey::Callable(shape_id) => AbstractConstructorKind::Callable(shape_id),
         TypeKey::Application(app_id) => AbstractConstructorKind::Application(app_id),
         _ => AbstractConstructorKind::NotAbstract,
@@ -1437,7 +1453,8 @@ pub fn classify_for_abstract_constructor(
 /// Classification for resolving types for property access.
 #[derive(Debug, Clone)]
 pub enum PropertyAccessResolutionKind {
-    /// Ref type - resolve the symbol
+    /// Ref type - resolve the symbol (deprecated)
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
     /// TypeQuery (typeof) - resolve the symbol
     TypeQuery(crate::solver::types::SymbolRef),
@@ -1469,7 +1486,6 @@ pub fn classify_for_property_access_resolution(
     };
 
     match key {
-        TypeKey::Ref(sym_ref) => PropertyAccessResolutionKind::Ref(sym_ref),
         TypeKey::TypeQuery(sym_ref) => PropertyAccessResolutionKind::TypeQuery(sym_ref),
         TypeKey::Application(app_id) => PropertyAccessResolutionKind::Application(app_id),
         TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
@@ -1506,7 +1522,8 @@ pub enum ContextualLiteralAllowKind {
     Members(Vec<TypeId>),
     /// Type parameter - check constraint
     TypeParameter { constraint: Option<TypeId> },
-    /// Ref - resolve and check
+    /// Ref - resolve and check (deprecated)
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
     /// Application - needs evaluation
     Application,
@@ -1535,7 +1552,6 @@ pub fn classify_for_contextual_literal(
                 constraint: info.constraint,
             }
         }
-        TypeKey::Ref(sym_ref) => ContextualLiteralAllowKind::Ref(sym_ref),
         TypeKey::Application(_) => ContextualLiteralAllowKind::Application,
         TypeKey::Mapped(_) => ContextualLiteralAllowKind::Mapped,
         _ => ContextualLiteralAllowKind::NotAllowed,
@@ -1577,7 +1593,8 @@ pub fn classify_mapped_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Map
 /// Classification for evaluating types with symbol resolution.
 #[derive(Debug, Clone)]
 pub enum TypeResolutionKind {
-    /// Ref - resolve to symbol type
+    /// Ref - resolve to symbol type (deprecated)
+    #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::solver::types::SymbolRef),
     /// Application - evaluate the application
     Application,
@@ -1592,7 +1609,6 @@ pub fn classify_for_type_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> T
     };
 
     match key {
-        TypeKey::Ref(sym_ref) => TypeResolutionKind::Ref(sym_ref),
         TypeKey::Application(_) => TypeResolutionKind::Application,
         _ => TypeResolutionKind::Resolved,
     }
@@ -1733,9 +1749,7 @@ pub fn classify_for_constructor_access(
     };
 
     match key {
-        TypeKey::Ref(sym_ref) | TypeKey::TypeQuery(sym_ref) => {
-            ConstructorAccessKind::SymbolRef(sym_ref)
-        }
+        TypeKey::TypeQuery(sym_ref) => ConstructorAccessKind::SymbolRef(sym_ref),
         TypeKey::Application(app_id) => ConstructorAccessKind::Application(app_id),
         _ => ConstructorAccessKind::Other,
     }
@@ -1813,13 +1827,13 @@ pub fn classify_for_binding_element(
 // Additional Accessor Helpers
 // =============================================================================
 
-/// Get the symbol ref from a Ref type.
-pub fn get_symbol_ref(
+/// Get the DefId from a Lazy type.
+pub fn get_lazy_def_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<crate::solver::types::SymbolRef> {
+) -> Option<crate::solver::def::DefId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Ref(sym_ref)) => Some(sym_ref),
+        Some(TypeKey::Lazy(def_id)) => Some(def_id),
         _ => None,
     }
 }
@@ -1832,8 +1846,8 @@ pub fn get_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::solve
     }
 }
 
-/// Get the symbol ref or DefId from a Ref or Lazy type.
-/// Returns (Option<SymbolRef>, Option<DefId>) - one or the other will be Some.
+/// Get the DefId from a Lazy type.
+/// Returns (Option<SymbolRef>, Option<DefId>) - DefId will be Some for Lazy types.
 pub fn get_type_identity(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1842,7 +1856,6 @@ pub fn get_type_identity(
     Option<crate::solver::def::DefId>,
 ) {
     match db.lookup(type_id) {
-        Some(TypeKey::Ref(sym_ref)) => (Some(sym_ref), None),
         Some(TypeKey::Lazy(def_id)) => (None, Some(def_id)),
         _ => (None, None),
     }
@@ -1892,10 +1905,11 @@ pub enum SymbolResolutionTraversalKind {
         base: TypeId,
         args: Vec<TypeId>,
     },
-    /// Ref type - resolve the symbol
-    Ref(crate::solver::types::SymbolRef),
     /// Lazy(DefId) type - resolve via DefId
     Lazy(crate::solver::def::DefId),
+    /// Deprecated: Ref type - use Lazy instead
+    #[deprecated(note = "Use Lazy instead")]
+    Ref(crate::solver::def::DefId),
     /// Type parameter - recurse into constraint/default
     TypeParameter {
         constraint: Option<TypeId>,
@@ -1945,7 +1959,6 @@ pub fn classify_for_symbol_resolution_traversal(
                 args: app.args.clone(),
             }
         }
-        TypeKey::Ref(sym_ref) => SymbolResolutionTraversalKind::Ref(sym_ref),
         TypeKey::Lazy(def_id) => SymbolResolutionTraversalKind::Lazy(def_id),
         TypeKey::TypeParameter(param) | TypeKey::Infer(param) => {
             SymbolResolutionTraversalKind::TypeParameter {

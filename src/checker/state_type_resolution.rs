@@ -334,10 +334,9 @@ impl<'a> CheckerState<'a> {
                                     .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
                                     .collect();
 
-                                // Create a Ref to the symbol directly - this ensures proper type parameter substitution
-                                let base_type_id = self.ctx.types.intern(crate::solver::TypeKey::Ref(
-                                    crate::solver::SymbolRef(sym_id.0)
-                                ));
+                                // Create a Lazy type with DefId for proper type parameter substitution
+                                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                                let base_type_id = self.ctx.types.intern(crate::solver::TypeKey::Lazy(def_id));
 
                                 // Create TypeApplication with defaults
                                 return self.ctx.types.application(base_type_id, default_args);
