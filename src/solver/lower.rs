@@ -990,6 +990,7 @@ impl<'a> TypeLowering<'a> {
                     properties,
                     string_index,
                     number_index,
+                    symbol: None,
                 });
             }
 
@@ -1164,6 +1165,7 @@ impl<'a> TypeLowering<'a> {
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,
+                symbol: None,
             });
         }
 
@@ -2600,6 +2602,7 @@ impl<'a> TypeLowering<'a> {
                 properties: vec![],
                 string_index: None,
                 number_index: None,
+                symbol: None,
             };
 
             self.interner.callable(shape)

@@ -632,7 +632,11 @@ pub struct CallSignature {
 ///   (x: number): string;
 /// }
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+/// NOTE: The `symbol` field affects Hash (for interning) but NOT PartialEq (for structural comparison).
+/// This ensures that:
+/// - Different classes with identical structures get different TypeIds (via Hash in interner)
+/// - Structural type checking still works correctly (via PartialEq ignoring symbol)
+#[derive(Clone, Debug)]
 pub struct CallableShape {
     /// Call signatures (order matters for overload resolution)
     pub call_signatures: Vec<CallSignature>,
@@ -644,6 +648,47 @@ pub struct CallableShape {
     pub string_index: Option<IndexSignature>,
     /// Number index signature (for static index signatures on classes)
     pub number_index: Option<IndexSignature>,
+    /// Nominal identity for class constructors (prevents structural interning of distinct classes)
+    pub symbol: Option<crate::binder::SymbolId>,
+}
+
+impl PartialEq for CallableShape {
+    fn eq(&self, other: &Self) -> bool {
+        // Structural equality: ignore the `symbol` field for type comparison
+        self.call_signatures == other.call_signatures
+            && self.construct_signatures == other.construct_signatures
+            && self.properties == other.properties
+            && self.string_index == other.string_index
+            && self.number_index == other.number_index
+    }
+}
+
+impl Eq for CallableShape {}
+
+impl std::hash::Hash for CallableShape {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Include the `symbol` field in hash for nominal interning
+        // This ensures different classes get different TypeIds
+        self.call_signatures.hash(state);
+        self.construct_signatures.hash(state);
+        self.properties.hash(state);
+        self.string_index.hash(state);
+        self.number_index.hash(state);
+        self.symbol.hash(state);
+    }
+}
+
+impl Default for CallableShape {
+    fn default() -> Self {
+        Self {
+            call_signatures: Vec::new(),
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+        }
+    }
 }
 
 /// Parameter information

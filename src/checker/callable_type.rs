@@ -170,6 +170,7 @@ impl<'a> CheckerState<'a> {
             properties: vec![],
             string_index: None,
             number_index: None,
+            symbol: None,
         };
 
         self.ctx.types.callable(shape)

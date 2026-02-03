@@ -168,6 +168,7 @@ impl<'a> CheckerState<'a> {
                         properties: Vec::new(),
                         string_index: None,
                         number_index: None,
+                        symbol: None,
                     }))
                 }
             }
@@ -957,6 +958,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index: None,
             number_index: None,
+            symbol: None,
         })
     }
 

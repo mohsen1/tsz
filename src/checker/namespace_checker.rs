@@ -101,6 +101,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
+            symbol: None,
         })
     }
 
@@ -170,6 +171,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
+            symbol: None,
         });
 
         (merged_type, Vec::new())
