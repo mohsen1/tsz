@@ -361,6 +361,30 @@ impl SymbolArena {
         }
         None
     }
+
+    /// Reserve SymbolIds in this arena by pre-allocating placeholder symbols.
+    ///
+    /// This is used when copying lib file_locals into a user binder:
+    /// - Lib has symbols 0..N (Array, String, etc.)
+    /// - We copy those SymbolIds into user's file_locals
+    /// - We need to reserve SymbolIds 0..N in user's arena so new allocations
+    ///   don't overwrite lib symbols
+    ///
+    /// After calling this, new allocations start at N (after the reserved range).
+    pub fn reserve_symbol_ids(&mut self, count: usize) {
+        let current_len = self.symbols.len();
+        if count > current_len {
+            // Extend with placeholder symbols to reserve the SymbolIds
+            self.symbols.reserve(count);
+            for id in current_len..count {
+                self.symbols.push(Symbol::new(
+                    SymbolId(id as u32),
+                    0,
+                    String::new(), // Empty placeholder
+                ));
+            }
+        }
+    }
 }
 
 // =============================================================================
