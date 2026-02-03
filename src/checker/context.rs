@@ -1024,6 +1024,40 @@ impl<'a> CheckerContext<'a> {
         self.def_to_symbol.borrow().get(&def_id).copied()
     }
 
+    /// Resolve a TypeId to its underlying SymbolId if it is a reference type.
+    ///
+    /// This helper bridges the DefId-based Solver and SymbolId-based Binder.
+    /// It handles the indirection automatically: TypeId → DefId → SymbolId.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Old (broken):
+    /// if let Some(sym_ref) = get_ref_symbol(self.ctx.types, type_id) {
+    ///     let sym_id = SymbolId(sym_ref.0); // BROKEN CAST
+    /// }
+    ///
+    /// // New (correct):
+    /// if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) {
+    ///     // use sym_id
+    /// }
+    /// ```
+    pub fn resolve_type_to_symbol_id(&self, type_id: TypeId) -> Option<SymbolId> {
+        use crate::solver::type_queries;
+
+        // 1. Try to get DefId (Lazy type) - Phase 4.2+
+        if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {
+            return self.def_to_symbol_id(def_id);
+        }
+
+        // 2. Fallback for legacy Ref types (if any remain during migration)
+        #[allow(deprecated)]
+        if let Some(sym_ref) = type_queries::get_symbol_ref(self.types, type_id) {
+            return Some(SymbolId(sym_ref.0));
+        }
+
+        None
+    }
+
     /// Look up an existing DefId for a symbol without creating a new one.
     ///
     /// Returns None if the symbol doesn't have a DefId yet.
