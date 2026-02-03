@@ -451,6 +451,7 @@ impl<'a> ParameterForCallExtractor<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
         // Count required (non-optional) parameters
         let required_count = params.iter().filter(|p| !p.optional).count();
@@ -926,6 +927,7 @@ impl<'a> ContextualTypeContext<'a> {
     }
 
     /// Helper to extract parameter type from a list of params.
+    #[allow(dead_code)]
     fn get_parameter_type_from_params(&self, params: &[ParamInfo], index: usize) -> Option<TypeId> {
         if index < params.len() {
             let param = &params[index];
@@ -1002,6 +1004,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn get_parameter_type_from_signatures(
         &self,
         signatures: &[CallSignature],
@@ -1021,6 +1024,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn get_parameter_type_from_signatures_for_call(
         &self,
         signatures: &[CallSignature],
@@ -1055,6 +1059,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
         let mut min = 0usize;
         let mut max = 0usize;
@@ -1080,6 +1085,7 @@ impl<'a> ContextualTypeContext<'a> {
         arg_count <= max
     }
 
+    #[allow(dead_code)]
     fn get_this_type_from_signatures(&self, signatures: &[CallSignature]) -> Option<TypeId> {
         let this_types: Vec<TypeId> = signatures.iter().filter_map(|sig| sig.this_type).collect();
 
@@ -1092,6 +1098,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn get_return_type_from_signatures(&self, signatures: &[CallSignature]) -> Option<TypeId> {
         if signatures.is_empty() {
             return None;

@@ -171,7 +171,7 @@ impl<'a> TypeVisitor for BigIntLikeVisitor<'a> {
 
 /// Visitor to check if a type is boolean-like.
 struct BooleanLikeVisitor<'a> {
-    db: &'a dyn TypeDatabase,
+    _db: &'a dyn TypeDatabase,
 }
 
 impl<'a> TypeVisitor for BooleanLikeVisitor<'a> {
@@ -192,7 +192,7 @@ impl<'a> TypeVisitor for BooleanLikeVisitor<'a> {
 
 /// Visitor to check if a type is symbol-like.
 struct SymbolLikeVisitor<'a> {
-    db: &'a dyn TypeDatabase,
+    _db: &'a dyn TypeDatabase,
 }
 
 impl<'a> TypeVisitor for SymbolLikeVisitor<'a> {
@@ -667,7 +667,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::SYMBOL {
             return true;
         }
-        let mut visitor = SymbolLikeVisitor { db: self.interner };
+        let mut visitor = SymbolLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
@@ -676,7 +676,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::BOOLEAN || type_id == TypeId::ANY {
             return true;
         }
-        let mut visitor = BooleanLikeVisitor { db: self.interner };
+        let mut visitor = BooleanLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 

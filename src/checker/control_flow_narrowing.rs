@@ -1735,6 +1735,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// // x === null -> Some(TypeGuard::NullishEquality, x_node)
     /// // x.kind === "circle" -> Some(TypeGuard::Discriminant { ... }, x_node)
     /// ```
+    #[allow(dead_code)]
     pub(crate) fn extract_type_guard(
         &self,
         condition: NodeIndex,
