@@ -11,7 +11,6 @@
 //! - Efficient unification with path compression
 
 use crate::interner::Atom;
-use crate::limits::BCT_BAILOUT_THRESHOLD;
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -1284,21 +1283,12 @@ impl<'a> InferenceContext<'a> {
     ///
     /// Returns None if no common base class exists or if types are not class types.
     fn find_common_base_class(&self, types: &[TypeId]) -> Option<TypeId> {
-        // Only applicable if we have at least 2 types
         if types.len() < 2 {
             return None;
         }
 
-        // HEURISTIC: Bail out for large arrays to prevent O(N·D²) behavior
-        // If we have > BCT_BAILOUT_THRESHOLD distinct types in an array literal,
-        // falling back to Union is semantically correct and much faster.
-        // See: docs/todo/14_perf.md - "Generic Functions Scaling (3.84x → 1.31x degradation)"
-        if types.len() > BCT_BAILOUT_THRESHOLD {
-            return None;
-        }
-
-        // Collect all potential base classes from the first type
-        // For the first type, collect all its base classes (including itself)
+        // 1. Initialize candidates from the FIRST type only.
+        // This is the only time we generate a full hierarchy.
         let mut base_candidates = if let Some(first_bases) = self.get_class_hierarchy(types[0]) {
             first_bases
         } else {
@@ -1306,27 +1296,21 @@ impl<'a> InferenceContext<'a> {
             return None;
         };
 
-        // For each other type, intersect its base classes with our candidates
+        // 2. For subsequent types, filter using is_subtype (cached and fast).
+        // No allocations, no hierarchy traversal - just subtype checks.
+        // This reduces complexity from O(N·Alloc(D)) to O(N·|Candidates|).
         for &ty in types.iter().skip(1) {
-            if let Some(ty_bases) = self.get_class_hierarchy(ty) {
-                // Keep only base classes that are also in the current type's hierarchy
-                base_candidates.retain(|&base| ty_bases.contains(&base));
-
-                // If no common bases remain, early exit
-                if base_candidates.is_empty() {
-                    return None;
-                }
-            } else {
-                // This type is not a class type, can't find common base class
+            // Optimization: If we run out of candidates, stop immediately.
+            if base_candidates.is_empty() {
                 return None;
             }
+
+            // Filter: Keep base if 'ty' is a subtype of 'base'
+            // This preserves semantic correctness while being much faster.
+            base_candidates.retain(|&base| self.is_subtype(ty, base));
         }
 
-        // We now have a list of common base classes
-        // The most specific common base is the last one in the hierarchy
-        // (closest to the derived classes)
-        // The hierarchy is ordered from most derived to most base
-        // So the first element is actually the most specific common base
+        // Return the most specific base (first remaining candidate after filtering)
         base_candidates.first().copied()
     }
 
