@@ -1,0 +1,997 @@
+/**
+ * Persistent worker thread for test execution
+ *
+ * Loads WASM once at startup, then processes tests as messages arrive.
+ * Includes crash detection and graceful error reporting.
+ *
+ * Uses pre-computed TSC results from cache when available.
+ */
+import { parentPort, workerData } from 'worker_threads';
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+import * as ts from 'typescript';
+import * as fs from 'fs';
+import * as path from 'path';
+import { hashContent } from './tsc-cache.js';
+import { loadLibManifest, normalizeLibName, resolveLibWithDependencies, parseLibReferences, readLibContent, } from './lib-manifest.js';
+import { parseTestCase, parseLibOption, shouldSkipTest, } from './test-utils.js';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+// Cached at worker startup
+let wasmModule = null;
+let libSource = '';
+let libPath = '';
+let libDir = '';
+let tsLibDir = ''; // TypeScript node_modules lib directory (for es2015, dom, etc.)
+let hasLibDir = false;
+let workerId = -1;
+let useWasm = true;
+let nativeBinaryPath = '';
+let nativeBinary = null;
+let tscCacheEntries = undefined;
+let libManifest = null;
+// Per-worker temp directory for native mode (reused across tests)
+let workerTempDir = null;
+let tempFileCounter = 0;
+function getWorkerTempDir() {
+    if (!workerTempDir) {
+        workerTempDir = fs.mkdtempSync(`/tmp/tsz-worker-${workerId}-`);
+    }
+    return workerTempDir;
+}
+function cleanWorkerTempDir() {
+    if (workerTempDir) {
+        try {
+            fs.rmSync(workerTempDir, { recursive: true, force: true });
+        }
+        catch { }
+        workerTempDir = null;
+        tempFileCounter = 0;
+    }
+}
+// Memory monitoring
+const getWasmMemoryUsage = () => {
+    try {
+        return wasmModule?.memory?.buffer?.byteLength ?? 0;
+    }
+    catch {
+        return 0;
+    }
+};
+const getMemoryUsage = () => process.memoryUsage().heapUsed + getWasmMemoryUsage();
+// Heartbeat to detect hangs
+let lastActivity = Date.now();
+const HEARTBEAT_INTERVAL = 1000;
+// Lib content cache (shared across tests for efficiency)
+const libContentCache = new Map();
+// Build lib directories list (set during worker init)
+let workerLibDirs = [];
+/**
+ * Read lib content using shared utilities with local caching.
+ */
+function readLibContentLocal(libName) {
+    const normalized = normalizeLibName(libName);
+    if (libContentCache.has(normalized)) {
+        return libContentCache.get(normalized);
+    }
+    const content = readLibContent(normalized, workerLibDirs);
+    if (content) {
+        libContentCache.set(normalized, content);
+    }
+    return content;
+}
+function loadLibRecursive(libName, out, seen) {
+    const normalized = normalizeLibName(libName);
+    if (seen.has(normalized))
+        return;
+    seen.add(normalized);
+    const content = readLibContentLocal(normalized);
+    if (!content)
+        return;
+    out.set(`lib.${normalized}.d.ts`, content);
+    // Use shared parseLibReferences from lib-manifest.ts
+    for (const ref of parseLibReferences(content)) {
+        loadLibRecursive(ref, out, seen);
+    }
+}
+function normalizeTargetName(target) {
+    if (typeof target === 'number') {
+        const name = ts.ScriptTarget[target];
+        if (typeof name === 'string')
+            return name.toLowerCase();
+    }
+    return String(target ?? 'es2020').toLowerCase();
+}
+function defaultFullLibNameForTarget(targetName) {
+    // Return .full lib name WITH DOM to match TSC's default behavior
+    // This ensures WASM mode produces the same results as server mode and TSC baseline
+    // The .full libs include DOM, ScriptHost, etc. via /// <reference lib="..." /> directives
+    switch (targetName) {
+        case 'es3':
+        case 'es5':
+            return 'es5.full';
+        case 'es6':
+        case 'es2015':
+            return 'es2015.full';
+        case 'es2016':
+            return 'es2016.full';
+        case 'es2017':
+            return 'es2017.full';
+        case 'es2018':
+            return 'es2018.full';
+        case 'es2019':
+            return 'es2019.full';
+        case 'es2020':
+            return 'es2020.full';
+        case 'es2021':
+            return 'es2021.full';
+        case 'es2022':
+            return 'es2022.full';
+        case 'es2023':
+            return 'es2023.full';
+        case 'es2024':
+            return 'es2024.full';
+        case 'esnext':
+            return 'esnext.full';
+        default:
+            // Default to ES5.full for unknown/unspecified targets (matches TSC)
+            return 'es5.full';
+    }
+}
+function defaultLibNamesForTarget(targetName) {
+    // Use .full lib (with DOM) to match TSC's default behavior
+    // This is critical for conformance - TSC baseline uses .full libs
+    const fullLibName = defaultFullLibNameForTarget(targetName);
+    // Return just the full lib name - collectLibFiles will recursively resolve dependencies
+    return [fullLibName];
+}
+function getLibNamesForTestCase(opts, compilerOptionsTarget) {
+    if (opts.nolib)
+        return [];
+    const explicit = parseLibOption(opts.lib);
+    if (explicit.length > 0)
+        return explicit;
+    // No explicit @lib - return default libs based on target
+    const targetName = normalizeTargetName(compilerOptionsTarget ?? opts.target);
+    return defaultLibNamesForTarget(targetName);
+}
+function collectLibFiles(libNames) {
+    const out = new Map();
+    const seen = new Set();
+    // If manifest is available, use it for more accurate dependency resolution
+    if (libManifest) {
+        const resolvedNames = new Set();
+        for (const libName of libNames) {
+            const deps = resolveLibWithDependencies(libName, libManifest);
+            for (const dep of deps) {
+                resolvedNames.add(dep);
+            }
+        }
+        for (const libName of resolvedNames) {
+            loadLibRecursive(libName, out, seen);
+        }
+    }
+    else {
+        // Fall back to file-based resolution
+        for (const libName of libNames) {
+            loadLibRecursive(libName, out, seen);
+        }
+    }
+    return out;
+}
+/**
+ * Parse test directives using shared utility.
+ * Adds isolatedModules: true for WASM mode (no filesystem access).
+ */
+function parseTestDirectives(code, filePath) {
+    const parsed = parseTestCase(code, filePath);
+    // Set isolatedModules: true to avoid false TS2307 errors
+    // (we don't have full filesystem access to resolve imports in WASM mode)
+    parsed.directives.isolatedmodules = true;
+    // Return in expected format (options field for compatibility)
+    return {
+        options: parsed.directives,
+        harness: parsed.harness,
+        isMultiFile: parsed.isMultiFile,
+        files: parsed.files,
+        category: parsed.category,
+    };
+}
+// Target string to ScriptTarget mapping
+const TARGET_MAP = {
+    es3: ts.ScriptTarget.ES3,
+    es5: ts.ScriptTarget.ES5,
+    es6: ts.ScriptTarget.ES2015,
+    es2015: ts.ScriptTarget.ES2015,
+    es2016: ts.ScriptTarget.ES2016,
+    es2017: ts.ScriptTarget.ES2017,
+    es2018: ts.ScriptTarget.ES2018,
+    es2019: ts.ScriptTarget.ES2019,
+    es2020: ts.ScriptTarget.ES2020,
+    es2021: ts.ScriptTarget.ES2021,
+    es2022: ts.ScriptTarget.ES2022,
+    esnext: ts.ScriptTarget.ESNext,
+};
+// Module string to ModuleKind mapping
+const MODULE_MAP = {
+    none: ts.ModuleKind.None,
+    commonjs: ts.ModuleKind.CommonJS,
+    amd: ts.ModuleKind.AMD,
+    umd: ts.ModuleKind.UMD,
+    system: ts.ModuleKind.System,
+    es6: ts.ModuleKind.ES2015,
+    es2015: ts.ModuleKind.ES2015,
+    es2020: ts.ModuleKind.ES2020,
+    es2022: ts.ModuleKind.ES2022,
+    esnext: ts.ModuleKind.ESNext,
+    node16: ts.ModuleKind.Node16,
+    nodenext: ts.ModuleKind.NodeNext,
+    preserve: ts.ModuleKind.Preserve,
+};
+// ModuleResolution string mapping
+const MODULE_RESOLUTION_MAP = {
+    classic: ts.ModuleResolutionKind.Classic,
+    node: ts.ModuleResolutionKind.NodeJs,
+    node10: ts.ModuleResolutionKind.NodeJs,
+    node16: ts.ModuleResolutionKind.Node16,
+    nodenext: ts.ModuleResolutionKind.NodeNext,
+    bundler: ts.ModuleResolutionKind.Bundler,
+};
+// JSX string mapping
+const JSX_MAP = {
+    none: ts.JsxEmit.None,
+    preserve: ts.JsxEmit.Preserve,
+    react: ts.JsxEmit.React,
+    'react-native': ts.JsxEmit.ReactNative,
+    'react-jsx': ts.JsxEmit.ReactJSX,
+    'react-jsxdev': ts.JsxEmit.ReactJSXDev,
+};
+function toCompilerOptions(opts) {
+    const options = {
+        noEmit: true,
+    };
+    // Target - default to ES5 for minimal lib loading (220KB vs 2MB+ for ES2020)
+    if (opts.target !== undefined) {
+        const t = String(opts.target).toLowerCase();
+        options.target = TARGET_MAP[t] ?? ts.ScriptTarget.ES5;
+    }
+    else {
+        options.target = ts.ScriptTarget.ES5;
+    }
+    // Module
+    if (opts.module !== undefined) {
+        const m = String(opts.module).toLowerCase();
+        options.module = MODULE_MAP[m] ?? ts.ModuleKind.ESNext;
+    }
+    else {
+        options.module = ts.ModuleKind.ESNext;
+    }
+    // Module resolution
+    if (opts.moduleresolution !== undefined) {
+        const mr = String(opts.moduleresolution).toLowerCase();
+        options.moduleResolution = MODULE_RESOLUTION_MAP[mr] ?? ts.ModuleResolutionKind.NodeJs;
+    }
+    // JSX
+    if (opts.jsx !== undefined) {
+        const j = String(opts.jsx).toLowerCase();
+        options.jsx = JSX_MAP[j] ?? ts.JsxEmit.None;
+    }
+    // Strict mode flags
+    if (opts.strict !== undefined)
+        options.strict = opts.strict;
+    if (opts.noimplicitany !== undefined)
+        options.noImplicitAny = opts.noimplicitany;
+    if (opts.strictnullchecks !== undefined)
+        options.strictNullChecks = opts.strictnullchecks;
+    if (opts.strictfunctiontypes !== undefined)
+        options.strictFunctionTypes = opts.strictfunctiontypes;
+    if (opts.strictbindcallapply !== undefined)
+        options.strictBindCallApply = opts.strictbindcallapply;
+    if (opts.strictpropertyinitialization !== undefined)
+        options.strictPropertyInitialization = opts.strictpropertyinitialization;
+    if (opts.noimplicitthis !== undefined)
+        options.noImplicitThis = opts.noimplicitthis;
+    if (opts.alwaysstrict !== undefined)
+        options.alwaysStrict = opts.alwaysstrict;
+    // Lib and noLib
+    if (opts.nolib !== undefined)
+        options.noLib = opts.nolib;
+    if (opts.lib !== undefined) {
+        const libVal = opts.lib;
+        if (typeof libVal === 'string') {
+            options.lib = libVal.split(',').map(s => s.trim());
+        }
+        else if (Array.isArray(libVal)) {
+            options.lib = libVal;
+        }
+    }
+    if (opts.skiplibcheck !== undefined)
+        options.skipLibCheck = opts.skiplibcheck;
+    // JavaScript support
+    if (opts.allowjs !== undefined)
+        options.allowJs = opts.allowjs;
+    if (opts.checkjs !== undefined)
+        options.checkJs = opts.checkjs;
+    // Declaration emit
+    if (opts.declaration !== undefined)
+        options.declaration = opts.declaration;
+    if (opts.declarationmap !== undefined)
+        options.declarationMap = opts.declarationmap;
+    if (opts.emitdeclarationonly !== undefined)
+        options.emitDeclarationOnly = opts.emitdeclarationonly;
+    // Decorators
+    if (opts.experimentaldecorators !== undefined)
+        options.experimentalDecorators = opts.experimentaldecorators;
+    if (opts.emitdecoratormetadata !== undefined)
+        options.emitDecoratorMetadata = opts.emitdecoratormetadata;
+    // Class fields
+    if (opts.usedefineforclassfields !== undefined)
+        options.useDefineForClassFields = opts.usedefineforclassfields;
+    // Import helpers
+    if (opts.importhelpers !== undefined)
+        options.importHelpers = opts.importhelpers;
+    if (opts.downleveliteration !== undefined)
+        options.downlevelIteration = opts.downleveliteration;
+    // Module interop
+    if (opts.esmoduleinterop !== undefined)
+        options.esModuleInterop = opts.esmoduleinterop;
+    if (opts.allowsyntheticdefaultimports !== undefined)
+        options.allowSyntheticDefaultImports = opts.allowsyntheticdefaultimports;
+    // Output options
+    if (opts.outfile !== undefined)
+        options.outFile = opts.outfile;
+    if (opts.outdir !== undefined)
+        options.outDir = opts.outdir;
+    if (opts.rootdir !== undefined)
+        options.rootDir = opts.rootdir;
+    // Type checking
+    if (opts.nounusedlocals !== undefined)
+        options.noUnusedLocals = opts.nounusedlocals;
+    if (opts.nounusedparameters !== undefined)
+        options.noUnusedParameters = opts.nounusedparameters;
+    if (opts.noimplicitreturns !== undefined)
+        options.noImplicitReturns = opts.noimplicitreturns;
+    if (opts.nofallthroughcasesinswitch !== undefined)
+        options.noFallthroughCasesInSwitch = opts.nofallthroughcasesinswitch;
+    if (opts.nouncheckedindexedaccess !== undefined)
+        options.noUncheckedIndexedAccess = opts.nouncheckedindexedaccess;
+    if (opts.nopropertyaccessfromindexsignature !== undefined)
+        options.noPropertyAccessFromIndexSignature = opts.nopropertyaccessfromindexsignature;
+    if (opts.exactoptionalpropertytypes !== undefined)
+        options.exactOptionalPropertyTypes = opts.exactoptionalpropertytypes;
+    // Source maps
+    if (opts.sourcemap !== undefined)
+        options.sourceMap = opts.sourcemap;
+    if (opts.inlinesourcemap !== undefined)
+        options.inlineSourceMap = opts.inlinesourcemap;
+    if (opts.inlinesources !== undefined)
+        options.inlineSources = opts.inlinesources;
+    // Isolated modules
+    if (opts.isolatedmodules !== undefined)
+        options.isolatedModules = opts.isolatedmodules;
+    // Resolve JSON modules
+    if (opts.resolvejsonmodule !== undefined)
+        options.resolveJsonModule = opts.resolvejsonmodule;
+    // Preserve const enums
+    if (opts.preserveconstenums !== undefined)
+        options.preserveConstEnums = opts.preserveconstenums;
+    // Allow unreachable/unused labels
+    if (opts.allowunreachablecode !== undefined)
+        options.allowUnreachableCode = opts.allowunreachablecode;
+    if (opts.allowunusedlabels !== undefined)
+        options.allowUnusedLabels = opts.allowunusedlabels;
+    // forceConsistentCasingInFileNames
+    if (opts.forceconsistentcasinginfilenames !== undefined) {
+        options.forceConsistentCasingInFileNames = opts.forceconsistentcasinginfilenames;
+    }
+    return options;
+}
+// Convert options to JSON for WASM (snake_case keys expected)
+function toWasmOptions(opts) {
+    const result = {};
+    const mapping = {
+        strict: 'strict',
+        noimplicitany: 'noImplicitAny',
+        strictnullchecks: 'strictNullChecks',
+        strictfunctiontypes: 'strictFunctionTypes',
+        strictpropertyinitialization: 'strictPropertyInitialization',
+        noimplicitreturns: 'noImplicitReturns',
+        noimplicitthis: 'noImplicitThis',
+        target: 'target',
+        module: 'module',
+        nolib: 'noLib',
+        lib: 'lib',
+        isolatedmodules: 'isolatedModules',
+    };
+    for (const [key, value] of Object.entries(opts)) {
+        const mapped = mapping[key] ?? key;
+        result[mapped] = value;
+    }
+    return result;
+}
+function runTsc(testCase) {
+    const compilerOptions = toCompilerOptions(testCase.options);
+    const sourceFiles = new Map();
+    const fileNames = [];
+    const libNames = getLibNamesForTestCase(testCase.options, compilerOptions.target);
+    const libFiles = libNames.length ? collectLibFiles(libNames) : new Map();
+    // DON'T set compilerOptions.lib - it causes tsc to look for libs at absolute paths
+    // Instead, we provide libs via getSourceFile/getDefaultLibFileName
+    for (const file of testCase.files) {
+        // Determine script kind based on file extension
+        let scriptKind = ts.ScriptKind.TS;
+        if (file.name.endsWith('.js'))
+            scriptKind = ts.ScriptKind.JS;
+        else if (file.name.endsWith('.jsx'))
+            scriptKind = ts.ScriptKind.JSX;
+        else if (file.name.endsWith('.tsx'))
+            scriptKind = ts.ScriptKind.TSX;
+        else if (file.name.endsWith('.json'))
+            scriptKind = ts.ScriptKind.JSON;
+        // Ensure content is always a string (defensive check for undefined from parser edge cases)
+        const content = file.content ?? '';
+        const sf = ts.createSourceFile(file.name, content, compilerOptions.target ?? ts.ScriptTarget.ES2020, true, scriptKind);
+        sourceFiles.set(file.name, sf);
+        fileNames.push(file.name);
+    }
+    // Add lib files unless noLib is set
+    if (!compilerOptions.noLib && libFiles.size) {
+        for (const [name, content] of libFiles.entries()) {
+            sourceFiles.set(name, ts.createSourceFile(name, content, compilerOptions.target ?? ts.ScriptTarget.ES2020, true));
+        }
+    }
+    else if (!compilerOptions.noLib && libSource) {
+        sourceFiles.set('lib.d.ts', ts.createSourceFile('lib.d.ts', libSource, compilerOptions.target ?? ts.ScriptTarget.ES2020, true));
+    }
+    const host = ts.createCompilerHost(compilerOptions);
+    host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) => {
+        return sourceFiles.get(name) ?? sourceFiles.get(path.basename(name));
+    };
+    host.fileExists = (name) => sourceFiles.has(name) || sourceFiles.has(path.basename(name));
+    host.readFile = (name) => {
+        const file = testCase.files.find(f => f.name === name);
+        if (file)
+            return file.content ?? ''; // Ensure content is always a string
+        const libName = libFiles.has(name) ? name : path.basename(name);
+        if (libFiles.has(libName))
+            return libFiles.get(libName);
+        if (libSource && libName === 'lib.d.ts')
+            return libSource;
+        return undefined;
+    };
+    // Return the base lib file that's in sourceFiles
+    // For ES5 target, this is lib.es5.d.ts; tsc will follow /// <reference lib="..." /> directives
+    host.getDefaultLibFileName = () => {
+        // If we have lib files loaded, return the base lib
+        if (libFiles.size > 0) {
+            // Find the base lib (es5 or the lowest available)
+            if (sourceFiles.has('lib.es5.d.ts'))
+                return 'lib.es5.d.ts';
+            // Fallback to first lib file
+            for (const name of sourceFiles.keys()) {
+                if (name.startsWith('lib.') && name.endsWith('.d.ts')) {
+                    return name;
+                }
+            }
+        }
+        return 'lib.d.ts';
+    };
+    host.getCurrentDirectory = () => '/';
+    host.getCanonicalFileName = (name) => name;
+    host.useCaseSensitiveFileNames = () => true;
+    host.getNewLine = () => '\n';
+    host.writeFile = () => { };
+    const program = ts.createProgram(fileNames, compilerOptions, host);
+    const diags = [];
+    for (const sf of sourceFiles.values()) {
+        if (sf.fileName.startsWith('lib.'))
+            continue;
+        for (const d of program.getSyntacticDiagnostics(sf))
+            diags.push(d.code);
+        for (const d of program.getSemanticDiagnostics(sf))
+            diags.push(d.code);
+    }
+    // Also get global diagnostics
+    for (const d of program.getGlobalDiagnostics())
+        diags.push(d.code);
+    return diags;
+}
+async function runCompiler(testCase) {
+    const memBefore = getMemoryUsage();
+    const wasmLibNames = getLibNamesForTestCase(testCase.options, undefined);
+    const wasmLibFiles = wasmLibNames.length ? collectLibFiles(wasmLibNames) : new Map();
+    if (useWasm) {
+        // WASM mode - use the loaded WASM module
+        try {
+            if (testCase.isMultiFile || testCase.files.length > 1) {
+                const program = new wasmModule.WasmProgram();
+                if (program.setCompilerOptions) {
+                    program.setCompilerOptions(JSON.stringify(toWasmOptions(testCase.options)));
+                }
+                // Add lib files unless noLib - use addLibFile for library files
+                if (!testCase.options.nolib) {
+                    if (wasmLibFiles.size) {
+                        for (const [name, content] of wasmLibFiles.entries()) {
+                            program.addLibFile(name, content);
+                        }
+                    }
+                    else if (libSource) {
+                        // No explicit lib files found - load default lib.d.ts (ES5 base)
+                        // This handles the case where lib names were specified but files not found,
+                        // or no libs were specified at all.
+                        // Note: The WASM compiler will use embedded ES2015+ libs based on target
+                        program.addLibFile('lib.d.ts', libSource);
+                    }
+                }
+                for (const file of testCase.files) {
+                    // Ensure content is always a string (defensive check for undefined from parser edge cases)
+                    program.addFile(file.name, file.content ?? '');
+                }
+                // Safely extract diagnostic codes with defensive checks
+                let codes = [];
+                try {
+                    const diagCodes = program.getAllDiagnosticCodes();
+                    codes = Array.isArray(diagCodes) ? diagCodes :
+                        Array.from(diagCodes || []).map((c) => typeof c === 'number' ? c : 0);
+                }
+                catch (e) {
+                    codes = [];
+                }
+                program.free();
+                return { codes, crashed: false, oom: false };
+            }
+            else {
+                const file = testCase.files[0];
+                // Ensure content is always a string (defensive check for undefined from parser edge cases)
+                const parser = new wasmModule.Parser(file.name, file.content ?? '');
+                // Add lib files unless noLib
+                if (!testCase.options.nolib) {
+                    if (wasmLibFiles.size) {
+                        for (const [name, content] of wasmLibFiles.entries()) {
+                            parser.addLibFile(name, content);
+                        }
+                    }
+                    else if (libSource) {
+                        // No explicit lib files found - load default lib.d.ts (ES5 base)
+                        // This handles the case where lib names were specified but files not found,
+                        // or no libs were specified at all.
+                        // Note: The WASM compiler will use embedded ES2015+ libs based on target
+                        parser.addLibFile('lib.d.ts', libSource);
+                    }
+                }
+                // Pass compiler options to WASM
+                if (parser.setCompilerOptions) {
+                    parser.setCompilerOptions(JSON.stringify(toWasmOptions(testCase.options)));
+                }
+                parser.parseSourceFile();
+                // Safely extract diagnostics with defensive checks
+                let parseDiags = [];
+                try {
+                    const parseResult = parser.getDiagnosticsJson();
+                    if (parseResult) {
+                        const parsed = JSON.parse(parseResult);
+                        parseDiags = Array.isArray(parsed) ? parsed : [];
+                    }
+                }
+                catch (e) {
+                    // If parsing fails, use empty array
+                    parseDiags = [];
+                }
+                let checkDiags = [];
+                try {
+                    const checkResult = parser.checkSourceFile();
+                    if (checkResult) {
+                        const parsed = JSON.parse(checkResult);
+                        checkDiags = Array.isArray(parsed?.diagnostics) ? parsed.diagnostics : [];
+                    }
+                }
+                catch (e) {
+                    // If parsing fails, use empty array
+                    checkDiags = [];
+                }
+                // Extract diagnostic codes with null checks
+                const codes = [
+                    ...parseDiags.filter((d) => d && typeof d.code === 'number').map((d) => d.code),
+                    ...checkDiags.filter((d) => d && typeof d.code === 'number').map((d) => d.code),
+                ];
+                parser.free();
+                return { codes, crashed: false, oom: false };
+            }
+        }
+        catch (e) {
+            const memAfter = getMemoryUsage();
+            const memGrowth = memAfter - memBefore;
+            const isOom = memGrowth > 100 * 1024 * 1024 ||
+                (e instanceof Error && (e.message.includes('memory') ||
+                    e.message.includes('allocation') ||
+                    e.message.includes('heap') ||
+                    e.message.includes('out of') ||
+                    e.message.includes('RuntimeError')));
+            return {
+                codes: [],
+                crashed: true,
+                oom: isOom,
+                error: e instanceof Error ? e.message : String(e)
+            };
+        }
+    }
+    else {
+        // Native mode - spawn the binary as a child process
+        // Use per-worker temp directory for better performance (reused across tests)
+        return new Promise((resolve) => {
+            const baseDir = getWorkerTempDir();
+            const testId = tempFileCounter++;
+            const tmpDir = path.join(baseDir, `test-${testId}`);
+            fs.mkdirSync(tmpDir, { recursive: true });
+            const cleanup = () => {
+                // Only clean the test subdirectory, not the whole worker temp dir
+                try {
+                    fs.rmSync(tmpDir, { recursive: true, force: true });
+                }
+                catch {
+                    // Ignore cleanup errors
+                }
+            };
+            try {
+                // Write test files to temp directory
+                const filesToCheck = [];
+                // For native mode, write lib.d.ts to the directory (for reference)
+                // but don't add it to the args list - the native CLI handles lib loading internally
+                // and parsing the huge lib.d.ts file for each test is too slow
+                if (!testCase.options.nolib && libSource) {
+                    fs.writeFileSync(path.join(tmpDir, 'lib.d.ts'), libSource);
+                    // Don't add to filesToCheck - native CLI handles its own lib loading
+                }
+                // Write test files
+                for (const file of testCase.files) {
+                    const filePath = path.join(tmpDir, file.name);
+                    // Ensure parent directories exist for nested paths like node_modules/...
+                    const parentDir = path.dirname(filePath);
+                    if (parentDir !== tmpDir) {
+                        fs.mkdirSync(parentDir, { recursive: true });
+                    }
+                    // Ensure content is always a string (defensive check for undefined from parser edge cases)
+                    fs.writeFileSync(filePath, file.content ?? '');
+                    filesToCheck.push(file.name);
+                }
+                // Handle symlinks for native mode (from harness options)
+                if (testCase.harness.symlinks) {
+                    for (const { target, link } of testCase.harness.symlinks) {
+                        const linkPath = path.join(tmpDir, link.replace(/^\.\//, ''));
+                        const targetPath = path.join(tmpDir, target.replace(/^\.\//, ''));
+                        const linkDir = path.dirname(linkPath);
+                        if (!fs.existsSync(linkDir)) {
+                            fs.mkdirSync(linkDir, { recursive: true });
+                        }
+                        try {
+                            // Calculate relative target for portability
+                            const relativeTarget = path.relative(linkDir, targetPath);
+                            // Determine symlink type for Windows compatibility
+                            const symlinkType = fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory() ? 'dir' : 'file';
+                            fs.symlinkSync(relativeTarget, linkPath, symlinkType);
+                        }
+                        catch {
+                            // Ignore EEXIST or permission errors to prevent crash
+                        }
+                    }
+                }
+                // Spawn native binary
+                const { spawn } = require('child_process');
+                const args = [];
+                // Add compiler options as CLI arguments
+                const opts = testCase.options;
+                if (opts.target)
+                    args.push('--target', String(opts.target));
+                if (opts.lib) {
+                    const libVal = opts.lib;
+                    if (typeof libVal === 'string') {
+                        // Split comma-separated lib names
+                        const libNames = libVal.split(',').map(s => s.trim());
+                        for (const libName of libNames) {
+                            args.push('--lib', libName);
+                        }
+                    }
+                    else if (Array.isArray(libVal)) {
+                        args.push('--lib', libVal.join(','));
+                    }
+                }
+                if (opts.nolib)
+                    args.push('--noLib');
+                if (opts.strict)
+                    args.push('--strict');
+                if (opts.strictnullchecks !== undefined)
+                    args.push(opts.strictnullchecks ? '--strictNullChecks' : '--strictNullChecks=false');
+                if (opts.strictfunctiontypes !== undefined)
+                    args.push(opts.strictfunctiontypes ? '--strictFunctionTypes' : '--strictFunctionTypes=false');
+                if (opts.strictpropertyinitialization !== undefined)
+                    args.push(opts.strictpropertyinitialization ? '--strictPropertyInitialization' : '--strictPropertyInitialization=false');
+                if (opts.noimplicitany !== undefined)
+                    args.push(opts.noimplicitany ? '--noImplicitAny' : '--noImplicitAny=false');
+                if (opts.noimplicitreturns)
+                    args.push('--noImplicitReturns');
+                if (opts.noimplicitthis !== undefined)
+                    args.push(opts.noimplicitthis ? '--noImplicitThis' : '--noImplicitThis=false');
+                if (opts.useunknownincatchvariables !== undefined)
+                    args.push(opts.useunknownincatchvariables ? '--useUnknownInCatchVariables' : '--useUnknownInCatchVariables=false');
+                if (opts.module)
+                    args.push('--module', String(opts.module));
+                if (opts.jsx)
+                    args.push('--jsx', String(opts.jsx));
+                if (opts.allowjs)
+                    args.push('--allowJs');
+                if (opts.checkjs)
+                    args.push('--checkJs');
+                if (opts.declaration)
+                    args.push('--declaration');
+                if (opts.noemit)
+                    args.push('--noEmit');
+                if (opts.allowunreachablecode !== undefined)
+                    args.push(opts.allowunreachablecode ? '--allowUnreachableCode' : '--allowUnreachableCode=false');
+                // Add file paths
+                args.push(...filesToCheck.map(f => path.join(tmpDir, f)));
+                // Run from project directory so CLI can find its built-in lib files
+                const projectDir = path.resolve(__dirname, '../../..');
+                const child = spawn(nativeBinaryPath, args, {
+                    cwd: projectDir,
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                });
+                let stderr = '';
+                const codes = [];
+                child.stderr?.on('data', (data) => {
+                    stderr += data.toString();
+                });
+                child.on('close', (code) => {
+                    // Parse error codes from stderr (tsz outputs to stderr)
+                    const errorMatches = stderr.match(/TS(\d+)/g);
+                    if (errorMatches) {
+                        for (const match of errorMatches) {
+                            codes.push(parseInt(match.substring(2), 10));
+                        }
+                    }
+                    // Exit code 1 with error codes is normal (tsz reports type errors)
+                    // Only treat as crash if:
+                    // 1. Exit code is not 0 or 1, OR
+                    // 2. Exit code is 1 but no error codes found (unexpected error)
+                    const hasErrors = codes.length > 0;
+                    const actuallyCrashed = (code !== 0 && code !== 1) || (code === 1 && !hasErrors);
+                    cleanup();
+                    resolve({ codes, crashed: actuallyCrashed, oom: false });
+                });
+                child.on('error', (err) => {
+                    cleanup();
+                    resolve({ codes: [], crashed: true, oom: false, error: err.message });
+                });
+                // Timeout after 10 seconds
+                setTimeout(() => {
+                    child.kill();
+                    cleanup();
+                    resolve({ codes: [], crashed: true, oom: false, error: 'Timeout' });
+                }, 10000);
+            }
+            catch (err) {
+                cleanup();
+                resolve({ codes: [], crashed: true, oom: false, error: String(err) });
+            }
+        });
+    }
+}
+async function processTest(job) {
+    lastActivity = Date.now();
+    const memBefore = getMemoryUsage();
+    try {
+        const code = fs.readFileSync(job.filePath, 'utf8');
+        const testCase = parseTestDirectives(code, job.filePath);
+        // Check if test should be skipped based on harness options
+        const skipResult = shouldSkipTest(testCase.harness);
+        if (skipResult.skip) {
+            return {
+                type: 'result',
+                id: job.id,
+                tscCodes: [],
+                wasmCodes: [],
+                crashed: false,
+                oom: false,
+                skipped: true,
+                skipReason: skipResult.reason,
+                category: testCase.category,
+                memoryUsed: 0,
+            };
+        }
+        // Try to use cached TSC result
+        let tscCodes;
+        const relPath = job.filePath.replace(job.testsBasePath + path.sep, '');
+        const cachedEntry = tscCacheEntries?.[relPath];
+        if (cachedEntry && cachedEntry.hash === hashContent(code)) {
+            // Use cached result
+            tscCodes = cachedEntry.codes;
+        }
+        else {
+            // Run TSC (cache miss or file changed)
+            tscCodes = runTsc(testCase);
+        }
+        lastActivity = Date.now();
+        // Run compiler (WASM or native, may crash)
+        const compilerResult = await runCompiler(testCase);
+        lastActivity = Date.now();
+        const memAfter = getMemoryUsage();
+        // Try to run garbage collection if available (Node.js with --expose-gc)
+        if (global.gc) {
+            try {
+                global.gc();
+            }
+            catch {
+                // Ignore GC errors
+            }
+        }
+        return {
+            type: 'result',
+            id: job.id,
+            tscCodes,
+            wasmCodes: compilerResult.codes,
+            crashed: compilerResult.crashed,
+            oom: compilerResult.oom,
+            skipped: false,
+            category: testCase.category,
+            error: compilerResult.error,
+            memoryUsed: memAfter - memBefore,
+        };
+    }
+    catch (e) {
+        const memAfter = getMemoryUsage();
+        const isOom = (memAfter - memBefore) > 100 * 1024 * 1024;
+        // Try to run garbage collection if available
+        if (global.gc) {
+            try {
+                global.gc();
+            }
+            catch {
+                // Ignore GC errors
+            }
+        }
+        return {
+            type: 'result',
+            id: job.id,
+            tscCodes: [],
+            wasmCodes: [],
+            crashed: true,
+            oom: isOom,
+            skipped: false,
+            category: 'unknown',
+            error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+            memoryUsed: memAfter - memBefore,
+        };
+    }
+}
+// Clean up temp directory on process exit
+process.on('exit', () => {
+    cleanWorkerTempDir();
+});
+// Uncaught exception handler - report and exit
+process.on('uncaughtException', (err) => {
+    cleanWorkerTempDir();
+    try {
+        parentPort?.postMessage({
+            type: 'crash',
+            workerId,
+            error: `Uncaught: ${err.message}`,
+            stack: err.stack,
+        });
+    }
+    catch {
+        // Can't send message, just exit
+    }
+    process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+    try {
+        parentPort?.postMessage({
+            type: 'crash',
+            workerId,
+            error: `Unhandled rejection: ${reason}`,
+        });
+    }
+    catch {
+        // Can't send message, just exit
+    }
+    process.exit(1);
+});
+// Initialize worker
+(async () => {
+    const data = workerData;
+    workerId = data.id;
+    libPath = data.libPath;
+    libDir = data.libDir;
+    useWasm = data.useWasm;
+    nativeBinaryPath = data.nativeBinaryPath || '';
+    tscCacheEntries = data.tscCacheEntries;
+    // Load WASM module once (if using WASM)
+    if (useWasm) {
+        try {
+            const wasmPath = path.join(data.wasmPkgPath, 'wasm.js');
+            // For --target nodejs, we use require() instead of dynamic import
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            wasmModule = require(wasmPath);
+        }
+        catch (e) {
+            parentPort?.postMessage({
+                type: 'error',
+                workerId,
+                error: `Failed to load WASM: ${e instanceof Error ? e.message : e}`,
+            });
+            process.exit(1);
+        }
+    }
+    else {
+        // Verify native binary exists
+        if (!fs.existsSync(nativeBinaryPath)) {
+            parentPort?.postMessage({
+                type: 'error',
+                workerId,
+                error: `Native binary not found: ${nativeBinaryPath}`,
+            });
+            process.exit(1);
+        }
+    }
+    // Load lib.d.ts once (if libPath is a file) or set libDir (if directory)
+    try {
+        const stat = fs.statSync(libPath);
+        if (stat.isDirectory()) {
+            libDir = libPath;
+            hasLibDir = fs.existsSync(path.join(libDir, 'es5.d.ts'));
+        }
+        else {
+            libSource = fs.readFileSync(libPath, 'utf8');
+            hasLibDir = fs.existsSync(path.join(libDir, 'es5.d.ts'));
+        }
+    }
+    catch { }
+    // Set TypeScript lib directory - always at TypeScript/src/lib relative to project root
+    tsLibDir = path.resolve(__dirname, '../../TypeScript/src/lib');
+    // Build lib directories list for shared utilities
+    workerLibDirs = [];
+    if (hasLibDir && libDir) {
+        workerLibDirs.push(libDir);
+    }
+    if (tsLibDir) {
+        workerLibDirs.push(tsLibDir);
+    }
+    // Load lib manifest for consistent resolution (optional - falls back to file-based)
+    try {
+        libManifest = loadLibManifest();
+    }
+    catch {
+        // Manifest not available, use file-based resolution
+    }
+    // Signal ready with memory info
+    parentPort.postMessage({
+        type: 'ready',
+        workerId,
+        memoryUsed: getMemoryUsage(),
+    });
+    // Process jobs
+    parentPort.on('message', async (msg) => {
+        // Handle recycle signal from parent (clean temp dir before termination)
+        if ('type' in msg && msg.type === 'recycle') {
+            cleanWorkerTempDir();
+            return;
+        }
+        // Process test job
+        const job = msg;
+        const result = await processTest(job);
+        parentPort.postMessage(result);
+    });
+    // Heartbeat - detect if we're hung
+    setInterval(() => {
+        const sinceLastActivity = Date.now() - lastActivity;
+        if (sinceLastActivity > 30000) {
+            parentPort?.postMessage({
+                type: 'heartbeat',
+                workerId,
+                sinceLastActivity,
+                memoryUsed: getMemoryUsage(),
+            });
+        }
+    }, HEARTBEAT_INTERVAL);
+})();
+//# sourceMappingURL=worker.js.map
