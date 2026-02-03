@@ -26,6 +26,30 @@ According to the analysis of the codebase, the next priorities for complex types
 
 ## History (Last 20)
 
+### 2025-02-03: Const Type Parameters (TS 5.0) - Partial Implementation
+
+**Completed**:
+1. Added `is_const: bool` field to `TypeParamInfo` struct in `src/solver/types.rs`
+2. Added `has_const_modifier` function in `src/solver/lower.rs` to detect const keyword
+3. Updated `lower_type_parameter` to set `is_const` flag based on modifiers
+
+**Status**: Implementation started but not complete. The inference side requires updating many places in `src/solver/infer.rs` to handle the 3-tuple `(name, var, is_const)` format for `type_params`. This is complex because:
+- Many places iterate over `type_params` using 2-tuple destructuring
+- The `InferenceContext` structure needs to be updated
+- `add_lower_bound` needs to apply const transformation to types
+
+**Next Steps**:
+1. Update all `type_params` iterations in infer.rs to use 3-tuple format
+2. Implement `as_const_type` helper function
+3. Modify `add_lower_bound` to check `is_const` and apply transformation
+4. Update callers of `fresh_type_param` to pass `is_const` flag
+
+**Files Modified**:
+- `src/solver/types.rs`: Added `is_const` field to `TypeParamInfo`
+- `src/solver/lower.rs`: Added `has_const_modifier` function, updated `lower_type_parameter`
+
+---
+
 ### 2025-02-03: Tail-Recursion Elimination for Conditional Types
 
 **Implemented**: Tail-recursion elimination in `src/solver/evaluate_rules/conditional.rs`

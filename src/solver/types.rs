@@ -761,6 +761,9 @@ pub struct TypeParamInfo {
     pub name: Atom,
     pub constraint: Option<TypeId>,
     pub default: Option<TypeId>,
+    /// Whether this is a const type parameter (TS 5.0+)
+    /// Const type parameters preserve literal types and infer readonly modifiers
+    pub is_const: bool,
 }
 
 /// Reference to a symbol (for named types)
