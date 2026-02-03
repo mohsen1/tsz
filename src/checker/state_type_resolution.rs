@@ -1047,6 +1047,110 @@ impl<'a> CheckerState<'a> {
         self.error(start, length, message, diagnostic_codes::CANNOT_FIND_MODULE);
     }
 
+    /// Emit TS1192 error when a module has no default export.
+    ///
+    /// This is emitted when trying to use a default import (`import X from 'mod'`)
+    /// but the module doesn't export a default binding.
+    ///
+    /// Note: This error is suppressed when `allowSyntheticDefaultImports` or
+    /// `esModuleInterop` is enabled, as those flags allow importing modules
+    /// without explicit default exports.
+    pub(crate) fn emit_no_default_export_error(
+        &mut self,
+        module_specifier: &str,
+        decl_node: NodeIndex,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        // Only emit if report_unresolved_imports is enabled
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        // allowSyntheticDefaultImports allows default imports without explicit default export
+        // This is implied by esModuleInterop
+        if self.ctx.allow_synthetic_default_imports() {
+            return;
+        }
+
+        // Get span from declaration node
+        let (start, length) = if !decl_node.is_none() {
+            if let Some(node) = self.ctx.arena.get(decl_node) {
+                (node.pos, node.end - node.pos)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+
+        use crate::checker::types::diagnostics::{diagnostic_messages, format_message};
+        let message =
+            format_message(diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT, &[module_specifier]);
+        self.error(
+            start,
+            length,
+            message,
+            diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
+        );
+    }
+
+    /// Emit TS2305 error when a module has no exported member with the given name.
+    ///
+    /// This is emitted when trying to use a named import (`import { X } from 'mod'`)
+    /// but the module doesn't export a member named 'X'.
+    pub(crate) fn emit_no_exported_member_error(
+        &mut self,
+        module_specifier: &str,
+        member_name: &str,
+        decl_node: NodeIndex,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        // Only emit if report_unresolved_imports is enabled
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        // Get span from declaration node
+        let (start, length) = if !decl_node.is_none() {
+            if let Some(node) = self.ctx.arena.get(decl_node) {
+                (node.pos, node.end - node.pos)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+
+        use crate::checker::types::diagnostics::{diagnostic_messages, format_message};
+        let message = format_message(
+            diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+            &[module_specifier, member_name],
+        );
+        self.error(
+            start,
+            length,
+            message,
+            diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+        );
+    }
+
+    /// Check if a module exists for cross-file resolution.
+    ///
+    /// Returns true if the module can be found via resolved_modules or through
+    /// the context's cross-file resolution mechanism.
+    pub(crate) fn module_exists_cross_file(&self, module_name: &str) -> bool {
+        // Check if it's in resolved_modules (set by the driver for multi-file mode)
+        if let Some(ref resolved) = self.ctx.resolved_modules {
+            if resolved.contains(module_name) {
+                return true;
+            }
+        }
+        // Could add additional cross-file resolution checks here in the future
+        false
+    }
+
     pub(crate) fn apply_type_arguments_to_constructor_type(
         &mut self,
         ctor_type: TypeId,

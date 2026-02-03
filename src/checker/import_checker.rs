@@ -362,17 +362,10 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.import_resolution_stack.push(module_name.clone());
 
-        tracing::debug!(
-            "check_import_declaration: module_name='{}' resolved_modules={:?}",
-            module_name,
-            self.ctx.resolved_modules.as_ref().map(|r| r.len())
-        );
-
         // Check for specific resolution error from driver FIRST (TS2834, TS2835, TS2792, etc.)
         // This must be checked before resolved_modules to catch extensionless import errors
         let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
-            tracing::debug!("check_import_declaration: found resolution error code={}", error.code);
             // Extract error values before mutable borrow
             let error_code = error.code;
             let error_message = error.message.clone();
@@ -388,12 +381,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if module was successfully resolved
-        let in_resolved = self.ctx.resolved_modules.as_ref().map(|r| r.contains(module_name)).unwrap_or(false);
-        tracing::debug!("check_import_declaration: module_name='{}' in_resolved_modules={}", module_name, in_resolved);
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
-            tracing::debug!("check_import_declaration: module found, checking imported members");
             self.check_imported_members(import, module_name);
 
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
