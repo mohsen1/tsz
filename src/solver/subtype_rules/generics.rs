@@ -134,6 +134,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Phase 3.1: Mirrors check_ref_ref_subtype but for DefId-based type identity.
     /// This handles cycles in Lazy(DefId) types at the DefId level, preventing
     /// infinite expansion of recursive type aliases that use DefId references.
+    ///
+    /// Phase 3.2: Added InheritanceGraph bridge for O(1) nominal class subtype checking.
     pub(crate) fn check_lazy_lazy_subtype(
         &mut self,
         source: TypeId,
@@ -172,6 +174,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Mark this pair as being checked
         self.seen_defs.insert(def_pair);
+
+        // =======================================================================
+        // O(1) NOMINAL CLASS SUBTYPE CHECKING (Phase 3.2: InheritanceGraph Bridge)
+        // =======================================================================
+        // This short-circuits expensive structural checks for class inheritance.
+        // We use the def_to_symbol bridge to map DefIds back to SymbolIds, then
+        // use the existing InheritanceGraph for O(1) nominal subtype checking.
+        // =======================================================================
+        if let Some(graph) = self.inheritance_graph {
+            if let (Some(s_sym), Some(t_sym)) = (
+                self.resolver.def_to_symbol_id(*s_def),
+                self.resolver.def_to_symbol_id(*t_def),
+            ) {
+                if let Some(is_class) = self.is_class_symbol {
+                    // Check if both symbols are classes (not interfaces or type aliases)
+                    let s_is_class = is_class(SymbolRef(s_sym.0));
+                    let t_is_class = is_class(SymbolRef(t_sym.0));
+
+                    if s_is_class && t_is_class {
+                        // Both are classes - use nominal inheritance check
+                        if graph.is_derived_from(s_sym, t_sym) {
+                            // O(1) bitset check: source is a subclass of target
+                            self.seen_defs.remove(&def_pair);
+                            return SubtypeResult::True;
+                        }
+                        // Not a subclass - fall through to structural check below
+                    }
+                }
+            }
+        }
 
         // Resolve DefIds to their structural forms
         let s_resolved = self.resolver.resolve_lazy(*s_def, self.interner);
