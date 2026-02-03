@@ -20,11 +20,11 @@ use crate::solver::diagnostics::SubtypeFailureReason;
 use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::{
-    application_id, array_element_type, callable_shape_id, conditional_type_id, function_shape_id,
-    index_access_parts, intersection_list_id, intrinsic_kind, is_this_type, keyof_inner_type,
-    lazy_def_id, literal_value, mapped_type_id, object_shape_id, object_with_index_shape_id,
-    readonly_inner_type, ref_symbol, template_literal_id, tuple_list_id, type_param_info,
-    type_query_symbol, union_list_id, unique_symbol_ref,
+    application_id, array_element_type, callable_shape_id, conditional_type_id, enum_components,
+    function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind, is_enum_type,
+    is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
+    tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
 use rustc_hash::FxHashSet;
 
@@ -1206,6 +1206,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(mapped_id) = mapped_type_id(self.interner, target) {
             return self.check_source_to_mapped_expansion(source, target, mapped_id);
+        }
+
+        // =======================================================================
+        // ENUM TYPE CHECKING (Nominal Identity)
+        // =======================================================================
+        // Enums are nominal types - two different enums with the same member types
+        // are NOT compatible. Enum(DefId, MemberType) preserves both:
+        // - DefId: For nominal identity (E1 != E2)
+        // - MemberType: For structural assignability to primitives (E1 <: number)
+        // =======================================================================
+
+        if let (Some((s_def_id, s_members)), Some((t_def_id, t_members))) = (
+            enum_components(self.interner, source),
+            enum_components(self.interner, target),
+        ) {
+            // Enum to Enum: Nominal check - DefIds must match
+            if s_def_id == t_def_id {
+                return SubtypeResult::True;
+            }
+            // Different enums are NOT compatible (nominal typing)
+            return SubtypeResult::False;
+        }
+
+        // Source is Enum, Target is not - check structural member type
+        if let Some((s_def_id, s_members)) = enum_components(self.interner, source) {
+            return self.check_subtype(s_members, target);
+        }
+
+        // Target is Enum, Source is not - check structural member type
+        if let Some((t_def_id, t_members)) = enum_components(self.interner, target) {
+            return self.check_subtype(source, t_members);
         }
 
         // =======================================================================

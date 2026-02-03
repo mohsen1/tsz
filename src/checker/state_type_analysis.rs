@@ -1057,25 +1057,134 @@ impl<'a> CheckerState<'a> {
             return (TypeId::UNKNOWN, Vec::new());
         }
 
+        // Enum - return TypeKey::Enum with DefId for nominal identity checking.
+        // The Enum type provides proper enum subtype checking via DefId-based
+        // symbol resolution and type equality.
+        //
+        // CRITICAL: We must compute and cache a structural type (union of member types)
+        // before returning TypeKey::Enum to prevent infinite recursion in ensure_refs_resolved.
+        //
+        // IMPORTANT: This check must come BEFORE the NAMESPACE_MODULE check below because
+        // enum-namespace merges have both ENUM and NAMESPACE_MODULE flags. We want to
+        // handle them as enums (returning TypeKey::Enum) rather than as namespaces (returning Lazy).
+        if flags & symbol_flags::ENUM != 0 {
+            use crate::scanner::SyntaxKind;
+            use crate::solver::TypeKey;
+
+            // Create DefId first
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+
+            // Find the enum declaration node
+            let decl_idx = if !value_decl.is_none() {
+                value_decl
+            } else {
+                declarations.first().copied().unwrap_or(NodeIndex::NONE)
+            };
+
+            // Compute the union type of all enum member types
+            let mut member_types = Vec::new();
+            if !decl_idx.is_none() {
+                if let Some(node) = self.ctx.arena.get(decl_idx) {
+                    if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
+                        for &member_idx in &enum_decl.members.nodes {
+                            if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                                if let Some(member) = self.ctx.arena.get_enum_member(member_node) {
+                                    // Get the type of this enum member
+                                    if !member.initializer.is_none() {
+                                        if let Some(init_node) =
+                                            self.ctx.arena.get(member.initializer)
+                                        {
+                                            match init_node.kind {
+                                                k if k == SyntaxKind::StringLiteral as u16 => {
+                                                    // String literal member
+                                                    if let Some(lit) =
+                                                        self.ctx.arena.get_literal(init_node)
+                                                    {
+                                                        let type_id = self
+                                                            .ctx
+                                                            .types
+                                                            .literal_string(&lit.text);
+                                                        member_types.push(type_id);
+                                                    }
+                                                }
+                                                k if k == SyntaxKind::NumericLiteral as u16 => {
+                                                    // Numeric literal member
+                                                    if let Some(lit) =
+                                                        self.ctx.arena.get_literal(init_node)
+                                                    {
+                                                        let text = &lit.text;
+                                                        // Try to parse as integer first for literal type
+                                                        let parsed: Result<i64, _> = text.parse();
+                                                        if let Ok(n) = parsed {
+                                                            let type_id = self
+                                                                .ctx
+                                                                .types
+                                                                .literal_number(n as f64);
+                                                            member_types.push(type_id);
+                                                        } else {
+                                                            // Float or parse error - just use NUMBER
+                                                            member_types.push(TypeId::NUMBER);
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    } else {
+                                        // Auto-incremented numeric member
+                                        member_types.push(TypeId::NUMBER);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Create the structural type (union of member types, or NUMBER/STRING for homogeneous enums)
+            let structural_type = if member_types.is_empty() {
+                // Empty enum - default to NUMBER
+                TypeId::NUMBER
+            } else if member_types.len() == 1 {
+                // Single member - use that type
+                member_types[0]
+            } else {
+                // Multiple members - create a union
+                self.ctx.types.union(member_types)
+            };
+
+            // Cache the structural type in type_env for compatibility
+            // Note: Enum types now use TypeKey::Enum(def_id, member_type) directly
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.insert_def(def_id, structural_type);
+            }
+
+            // CRITICAL: Return TypeKey::Enum(def_id, structural_type) NOT Lazy(def_id)
+            // - Lazy(def_id) creates infinite recursion in ensure_refs_resolved
+            // - structural_type alone loses nominal identity (E1 becomes 0 | 1)
+            // - Enum(def_id, structural_type) preserves both:
+            //   1. DefId for nominal identity (E1 != E2)
+            //   2. structural_type for assignability to primitives (E1 <: number)
+            let enum_type = self
+                .ctx
+                .types
+                .intern(TypeKey::Enum(def_id, structural_type));
+            return (enum_type, Vec::new());
+        }
+
         // Namespace / Module
         // Return a Ref type AND register DefId mapping for gradual migration.
         // The Ref type is needed because resolve_qualified_name and other code
         // extracts SymbolRef from the type to look up the symbol's exports map.
         // Skip this when the symbol is also a FUNCTION — the FUNCTION branch below
         // handles merging namespace exports into the function's callable type.
+        //
+        // IMPORTANT: This check must come AFTER the ENUM check above because
+        // enum-namespace merges have both ENUM and NAMESPACE_MODULE flags. We want to
+        // handle them as enums (returning TypeKey::Enum) rather than as namespaces.
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
             && flags & symbol_flags::FUNCTION == 0
         {
-            use crate::solver::TypeKey;
-            // Create DefId and use Lazy type
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
-            return (self.ctx.types.intern(TypeKey::Lazy(def_id)), Vec::new());
-        }
-
-        // Enum - return a Lazy type with DefId for nominal identity checking.
-        // The Lazy type provides proper enum subtype checking via DefId-based
-        // symbol resolution and type equality.
-        if flags & symbol_flags::ENUM != 0 {
             use crate::solver::TypeKey;
             // Create DefId and use Lazy type
             let def_id = self.ctx.get_or_create_def_id(sym_id);

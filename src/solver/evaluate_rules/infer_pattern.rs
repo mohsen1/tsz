@@ -185,6 +185,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::StringIntrinsic { type_arg, .. } => {
                 self.type_contains_infer_inner(type_arg, visited)
             }
+            TypeKey::Enum(_def_id, member_type) => {
+                self.type_contains_infer_inner(member_type, visited)
+            }
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Lazy(_)
@@ -641,6 +644,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeKey::StringIntrinsic { type_arg, .. } => {
                 self.bind_infer_defaults_inner(type_arg, inferred, bindings, checker, visited)
+            }
+            TypeKey::Enum(_def_id, member_type) => {
+                self.bind_infer_defaults_inner(member_type, inferred, bindings, checker, visited)
             }
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)

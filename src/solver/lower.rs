@@ -1487,6 +1487,9 @@ impl<'a> TypeLowering<'a> {
             TypeKey::StringIntrinsic { type_arg, .. } => {
                 self.contains_meta_type_inner(type_arg, visited)
             }
+            TypeKey::Enum(_def_id, member_type) => {
+                self.contains_meta_type_inner(member_type, visited)
+            }
             TypeKey::Lazy(_)
             | TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
@@ -1772,6 +1775,9 @@ impl<'a> TypeLowering<'a> {
             }
             TypeKey::StringIntrinsic { type_arg, .. } => {
                 self.collect_infer_bindings(type_arg, visited);
+            }
+            TypeKey::Enum(_def_id, member_type) => {
+                self.collect_infer_bindings(member_type, visited);
             }
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)

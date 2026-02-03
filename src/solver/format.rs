@@ -326,6 +326,19 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("{}<{}>", kind_name, self.format(*type_arg))
             }
+            TypeKey::Enum(def_id, _member_type) => {
+                // Try to get the enum name from the definition store
+                if let Some(def_store) = self.def_store {
+                    if let Some(def) = def_store.get(*def_id) {
+                        // Use the definition name if available
+                        self.atom(def.name).to_string()
+                    } else {
+                        format!("Enum({})", def_id.0)
+                    }
+                } else {
+                    format!("Enum({})", def_id.0)
+                }
+            }
             TypeKey::ModuleNamespace(sym) => {
                 let name = if let Some(arena) = self.symbol_arena {
                     if let Some(symbol) = arena.get(SymbolId(sym.0)) {

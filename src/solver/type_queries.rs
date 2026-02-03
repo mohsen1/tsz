@@ -235,6 +235,7 @@ fn is_object_like_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             .constraint
             .map(|constraint| is_object_like_type_impl(db, constraint))
             .unwrap_or(false),
+        Some(TypeKey::Enum(_, _)) => false,
         _ => false,
     }
 }
@@ -255,6 +256,7 @@ fn is_function_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
                 .iter()
                 .any(|&member| is_function_type_impl(db, member))
         }
+        Some(TypeKey::Enum(_, _)) => false,
         _ => false,
     }
 }
@@ -443,6 +445,7 @@ where
             }
             TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) => self.check(*inner),
             TypeKey::StringIntrinsic { type_arg, .. } => self.check(*type_arg),
+            TypeKey::Enum(_def_id, member_type) => self.check(*member_type),
         }
     }
 }
@@ -845,6 +848,7 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         TypeKey::Application(_) => ConstructorTypeKind::NeedsApplicationEvaluation,
         TypeKey::TypeQuery(sym_ref) => ConstructorTypeKind::TypeQuery(sym_ref),
         // All other types cannot be constructors
+        TypeKey::Enum(_, _) => ConstructorTypeKind::NotConstructor,
         TypeKey::Intrinsic(_)
         | TypeKey::Literal(_)
         | TypeKey::Object(_)
@@ -1151,6 +1155,7 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
         | TypeKey::TypeQuery(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
+        | TypeKey::Enum(_, _)
         | TypeKey::Lazy(_)
         | TypeKey::Error => ConstraintTypeKind::NoConstraint,
     }
@@ -1244,6 +1249,7 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         | TypeKey::TypeQuery(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
+        | TypeKey::Enum(_, _)
         | TypeKey::Error => SignatureTypeKind::NoSignatures,
     }
 }
@@ -1369,6 +1375,7 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
         | TypeKey::KeyOf(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
+        | TypeKey::Enum(_, _)
         | TypeKey::Error => FullIterableTypeKind::NotIterable,
     }
 }
@@ -1558,6 +1565,7 @@ pub fn classify_for_property_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> P
         | TypeKey::ReadonlyType(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
+        | TypeKey::Enum(_, _)
         | TypeKey::Error => PropertyLookupKind::NoProperties,
     }
 }
@@ -1648,6 +1656,7 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         | TypeKey::ThisType
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
+        | TypeKey::Enum(_, _)
         | TypeKey::Error => EvaluationNeeded::Resolved(type_id),
     }
 }
@@ -1737,7 +1746,8 @@ pub fn classify_for_property_access(
         | TypeKey::ThisType
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
-        | TypeKey::Error => PropertyAccessClassification::Resolved(type_id),
+        | TypeKey::Error
+        | TypeKey::Enum(_, _) => PropertyAccessClassification::Resolved(type_id),
     }
 }
 
@@ -1843,7 +1853,8 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         | TypeKey::TypeQuery(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
-        | TypeKey::Error => TypeTraversalKind::Terminal,
+        | TypeKey::Error
+        | TypeKey::Enum(_, _) => TypeTraversalKind::Terminal,
     }
 }
 
@@ -1955,7 +1966,8 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         | TypeKey::ReadonlyType(_)
         | TypeKey::StringIntrinsic { .. }
         | TypeKey::ModuleNamespace(_)
-        | TypeKey::Error => InterfaceMergeKind::Other,
+        | TypeKey::Error
+        | TypeKey::Enum(_, _) => InterfaceMergeKind::Other,
     }
 }
 

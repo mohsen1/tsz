@@ -1174,6 +1174,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             TypeKey::StringIntrinsic { type_arg, .. } => {
                 self.type_contains_placeholder(type_arg, var_map, visited)
             }
+            TypeKey::Enum(_def_id, member_type) => {
+                self.type_contains_placeholder(member_type, var_map, visited)
+            }
             TypeKey::TypeParameter(_)
             | TypeKey::Infer(_)
             | TypeKey::Intrinsic(_)
@@ -1525,6 +1528,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.constrain_types(ctx, var_map, *s_arg, *t_arg);
                     }
                 }
+            }
+            (Some(TypeKey::Enum(_, s_mem)), Some(TypeKey::Enum(_, t_mem))) => {
+                self.constrain_types(ctx, var_map, s_mem, t_mem);
             }
             _ => {}
         }

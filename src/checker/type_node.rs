@@ -181,7 +181,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Look up the symbol in file_locals
             if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                if (symbol.flags & symbol_flags::TYPE) != 0 {
+                // Check for TYPE flag or ENUM flag (enums can be used as types)
+                if (symbol.flags
+                    & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                    != 0
+                {
                     return Some(sym_id.0);
                 }
             }
@@ -190,7 +194,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             for lib_ctx in &self.ctx.lib_contexts {
                 if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
                     let symbol = lib_ctx.binder.get_symbol(sym_id)?;
-                    if (symbol.flags & symbol_flags::TYPE) != 0 {
+                    // Check for TYPE flag or ENUM flag (enums can be used as types)
+                    if (symbol.flags
+                        & (symbol_flags::TYPE
+                            | symbol_flags::REGULAR_ENUM
+                            | symbol_flags::CONST_ENUM))
+                        != 0
+                    {
                         return Some(sym_id.0);
                     }
                 }
@@ -223,10 +233,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
             .collect();
 
-        let mut lowering = TypeLowering::with_resolvers(
+        // Create a def_id_resolver that converts symbol IDs to DefIds
+        // This is needed for enums and other types that use DefId-based identity
+        let def_id_resolver = |node_idx: NodeIndex| -> Option<crate::solver::def::DefId> {
+            let sym_id = type_resolver(node_idx)?;
+            Some(
+                self.ctx
+                    .get_or_create_def_id(crate::binder::SymbolId(sym_id)),
+            )
+        };
+
+        let mut lowering = TypeLowering::with_hybrid_resolver(
             self.ctx.arena,
             self.ctx.types,
             &type_resolver,
+            &def_id_resolver,
             &value_resolver,
         );
         if !type_param_bindings.is_empty() {
@@ -459,7 +480,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Look up the symbol in file_locals
             if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                if (symbol.flags & symbol_flags::TYPE) != 0 {
+                // Check for TYPE flag or ENUM flag (enums can be used as types)
+                if (symbol.flags
+                    & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                    != 0
+                {
                     return Some(sym_id.0);
                 }
             }
@@ -468,7 +493,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             for lib_ctx in &self.ctx.lib_contexts {
                 if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
                     let symbol = lib_ctx.binder.get_symbol(sym_id)?;
-                    if (symbol.flags & symbol_flags::TYPE) != 0 {
+                    // Check for TYPE flag or ENUM flag (enums can be used as types)
+                    if (symbol.flags
+                        & (symbol_flags::TYPE
+                            | symbol_flags::REGULAR_ENUM
+                            | symbol_flags::CONST_ENUM))
+                        != 0
+                    {
                         return Some(sym_id.0);
                     }
                 }
