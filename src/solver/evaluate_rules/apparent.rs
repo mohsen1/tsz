@@ -44,12 +44,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Get the apparent object shape for a type if it's a primitive.
+    #[allow(dead_code)]
     pub(crate) fn apparent_primitive_shape_for_type(&self, type_id: TypeId) -> Option<ObjectShape> {
         let kind = self.apparent_primitive_kind(type_id)?;
         Some(self.apparent_primitive_shape(kind))
     }
 
     /// Get the intrinsic kind for a type if it represents a primitive.
+    #[allow(dead_code)]
     pub(crate) fn apparent_primitive_kind(&self, type_id: TypeId) -> Option<IntrinsicKind> {
         if let Some(kind) = intrinsic_kind(self.interner(), type_id) {
             return match kind {
