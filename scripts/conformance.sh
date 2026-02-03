@@ -38,6 +38,7 @@ Options:
   --verbose         Show per-test results
   --filter PAT      Filter test files by pattern
   --error-code N    Only show tests with this error code (e.g., 2304)
+  --no-cache        Force cache regeneration even if cache exists
 
 Examples:
   ./scripts/conformance.sh all                        # Full pipeline
@@ -45,6 +46,7 @@ Examples:
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
   ./scripts/conformance.sh run --error-code 2304      # Only show tests with TS2304
   ./scripts/conformance.sh generate --workers 32      # Regenerate cache with 32 workers
+  ./scripts/conformance.sh generate --no-cache       # Force regenerate cache
 
 Note: Binaries are automatically built if not found.
 Cache location: tsc-cache-full.json (in repo root)
@@ -98,6 +100,20 @@ ensure_binaries() {
 }
 
 generate_cache() {
+    local force_regenerate="${1:-false}"
+    
+    if [ "$force_regenerate" != "true" ] && [ -f "$CACHE_FILE" ]; then
+        echo -e "${YELLOW}Cache already exists: $CACHE_FILE${NC}"
+        echo "Skipping cache generation."
+        echo ""
+        return
+    fi
+
+    if [ "$force_regenerate" = "true" ] && [ -f "$CACHE_FILE" ]; then
+        echo -e "${YELLOW}Cache exists but --no-cache flag set, regenerating...${NC}"
+        echo ""
+    fi
+
     echo -e "${GREEN}Generating TSC cache (using tsserver)...${NC}"
     echo "Test directory: $TEST_DIR"
     echo ""
@@ -118,13 +134,17 @@ run_tests() {
     echo ""
 
     cd "$REPO_ROOT"
-    # Filter out --workers from passed args to avoid duplication
+    # Filter out --workers and --no-cache from passed args to avoid duplication
     local filtered_args=()
     local extra_args=()
     local verbose=false
     for arg in "$@"; do
         if [[ "$arg" == --workers* ]]; then
             # Skip --workers argument (we use our own)
+            continue
+        fi
+        if [ "$arg" = "--no-cache" ]; then
+            # Skip --no-cache (already handled)
             continue
         fi
         if [[ "$arg" == --verbose ]]; then
@@ -159,26 +179,53 @@ clean_cache() {
 COMMAND="${1:-all}"
 shift || true
 
+# Check for --no-cache flag
+NO_CACHE=false
+REMAINING_ARGS=()
+for arg in "$@"; do
+    if [ "$arg" = "--no-cache" ]; then
+        NO_CACHE=true
+    else
+        REMAINING_ARGS+=("$arg")
+    fi
+done
+
 case "$COMMAND" in
     generate)
         ensure_binaries
-        generate_cache
+        if [ "$NO_CACHE" = "true" ]; then
+            generate_cache "true"
+        else
+            generate_cache
+        fi
         ;;
     run)
         ensure_binaries
-        if [ ! -f "$CACHE_FILE" ]; then
-            echo -e "${YELLOW}Cache not found, generating first...${NC}"
+        if [ "$NO_CACHE" = "true" ] || [ ! -f "$CACHE_FILE" ]; then
+            if [ "$NO_CACHE" = "true" ]; then
+                echo -e "${YELLOW}--no-cache flag set, regenerating cache...${NC}"
+            else
+                echo -e "${YELLOW}Cache not found, generating first...${NC}"
+            fi
             echo ""
-            generate_cache
+            if [ "$NO_CACHE" = "true" ]; then
+                generate_cache "true"
+            else
+                generate_cache
+            fi
             echo ""
         fi
-        run_tests "$@"
+        run_tests "${REMAINING_ARGS[@]}"
         ;;
     all)
         ensure_binaries
-        generate_cache
+        if [ "$NO_CACHE" = "true" ]; then
+            generate_cache "true"
+        else
+            generate_cache
+        fi
         echo ""
-        run_tests "$@"
+        run_tests "${REMAINING_ARGS[@]}"
         ;;
     clean)
         clean_cache
