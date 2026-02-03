@@ -1,0 +1,15 @@
+{
+  "_comment": "Maps TypeScript submodule SHA to npm package version. Used by conformance testing to match TSC version to submodule commit.",
+  "_usage": "When you update the TypeScript submodule, find the commit date and use the corresponding nightly: npm view typescript@6.0.0-dev.YYYYMMDD",
+  "mappings": {
+    "7f6a84673def7665a4c4bc2bdfaf7bcc8549b276": {
+      "npm": "6.0.0-dev.20260116",
+      "date": "2026-01-16",
+      "note": "Commit from TypeScript main branch, nightly build from same date"
+    }
+  },
+  "default": {
+    "npm": "5.9.3",
+    "note": "Fallback to latest stable when submodule SHA is not mapped"
+  }
+}

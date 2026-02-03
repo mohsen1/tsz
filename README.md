@@ -22,8 +22,24 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [██████████░░░░░░░░░░] 49.5% (6,130 / 12,378 tests)
+Progress: [█████████████░░] 88.7% (5,941 / 6,695 tests)
+Performance: 577 tests/sec (11.6s for full suite)
 ```
+
+**Quick Start:**
+```bash
+# Generate TSC cache (one-time setup)
+./scripts/conformance.sh generate
+
+# Run conformance tests
+./scripts/conformance.sh run
+
+# See details
+./scripts/conformance.sh run --verbose --max 100
+```
+
+**Implementation:** High-performance Rust runner with parallel execution
+**Documentation:** [conformance-rust/README.md](conformance-rust/README.md) | [docs/CONFORMANCE_DEEP_DIVE.md](docs/CONFORMANCE_DEEP_DIVE.md)
 <!-- CONFORMANCE_END -->
 
 ### Language Service
