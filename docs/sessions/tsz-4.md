@@ -2,11 +2,28 @@
 
 ## Current Work
 
-*No active work*
+**Task**: Investigating and fixing TS2339 errors for catch clause destructuring
+
+Working on fixing ignored tests related to property-not-exist (TS2339) errors when destructuring catch clause variables. The issue is that tsz suppresses property access errors on `unknown` types, but TypeScript (with `useUnknownInCatchVariables=true`, which is default in strict mode) should report TS2339 when destructuring catch variables like `catch ({ x })` because the catch variable type is `unknown`.
+
+**Test case**:
+```typescript
+// @strict: true
+function f() {
+    try {
+    } catch ({ x }) {
+    }
+}
+```
+
+Expected: TS2339 error "Property 'x' does not exist on type '{}'"
+Actual: No error (suppressed because type is `unknown`)
 
 ---
 
 ## History (Last 20)
+
+### 2025-02-03: Investigating TS2339 catch clause destructuring issue
 
 ### 2025-02-03: Fixed 13 TS2304 (Cannot find name) ignored tests
 
