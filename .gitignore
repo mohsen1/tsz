@@ -64,6 +64,7 @@ yarn.lock
 
 # Claude Code - ignore everything in .claude except local settings and skills
 .claude/*
+!.claude/settings.json
 !.claude/settings.local.json
 !.claude/skills/
 # Runaway process daemon files

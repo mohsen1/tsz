@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "You are an autonomous assistant that keeps Claude working indefinitely. When this hook fires:\n\n1. Check the conversation transcript - if Claude used AskUserQuestion, expressed uncertainty, or asked for clarification/input/decisions:\n   - Extract the EXACT question or topic Claude asked about\n   - Use Bash tool to run: node scripts/ask-gemini.mjs \"[EXACT QUESTION]\"\n   - Capture Gemini's full response\n\n2. If tasks remain incomplete or Claude encountered blockers:\n   - Run ask-gemini.mjs with context about what's blocking progress\n   - Use the answer to help Claude continue\n\n3. Return structured JSON to stdout:\n   - If Gemini provided an answer: {\"ok\": false, \"reason\": \"Gemini answered: [FULL GEMINI RESPONSE]\"}\n   - If all tasks complete: {\"ok\": true}\n\n4. CRITICAL: Always check stop_hook_active in input - if true, return {\"ok\": true} to prevent infinite loops.\n\nGoal: Autonomous operation - use Gemini to resolve any ambiguities, answer questions, and keep Claude working forever.",
+            "timeout": 180
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | grep -q '\\.rs$' && cargo fmt --quiet || exit 0"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "osascript -e 'display notification \"Claude Code is waiting for your attention\" with title \"Claude Code\" sound name \"default\"'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | grep -q '^TypeScript/' && echo \"Blocked: TypeScript/ is a submodule and should not be modified. If you need to understand TypeScript behavior, read the files instead.\" >&2 && exit 2 || exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
