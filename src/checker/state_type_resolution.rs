@@ -215,6 +215,16 @@ impl<'a> CheckerState<'a> {
                     // are available in the type_env for Application expansion
                     let _ = self.get_type_of_symbol(sym_id);
                 }
+
+                // Check for unresolved import before creating TypeApplication
+                // This prevents creating TypeApplication(error<T>) which causes cascading errors
+                if !is_builtin_array
+                    && sym_id.is_some()
+                    && self.is_unresolved_import_symbol(type_name_idx)
+                {
+                    return TypeId::ERROR;
+                }
+
                 // Also ensure type arguments are resolved and in type_env
                 // This is needed so that when we evaluate the Application, we can
                 // resolve Ref types in the arguments
