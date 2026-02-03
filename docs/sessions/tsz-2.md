@@ -2,11 +2,12 @@
 
 ## Current Work
 
-**Task**: TS2322 (Type not assignable) - Accessor Type Compatibility False Positives
+**Completed**: TS2322 (Type not assignable) - Accessor Type Compatibility False Positives ✅
 
 **Specific Issue**: `accessors_spec_section-4.5_inference.ts`
 - TSC expects: NO errors (empty array)
-- tsz reports: 4 TS2322 errors (false positives)
+- tsz was reporting: 4 TS2322 errors (false positives)
+- **Now FIXED**: tsz correctly reports 0 errors
 
 **Test Case**:
 ```typescript
@@ -19,35 +20,45 @@ class LanguageSpec_section_4_5_inference {
 }
 ```
 
-**Expected Behavior**:
-- Getter returns `B` (inferred from `new B()`)
-- Setter takes `A`
-- Since `B extends A`, `B <: A` should be TRUE
-- Should NOT error
+## Resolution Summary
 
-**Investigation Findings**:
-1. Created unit test `test_accessor_type_compatibility_inheritance_no_error` to reproduce the issue
-2. Test FAILS - confirms the bug exists
-3. The error message shows: getter is returning Object prototype type instead of `B`:
-   ```
-   Type '{ isPrototypeOf: { (v: Object): boolean }; ... }' is not assignable to type 'A'.
-   ```
-4. The problem is NOT in the accessor compatibility check itself
-5. The problem is in `new B()` type inference - it returns the wrong type
+### Root Causes Identified and Fixed:
 
-**Root Cause**:
-`new B()` where `B extends A` is being typed as the Object prototype type instead of `B`. This means:
-- `get_type_of_node(new B())` returns Object prototype type
-- `infer_getter_return_type()` calls `get_type_of_node(return expression)`
-- So getter_type = Object prototype type instead of B
-- Object prototype is NOT assignable to A
-- False positive TS2322 error
+**1. Missing Nominal Typing for Empty Classes**
+- Empty classes A and B were both getting `Object(ObjectShapeId(0))` - the same type
+- This broke nominal typing where each class should have a distinct type
+- **Fix**: Set `symbol` field in `ObjectShape` for ALL class instance types (src/checker/class_type.rs:888-918)
+- Now each class gets a distinct `ObjectWithIndex` type with its unique symbol
 
-**Deep Investigation**:
-Found the class instance type construction in `src/checker/class_type.rs`:
-- Lines 848-869: Object prototype members are correctly added to class properties
-- Lines 871-883: Final instance type is built
-- This part is CORRECT - class B should have Object members
+**2. Type Annotations Resolving to Constructor Types**
+- When processing `a: A` where A is a class, the type was resolving to the constructor type (Callable) instead of instance type (Object)
+- In type position, class references should return instance types
+- `typeof A` should return constructor types
+- **Fix**: Added `resolve_type_annotation` helper (src/checker/type_checking_queries.rs:21-65)
+- Detects direct class Lazy references and extracts instance type from construct signatures
+
+### Changes Made:
+
+1. **src/checker/class_type.rs**:
+   - Changed instance type construction to use `object_with_index` with symbol set for all classes
+   - Both branches (with/without index signatures) now set `symbol: current_sym`
+
+2. **src/checker/type_checking_queries.rs**:
+   - Added `resolve_type_annotation()` helper function
+   - Checks if type annotation is a direct Lazy reference to a CLASS symbol
+   - Extracts instance type from constructor type's construct signatures
+   - Preserves constructor types for `typeof` expressions and type aliases
+
+### Test Results:
+- ✅ `test_accessor_type_compatibility_inheritance_no_error` - PASSES
+- The getter returning `new B()` (B extends A) is now correctly assignable to setter taking `A`
+
+### Known Issues (Pre-existing, not introduced by this fix):
+- `test_abstract_constructor_assignability` - Shows Object prototype type in error messages
+- `test_abstract_mixin_intersection_ts2339` - Similar issues with property access
+- These appear to be pre-existing issues related to type formatting/error messages
+
+
 
 The issue is likely in how `new B()` gets the instance type:
 1. `get_type_of_new_expression()` (line 23 in type_computation_complex.rs)
@@ -154,6 +165,28 @@ These are "Environment" errors. If tsz fails to load the standard library or imp
 ---
 
 ## History (Last 20)
+
+### 2025-02-04: FIXED TS2322 accessor false positive with class inheritance
+
+**Root Causes Fixed**:
+1. **Nominal typing for empty classes**: Empty classes A and B were both getting `Object(ObjectShapeId(0))` - the same type. Fixed by setting `symbol` field in `ObjectShape` for ALL class instance types.
+
+2. **Type annotation resolution**: Class references in type position (e.g., `a: A`) were resolving to constructor types instead of instance types. Fixed by adding `resolve_type_annotation()` helper that detects direct class Lazy references and extracts instance type from construct signatures.
+
+**Files Modified**:
+- `src/checker/class_type.rs`: Set symbol in ObjectShape for all class instance types
+- `src/checker/type_checking_queries.rs`: Added resolve_type_annotation helper for accessor type checking
+
+**Test Results**:
+- ✅ `test_accessor_type_compatibility_inheritance_no_error` now PASSES
+- `new B()` where `B extends A` now correctly returns B's instance type
+- Getter returning B is correctly assignable to setter taking A
+
+**Technical Details**:
+- Used Gemini to understand TypeScript's nominal typing system
+- Learned that ObjectShape.symbol field exists for this exact purpose
+- Discovered distinction between type position (`a: A`) and type query (`typeof A`)
+- Created targeted fix that only affects direct class Lazy references, not type aliases
 
 ### 2025-02-03: Investigated TS2322 accessor false positive with class inheritance
 
