@@ -468,7 +468,10 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate for type checking but keep original for error messages
         let evaluated_rhs_type = self.evaluate_application_type(rhs_type);
-        if evaluated_rhs_type == TypeId::ANY || evaluated_rhs_type == TypeId::ERROR || evaluated_rhs_type == TypeId::UNKNOWN {
+        if evaluated_rhs_type == TypeId::ANY
+            || evaluated_rhs_type == TypeId::ERROR
+            || evaluated_rhs_type == TypeId::UNKNOWN
+        {
             return;
         }
 

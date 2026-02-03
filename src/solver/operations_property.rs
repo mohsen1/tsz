@@ -1240,11 +1240,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                     self.lookup_object_property(shape_id, &shape.properties, prop_atom)
                 {
                     // Found! Now instantiate the property type with the type arguments
-                    let substitution = TypeSubstitution::from_args(
-                        self.interner,
-                        &type_params,
-                        &app.args,
-                    );
+                    let substitution =
+                        TypeSubstitution::from_args(self.interner, &type_params, &app.args);
 
                     // Instantiate both read and write types
                     let instantiated_read_type =

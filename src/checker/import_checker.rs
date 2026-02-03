@@ -400,10 +400,8 @@ impl<'a> CheckerState<'a> {
                 }
                 // Try to resolve the identifier as a namespace/module
                 if self.resolve_identifier_symbol(module_ref).is_none() {
-                    let message = format_message(
-                        diagnostic_messages::CANNOT_FIND_NAMESPACE,
-                        &[name],
-                    );
+                    let message =
+                        format_message(diagnostic_messages::CANNOT_FIND_NAMESPACE, &[name]);
                     self.error_at_node(
                         module_ref,
                         &message,
@@ -423,10 +421,8 @@ impl<'a> CheckerState<'a> {
                     // Try to resolve the left identifier
                     let left_resolved = self.resolve_leftmost_qualified_name(qn.left);
                     if left_resolved.is_none() {
-                        let message = format_message(
-                            diagnostic_messages::CANNOT_FIND_NAMESPACE,
-                            &[&name],
-                        );
+                        let message =
+                            format_message(diagnostic_messages::CANNOT_FIND_NAMESPACE, &[&name]);
                         self.error_at_node(
                             qn.left,
                             &message,

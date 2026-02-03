@@ -3382,8 +3382,7 @@ impl Server {
             // 2. Set lib_binders for lib symbol resolution (fallback)
             // 3. Do NOT copy file_locals - let lib symbols be resolved via lib_binders
             let mut binder = BinderState::new();
-            if let Some(lib_binder) = unified_lib_binder.as_ref()
-            {
+            if let Some(lib_binder) = unified_lib_binder.as_ref() {
                 // Step 1: Set base offset so user symbols start AFTER lib symbols.
                 // This ensures lookups for lib IDs (0..N) return None in the user arena,
                 // triggering the fallback to lib_binders.

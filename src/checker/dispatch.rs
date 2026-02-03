@@ -47,7 +47,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     if let Some(class_node) = self.checker.ctx.arena.get(class_info.class_idx)
                         && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
                     {
-                        return self.checker.get_class_instance_type(class_info.class_idx, class_data);
+                        return self
+                            .checker
+                            .get_class_instance_type(class_info.class_idx, class_data);
                     }
                     TypeId::ANY
                 } else {
@@ -56,7 +58,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // should NOT trigger TS2683. We need to skip past arrow functions
                     // to find the actual enclosing function that defines the `this` context.
                     if self.checker.ctx.no_implicit_this()
-                        && self.checker.find_enclosing_non_arrow_function(idx).is_some()
+                        && self
+                            .checker
+                            .find_enclosing_non_arrow_function(idx)
+                            .is_some()
                     {
                         // TS2683: 'this' implicitly has type 'any'
                         // Only emit when noImplicitThis is enabled
@@ -76,7 +81,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     }
                 }
             }
-            k if k == SyntaxKind::SuperKeyword as u16 => self.checker.get_type_of_super_keyword(idx),
+            k if k == SyntaxKind::SuperKeyword as u16 => {
+                self.checker.get_type_of_super_keyword(idx)
+            }
 
             // Literals - preserve literal types when contextual typing expects them.
             k if k == SyntaxKind::NumericLiteral as u16 => {
@@ -123,13 +130,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
 
             // Binary expressions
-            k if k == syntax_kind_ext::BINARY_EXPRESSION => self.checker.get_type_of_binary_expression(idx),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.checker.get_type_of_binary_expression(idx)
+            }
 
             // Call expressions
-            k if k == syntax_kind_ext::CALL_EXPRESSION => self.checker.get_type_of_call_expression(idx),
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                self.checker.get_type_of_call_expression(idx)
+            }
 
             // New expressions
-            k if k == syntax_kind_ext::NEW_EXPRESSION => self.checker.get_type_of_new_expression(idx),
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                self.checker.get_type_of_new_expression(idx)
+            }
 
             // Class expressions
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
@@ -163,10 +176,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
 
             // Function declaration
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self.checker.get_type_of_function(idx),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.checker.get_type_of_function(idx)
+            }
 
             // Function expression
-            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.checker.get_type_of_function(idx),
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
+                self.checker.get_type_of_function(idx)
+            }
 
             // Arrow function
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.checker.get_type_of_function(idx),
@@ -235,7 +252,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // If the awaited type is Promise-like, extract the type argument
                     // Otherwise, return the original type (TypeScript allows awaiting non-Promises)
                     // This matches TSC behavior: `await 5` has type `number`, not `unknown`
-                    self.checker.promise_like_return_type_argument(expr_type)
+                    self.checker
+                        .promise_like_return_type_argument(expr_type)
                         .unwrap_or(expr_type)
                 } else {
                     // Return ANY to prevent cascading TS2571 errors
@@ -266,12 +284,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     if assertion.type_node.is_none() {
                         expr_type
                     } else {
-                        let asserted_type = self.checker.get_type_from_type_node(assertion.type_node);
+                        let asserted_type =
+                            self.checker.get_type_from_type_node(assertion.type_node);
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // `satisfies` keeps the expression type at runtime, but checks assignability.
                             // This is different from `as` which coerces the type.
                             self.checker.ensure_application_symbols_resolved(expr_type);
-                            self.checker.ensure_application_symbols_resolved(asserted_type);
+                            self.checker
+                                .ensure_application_symbols_resolved(asserted_type);
                             if !self.checker.type_contains_error(asserted_type)
                                 && !self.checker.is_assignable_to(expr_type, asserted_type)
                                 && !self.checker.should_skip_weak_union_error(
@@ -357,7 +377,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // JSX Elements (Rule #36: JSX Intrinsic Lookup)
             k if k == syntax_kind_ext::JSX_ELEMENT => {
                 if let Some(jsx) = self.checker.ctx.arena.get_jsx_element(node) {
-                    self.checker.get_type_of_jsx_opening_element(jsx.opening_element)
+                    self.checker
+                        .get_type_of_jsx_opening_element(jsx.opening_element)
                 } else {
                     TypeId::ERROR
                 }

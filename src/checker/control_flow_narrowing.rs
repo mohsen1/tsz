@@ -10,8 +10,8 @@ use crate::parser::node::CallExprData;
 use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{
-    LiteralValue, NarrowingContext, ParamInfo, TypeId, TypePredicate, TypePredicateTarget,
-    TypeGuard,
+    LiteralValue, NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate,
+    TypePredicateTarget,
     type_queries::{
         ConstructorInstanceKind, FalsyComponentKind, LiteralValueKind, NonObjectKind,
         PredicateSignatureKind, PropertyPresenceKind, TypeParameterConstraintKind,
@@ -1711,7 +1711,10 @@ impl<'a> FlowAnalyzer<'a> {
             }
 
             // Move to parent scope
-            scope_id = self.binder.scopes.get(scope_id.0 as usize)
+            scope_id = self
+                .binder
+                .scopes
+                .get(scope_id.0 as usize)
                 .map(|scope| scope.parent)
                 .unwrap_or(ScopeId::NONE);
 

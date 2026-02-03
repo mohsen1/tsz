@@ -1195,7 +1195,7 @@ fn test_narrow_to_interface_type() {
 // TypeGuard and narrow_type() Tests
 // =============================================================================
 
-use crate::solver::narrowing::{TypeGuard, NarrowingContext};
+use crate::solver::narrowing::{NarrowingContext, TypeGuard};
 
 #[test]
 fn test_type_guard_typeof_string() {

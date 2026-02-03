@@ -24609,8 +24609,7 @@ fn test_this_type_query_builder() {
 
     let this_type = interner.intern(TypeKey::ThisType);
     let result_array = interner.array(interner.lazy(DefId(100)));
-    let promise_results =
-        interner.application(interner.lazy(DefId(101)), vec![result_array]);
+    let promise_results = interner.application(interner.lazy(DefId(101)), vec![result_array]);
 
     let where_method = interner.function(FunctionShape {
         type_params: vec![],

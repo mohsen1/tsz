@@ -5980,16 +5980,21 @@ fn compile_incremental_creates_tsbuildinfo() {
 
     // Verify BuildInfo file is created
     let build_info_path = base.join("dist/project.tsbuildinfo");
-    assert!(build_info_path.is_file(), "tsbuildinfo file should be created");
+    assert!(
+        build_info_path.is_file(),
+        "tsbuildinfo file should be created"
+    );
 
     // Verify BuildInfo can be parsed
-    let build_info_content = std::fs::read_to_string(&build_info_path)
-        .expect("read buildinfo");
-    let build_info: serde_json::Value = serde_json::from_str(&build_info_content)
-        .expect("parse buildinfo");
+    let build_info_content = std::fs::read_to_string(&build_info_path).expect("read buildinfo");
+    let build_info: serde_json::Value =
+        serde_json::from_str(&build_info_content).expect("parse buildinfo");
 
     // Verify structure
-    assert_eq!(build_info["version"], crate::cli::incremental::BUILD_INFO_VERSION);
+    assert_eq!(
+        build_info["version"],
+        crate::cli::incremental::BUILD_INFO_VERSION
+    );
     assert!(build_info["rootFiles"].is_array());
 
     // Second build with no changes should succeed
@@ -5997,23 +6002,32 @@ fn compile_incremental_creates_tsbuildinfo() {
     assert!(result2.diagnostics.is_empty());
 
     // Verify BuildInfo still exists and has been updated
-    let build_info_content2 = std::fs::read_to_string(&build_info_path)
-        .expect("read buildinfo again");
-    let build_info2: serde_json::Value = serde_json::from_str(&build_info_content2)
-        .expect("parse buildinfo again");
-    assert_eq!(build_info2["version"], crate::cli::incremental::BUILD_INFO_VERSION);
+    let build_info_content2 =
+        std::fs::read_to_string(&build_info_path).expect("read buildinfo again");
+    let build_info2: serde_json::Value =
+        serde_json::from_str(&build_info_content2).expect("parse buildinfo again");
+    assert_eq!(
+        build_info2["version"],
+        crate::cli::incremental::BUILD_INFO_VERSION
+    );
 
     // Third build with a source change
-    write_file(&base.join("src/index.ts"), "export const value = 2; export const foo = 'bar';");
+    write_file(
+        &base.join("src/index.ts"),
+        "export const value = 2; export const foo = 'bar';",
+    );
     let result3 = compile(&args, base).expect("third compile should succeed");
     assert!(result3.diagnostics.is_empty());
 
     // Verify BuildInfo was updated with new content
-    let build_info_content3 = std::fs::read_to_string(&build_info_path)
-        .expect("read buildinfo third time");
-    let build_info3: serde_json::Value = serde_json::from_str(&build_info_content3)
-        .expect("parse buildinfo third time");
-    assert_eq!(build_info3["version"], crate::cli::incremental::BUILD_INFO_VERSION);
+    let build_info_content3 =
+        std::fs::read_to_string(&build_info_path).expect("read buildinfo third time");
+    let build_info3: serde_json::Value =
+        serde_json::from_str(&build_info_content3).expect("parse buildinfo third time");
+    assert_eq!(
+        build_info3["version"],
+        crate::cli::incremental::BUILD_INFO_VERSION
+    );
 }
 
 // Tests for @noTypesAndSymbols parsing
@@ -6078,4 +6092,3 @@ fn test_has_no_types_and_symbols_directive_semicolon_terminated() {
 async function f(x, y = z) {}"#;
     assert!(has_no_types_and_symbols_directive(source));
 }
-

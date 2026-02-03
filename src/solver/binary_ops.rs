@@ -14,9 +14,9 @@
 //! All functions take `TypeId` as input and return structured results,
 //! making them pure logic that can be unit tested independently.
 
-use crate::solver::{IntrinsicKind, LiteralValue, TypeDatabase, TypeId, TypeKey};
-use crate::solver::visitor::TypeVisitor;
 use crate::solver::types::TypeListId;
+use crate::solver::visitor::TypeVisitor;
+use crate::solver::{IntrinsicKind, LiteralValue, TypeDatabase, TypeId, TypeKey};
 
 /// Result of a binary operation.
 #[derive(Clone, Debug, PartialEq)]
@@ -276,9 +276,12 @@ impl<'a> OverlapChecker<'a> {
         // Fast path: top/bottom types
         if matches!(
             (self.left, right),
-            (TypeId::ANY, _) | (_, TypeId::ANY) |
-            (TypeId::UNKNOWN, _) | (_, TypeId::UNKNOWN) |
-            (TypeId::ERROR, _) | (_, TypeId::ERROR)
+            (TypeId::ANY, _)
+                | (_, TypeId::ANY)
+                | (TypeId::UNKNOWN, _)
+                | (_, TypeId::UNKNOWN)
+                | (TypeId::ERROR, _)
+                | (_, TypeId::ERROR)
         ) {
             return true;
         }
@@ -333,11 +336,9 @@ impl<'a> TypeVisitor for OverlapChecker<'a> {
             Some(TypeKey::Union(members)) => {
                 // Check if left's union contains this literal
                 let members = self.db.type_list(members);
-                members.iter().any(|&m| {
-                    match self.db.lookup(m) {
-                        Some(TypeKey::Literal(lit)) => lit == *value,
-                        _ => false,
-                    }
+                members.iter().any(|&m| match self.db.lookup(m) {
+                    Some(TypeKey::Literal(lit)) => lit == *value,
+                    _ => false,
                 })
             }
             _ => false,

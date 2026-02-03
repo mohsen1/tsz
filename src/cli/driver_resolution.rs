@@ -202,9 +202,8 @@ pub(crate) fn collect_module_specifiers(
     };
 
     // Helper to strip surrounding quotes from a module specifier
-    let strip_quotes = |s: &str| -> String {
-        s.trim_matches(|c| c == '"' || c == '\'').to_string()
-    };
+    let strip_quotes =
+        |s: &str| -> String { s.trim_matches(|c| c == '"' || c == '\'').to_string() };
 
     for &stmt_idx in &source.statements.nodes {
         if stmt_idx.is_none() {
@@ -257,9 +256,8 @@ fn extract_require_specifier(arena: &NodeArena, idx: NodeIndex) -> Option<String
     let node = arena.get(idx)?;
 
     // Helper to strip surrounding quotes from a string
-    let strip_quotes = |s: &str| -> String {
-        s.trim_matches(|c| c == '"' || c == '\'').to_string()
-    };
+    let strip_quotes =
+        |s: &str| -> String { s.trim_matches(|c| c == '"' || c == '\'').to_string() };
 
     // If it's directly a string literal, return it (without quotes)
     if let Some(text) = arena.get_literal_text(idx) {

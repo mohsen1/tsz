@@ -258,7 +258,8 @@ pub mod diagnostic_messages {
     pub const CANNOT_FIND_NAME_CHANGE_LIB: &str = "Cannot find name '{0}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.";
     /// TS2584: Cannot find name - suggest including 'dom' lib
     pub const CANNOT_FIND_NAME_CHANGE_TARGET_LIB: &str = "Cannot find name '{0}'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.";
-    pub const ASYNC_MODIFIER_CANNOT_APPEAR_ON_TYPE_MEMBER: &str = "'async' modifier cannot appear on a type member.";
+    pub const ASYNC_MODIFIER_CANNOT_APPEAR_ON_TYPE_MEMBER: &str =
+        "'async' modifier cannot appear on a type member.";
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: &str =
         "An 'await' expression is only allowed within an async function.";
     pub const AWAIT_IN_PARAMETER_DEFAULT: &str =

@@ -100,7 +100,11 @@ impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
     }
 
     fn visit_function(&mut self, shape_id: u32) -> Self::Output {
-        Some(self.db.function_shape(FunctionShapeId(shape_id)).return_type)
+        Some(
+            self.db
+                .function_shape(FunctionShapeId(shape_id))
+                .return_type,
+        )
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
@@ -205,11 +209,7 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
         if self.index < elements.len() {
             Some(elements[self.index].type_id)
         } else if let Some(last) = elements.last() {
-            if last.rest {
-                Some(last.type_id)
-            } else {
-                None
-            }
+            if last.rest { Some(last.type_id) } else { None }
         } else {
             None
         }
@@ -411,7 +411,11 @@ struct ParameterForCallExtractor<'a> {
 
 impl<'a> ParameterForCallExtractor<'a> {
     fn new(db: &'a dyn TypeDatabase, index: usize, arg_count: usize) -> Self {
-        Self { db, index, arg_count }
+        Self {
+            db,
+            index,
+            arg_count,
+        }
     }
 
     fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {

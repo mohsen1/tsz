@@ -5,8 +5,8 @@
 //!
 //! These functions operate purely on TypeIds and maintain no AST dependencies.
 
-use crate::solver::types::{TypeId, TypeKey, LiteralValue, IntrinsicKind};
 use crate::solver::TypeDatabase;
+use crate::solver::types::{IntrinsicKind, LiteralValue, TypeId, TypeKey};
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
 ///
@@ -74,10 +74,7 @@ pub fn compute_conditional_expression_type(
 ///
 /// # Returns
 /// * `TypeId::STRING` - Template literals always produce strings
-pub fn compute_template_expression_type(
-    _interner: &dyn TypeDatabase,
-    parts: &[TypeId],
-) -> TypeId {
+pub fn compute_template_expression_type(_interner: &dyn TypeDatabase, parts: &[TypeId]) -> TypeId {
     // Check for error propagation
     for &part in parts {
         if part == TypeId::ERROR {
@@ -114,10 +111,7 @@ pub fn compute_template_expression_type(
 /// - Find the first candidate that is a supertype of all others
 /// - Handle literal widening (1 | 2 -> number)
 /// - Handle base class relationships
-pub fn compute_best_common_type(
-    interner: &dyn TypeDatabase,
-    types: &[TypeId],
-) -> TypeId {
+pub fn compute_best_common_type(interner: &dyn TypeDatabase, types: &[TypeId]) -> TypeId {
     // Handle empty cases
     if types.is_empty() {
         return TypeId::NEVER;
@@ -350,7 +344,8 @@ mod tests {
     fn test_bct_all_same() {
         let interner = TypeInterner::new();
         // BCT of [string, string, string] -> string
-        let result = compute_best_common_type(&interner, &[TypeId::STRING, TypeId::STRING, TypeId::STRING]);
+        let result =
+            compute_best_common_type(&interner, &[TypeId::STRING, TypeId::STRING, TypeId::STRING]);
         assert_eq!(result, TypeId::STRING);
     }
 
@@ -368,7 +363,8 @@ mod tests {
     fn test_bct_error_propagation() {
         let interner = TypeInterner::new();
         // BCT of [string, ERROR, number] -> ERROR
-        let result = compute_best_common_type(&interner, &[TypeId::STRING, TypeId::ERROR, TypeId::NUMBER]);
+        let result =
+            compute_best_common_type(&interner, &[TypeId::STRING, TypeId::ERROR, TypeId::NUMBER]);
         assert_eq!(result, TypeId::ERROR);
     }
 }

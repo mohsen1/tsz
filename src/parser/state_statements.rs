@@ -2167,7 +2167,12 @@ impl ParserState {
             // Before consuming token, check for TS1028 (duplicate accessibility) and TS1029 (wrong order)
             let current_kind = self.token();
 
-            if matches!(current_kind, SyntaxKind::PublicKeyword | SyntaxKind::PrivateKeyword | SyntaxKind::ProtectedKeyword) {
+            if matches!(
+                current_kind,
+                SyntaxKind::PublicKeyword
+                    | SyntaxKind::PrivateKeyword
+                    | SyntaxKind::ProtectedKeyword
+            ) {
                 if seen_accessibility {
                     use crate::checker::types::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
@@ -2176,7 +2181,13 @@ impl ParserState {
                     );
                 }
                 // TS1029: accessibility must come after certain modifiers
-                if seen_static || seen_abstract || seen_readonly || seen_override || seen_accessor || seen_async {
+                if seen_static
+                    || seen_abstract
+                    || seen_readonly
+                    || seen_override
+                    || seen_accessor
+                    || seen_async
+                {
                     use crate::checker::types::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'accessibility modifier' must come before other modifiers.",

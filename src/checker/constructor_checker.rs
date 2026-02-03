@@ -19,9 +19,9 @@ use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccess
 use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
-use crate::solver::type_queries_extended::classify_for_abstract_constructor;
 use crate::solver::TypeId;
 use crate::solver::type_queries::get_callable_shape;
+use crate::solver::type_queries_extended::classify_for_abstract_constructor;
 use rustc_hash::FxHashSet;
 
 // =============================================================================
@@ -537,7 +537,11 @@ impl<'a> CheckerState<'a> {
             // Then check TypeQuery types
             match classify_for_abstract_constructor(self.ctx.types, type_id) {
                 AbstractConstructorKind::TypeQuery(sym_ref) => {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(crate::binder::SymbolId(sym_ref.0)) {
+                    if let Some(symbol) = self
+                        .ctx
+                        .binder
+                        .get_symbol(crate::binder::SymbolId(sym_ref.0))
+                    {
                         symbol.flags & symbol_flags::ABSTRACT != 0
                     } else {
                         false

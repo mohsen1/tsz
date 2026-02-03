@@ -407,6 +407,7 @@ impl BinderState {
             scopes,
             node_scope_ids,
             FxHashMap::default(), // global_augmentations
+            FxHashMap::default(), // module_augmentations
             FxHashMap::default(), // module_exports
             FxHashMap::default(), // reexports
             FxHashMap::default(), // wildcard_reexports
@@ -423,6 +424,8 @@ impl BinderState {
     /// This is used for type checking after parallel binding and symbol merging.
     /// Global augmentations are interface/type declarations inside `declare global` blocks
     /// that should merge with lib.d.ts symbols during type resolution.
+    /// Module augmentations are interface/type declarations inside `declare module 'x'` blocks
+    /// that should merge with the target module's symbols.
     pub fn from_bound_state_with_scopes_and_augmentations(
         options: BinderOptions,
         symbols: SymbolArena,
@@ -431,6 +434,7 @@ impl BinderState {
         scopes: Vec<Scope>,
         node_scope_ids: FxHashMap<u32, ScopeId>,
         global_augmentations: FxHashMap<String, Vec<crate::parser::NodeIndex>>,
+        module_augmentations: FxHashMap<String, Vec<(String, crate::parser::NodeIndex)>>,
         module_exports: FxHashMap<String, SymbolTable>,
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
         wildcard_reexports: FxHashMap<String, Vec<String>>,
@@ -473,7 +477,7 @@ impl BinderState {
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations,
             in_global_augmentation: false,
-            module_augmentations: FxHashMap::default(),
+            module_augmentations,
             in_module_augmentation: false,
             current_augmented_module: None,
             lib_binders: Vec::new(),

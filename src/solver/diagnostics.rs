@@ -24,9 +24,9 @@
 
 use crate::binder::SymbolId;
 use crate::interner::Atom;
-use crate::solver::def::DefinitionStore;
 use crate::solver::TypeDatabase;
 use crate::solver::TypeFormatter;
+use crate::solver::def::DefinitionStore;
 use crate::solver::types::*;
 use std::sync::Arc;
 

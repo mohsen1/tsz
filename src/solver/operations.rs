@@ -562,10 +562,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // 3.5. Apply contextual type constraint to return type
         // This enables inference from the expected type: `let x: string = id(...)` should infer T = string
         if let Some(ctx_type) = self.contextual_type {
-            let return_type_with_placeholders = instantiate_type(self.interner, func.return_type, &substitution);
+            let return_type_with_placeholders =
+                instantiate_type(self.interner, func.return_type, &substitution);
             // ctx_type <: return_type (expected type constrains the return type)
             // This allows inference variables in the return type to be constrained by the context
-            self.constrain_types(&mut infer_ctx, &var_map, ctx_type, return_type_with_placeholders);
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                ctx_type,
+                return_type_with_placeholders,
+            );
         }
 
         // 4. Resolve inference variables

@@ -171,12 +171,8 @@ impl<'a> TypeVisitor for ReadonlyChecker<'a> {
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         match self.kind {
-            IndexKind::String => {
-                shape.string_index.as_ref().is_some_and(|idx| idx.readonly)
-            }
-            IndexKind::Number => {
-                shape.number_index.as_ref().is_some_and(|idx| idx.readonly)
-            }
+            IndexKind::String => shape.string_index.as_ref().is_some_and(|idx| idx.readonly),
+            IndexKind::Number => shape.number_index.as_ref().is_some_and(|idx| idx.readonly),
         }
     }
 
@@ -350,10 +346,7 @@ impl<'a> IndexSignatureResolver<'a> {
     /// - `{ readonly [x: string]: string }` with `IndexKind::String` → `true`
     /// - `{ [x: string]: string }` with `IndexKind::String` → `false`
     pub fn is_readonly(&self, obj: TypeId, kind: IndexKind) -> bool {
-        let mut visitor = ReadonlyChecker {
-            db: self.db,
-            kind,
-        };
+        let mut visitor = ReadonlyChecker { db: self.db, kind };
         visitor.visit_type(self.db, obj)
     }
 

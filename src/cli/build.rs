@@ -22,19 +22,22 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
         cwd.join(project)
     } else {
         // Find tsconfig.json in current directory
-        find_tsconfig(cwd).ok_or_else(|| {
-            anyhow::anyhow!("No tsconfig.json found in {}", cwd.display())
-        })?
+        find_tsconfig(cwd)
+            .ok_or_else(|| anyhow::anyhow!("No tsconfig.json found in {}", cwd.display()))?
     };
 
-    info!("Loading project reference graph from: {}", root_config.display());
+    info!(
+        "Loading project reference graph from: {}",
+        root_config.display()
+    );
 
     // Load project reference graph
     let graph = ProjectReferenceGraph::load(&root_config)
         .context("Failed to load project reference graph")?;
 
     // Get build order (topological sort)
-    let build_order = graph.build_order()
+    let build_order = graph
+        .build_order()
         .context("Failed to determine build order (circular dependencies?)")?;
 
     info!("Build order: {} projects", build_order.len());
@@ -45,7 +48,8 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
 
     // Build projects in dependency order
     for project_id in build_order {
-        let project = graph.get_project(project_id)
+        let project = graph
+            .get_project(project_id)
             .ok_or_else(|| anyhow::anyhow!("Project not found: {:?}", project_id))?;
 
         // Check if project is up-to-date
@@ -57,16 +61,20 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
         info!("Building project: {}", project.config_path.display());
 
         // Compile this project
-        let result = crate::cli::driver::compile_project(args, &project.root_dir, &project.config_path)
-            .with_context(|| format!("Failed to build project: {}", project.config_path.display()))?;
+        let result =
+            crate::cli::driver::compile_project(args, &project.root_dir, &project.config_path)
+                .with_context(|| {
+                    format!("Failed to build project: {}", project.config_path.display())
+                })?;
 
         // Collect diagnostics
         if !result.diagnostics.is_empty() {
             all_diagnostics.extend(result.diagnostics.clone());
 
             // Check for errors
-            let has_errors = result.diagnostics.iter()
-                .any(|d| d.category == crate::checker::types::diagnostics::DiagnosticCategory::Error);
+            let has_errors = result.diagnostics.iter().any(|d| {
+                d.category == crate::checker::types::diagnostics::DiagnosticCategory::Error
+            });
 
             if has_errors {
                 all_success = false;
@@ -81,10 +89,16 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
                     return Ok(false);
                 }
             } else {
-                info!("✓ Project built with warnings: {}", project.config_path.display());
+                info!(
+                    "✓ Project built with warnings: {}",
+                    project.config_path.display()
+                );
             }
         } else {
-            info!("✓ Project built successfully: {}", project.config_path.display());
+            info!(
+                "✓ Project built successfully: {}",
+                project.config_path.display()
+            );
         }
     }
 
@@ -102,8 +116,8 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
 /// Check if a project is up-to-date by examining its .tsbuildinfo file
 /// and the outputs of its referenced projects.
 pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool {
+    use crate::cli::fs::{FileDiscoveryOptions, discover_ts_files};
     use crate::cli::incremental::ChangeTracker;
-    use crate::cli::fs::{discover_ts_files, FileDiscoveryOptions};
 
     // Load BuildInfo for this project
     let build_info_path = match get_build_info_path(project) {
@@ -129,7 +143,11 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
         }
         Err(e) => {
             if args.build_verbose {
-                warn!("Failed to load BuildInfo from {}: {}", build_info_path.display(), e);
+                warn!(
+                    "Failed to load BuildInfo from {}: {}",
+                    build_info_path.display(),
+                    e
+                );
             }
             return false;
         }
@@ -153,7 +171,11 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
         Ok(files) => files,
         Err(e) => {
             if args.build_verbose {
-                warn!("Failed to discover source files in {}: {}", root_dir.display(), e);
+                warn!(
+                    "Failed to discover source files in {}: {}",
+                    root_dir.display(),
+                    e
+                );
             }
             // If we can't scan files, assume we need to rebuild
             return false;
@@ -164,11 +186,7 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
     // But we need to keep absolute paths for ChangeTracker to read files
     let _current_files_relative: Vec<PathBuf> = current_files
         .iter()
-        .filter_map(|path| {
-            path.strip_prefix(root_dir)
-                .ok()
-                .map(|p| p.to_path_buf())
-        })
+        .filter_map(|path| path.strip_prefix(root_dir).ok().map(|p| p.to_path_buf()))
         .collect();
 
     // Use ChangeTracker to detect modifications
@@ -183,7 +201,8 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
 
     if tracker.has_changes() {
         if args.build_verbose {
-            info!("Project has changes: {} changed, {} new, {} deleted",
+            info!(
+                "Project has changes: {} changed, {} new, {} deleted",
                 tracker.changed_files().len(),
                 tracker.new_files().len(),
                 tracker.deleted_files().len()
@@ -209,14 +228,17 @@ fn are_referenced_projects_uptodate(
 ) -> bool {
     // For each referenced project
     for reference in &project.resolved_references {
-        let project_dir = reference.config_path.parent()
+        let project_dir = reference
+            .config_path
+            .parent()
             .unwrap_or(reference.config_path.as_path());
 
         let ref_build_info_path = project_dir.join("tsconfig.tsbuildinfo");
 
         if !ref_build_info_path.exists() {
             if args.build_verbose {
-                let project_name = reference.config_path
+                let project_name = reference
+                    .config_path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("unknown");
@@ -237,18 +259,22 @@ fn are_referenced_projects_uptodate(
                     if let Ok(metadata) = std::fs::metadata(&dts_absolute_path) {
                         if let Ok(dts_modified) = metadata.modified() {
                             // Convert the .d.ts modification time to seconds since epoch
-                            if let Ok(dts_secs) = dts_modified.duration_since(std::time::UNIX_EPOCH) {
+                            if let Ok(dts_secs) = dts_modified.duration_since(std::time::UNIX_EPOCH)
+                            {
                                 let dts_timestamp = dts_secs.as_secs();
 
                                 // Compare with our build time
                                 if dts_timestamp > build_info.build_time {
                                     if args.build_verbose {
-                                        let project_name = reference.config_path
+                                        let project_name = reference
+                                            .config_path
                                             .file_stem()
                                             .and_then(|s| s.to_str())
                                             .unwrap_or("unknown");
-                                        info!("Referenced project's .d.ts is newer: {} ({} > {})",
-                                            project_name, dts_timestamp, build_info.build_time);
+                                        info!(
+                                            "Referenced project's .d.ts is newer: {} ({} > {})",
+                                            project_name, dts_timestamp, build_info.build_time
+                                        );
                                     }
                                     return false;
                                 }
@@ -259,7 +285,8 @@ fn are_referenced_projects_uptodate(
             }
             Ok(None) => {
                 if args.build_verbose {
-                    let project_name = reference.config_path
+                    let project_name = reference
+                        .config_path
                         .file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown");
@@ -269,7 +296,8 @@ fn are_referenced_projects_uptodate(
             }
             Err(e) => {
                 if args.build_verbose {
-                    let project_name = reference.config_path
+                    let project_name = reference
+                        .config_path
                         .file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown");
@@ -295,9 +323,5 @@ fn get_build_info_path(project: &ResolvedProject) -> Option<PathBuf> {
 /// Find a tsconfig.json file in the given directory
 fn find_tsconfig(dir: &Path) -> Option<PathBuf> {
     let config = dir.join("tsconfig.json");
-    if config.exists() {
-        Some(config)
-    } else {
-        None
-    }
+    if config.exists() { Some(config) } else { None }
 }

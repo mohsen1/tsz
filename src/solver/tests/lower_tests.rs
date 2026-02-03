@@ -506,7 +506,7 @@ fn test_lower_array_type_reference_respects_resolver() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Lazy(_def_id)) => {}, // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeKey::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                 other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
@@ -552,7 +552,7 @@ fn test_lower_readonly_array_type_reference_respects_resolver() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Lazy(_def_id)) => {}, // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeKey::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                 other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
@@ -1600,7 +1600,7 @@ fn test_lower_type_reference_with_arguments() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Lazy(_def_id)) => {}, // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeKey::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                 other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
@@ -1617,7 +1617,7 @@ fn test_lower_type_query_uses_value_resolver() {
 
     // Phase 4.2: Use def_id_resolver for Foo reference
     let def_id_resolver = |_node_idx: NodeIndex| Some(DefId(1));
-    let type_resolver = |_node_idx: NodeIndex| None;  // Not needed with def_id_resolver
+    let type_resolver = |_node_idx: NodeIndex| None; // Not needed with def_id_resolver
     let value_resolver = |_node_idx: NodeIndex| Some(2);
 
     // Use with_hybrid_resolver to provide def_id_resolver and value_resolver

@@ -1324,7 +1324,10 @@ impl<'a> CheckerState<'a> {
 
         // Bug #1.2: Check if this is a captured mutable variable
         // Rule #42 only applies to variables captured from outer scope, not local variables
-        if self.is_inside_closure() && self.is_captured_variable(sym_id) && self.is_mutable_binding(sym_id) {
+        if self.is_inside_closure()
+            && self.is_captured_variable(sym_id)
+            && self.is_mutable_binding(sym_id)
+        {
             // Rule #42: Reset narrowing for captured mutable bindings in closures
             // (const variables preserve narrowing, let/var reset to declared type)
             return declared_type;
@@ -1395,8 +1398,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for let/var (mutable), false for const (immutable).
     fn is_mutable_binding(&self, sym_id: SymbolId) -> bool {
-        use crate::parser::syntax_kind_ext;
         use crate::parser::node_flags;
+        use crate::parser::syntax_kind_ext;
 
         let symbol = match self.ctx.binder.get_symbol(sym_id) {
             Some(sym) => sym,
@@ -1457,7 +1460,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Find the enclosing scope of the declaration
-        let decl_scope_id = match self.ctx.binder.find_enclosing_scope(self.ctx.arena, decl_idx) {
+        let decl_scope_id = match self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, decl_idx)
+        {
             Some(scope_id) => scope_id,
             None => return false, // No scope info, assume not captured
         };
@@ -1482,7 +1489,11 @@ impl<'a> CheckerState<'a> {
             }
 
             // Move to parent scope
-            scope_id = self.ctx.binder.scopes.get(scope_id.0 as usize)
+            scope_id = self
+                .ctx
+                .binder
+                .scopes
+                .get(scope_id.0 as usize)
                 .map(|scope| scope.parent)
                 .unwrap_or(ScopeId::NONE);
 

@@ -894,11 +894,7 @@ impl<'a> CheckerState<'a> {
                         // TS2694 (namespace has no exported member) is for TYPE context only,
                         // which is handled separately in type name resolution.
                         // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                        self.error_property_not_exist_at(
-                            property_name,
-                            original_object_type,
-                            idx,
-                        );
+                        self.error_property_not_exist_at(property_name, original_object_type, idx);
                     }
                     TypeId::ERROR
                 }

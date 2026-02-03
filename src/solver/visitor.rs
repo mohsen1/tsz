@@ -1400,11 +1400,10 @@ impl LiteralTypeChecker {
         match types.lookup(type_id) {
             Some(TypeKey::Literal(_)) => true,
             Some(TypeKey::ReadonlyType(inner)) => Self::check(types, inner),
-            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => {
-                info.constraint
-                    .map(|c| Self::check(types, c))
-                    .unwrap_or(false)
-            }
+            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => info
+                .constraint
+                .map(|c| Self::check(types, c))
+                .unwrap_or(false),
             _ => false,
         }
     }
@@ -1421,11 +1420,10 @@ impl FunctionTypeChecker {
                 let members = types.type_list(members);
                 members.iter().any(|&member| Self::check(types, member))
             }
-            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => {
-                info.constraint
-                    .map(|c| Self::check(types, c))
-                    .unwrap_or(false)
-            }
+            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => info
+                .constraint
+                .map(|c| Self::check(types, c))
+                .unwrap_or(false),
             _ => false,
         }
     }
@@ -1447,11 +1445,10 @@ impl ObjectTypeChecker {
                 let members = types.type_list(members);
                 members.iter().all(|&member| Self::check(types, member))
             }
-            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => {
-                info.constraint
-                    .map(|constraint| Self::check(types, constraint))
-                    .unwrap_or(false)
-            }
+            Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => info
+                .constraint
+                .map(|constraint| Self::check(types, constraint))
+                .unwrap_or(false),
             _ => false,
         }
     }

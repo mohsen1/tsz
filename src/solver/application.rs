@@ -147,7 +147,10 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         }
 
         // Get type parameters for this DefId
-        let type_params = self.resolver.get_lazy_type_params(def_id).unwrap_or_default();
+        let type_params = self
+            .resolver
+            .get_lazy_type_params(def_id)
+            .unwrap_or_default();
 
         if type_params.is_empty() {
             return ApplicationResult::Resolved(body_type);

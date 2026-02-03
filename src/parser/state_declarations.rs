@@ -137,7 +137,9 @@ impl ParserState {
 
         // TS1070: 'async' modifier cannot appear on a type member
         // Check if async is being used as a modifier (not as a property name)
-        if self.is_token(SyntaxKind::AsyncKeyword) && !self.look_ahead_is_property_name_after_keyword() {
+        if self.is_token(SyntaxKind::AsyncKeyword)
+            && !self.look_ahead_is_property_name_after_keyword()
+        {
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "'async' modifier cannot appear on a type member.",
@@ -806,10 +808,12 @@ impl ParserState {
 
         // Parse body
         // Check if this is a declare namespace/module (has declare modifier)
-        let is_declare = modifiers.as_ref()
+        let is_declare = modifiers
+            .as_ref()
             .and_then(|m| m.nodes.first())
             .map_or(false, |&node| {
-                self.arena.get(node)
+                self.arena
+                    .get(node)
                     .map_or(false, |n| n.kind == SyntaxKind::DeclareKeyword as u16)
             });
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
