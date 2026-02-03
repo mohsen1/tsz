@@ -2432,6 +2432,57 @@ impl<'a> CheckerState<'a> {
                 None
             }
 
+            // Handle Lazy types (type aliases stored with DefId)
+            NamespaceMemberKind::Lazy(def_id) => {
+                // Resolve the DefId to a SymbolId and reuse the SymbolRef logic
+                let sym_id = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
+                let Some(sym_id) = sym_id else {
+                    return None;
+                };
+
+                let symbol = match self.ctx.binder.get_symbol(sym_id) {
+                    Some(symbol) => symbol,
+                    None => return None,
+                };
+
+                if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
+                    return None;
+                }
+
+                // Check direct exports first
+                if let Some(exports) = symbol.exports.as_ref()
+                    && let Some(member_id) = exports.get(property_name)
+                {
+                    // Follow re-export chains to get the actual symbol
+                    let resolved_member_id = if let Some(member_symbol) =
+                        self.ctx.binder.get_symbol(member_id)
+                        && member_symbol.flags & symbol_flags::ALIAS != 0
+                    {
+                        let mut visited_aliases = Vec::new();
+                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                            .unwrap_or(member_id)
+                    } else {
+                        member_id
+                    };
+
+                    if let Some(member_symbol) = self.ctx.binder.get_symbol(resolved_member_id)
+                        && member_symbol.flags & symbol_flags::VALUE == 0
+                        && member_symbol.flags & symbol_flags::ALIAS == 0
+                    {
+                        return None;
+                    }
+                    return Some(self.get_type_of_symbol(resolved_member_id));
+                }
+
+                if symbol.flags & symbol_flags::ENUM != 0
+                    && let Some(member_type) = self.enum_member_type_for_name(sym_id, property_name)
+                {
+                    return Some(member_type);
+                }
+
+                None
+            }
+
             // Handle Callable types from merged class+namespace or function+namespace symbols
             // When a class/function merges with a namespace, the type is a Callable with
             // properties containing the namespace exports
@@ -2529,6 +2580,55 @@ impl<'a> CheckerState<'a> {
                     (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
                 let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
                 has_type && !has_value
+            }
+
+            // Handle Lazy types (type aliases stored with DefId)
+            NamespaceMemberKind::Lazy(def_id) => {
+                // Resolve the DefId to a SymbolId and check if it has type-only members
+                if let Some(sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id).copied() {
+                    let symbol = match self.ctx.binder.get_symbol(sym_id) {
+                        Some(symbol) => symbol,
+                        None => return false,
+                    };
+
+                    if symbol.flags & symbol_flags::MODULE == 0 {
+                        return false;
+                    }
+
+                    let exports = match symbol.exports.as_ref() {
+                        Some(exports) => exports,
+                        None => return false,
+                    };
+
+                    let member_id = match exports.get(property_name) {
+                        Some(member_id) => member_id,
+                        None => return false,
+                    };
+
+                    // Follow alias chains to determine if the ultimate target is type-only
+                    let resolved_member_id = if let Some(member_symbol) =
+                        self.ctx.binder.get_symbol(member_id)
+                        && member_symbol.flags & symbol_flags::ALIAS != 0
+                    {
+                        let mut visited_aliases = Vec::new();
+                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                            .unwrap_or(member_id)
+                    } else {
+                        member_id
+                    };
+
+                    if let Some(member_symbol) = self.ctx.binder.get_symbol(resolved_member_id) {
+                        let has_value = (member_symbol.flags
+                            & (symbol_flags::VALUE | symbol_flags::ALIAS))
+                            != 0;
+                        let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+                        return has_type && !has_value;
+                    }
+
+                    false
+                } else {
+                    false
+                }
             }
 
             // Handle Callable types from merged class+namespace or function+namespace symbols
