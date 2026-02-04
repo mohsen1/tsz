@@ -1,6 +1,12 @@
 # Session tsz-4
 
-## Date: 2025-02-04
+## WORK IS NEVER DONE UNTIL ALL TESTS PASS
+Work is never done until all tests pass. This includes:
+- Unit tests (`cargo nextest run`)
+- Conformance tests (`./scripts/conformance.sh`)
+- No existing `#[ignore]` tests
+- No cleanup work left undone
+- No large files (>3000 lines) left unaddressed
 
 ## Current Status: Working on TS1359 reserved word detection
 
