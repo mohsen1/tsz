@@ -42,22 +42,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Helper to get property modifiers for a given key in a source object.
+    /// Handles Intersections, Lazy, Ref, and TypeParameter types robustly.
     fn get_property_modifiers_for_key(
-        &self,
+        &mut self,
         source_object: Option<TypeId>,
         key_name: Atom,
     ) -> (bool, bool) {
-        if let Some(source_obj) = source_object {
-            if let Some(TypeKey::Object(shape_id)) = self.interner().lookup(source_obj) {
-                let shape = self.interner().object_shape(shape_id);
-                for prop in &shape.properties {
-                    if prop.name == key_name {
-                        return (prop.optional, prop.readonly);
-                    }
-                }
-            } else if let Some(TypeKey::ObjectWithIndex(shape_id)) =
-                self.interner().lookup(source_obj)
-            {
+        let Some(source_obj) = source_object else {
+            return (false, false);
+        };
+
+        // Resolve the type to handle Lazy and Ref
+        let resolved = self.resolve_type_for_property_lookup(source_obj);
+
+        // Handle different type kinds
+        match self.interner().lookup(resolved) {
+            // Direct object types
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 for prop in &shape.properties {
                     if prop.name == key_name {
@@ -65,14 +66,63 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
             }
+
+            // Intersection: check all constituents
+            // If any constituent has the property as readonly, it's readonly
+            // If all constituents have the property as optional, it's optional
+            Some(TypeKey::Intersection(members)) => {
+                let members_list = self.interner().type_list(members);
+                let mut found_optional = None;
+                let mut found_readonly = None;
+
+                for &member in members_list.iter() {
+                    if let (opt, ro) = self.get_property_modifiers_for_key(Some(member), key_name) {
+                        // Found the property in this constituent
+                        found_optional = Some(found_optional.unwrap_or(true) && opt);
+                        found_readonly = Some(found_readonly.unwrap_or(false) || ro);
+                    }
+                }
+
+                if let (Some(opt), Some(ro)) = (found_optional, found_readonly) {
+                    return (opt, ro);
+                }
+            }
+
+            // TypeParameter: look at the constraint
+            Some(TypeKey::TypeParameter(param)) => {
+                if let Some(constraint) = param.constraint {
+                    return self.get_property_modifiers_for_key(Some(constraint), key_name);
+                }
+            }
+
+            _ => {}
         }
+
         // Default modifiers when we can't determine
         (false, false)
     }
 
+    /// Resolve a type for property lookup, handling Lazy types.
+    /// Actually evaluates the type to get the concrete structure.
+    fn resolve_type_for_property_lookup(&mut self, ty: TypeId) -> TypeId {
+        match self.interner().lookup(ty) {
+            Some(TypeKey::Lazy(_)) => {
+                // Actually evaluate it to get the concrete structure
+                let evaluated = self.evaluate(ty);
+                // Protect against infinite loops if evaluate returns self
+                if evaluated != ty {
+                    self.resolve_type_for_property_lookup(evaluated)
+                } else {
+                    ty
+                }
+            }
+            _ => ty,
+        }
+    }
+
     /// Helper to compute modifiers for a mapped type property.
     fn get_mapped_modifiers(
-        &self,
+        &mut self,
         mapped: &MappedType,
         is_homomorphic: bool,
         source_object: Option<TypeId>,
@@ -110,6 +160,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///    - Apply readonly/optional modifiers
     /// 3. Construct a new object type with the resulting properties
     pub fn evaluate_mapped(&mut self, mapped: &MappedType) -> TypeId {
+        // TODO: Array/Tuple Preservation for Homomorphic Mapped Types
+        // If source_object is an Array or Tuple, we should construct a Mapped Array/Tuple
+        // instead of degrading to a plain Object. This is required to preserve
+        // Array.prototype methods (push, pop, map) and tuple-specific behavior.
+        // Example: type Boxed<T> = { [K in keyof T]: Box<T[K]> }
+        //   Boxed<[number, string]> should be [Box<number>, Box<string>] (Tuple)
+        //   Boxed<number[]> should be Box<number>[] (Array)
+        // Current implementation degrades both to plain Objects.
+
         // Check if depth was already exceeded
         if self.is_depth_exceeded() {
             return TypeId::ERROR;
@@ -413,17 +472,52 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Check if a mapped type is homomorphic (template is T[K] indexed access).
     /// Homomorphic mapped types preserve modifiers from the source type.
-    fn is_homomorphic_mapped_type(&self, mapped: &MappedType) -> bool {
-        // Check if template is an IndexAccess type
+    ///
+    /// A mapped type is homomorphic if:
+    /// 1. The constraint is `keyof T` for some type T
+    /// 2. The template is `T[K]` where T is the same type and K is the iteration parameter
+    fn is_homomorphic_mapped_type(&mut self, mapped: &MappedType) -> bool {
+        // Extract the source type from the constraint (keyof T)
+        let Some(source_from_constraint) = self.extract_source_from_keyof(mapped.constraint) else {
+            return false;
+        };
+
+        // Check if template is an IndexAccess type T[K]
         match self.interner().lookup(mapped.template) {
-            Some(TypeKey::IndexAccess(_obj, idx)) => {
-                // Check if the index is our type parameter
+            Some(TypeKey::IndexAccess(obj, idx)) => {
+                // CRITICAL: Must verify that the object being indexed is the same T
+                // from keyof T in the constraint
+                if obj != source_from_constraint {
+                    return false;
+                }
+
+                // Check if the index is our type parameter K
                 match self.interner().lookup(idx) {
                     Some(TypeKey::TypeParameter(param)) => param.name == mapped.type_param.name,
                     _ => false,
                 }
             }
             _ => false,
+        }
+    }
+
+    /// Extract the source type T from a `keyof T` constraint.
+    /// Handles aliased constraints like `type Keys<T> = keyof T`.
+    fn extract_source_from_keyof(&mut self, constraint: TypeId) -> Option<TypeId> {
+        match self.interner().lookup(constraint) {
+            Some(TypeKey::KeyOf(source)) => Some(source),
+            // Handle aliased constraints (Application)
+            Some(TypeKey::Application(_)) => {
+                // Evaluate to resolve the alias
+                let evaluated = self.evaluate(constraint);
+                // Recursively check the evaluated type
+                if evaluated != constraint {
+                    self.extract_source_from_keyof(evaluated)
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 
