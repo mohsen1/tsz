@@ -314,3 +314,58 @@ Fixed Cache Isolation Bug where lib.d.ts type aliases weren't resolving correctl
 **Next**: Task 4 - Truthiness Narrowing
 
 ---
+
+### Task 4 Complete ✅
+
+**Commits**:
+- `5b7d3b159` - "feat(tsz-2): implement Task 4 - Truthiness Narrowing with TypeGuard"
+- `79a812ccb` - "fix(tsz-2): add NaN and void to falsy narrowing per Gemini review"
+
+**Changes Made**:
+
+1. **src/solver/narrowing.rs** - Added falsy narrowing support:
+   - Added `narrow_to_falsy()` method to `NarrowingContext`
+   - Narrows types to falsy components (string → "", number → 0 | NaN, boolean → false)
+   - Handles intrinsics: null, undefined, void, boolean, string, number, bigint
+
+2. **src/solver/narrowing.rs** - Added helper methods:
+   - `falsy_component()`: Returns falsy representation of a type
+   - `literal_is_falsy()`: Checks if a literal value is falsy
+
+3. **src/solver/narrowing.rs** - Updated `TypeGuard::Truthy` handler:
+   - True branch: uses `narrow_by_truthiness()` (existing)
+   - False branch: uses `narrow_to_falsy()` (NEW) - fixes critical bug
+
+4. **src/checker/control_flow.rs** - Refactored truthiness handling:
+   - Added `TypeGuard` to imports
+   - Property access case: now uses `TypeGuard::Truthy`
+   - Default/fallback case: now uses `TypeGuard::Truthy`
+   - Removed manual narrowing logic
+   - Delegates to Solver via `narrowing.narrow_type()`
+
+**Critical Bugs Fixed** (via Gemini Code Review):
+1. **Missing NaN for number narrowing**
+   - TypeScript treats NaN as falsy
+   - Number type must narrow to `0 | NaN` in false branch
+   - Updated `falsy_component()` for NUMBER to return union of 0 and NaN
+   - Updated `narrow_to_falsy()` for UNKNOWN to include NaN
+
+2. **Missing void handling**
+   - void is a falsy type (effectively undefined at runtime)
+   - `falsy_component()` now handles VOID alongside NULL and UNDEFINED
+
+3. **False branch was returning source_type unchanged**
+   - Was: `sense = false` → return `source_type`
+   - Fixed: `sense = false` → return `narrow_to_falsy(source_type)`
+
+**Solver-First Architecture**:
+- Checker identifies truthiness context (WHERE + WHAT)
+- Solver calculates narrowed type (RESULT)
+
+**Gemini Guidance**:
+- Question 1 (PRE): Approach validation - use TypeGuard::Truthy, implement narrow_to_falsy
+- Question 2 (POST): Implementation review - found 3 critical issues, all fixed
+
+**Session Status**: 🟢 ALL TASKS COMPLETE
+
+---
