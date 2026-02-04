@@ -1,55 +1,74 @@
-# Session tsz-3: Error Formatting & Module Validation Cleanup
+# Session tsz-3 - Global Symbol Resolution (Fix TS2304 Poisoning)
 
-**Completed**: 2026-02-04
+**Started**: 2026-02-04
+**Status**: ACTIVE
+**Focus**: Critical Conformance - Global Symbol Resolution
 
-## Summary
+## Goal
 
-Successfully completed both tasks:
-1. Fixed class instance type formatting in error messages
-2. Cleaned up unused module_validation.rs file
+Fix the "poisoning" effect where missing global symbols (TS2304) cause types to default to `any`, which:
+- Suppresses subsequent type errors
+- Artificially inflates conformance scores
+- Hides real type checking issues
 
-## Task 1: Class Instance Type Formatting ✅
+## Problem Statement
 
-### Problem
-Class instances were being printed as structural object literals with all properties including Object.prototype methods.
+From `docs/specs/DIAGNOSTICS.md` Section 2:
+> When a global symbol like `console`, `Promise`, or `Array` fails to resolve (TS2304), it defaults to `any`. This "poisons" the type system by suppressing valid errors that should be emitted later.
 
-### Solution
-Modified `src/solver/format.rs` TypeFormatter to check `ObjectShape.symbol` field and use the class name when available.
-
-### Result
-**Before**:
-```
-error TS2345: Argument of type '{ isPrototypeOf: { ... }; propertyIsEnumerable: { ... }; name: string }'
-```
-
-**After**:
-```
-error TS2345: Argument of type 'Giraffe'
+**Example**:
+```typescript
+// If 'console' doesn't resolve, it becomes 'any'
+console.log("hello");  // Should error but doesn't because console is 'any'
+console.nonExistent(); // Should error TS2339 but doesn't
 ```
 
-### Commits
-- `43955b57f` - feat: use class symbol names in type formatter
+## Tasks
 
-## Task 2: Module Validation Cleanup ✅
+### Task 1: Diagnose Global Resolution Gaps
+Create a minimal reproduction case and investigate how lib_contexts are used:
 
-### Problem
-`src/checker/module_validation.rs` was commented out in mod.rs due to API mismatches, creating technical debt and duplicate code.
+**Files to investigate**:
+- `src/checker/symbol_resolver.rs` - Symbol resolution logic
+- `src/checker/context.rs` - Type context with lib_contexts
+- `src/binder/mod.rs` - Binder with lib file loading
 
-### Solution
-- Deleted `src/checker/module_validation.rs` (335 lines of dead code)
-- Removed commented-out module declaration from `src/checker/mod.rs`
-- Confirmed `import_checker.rs` already handles the validation logic (TS2305, TS2307, re-export cycles)
+**Actions**:
+1. Create test case using standard globals (console, Promise, Array)
+2. Trace through resolution to find where lib symbols aren't being found
+3. Check if lib_contexts are being queried correctly
 
-### Result
-- Cleaner codebase with no duplicate validation logic
-- Module validation consolidated in `import_checker.rs`
-- 352 lines removed (335 line file + formatting)
+### Task 2: Fix Lib Context Merging
+Ensure lib.d.ts symbols are correctly merged into scope chain:
 
-### Commits
-- `b9b6c6c0b` - refactor: remove unused module_validation.rs file
+**Actions**:
+1. Verify `resolve_identifier_symbol` in symbol_resolver.rs
+2. Check fallback to lib binders when symbol not in local scope
+3. Ensure lib_contexts from CLI driver are passed through to checker
 
-## Impact
+### Task 3: Verify Conformance Improvement
+Run tests to verify the fix:
 
-- Error messages are now much more readable
-- Codebase is cleaner with less technical debt
-- No breaking changes to existing functionality
+**Actions**:
+1. Run conformance tests that rely on globals
+2. Verify TS2304 is no longer emitted for valid globals
+3. Verify TS2339 and other errors are now correctly emitted
+
+## Context
+
+**Previous Session**: Completed error formatting and module validation cleanup
+
+**Key Insight**: This is a critical issue affecting conformance accuracy. Fixing it will likely reveal many hidden type errors that are currently being suppressed.
+
+**Files**:
+- `src/checker/symbol_resolver.rs` - Symbol resolution implementation
+- `src/checker/context.rs` - Type context with lib_contexts
+- `src/cli/driver.rs` - Where lib_contexts are created
+- `src/binder/mod.rs` - Binder implementation
+
+## Success Criteria
+
+- ✅ Standard globals (console, Promise, Array, etc.) resolve correctly
+- ✅ No TS2304 for valid global symbols
+- ✅ Type errors are emitted correctly (not suppressed by `any`)
+- ✅ Conformance tests show improvement
