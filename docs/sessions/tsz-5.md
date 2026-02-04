@@ -2,7 +2,27 @@
 
 ## Date: 2026-02-04
 
-## Status: PHASE 1 - Usage Analysis Implementation
+## Status: PAUSED - Waiting for TSZ-6 (Advanced Type Nodes)
+
+### Pause Reason (2026-02-04)
+
+Per Gemini strategic consultation, TSZ-5 is **PAUSED** until TSZ-6 completes.
+
+**Strategic Rationale:**
+- Import/Export Elision has a hard dependency on accurate type parsing
+- Current emit_type() lacks support for MappedType, ConditionalType, TypeQuery, IndexedAccessType
+- This causes 75+ TS1005 syntax errors that would corrupt usage analysis
+- **Solver-First Principle:** Type nodes must be implemented before usage analysis can be accurate
+
+**Gemini Quote:**
+> "If a .d.ts contains `export const x: typeof InternalVar;` and TypeQuery isn't implemented, the usage analyzer will fail to see that InternalVar is 'used', leading to incorrect import elision."
+
+**Next Steps:**
+1. Complete TSZ-6 (Advanced Type Nodes)
+2. Verify TS1005 errors reduced significantly
+3. Resume TSZ-5 with accurate type foundation
+
+**See:** `docs/sessions/tsz-6.md` for active session
 
 ### Session Goal
 
