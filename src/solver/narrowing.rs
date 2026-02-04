@@ -119,6 +119,23 @@ pub enum TypeGuard {
         type_id: Option<TypeId>,
         asserts: bool,
     },
+
+    /// `Array.isArray(x)`
+    ///
+    /// Narrows a type to only array-like types (arrays, tuples, readonly arrays).
+    ///
+    /// # Examples
+    /// ```typescript
+    /// function process(x: string[] | number | { length: number }) {
+    ///   if (Array.isArray(x)) {
+    ///     x; // string[] (not number or the object)
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// This preserves element types - `string[] | number[]` stays as `string[] | number[]`,
+    /// it doesn't collapse to `any[]`.
+    Array,
 }
 
 /// Result of a narrowing operation.
@@ -1735,6 +1752,16 @@ impl<'a> NarrowingContext<'a> {
                     }
                 }
             }
+
+            TypeGuard::Array => {
+                if sense {
+                    // Positive: Array.isArray(x) - narrow to array-like types
+                    self.narrow_to_array(source_type)
+                } else {
+                    // Negative: !Array.isArray(x) - exclude array-like types
+                    self.narrow_excluding_array(source_type)
+                }
+            }
         }
     }
 
@@ -2003,6 +2030,162 @@ impl<'a> NarrowingContext<'a> {
             narrower,
         };
         visitor.visit_type(self.db, type_id)
+    }
+
+    /// Task 10: Narrow a type to only array-like types.
+    ///
+    /// Used for `Array.isArray(x)` in the true branch.
+    /// Keeps only arrays, tuples, and readonly arrays - preserves element types.
+    ///
+    /// # Examples
+    /// - `narrow_to_array(string[] | number)` → `string[]`
+    /// - `narrow_to_array(unknown)` → `any[]`
+    /// - `narrow_to_array(any)` → `any`
+    /// - `narrow_to_array(readonly [number, string])` → `readonly [number, string]`
+    fn narrow_to_array(&self, source_type: TypeId) -> TypeId {
+        // Handle ANY and UNKNOWN first
+        if source_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+
+        if source_type == TypeId::UNKNOWN {
+            // Unknown narrows to any[] (most general array type)
+            return self.db.array(TypeId::ANY);
+        }
+
+        // Handle Union: filter members, keeping only array-like types
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
+            let array_like: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    let narrowed = self.narrow_to_array(member);
+                    if narrowed == TypeId::NEVER {
+                        None
+                    } else {
+                        Some(narrowed)
+                    }
+                })
+                .collect();
+
+            if array_like.is_empty() {
+                return TypeId::NEVER;
+            } else if array_like.len() == 1 {
+                return array_like[0];
+            } else {
+                return self.db.union(array_like);
+            }
+        }
+
+        // Handle Intersections: if ANY member is array-like, the whole intersection is array-like
+        // e.g., string[] & { foo: string } is an array-like type
+        if let Some(members_id) = intersection_list_id(self.db, source_type) {
+            let members = self.db.type_list(members_id);
+            let is_array = members.iter().any(|&m| {
+                let resolved = self.resolve_type(m);
+                self.is_array_like(resolved) || self.narrow_to_array(resolved) != TypeId::NEVER
+            });
+
+            if is_array {
+                return source_type;
+            }
+        }
+
+        // Handle Type Parameters: intersect with any[]
+        if let Some(_info) = type_param_info(self.db, source_type) {
+            let any_array = self.db.array(TypeId::ANY);
+            return self.db.intersection2(source_type, any_array);
+        }
+
+        // Check if type is array-like (Array, Tuple, or ReadonlyArray)
+        if self.is_array_like(source_type) {
+            return source_type;
+        }
+
+        // Not array-like
+        TypeId::NEVER
+    }
+
+    /// Task 10: Exclude array-like types from a type.
+    ///
+    /// Used for `!Array.isArray(x)` in the false branch.
+    /// Removes arrays, tuples, and readonly arrays.
+    ///
+    /// # Examples
+    /// - `narrow_excluding_array(string[] | number)` → `number`
+    /// - `narrow_excluding_array(string[])` → `NEVER`
+    /// - `narrow_excluding_array(unknown)` → `unknown`
+    fn narrow_excluding_array(&self, source_type: TypeId) -> TypeId {
+        // Handle ANY and UNKNOWN
+        if source_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+
+        if source_type == TypeId::UNKNOWN {
+            // Unknown doesn't have a "not array" type representation
+            return TypeId::UNKNOWN;
+        }
+
+        // Handle Union: filter out array-like members
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
+            let non_array: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    let narrowed = self.narrow_excluding_array(member);
+                    if narrowed == TypeId::NEVER {
+                        None
+                    } else {
+                        Some(narrowed)
+                    }
+                })
+                .collect();
+
+            if non_array.is_empty() {
+                return TypeId::NEVER;
+            } else if non_array.len() == 1 {
+                return non_array[0];
+            } else {
+                return self.db.union(non_array);
+            }
+        }
+
+        // Handle Type Parameters: check if constraint is definitely an array
+        // e.g., if T extends string[] and we check !Array.isArray(x), then x is never
+        if let Some(info) = type_param_info(self.db, source_type) {
+            if let Some(constraint) = info.constraint {
+                // If the constraint is definitely an array, then T is definitely an array.
+                // So !Array.isArray(T) is NEVER.
+                let narrowed_constraint = self.narrow_excluding_array(constraint);
+                if narrowed_constraint == TypeId::NEVER {
+                    return TypeId::NEVER;
+                }
+            }
+        }
+
+        // If array-like, return NEVER (excluded)
+        if self.is_array_like(source_type) {
+            return TypeId::NEVER;
+        }
+
+        // Not array-like, keep as-is
+        source_type
+    }
+
+    /// Check if a type is array-like (Array, Tuple, or ReadonlyArray).
+    ///
+    /// This unwraps ReadonlyType recursively to check the underlying type.
+    fn is_array_like(&self, type_id: TypeId) -> bool {
+        use crate::solver::type_queries;
+
+        // Check for ReadonlyType wrapper (unwrap recursively)
+        if let Some(TypeKey::ReadonlyType(inner)) = self.db.lookup(type_id) {
+            return self.is_array_like(inner);
+        }
+
+        // Check if type is Array, Tuple, or ReadonlyArray (wrapped)
+        type_queries::is_array_type(self.db, type_id)
+            || type_queries::is_tuple_type(self.db, type_id)
     }
 }
 
