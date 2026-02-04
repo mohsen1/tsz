@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 3 Active - Task 9: typeof Narrowing (COMPLETE)
+**Status**: 🟢 Phase 3 Active - Task 7: Assignment Narrowing (COMPLETE)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -623,6 +623,35 @@ However, to achieve the goal of matching `tsc` behavior exactly, additional narr
 - The comment on line 642 said "// includes null" but the code was `TypeId::OBJECT`
 - For `UNKNOWN` it was correct, but for regular types it was wrong
 - This would have caused incorrect narrowing in real-world TypeScript code
+
+### Task 7 Complete ✅
+
+**Commit**: `2d40491db` - "fix(tsz-2): fix two critical bugs in assignment narrowing"
+
+**Discovery**: Assignment narrowing infrastructure was already implemented, but had 2 critical bugs that broke destructuring and caused narrowing loss.
+
+**Changes Made**:
+1. Fixed destructuring assignment handling (Bug #1)
+   - Before: Only direct assignments (`x = ...`) worked due to `is_direct_assignment_to_reference` check
+   - After: Try `get_assigned_type` for ALL assignments including destructuring
+   - Impact: `[x] = [1]` now correctly narrows `x` to literal `1`
+   - Reason: `get_assigned_type` already handles destructuring via `match_destructuring_rhs`
+
+2. Fixed mutation narrowing reset (Bug #2)
+   - Before: `assignment_affects_reference_node` stopped traversal, losing all narrowing
+   - After: Continue to antecedent for mutations to preserve existing narrowing
+   - Impact: `x.prop = 1` no longer loses narrowing from earlier conditions
+   - Reason: Property mutations affect object state, not variable's narrowed type
+
+**Gemini Guidance**: Followed Two-Question Rule
+- Question 1: Asked about approach - discovered infrastructure already exists
+- Gemini Review: Found 2 critical bugs in existing implementation
+
+**Technical Details**:
+- Removed `is_direct_assignment_to_reference` guard that blocked destructuring
+- Added proper antecedent traversal for mutations (don't stop at `assignment_affects_reference`)
+- Maintains "killing definition" semantics for reassignments
+- Approved by Gemini Question 2: "logic correctly distinguishes between variable reassignment (killing def) and object mutation"
 
 
 ---
