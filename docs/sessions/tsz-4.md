@@ -2,9 +2,23 @@
 
 ## Date: 2026-02-04
 
-## Status: ACTIVE - Fixing Test Infrastructure
+## Status: ACTIVE - Implementing Enum Declaration Emit
 
-### Current Task: Migrate Test Runner to Native CLI ✅ (COMPLETED)
+### Current Task: Fix Abstract Property Type Caching (Quick Win)
+
+**Issue**: Abstract properties with initializers are missing type annotations in .d.ts output.
+- Test: `abstract prop = 1` emits `abstract prop;` instead of `abstract prop: number;`
+- Root cause: `get_node_type` returns None - checker doesn't cache types for invalid constructs
+- Fix needed: Ensure type is computed even for invalid TS (abstract + initializer violates TS1245)
+
+**Next Task: Implement Enum Declaration Emit**
+- TypeKey::Enum(DefId, TypeId) infrastructure exists
+- Need to implement:
+  1. Enum assignability rules (Rules #7, #24, #34 from unsoundness_audit.rs)
+  2. Enum member resolution (`MyEnum.Member` lookups)
+  3. Enum declaration emit in TypePrinter
+
+### Completed Task: Migrate Test Runner to Native CLI ✅
 
 **What was done:**
 1. Created `scripts/emit/src/cli-transpiler.ts` - CLI-based transpiler using native tsz binary
@@ -36,12 +50,15 @@ Match TypeScript's declaration output exactly using **test-driven development**.
 - **Test runner migrated to CLI-based testing** ✅ NEW
 
 **⏳ In Progress:**
-- Implementing missing TypePrinter features
+- Fixing abstract property type caching issue
+- Implementing Enum declaration emit
 
-**📋 TODO (Prioritized Order):**
-1. **[IN PROGRESS] Implement Enums** - Numeric, string, and const enum declaration emit (user-facing feature)
-2. **Implement Lazy Types** - Handle `TypeKey::Lazy(DefId)` for circular references (internal refactor)
-3. **Fix failing tests** - Use test runner to identify and fix declaration emit issues
+**📋 TODO (Prioritized Order - based on Gemini recommendation):**
+1. **[CURRENT] Fix Abstract Property Type Caching** (1-2 hours) - Quick win to validate new test infrastructure
+2. **Implement Enum Assignability** (Primary Focus) - Rules #7 (open numeric), #24 (nominal), #34 (string enums)
+3. **Implement Enum Member Resolution** - Enable `MyEnum.Member` lookups returning correct literal types
+4. **Implement Lazy Types** - Handle `TypeKey::Lazy(DefId)` for circular references (internal refactor)
+5. **Fix remaining declaration emit issues** - Use test runner to identify and fix
 
 ## Testing Infrastructure
 
