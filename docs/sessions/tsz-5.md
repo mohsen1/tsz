@@ -14,27 +14,35 @@
    - ✅ Refactored to use components instead of CheckerContext
    - ✅ Added `def_to_symbol` field to `TypeCache`
    - ✅ Handles inferred types, qualified names, computed properties
+   - ✅ Validated by Gemini Pro (Question 3) - Architecture CORRECT
 
-2. **Test Structure Created** (commit `fb15e09cd`)
+2. **TypeCache Integration** (commits `44f11b33b`, `a250935f8`)
+   - ✅ Added `def_to_symbol: FxHashMap<DefId, SymbolId>` to TypeCache
+   - ✅ Updated `TypeCache::merge()` to include def_to_symbol
+   - ✅ Updated `with_cache()` constructors to merge cache.def_to_symbol
+   - ✅ DeclarationEmitter now takes `binder: Option<&BinderState>`
+
+3. **Test Structure Created** (commit `fb15e09cd`)
    - ✅ Added 11 comprehensive test cases
    - ✅ Tests structured in `src/declaration_emitter/tests/`
 
-3. **TypeEnvironment Unification** (commits via tsz-3, merged 2026-02-04)
-   - ✅ FlowAnalyzer can now resolve Lazy types during narrowing
-   - ✅ type_environment population fix completes TypeResolver infrastructure
+4. **DeclarationEmitter Integration** (commit `d7597b9ff`)
+   - ✅ Added `used_symbols: Option<FxHashSet<SymbolId>>` field
+   - ✅ Added `set_used_symbols()` method
+   - ✅ Added `should_emit_import_specifier()` helper
+   - ✅ Added `count_used_imports()` helper
+   - ✅ Modified `emit_import_declaration()` to filter imports
+   - ✅ Added `emit_named_imports_filtered()` for specifier filtering
 
 **Current Task:**
 
-**Priority 1:** ⏳ **IN PROGRESS** - Integrate UsageAnalyzer into DeclarationEmitter
-   - Location: `src/emitter/declarations.rs`
-   - **BLOCKED**: Requires Gemini Question 1 (Approach Validation) per AGENTS.md
-   - Must modify DeclarationEmitter to use UsageAnalyzer
-   - Must filter import emission based on usage results
+**Priority 1:** ✅ **COMPLETED** - Integrate UsageAnalyzer into DeclarationEmitter
+   - Location: `src/declaration_emitter/mod.rs`
+   - All filtering logic implemented and compiling
 
-**Priority 2:** ⏸ PENDING - Run conformance tests for baseline
+**Priority 2:** 🔄 **IN PROGRESS** - Run conformance tests for baseline
    - Goal: Identify tests failing due to extra/missing imports
    - Command: `./scripts/conformance.sh --filter=decl`
-   - Should be done AFTER integration is complete
 
 **Key Architecture Decisions:**
 - UsageAnalyzer uses hybrid walk: AST for explicit types, Semantic for inferred
