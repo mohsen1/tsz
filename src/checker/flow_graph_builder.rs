@@ -1338,14 +1338,9 @@ impl<'a> FlowGraphBuilder<'a> {
 
                 if is_short_circuit {
                     // Handle short-circuit expressions with proper flow branching
-                    let before_expr = self.current_flow;
-
                     // Bind left operand and save the flow after it
                     self.handle_expression_for_assignments(binary.left);
-                    let _after_left_flow = self.current_flow;
-
-                    // Reset to before the expression for creating condition nodes
-                    self.current_flow = before_expr;
+                    let after_left_flow = self.current_flow;
 
                     if binary.operator_token
                         == crate::scanner::SyntaxKind::AmpersandAmpersandToken as u16
@@ -1353,7 +1348,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         // For &&: right side is only evaluated when left is truthy
                         let true_condition = self.create_flow_node(
                             flow_flags::TRUE_CONDITION,
-                            before_expr,
+                            after_left_flow,
                             binary.left,
                         );
                         self.current_flow = true_condition;
@@ -1363,7 +1358,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         // Short-circuit path: left is falsy, right is not evaluated
                         let false_condition = self.create_flow_node(
                             flow_flags::FALSE_CONDITION,
-                            before_expr,
+                            after_left_flow,
                             binary.left,
                         );
 
@@ -1376,7 +1371,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         // For || and ??: right side is only evaluated when left is falsy/nullish
                         let false_condition = self.create_flow_node(
                             flow_flags::FALSE_CONDITION,
-                            before_expr,
+                            after_left_flow,
                             binary.left,
                         );
                         self.current_flow = false_condition;
@@ -1386,7 +1381,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         // Short-circuit path: left is truthy, right is not evaluated
                         let true_condition = self.create_flow_node(
                             flow_flags::TRUE_CONDITION,
-                            before_expr,
+                            after_left_flow,
                             binary.left,
                         );
 
