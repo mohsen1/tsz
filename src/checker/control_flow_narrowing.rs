@@ -906,7 +906,27 @@ impl<'a> FlowAnalyzer<'a> {
 
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(node)?;
-            if !self.is_matching_reference(access.expression, target) {
+            // Unwrap assignment expressions to get the actual target
+            // e.g., in (o = fn()).done, access.expression is the assignment,
+            // and we need to extract 'o' from the left side of the assignment
+            let access_target = access.expression;
+            let access_target = self.skip_parenthesized(access_target);
+            let access_target_node = self.arena.get(access_target)?;
+
+            // If the expression is an assignment, use the left-hand side
+            let effective_target = if access_target_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            {
+                let binary = self.arena.get_binary_expr(access_target_node)?;
+                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
+                    binary.left
+                } else {
+                    access_target
+                }
+            } else {
+                access_target
+            };
+
+            if !self.is_matching_reference(effective_target, target) {
                 return None;
             }
             let name_node = self.arena.get(access.name_or_argument)?;
@@ -917,7 +937,24 @@ impl<'a> FlowAnalyzer<'a> {
 
         if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(node)?;
-            if !self.is_matching_reference(access.expression, target) {
+            // Unwrap assignment expressions for element access too
+            let access_target = access.expression;
+            let access_target = self.skip_parenthesized(access_target);
+            let access_target_node = self.arena.get(access_target)?;
+
+            let effective_target = if access_target_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            {
+                let binary = self.arena.get_binary_expr(access_target_node)?;
+                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
+                    binary.left
+                } else {
+                    access_target
+                }
+            } else {
+                access_target
+            };
+
+            if !self.is_matching_reference(effective_target, target) {
                 return None;
             }
             let name = self.literal_atom_from_node_or_type(access.name_or_argument)?;
