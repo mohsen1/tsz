@@ -1,8 +1,8 @@
 //! Parser state - statement and declaration parsing methods
 
 use super::state::{
-    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT,
-    CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR,
+    CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
 };
 use crate::parser::{NodeIndex, NodeList, node::*, parse_rules::*, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
@@ -1572,7 +1572,16 @@ impl ParserState {
         let heritage_clauses = self.parse_heritage_clauses();
 
         self.parse_expected(SyntaxKind::OpenBraceToken);
+
+        // Set ambient context for class members
+        let saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_AMBIENT;
+
         let members = self.parse_class_members();
+
+        // Restore context flags
+        self.context_flags = saved_flags;
+
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -1623,7 +1632,16 @@ impl ParserState {
         let heritage_clauses = self.parse_heritage_clauses();
 
         self.parse_expected(SyntaxKind::OpenBraceToken);
+
+        // Set ambient context for class members
+        let saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_AMBIENT;
+
         let members = self.parse_class_members();
+
+        // Restore context flags
+        self.context_flags = saved_flags;
+
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -2564,10 +2582,23 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse body (may be empty for ambient declarations)
+        // Parse body (may be empty for ambient declarations or abstract accessors)
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
+            // Accessors must have a body unless in an ambient context or if abstract
+            let has_abstract = modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&idx| {
+                    self.arena
+                        .nodes
+                        .get(idx.0 as usize)
+                        .is_some_and(|node| node.kind == SyntaxKind::AbstractKeyword as u16)
+                })
+            });
+
+            if (self.context_flags & CONTEXT_FLAG_AMBIENT) == 0 && !has_abstract {
+                self.error_token_expected("{");
+            }
             self.parse_semicolon();
             NodeIndex::NONE
         };
@@ -2634,10 +2665,23 @@ impl ParserState {
             let _ = self.parse_type();
         }
 
-        // Parse body (may be empty for ambient declarations)
+        // Parse body (may be empty for ambient declarations or abstract accessors)
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
+            // Accessors must have a body unless in an ambient context or if abstract
+            let has_abstract = modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&idx| {
+                    self.arena
+                        .nodes
+                        .get(idx.0 as usize)
+                        .is_some_and(|node| node.kind == SyntaxKind::AbstractKeyword as u16)
+                })
+            });
+
+            if (self.context_flags & CONTEXT_FLAG_AMBIENT) == 0 && !has_abstract {
+                self.error_token_expected("{");
+            }
             self.parse_semicolon();
             NodeIndex::NONE
         };
