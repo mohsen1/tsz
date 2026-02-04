@@ -2,12 +2,14 @@
 
 ## Date: 2026-02-04
 
-## Status: ✅ COMPLETE (2026-02-04)
+## Status: 🟡 ACTIVE - 4th Task Defined (2026-02-04)
 
-Completed 3 tasks:
+Completed 3 tasks successfully:
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
+
+### Next Task: Module System Fidelity (2026-02-04)
 
 ### Type Predicates and Assertion Functions ✅ COMPLETE (2026-02-04)
 
@@ -737,4 +739,92 @@ export declare class Container {
 
 ---
 
-## Previous Task: Computed Property Names and unique symbol ✅
+## Next Task: Module System Fidelity (2026-02-04)
+
+**Gemini Consultation Summary:**
+
+Since tsz-5 (Usage Analysis) and tsz-7 (Auto-imports) are handling module complexity, the next high-impact task for tsz-4 is **Module System Fidelity** - supporting ambient modules, global augmentation, and legacy CommonJS syntax.
+
+### Problem Description
+
+Current emitter has basic namespace support but lacks nuances for:
+- Ambient modules with string literals (declare module "fs")
+- Global augmentation (declare global)
+- Import equals (import fs = require("fs"))
+- Namespace exports (export as namespace)
+
+### Implementation Plan
+
+**Estimated Complexity: Low-Medium (1 day)**
+
+#### Phase 1: Ambient Module Detection
+- Check if module name is Identifier vs StringLiteral
+- StringLiteral → `declare module "name"`
+- Identifier → `namespace name`
+
+#### Phase 2: Global Augmentation
+- Handle `declare global` as special module declaration
+- Emit `declare global { ... }` syntax
+
+#### Phase 3: Import Equals
+- Handle `IMPORT_EQUALS_DECLARATION`
+- Emit `import id = require("mod")`
+
+#### Phase 4: Namespace Exports
+- Handle `NAMESPACE_EXPORT_DECLARATION`
+- Emit `export as namespace id`
+
+### Files to Modify
+- **`src/declaration_emitter/mod.rs`**: Primary changes
+  - Update `emit_statement` for new declaration types
+  - Modify `emit_module_declaration` for name type detection
+  - Implement `emit_import_equals_declaration`
+  - Implement `emit_namespace_export_declaration`
+
+### Success Criteria
+
+**Ambient Modules:**
+```typescript
+// Input
+declare module "fs" { export function readFile(): void; }
+
+// Output ✅
+declare module "fs" {
+    export function readFile(): void;
+}
+```
+
+**Global Augmentation:**
+```typescript
+// Input
+declare global { interface Window { custom: string; } }
+
+// Output ✅
+declare global {
+    interface Window {
+        custom: string;
+    }
+}
+```
+
+**Import Equals:**
+```typescript
+// Input
+import fs = require("fs");
+
+// Output ✅
+import fs = require("fs");
+```
+
+**UMD Namespace:**
+```typescript
+// Input
+export as namespace MyLib;
+
+// Output ✅
+export as namespace MyLib;
+```
+
+---
+
+## Previous Task: Type Predicates and Assertion Functions ✅
