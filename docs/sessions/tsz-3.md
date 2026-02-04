@@ -101,12 +101,66 @@ Systematic review of the last 400 commits to find and fix type system bugs befor
 
 **Total Critical Bugs**: 8+
 
-## Next Steps
+## Implementation Plan (from Gemini Question 1)
 
-TODO: Ask Gemini to prioritize:
-1. Fix instanceof and `in` operator narrowing bugs
-2. Continue review of remaining commits
-3. Re-implement discriminant narrowing correctly
+### Priority 1: `in` Operator Narrowing Fix
+
+**Files**: `src/solver/narrowing.rs`
+**Functions**: `type_has_property`, `narrow_by_property_presence`
+
+**Changes Required**:
+
+1. **Enhance `type_has_property`**:
+   - Add `Lazy`/`Ref` resolution: Call resolution helper to unwrap wrappers
+   - Add `Intersection` support: Return true if ANY member has property
+   - Add prototype checking: Call `apparent_object_member_kind`
+   - Keep existing index signature logic
+
+2. **Fix `narrow_by_property_presence`**:
+   - Transform from filter to transformer
+   - For `unknown`: Return `object & { prop: unknown }`
+   - Add `promote_optional_property` helper to synthesize new ObjectShape
+   - Handle readonly wrappers
+
+3. **New Helper: `promote_optional_property`**:
+   - Clone ObjectShape
+   - Find property and set `optional: false`
+   - Re-intern shape
+   - Handle visited set for recursive types
+
+**Edge Cases**:
+- Recursive types (use visited set)
+- `any`/`error` (leave unchanged)
+- Numeric keys (match numeric index signatures)
+- Private fields (always required)
+
+**Status**: ⏸️ Plan approved, implementation pending
+
+---
+
+### Priority 2: instanceof Narrowing Fix
+
+**File**: `src/solver/narrowing.rs`
+**Function**: `narrow_by_instanceof`
+
+**Change**: Use `interner.intersection2(source, target)` instead of `narrow_to_type` when not assignable
+
+**Status**: Not started
+
+---
+
+### Priority 3: Discriminant Narrowing Re-implementation
+
+**File**: `src/solver/narrowing.rs`
+**Function**: `narrow_by_discriminant`
+
+**Requirements**:
+- Use filtering approach (not pre-discovery)
+- Use visitor pattern for all TypeKey variants
+- Handle Lazy, Intersection, ReadonlyType
+- Ask Gemini Question 1 BEFORE implementing
+
+**Status**: Not started
 
 ## Session History
 
