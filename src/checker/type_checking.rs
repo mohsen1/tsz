@@ -2555,30 +2555,24 @@ impl<'a> CheckerState<'a> {
             "String",
         ];
 
-        // Check if lib files are loaded
-        let has_lib = self.ctx.has_lib_loaded();
-
         // Emit TS2318 errors when core global types are not available.
-        // This happens when:
-        // - noLib is specified (user opted out of lib files)
-        // - OR lib files failed to load for some reason
-        //
         // TypeScript always requires these core global types to exist.
-        // With --noLib, users must provide their own declarations.
-        // Note: tsc emits these errors BOTH with and without --noLib.
-        if !has_lib {
-            for &type_name in CORE_GLOBAL_TYPES {
-                // Check if the type is declared in the current file
-                if !self.ctx.binder.file_locals.has(type_name) {
-                    // Type not declared locally and no lib loaded - emit TS2318
-                    self.ctx
-                        .push_diagnostic(lib_loader::emit_error_global_type_missing(
-                            type_name,
-                            self.ctx.file_name.clone(),
-                            0,
-                            0,
-                        ));
-                }
+        // tsc emits these errors BOTH with and without --noLib.
+        //
+        // We check if types exist globally (in libs or current file scope).
+        // This matches tsc behavior where missing core types are reported
+        // even when some libs are loaded (e.g., if --lib es6 is missing Array).
+        for &type_name in CORE_GLOBAL_TYPES {
+            // Check if the type is available in any loaded lib or current scope
+            if !self.ctx.has_name_in_lib(type_name) {
+                // Type not available globally - emit TS2318
+                self.ctx
+                    .push_diagnostic(lib_loader::emit_error_global_type_missing(
+                        type_name,
+                        self.ctx.file_name.clone(),
+                        0,
+                        0,
+                    ));
             }
         }
 
