@@ -1944,27 +1944,24 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         type_id: crate::solver::TypeId,
         interner: &dyn crate::solver::TypeDatabase,
     ) -> Option<crate::solver::TypeId> {
-        use crate::binder::symbol_flags;
+        
         use crate::solver::type_queries;
         use crate::solver::visitor::{
             callable_shape_id, object_shape_id, object_with_index_shape_id,
         };
 
-        // 1. First try Lazy types (type aliases, some class references)
+        // 1. First try Lazy types (type aliases, class/interface references)
         if let Some(def_id) = type_queries::get_lazy_def_id(self.types, type_id) {
             // 2. Convert DefId to SymbolId
             let sym_id = self.def_to_symbol_id(def_id)?;
 
-            // 3. Verify this is a class (not an interface - interfaces don't have base classes)
-            let symbol = self.binder.symbols.get(sym_id)?;
-            if (symbol.flags & symbol_flags::CLASS) == 0 {
-                return None;
-            }
-
-            // 4. Get parents from InheritanceGraph (populated during class binding)
+            // 3. Get parents from InheritanceGraph (populated during class/interface binding)
+            // Works for both classes (single inheritance) and interfaces (multiple extends)
             let parents = self.inheritance_graph.get_parents(sym_id);
 
-            // 5. Return the first parent's type (the immediate base class)
+            // 4. Return the first parent's type (the immediate base class/interface)
+            // Note: For interfaces with multiple parents, we only return the first one.
+            // This is sufficient for BCT which checks all candidates in the set.
             if let Some(parent_sym_id) = parents.first() {
                 // Look up the cached type for the parent symbol
                 // For classes, we need the instance type, not constructor type

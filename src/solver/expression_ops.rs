@@ -115,7 +115,7 @@ pub fn compute_template_expression_type(_interner: &dyn TypeDatabase, parts: &[T
 pub fn compute_best_common_type(
     interner: &dyn TypeDatabase,
     types: &[TypeId],
-    resolver: Option<&dyn crate::solver::TypeResolver>,
+    _resolver: Option<&dyn crate::solver::TypeResolver>,
 ) -> TypeId {
     // Handle empty cases
     if types.is_empty() {
@@ -145,22 +145,19 @@ pub fn compute_best_common_type(
     // Example: [1, 2] -> number[], ["a", "b"] -> string[]
     let widened = widen_literals(interner, types);
 
-    // Step 2: Try to find a common base class for nominal types (e.g., Dog + Cat -> Animal)
-    if let Some(r) = resolver {
-        // Collect candidate base types from the first type
-        let mut base_candidates = get_type_hierarchy(interner, r, widened[0]);
-
-        // Filter candidates by checking if all other types are subtypes
-        for &ty in widened.iter().skip(1) {
-            if base_candidates.is_empty() {
-                break; // No candidates left
-            }
-            base_candidates.retain(|&base| is_subtype_of(interner, ty, base));
-        }
-
-        // Return the most specific common base (first candidate after filtering)
-        if let Some(common_base) = base_candidates.first() {
-            return *common_base;
+    // Step 2: Find the best common type from the candidate types
+    // TypeScript rule: The best common type must be one of the input types
+    // For example: [Dog, Cat] -> Dog | Cat (NOT Animal, even if both extend Animal)
+    //              [Dog, Animal] -> Animal (Animal is in the set and is a supertype)
+    for &candidate in &widened {
+        // Check if all types are subtypes of this candidate
+        // TODO: Use resolver for nominal inheritance checks once SubtypeChecker supports ?Sized
+        if widened
+            .iter()
+            .all(|&ty| is_subtype_of(interner, ty, candidate))
+        {
+            // Found a valid BCT - return it
+            return candidate;
         }
     }
 
@@ -252,41 +249,6 @@ fn all_types_are_narrower_than_base(
     base: TypeId,
 ) -> bool {
     types.iter().all(|&ty| is_subtype_of(interner, ty, base))
-}
-
-/// Get the type hierarchy for a type, from most derived to most base.
-/// Returns empty vec if the type is not a class/interface type.
-fn get_type_hierarchy(
-    interner: &dyn TypeDatabase,
-    resolver: &dyn crate::solver::TypeResolver,
-    ty: TypeId,
-) -> Vec<TypeId> {
-    let mut hierarchy = Vec::new();
-    collect_type_hierarchy(interner, resolver, ty, &mut hierarchy);
-    hierarchy
-}
-
-/// Recursively collect the type hierarchy for a class/interface.
-fn collect_type_hierarchy(
-    interner: &dyn TypeDatabase,
-    resolver: &dyn crate::solver::TypeResolver,
-    ty: TypeId,
-    hierarchy: &mut Vec<TypeId>,
-) {
-    // Prevent infinite recursion
-    if hierarchy.contains(&ty) {
-        return;
-    }
-
-    // Add current type to hierarchy
-    hierarchy.push(ty);
-
-    // Get base type from resolver (for class/interface types)
-    let base = resolver.get_base_type(ty, interner);
-
-    if let Some(base_type) = base {
-        collect_type_hierarchy(interner, resolver, base_type, hierarchy);
-    }
 }
 
 // =============================================================================
