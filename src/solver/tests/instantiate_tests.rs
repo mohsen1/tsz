@@ -28,6 +28,7 @@ fn test_substitution_from_args() {
     let u_name = interner.intern_string("U");
     let type_params = vec![
         TypeParamInfo {
+            is_const: false,
             name: t_name,
             constraint: None,
             is_const: false,
@@ -35,6 +36,7 @@ fn test_substitution_from_args() {
             is_const: false,
         },
         TypeParamInfo {
+            is_const: false,
             name: u_name,
             constraint: None,
             is_const: false,
@@ -58,6 +60,7 @@ fn test_instantiate_type_parameter() {
 
     // Create a type parameter T
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -84,6 +87,7 @@ fn test_instantiate_array() {
 
     // Create Array<T>
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -109,6 +113,7 @@ fn test_instantiate_union() {
 
     // Create T | null
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -134,6 +139,7 @@ fn test_instantiate_object() {
 
     // Create { value: T }
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -173,6 +179,7 @@ fn test_instantiate_function() {
 
     // Create (x: T) => T
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -223,6 +230,7 @@ fn test_instantiate_function_shadowed_type_params() {
     let t_name = interner.intern_string("T");
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -274,6 +282,7 @@ fn test_instantiate_tuple() {
 
     // Create [T, U]
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -281,6 +290,7 @@ fn test_instantiate_tuple() {
             is_const: false,
     }));
     let type_param_u = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: u_name,
         constraint: None,
         is_const: false,
@@ -332,6 +342,7 @@ fn test_instantiate_generic_convenience() {
 
     // Create Array<T>
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -342,6 +353,7 @@ fn test_instantiate_generic_convenience() {
 
     // Use convenience function
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -364,6 +376,7 @@ fn test_instantiate_nested() {
 
     // Create Array<Array<T>>
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -389,6 +402,7 @@ fn test_instantiate_application_promise() {
     let interner = TypeInterner::new();
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -410,6 +424,7 @@ fn test_instantiate_application_map_nested() {
     let interner = TypeInterner::new();
 
     let k_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("K"),
         constraint: None,
         is_const: false,
@@ -417,6 +432,7 @@ fn test_instantiate_application_map_nested() {
             is_const: false,
     };
     let v_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("V"),
         constraint: None,
         is_const: false,
@@ -481,6 +497,7 @@ fn test_instantiate_conditional() {
 
     // Create T extends string ? T : never
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -518,6 +535,7 @@ fn test_instantiate_mapped_type_shadowed_param() {
     let t_name = interner.intern_string("T");
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -556,6 +574,7 @@ fn test_instantiation_depth_limit_returns_error() {
     let t_name = interner.intern_string("T");
 
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -584,6 +603,7 @@ fn test_substitution_from_args_with_defaults() {
 
     // Create type params where U's default is T
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -593,6 +613,7 @@ fn test_substitution_from_args_with_defaults() {
 
     let type_params = vec![
         TypeParamInfo {
+            is_const: false,
             name: t_name,
             constraint: None,
             is_const: false,
@@ -600,6 +621,7 @@ fn test_substitution_from_args_with_defaults() {
             is_const: false,
         },
         TypeParamInfo {
+            is_const: false,
             name: u_name,
             constraint: None,
             is_const: false,
@@ -626,6 +648,7 @@ fn test_substitution_from_args_with_concrete_defaults() {
 
     let type_params = vec![
         TypeParamInfo {
+            is_const: false,
             name: t_name,
             constraint: None,
             is_const: false,
@@ -633,6 +656,7 @@ fn test_substitution_from_args_with_concrete_defaults() {
             is_const: false,
         },
         TypeParamInfo {
+            is_const: false,
             name: u_name,
             constraint: None,
             is_const: false,
@@ -660,6 +684,7 @@ fn test_instantiate_template_literal_with_string_literal() {
 
     // Create `get${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -689,6 +714,7 @@ fn test_instantiate_template_literal_with_union() {
 
     // Create `get${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -723,6 +749,7 @@ fn test_instantiate_template_literal_with_multiple_unions() {
 
     // Create `${T}_${U}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -730,6 +757,7 @@ fn test_instantiate_template_literal_with_multiple_unions() {
             is_const: false,
     }));
     let type_param_u = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: u_name,
         constraint: None,
         is_const: false,
@@ -783,6 +811,7 @@ fn test_instantiate_template_literal_preserves_type_param() {
 
     // Create `get${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -821,6 +850,7 @@ fn test_instantiate_template_literal_with_string_intrinsic() {
 
     // Create `prefix${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -857,6 +887,7 @@ fn test_instantiate_template_literal_in_object() {
 
     // Create a template literal type
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -904,6 +935,7 @@ fn test_instantiate_template_literal_in_mapped_type_template() {
 
     // Create type parameter T (outer, will be substituted)
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -913,6 +945,7 @@ fn test_instantiate_template_literal_in_mapped_type_template() {
 
     // Create mapped type parameter K (inner, shadowed)
     let k_param = TypeParamInfo {
+        is_const: false,
         name: k_name,
         constraint: None,
         is_const: false,
@@ -974,6 +1007,7 @@ fn test_instantiate_template_literal_with_number_literal() {
 
     // Create `value_${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1018,6 +1052,7 @@ fn test_instantiate_template_literal_empty_string() {
 
     // Create `${T}` template literal (just the type param)
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1044,6 +1079,7 @@ fn test_instantiate_template_literal_nested_in_union() {
 
     // Create `get${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1083,6 +1119,7 @@ fn test_instantiate_template_literal_in_function_return() {
 
     // Create `get${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1128,6 +1165,7 @@ fn test_instantiate_template_literal_in_conditional_type() {
 
     // Create `prefix_${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1187,6 +1225,7 @@ fn test_instantiate_string_intrinsic_uppercase_with_literal() {
 
     // Create Uppercase<T>
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1215,6 +1254,7 @@ fn test_instantiate_string_intrinsic_lowercase_with_union() {
 
     // Create Lowercase<T>
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1248,6 +1288,7 @@ fn test_instantiate_string_intrinsic_capitalize() {
 
     // Create Capitalize<T>
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1276,6 +1317,7 @@ fn test_instantiate_string_intrinsic_uncapitalize() {
 
     // Create Uncapitalize<T>
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1304,6 +1346,7 @@ fn test_instantiate_string_intrinsic_with_template_literal() {
 
     // Create `get${T}` template literal
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -1339,6 +1382,7 @@ fn test_instantiate_string_intrinsic_preserves_type_param() {
 
     // Create Uppercase<T>
     let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,

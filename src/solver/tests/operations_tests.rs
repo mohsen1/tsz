@@ -418,6 +418,7 @@ fn test_binary_overlap_generic_constraint_disjoint() {
     let evaluator = BinaryOpEvaluator::new(&interner);
 
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -434,6 +435,7 @@ fn test_binary_overlap_generic_constraint_overlap() {
     let evaluator = BinaryOpEvaluator::new(&interner);
 
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -453,6 +455,7 @@ fn test_binary_overlap_unconstrained_type_param() {
     let evaluator = BinaryOpEvaluator::new(&interner);
 
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -474,6 +477,7 @@ fn test_binary_overlap_union_constraint_disjoint() {
 
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -491,6 +495,7 @@ fn test_binary_overlap_union_constraint_overlap() {
 
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -944,6 +949,7 @@ fn make_array_test_env(
     use crate::solver::types::TypeParamInfo;
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -964,6 +970,7 @@ fn make_array_test_env(
 
     // map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -1680,6 +1687,7 @@ fn test_call_generic_function_identity() {
 
     // Create type parameter T
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -1720,6 +1728,7 @@ fn test_call_generic_function_with_string() {
 
     // Create type parameter T
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -1759,6 +1768,7 @@ fn test_call_generic_argument_type_mismatch_with_default() {
     let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -1804,6 +1814,7 @@ fn test_call_generic_argument_count_mismatch() {
     let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -1862,6 +1873,7 @@ fn test_call_generic_rest_tuple_constraint_count_mismatch() {
         },
     ]);
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(tuple_constraint),
         default: None,
@@ -1920,6 +1932,7 @@ fn test_call_generic_default_rest_tuple_count_mismatch() {
         },
     ]);
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -1970,6 +1983,7 @@ fn test_call_generic_default_rest_tuple_optional_allows_empty() {
         rest: false,
     }]);
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2006,6 +2020,7 @@ fn test_call_generic_argument_type_mismatch_non_generic_param() {
     let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2060,6 +2075,7 @@ fn test_call_generic_callable_signature() {
     let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2103,6 +2119,7 @@ fn test_call_generic_array_function() {
 
     // Create type parameter T
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2143,6 +2160,7 @@ fn test_infer_call_signature_identity() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2175,6 +2193,7 @@ fn test_infer_generic_function_identity() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2208,6 +2227,7 @@ fn test_infer_generic_function_this_type_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2261,6 +2281,7 @@ fn test_infer_generic_callable_param_from_function() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2329,6 +2350,7 @@ fn test_infer_generic_function_param_from_callable() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2397,6 +2419,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2488,6 +2511,7 @@ fn test_infer_generic_callable_param_from_callable() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2561,6 +2585,7 @@ fn test_infer_generic_construct_signature_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2634,6 +2659,7 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2678,6 +2704,7 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2685,6 +2712,7 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
             is_const: false,
     };
     let k_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("K"),
         constraint: None,
         is_const: false,
@@ -2731,6 +2759,7 @@ fn test_infer_generic_index_access_param_from_object_property_arg() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2775,6 +2804,7 @@ fn test_infer_generic_template_literal_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2820,6 +2850,7 @@ fn test_infer_generic_conditional_param_from_arg() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2862,6 +2893,7 @@ fn test_infer_generic_mapped_param_from_object_arg() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2871,6 +2903,7 @@ fn test_infer_generic_mapped_param_from_object_arg() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let key_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("K"),
         constraint: None,
         is_const: false,
@@ -2935,6 +2968,7 @@ fn test_infer_generic_array_map() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -2942,6 +2976,7 @@ fn test_infer_generic_array_map() {
             is_const: false,
     };
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -3023,6 +3058,7 @@ fn test_infer_generic_array_param_from_tuple_arg() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3072,6 +3108,7 @@ fn test_infer_generic_readonly_array_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3108,6 +3145,7 @@ fn test_infer_generic_readonly_tuple_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3155,6 +3193,7 @@ fn test_infer_generic_constructor_instantiation() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3192,6 +3231,7 @@ fn test_infer_generic_application_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3229,6 +3269,7 @@ fn test_infer_generic_object_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3279,6 +3320,7 @@ fn test_infer_generic_optional_property_value() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3328,6 +3370,7 @@ fn test_infer_generic_optional_property_undefined_value() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3377,6 +3420,7 @@ fn test_infer_generic_optional_property_missing() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3421,6 +3465,7 @@ fn test_infer_generic_required_property_from_optional_argument() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3471,6 +3516,7 @@ fn test_infer_generic_required_property_missing_argument() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3514,6 +3560,7 @@ fn test_infer_generic_readonly_property_mismatch() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3564,6 +3611,7 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3634,6 +3682,7 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3690,6 +3739,7 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3746,6 +3796,7 @@ fn test_infer_generic_method_property_bivariant_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3826,6 +3877,7 @@ fn test_infer_generic_function_property_contravariant_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3907,6 +3959,7 @@ fn test_infer_generic_method_property_bivariant_optional_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -3987,6 +4040,7 @@ fn test_infer_generic_missing_property_uses_index_signature() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4039,6 +4093,7 @@ fn test_infer_generic_missing_numeric_property_uses_number_index_signature() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4091,6 +4146,7 @@ fn test_infer_generic_tuple_element() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4153,6 +4209,7 @@ fn test_infer_generic_tuple_rest_elements() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4217,6 +4274,7 @@ fn test_infer_generic_tuple_rest_parameter() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4271,6 +4329,7 @@ fn test_infer_generic_tuple_rest_from_rest_argument() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4337,6 +4396,7 @@ fn test_infer_generic_index_signature() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4394,6 +4454,7 @@ fn test_infer_generic_index_signature_from_object_literal() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4448,6 +4509,7 @@ fn test_infer_generic_index_signature_from_optional_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4503,6 +4565,7 @@ fn test_infer_generic_number_index_from_optional_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4558,6 +4621,7 @@ fn test_infer_generic_number_index_from_numeric_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4612,6 +4676,7 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4666,6 +4731,7 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4720,6 +4786,7 @@ fn test_infer_generic_number_index_from_nan_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4774,6 +4841,7 @@ fn test_infer_generic_number_index_from_exponent_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4828,6 +4896,7 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4882,6 +4951,7 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4889,6 +4959,7 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
             is_const: false,
     };
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -4986,6 +5057,7 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -4993,6 +5065,7 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
             is_const: false,
     };
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -5091,6 +5164,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5098,6 +5172,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
             is_const: false,
     };
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -5195,6 +5270,7 @@ fn test_infer_generic_property_from_source_index_signature() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5247,6 +5323,7 @@ fn test_infer_generic_property_from_number_index_signature_infinity() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5300,6 +5377,7 @@ fn test_infer_generic_union_source() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5361,6 +5439,7 @@ fn test_infer_generic_union_target_with_placeholder_member() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5395,6 +5474,7 @@ fn test_infer_generic_union_target_with_placeholder_and_optional_member() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5429,6 +5509,7 @@ fn test_infer_generic_optional_union_target() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5463,6 +5544,7 @@ fn test_infer_generic_optional_union_target_with_null() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5497,6 +5579,7 @@ fn test_infer_generic_rest_parameters() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5537,6 +5620,7 @@ fn test_infer_generic_rest_tuple_type_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -5588,6 +5672,7 @@ fn test_infer_generic_tuple_rest_type_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -5655,6 +5740,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -5738,6 +5824,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -5809,6 +5896,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument_with_fixed_ta
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -5892,6 +5980,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_empty_tail() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -5947,6 +6036,7 @@ fn test_infer_generic_default_type_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5979,6 +6069,7 @@ fn test_infer_generic_default_depends_on_prior_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -5988,6 +6079,7 @@ fn test_infer_generic_default_depends_on_prior_param() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -6020,6 +6112,7 @@ fn test_infer_generic_constraint_fallback() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -6052,6 +6145,7 @@ fn test_infer_generic_constraint_violation() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -6086,6 +6180,7 @@ fn test_infer_generic_constraint_depends_on_prior_param() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -6095,6 +6190,7 @@ fn test_infer_generic_constraint_depends_on_prior_param() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: Some(t_type),
         default: None,
@@ -6146,6 +6242,7 @@ fn test_rest_param_spreading_homogeneous_args() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -6188,6 +6285,7 @@ fn test_rest_param_spreading_heterogeneous_args() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -6231,6 +6329,7 @@ fn test_rest_param_with_leading_fixed() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -6240,6 +6339,7 @@ fn test_rest_param_with_leading_fixed() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -6323,6 +6423,7 @@ fn test_tuple_rest_captures_remaining() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -6393,6 +6494,7 @@ fn test_tuple_rest_with_multiple_prefix() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -6475,6 +6577,7 @@ fn test_tuple_rest_single_capture() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
@@ -6542,6 +6645,7 @@ fn test_variadic_with_constraint() {
 
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -6584,6 +6688,7 @@ fn test_variadic_zip_pattern() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -6593,6 +6698,7 @@ fn test_variadic_zip_pattern() {
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
 
     let u_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -6708,6 +6814,7 @@ fn test_variadic_empty_args_uses_constraint() {
     let mut subtype = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::UNKNOWN),
         default: None,
@@ -6814,6 +6921,7 @@ fn test_solve_generic_instantiation_success() {
 
     // <T extends string>
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -6835,6 +6943,7 @@ fn test_solve_generic_instantiation_constraint_violation() {
 
     // <T extends string>
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -6869,6 +6978,7 @@ fn test_solve_generic_instantiation_unconstrained_success() {
 
     // <T> (no constraint)
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -6892,12 +7002,14 @@ fn test_solve_generic_instantiation_multiple_params() {
     // <T extends string, U extends number>
     let type_params = vec![
         TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
         },
         TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("U"),
             constraint: Some(TypeId::NUMBER),
             default: None,
@@ -6939,6 +7051,7 @@ fn test_solve_generic_instantiation_literal_satisfies_constraint() {
 
     // <T extends string>
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -6962,6 +7075,7 @@ fn test_solve_generic_instantiation_union_satisfies_constraint() {
     // <T extends string | number>
     let union_constraint = interner.union2(TypeId::STRING, TypeId::NUMBER);
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(union_constraint),
         default: None,
@@ -6989,6 +7103,7 @@ fn test_solve_generic_instantiation_task_example() {
 
     // <T> (unconstrained)
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -7012,6 +7127,7 @@ fn test_solve_generic_instantiation_number_not_string() {
 
     // <T extends string>
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -7053,6 +7169,7 @@ fn test_solve_generic_instantiation_object_constraint() {
 
     // <T extends { x: number }>
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(object_type),
         default: None,
@@ -7337,6 +7454,7 @@ fn test_generic_function_tuple_to_array_constraint() {
     let string_array = interner.array(TypeId::STRING);
 
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(string_array),
         default: None,
@@ -7378,6 +7496,7 @@ fn test_generic_function_heterogeneous_tuple_fails_homogeneous_array_constraint(
     let string_array = interner.array(TypeId::STRING);
 
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(string_array),
         default: None,
@@ -7422,6 +7541,7 @@ fn test_generic_function_tuple_to_union_array_constraint() {
     let union_array = interner.array(union_elem);
 
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(union_array),
         default: None,
@@ -7465,6 +7585,7 @@ fn test_generic_function_tuple_with_rest_to_array_constraint() {
     let number_array = interner.array(TypeId::NUMBER);
 
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(union_array),
         default: None,
@@ -7506,6 +7627,7 @@ fn test_generic_function_empty_tuple_to_any_array_constraint() {
     let any_array = interner.array(TypeId::ANY);
 
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(any_array),
         default: None,
@@ -7534,6 +7656,7 @@ fn test_generic_function_single_element_tuple_to_array_constraint() {
     let number_array = interner.array(TypeId::NUMBER);
 
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(number_array),
         default: None,
@@ -7567,6 +7690,7 @@ fn test_generic_function_tuple_with_optional_to_array_constraint() {
     let string_array = interner.array(TypeId::STRING);
 
     let type_params = vec![TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(string_array),
         default: None,
@@ -7607,6 +7731,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param() {
     // Create T
     let t_name = interner.intern_string("T");
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -7617,6 +7742,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param() {
     // <T, U extends T>
     let type_params = vec![
         TypeParamInfo {
+            is_const: false,
             name: t_name,
             constraint: None,
             is_const: false,
@@ -7624,6 +7750,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param() {
             is_const: false,
         },
         TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("U"),
             constraint: Some(t_type), // U extends T
             default: None,
@@ -7651,6 +7778,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param_violation() {
     // Create T
     let t_name = interner.intern_string("T");
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -7661,6 +7789,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param_violation() {
     // <T, U extends T>
     let type_params = vec![
         TypeParamInfo {
+            is_const: false,
             name: t_name,
             constraint: None,
             is_const: false,
@@ -7668,6 +7797,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param_violation() {
             is_const: false,
         },
         TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("U"),
             constraint: Some(t_type), // U extends T
             default: None,
@@ -7882,6 +8012,7 @@ fn test_property_access_array_push_with_env_resolver() {
 
     // Create a mock Array<T> interface with a "push" method
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -7971,6 +8102,7 @@ fn test_array_mapped_type_method_resolution() {
     // Create T extends any[]
     let any_array = interner.array(TypeId::ANY);
     let t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(any_array),
         default: None,
@@ -7980,6 +8112,7 @@ fn test_array_mapped_type_method_resolution() {
 
     // Create the mapped type: { [P in keyof T]: T[P] }
     let p_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("P"),
         constraint: None,
         is_const: false,
@@ -8008,6 +8141,7 @@ fn test_array_mapped_type_method_resolution() {
 
     // Create a mock Array<T> interface with pop method
     let array_t_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,

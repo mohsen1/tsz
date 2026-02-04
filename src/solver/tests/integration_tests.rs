@@ -35,6 +35,7 @@ mod generic_strictness_tests {
         }]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: Some(identifiable_constraint),
             default: None,
@@ -81,6 +82,7 @@ mod generic_strictness_tests {
         }]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: Some(identifiable_constraint),
             default: None,
@@ -113,6 +115,7 @@ mod generic_strictness_tests {
 
         // Create an unconstrained generic parameter
         let t_param_unconstrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: None,
             is_const: false,
@@ -161,6 +164,7 @@ mod generic_strictness_tests {
         }]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: Some(length_constraint),
             default: None,
@@ -168,6 +172,7 @@ mod generic_strictness_tests {
         }));
 
         let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("U"),
             constraint: Some(name_constraint),
             default: None,
@@ -215,6 +220,7 @@ mod generic_strictness_tests {
         }]);
 
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: Some(identifiable_constraint),
             default: None,
@@ -951,6 +957,7 @@ mod function_variance_tests {
 
         // <T>(x: T) => T
         let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: None,
             is_const: false,
@@ -976,6 +983,7 @@ mod function_variance_tests {
         // <T>(x: T) => T where T extends number
         let number_constraint = TypeId::NUMBER;
         let t_constrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: Some(number_constraint),
             default: None,
@@ -1612,6 +1620,7 @@ mod unknown_fallback_tests {
 
         // Generic parameter without constraint should fallback to Unknown
         let t_param_unconstrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("T"),
             constraint: None, // No constraint - should use Unknown
             default: None,
