@@ -1285,8 +1285,20 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
                 self.check_accessor_declaration(member_idx);
             }
+            syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                // Static blocks contain statements that must be type-checked
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    // Check for unreachable code in the static block
+                    self.check_unreachable_code_in_block(&block.statements.nodes);
+
+                    // Check each statement in the block
+                    for &stmt_idx in &block.statements.nodes {
+                        self.check_statement(stmt_idx);
+                    }
+                }
+            }
             _ => {
-                // Other class member types (static blocks, index signatures, etc.)
+                // Other class member types (index signatures, etc.)
                 self.get_type_of_node(member_idx);
             }
         }

@@ -1527,9 +1527,21 @@ impl<'a> CheckerState<'a> {
             // 1. Static block TDZ - variable used in static block before its declaration
             // 2. Computed property TDZ - variable used in computed property name before its declaration
             // 3. Heritage clause TDZ - variable used in extends/implements before its declaration
-            // Return TypeId::ERROR after emitting TS2454 to prevent cascading errors (e.g., TS2571)
+            // Return TypeId::ERROR after emitting TDZ error to prevent cascading errors
             if self.is_variable_used_before_declaration_in_static_block(sym_id, idx) {
-                self.error_variable_used_before_assigned_at(name, idx);
+                // TS2448: Block-scoped variable used before declaration (TDZ error)
+                use crate::checker::types::diagnostics::{
+                    diagnostic_codes, diagnostic_messages, format_message,
+                };
+                let message = format_message(
+                    diagnostic_messages::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
+                    &[name],
+                );
+                self.error_at_node(
+                    idx,
+                    &message,
+                    diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
+                );
                 return TypeId::ERROR;
             } else if self.is_variable_used_before_declaration_in_computed_property(sym_id, idx) {
                 self.error_variable_used_before_assigned_at(name, idx);
