@@ -75,6 +75,9 @@ Working on fixing the parser to emit TS1136 "Property assignment expected" for i
 *2026-02-03 23:30 - Investigated TS1040 bug, traced parser code, unable to identify root cause*
 *2026-02-03 23:45 - Investigated TS2705, found tests include Promise in lib*
 *2026-02-03 23:50 - Investigated parse errors, confirmed 42 missing parse errors*
+*2026-02-04 02:00 - Fixed is_const compilation errors (collaborative with tsz-4)*
+*2026-02-04 03:00 - Added TS1136 parser fix for invalid property names, test passes*
+*2026-02-04 03:30 - Fixed fresh_type_param calls missing is_const argument*
 
 ---
 
