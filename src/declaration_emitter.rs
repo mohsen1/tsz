@@ -342,8 +342,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !prop.type_annotation.is_none() && !is_private {
             self.write(": ");
             self.emit_type(prop.type_annotation);
-        } else if is_abstract || (!is_private && !prop.initializer.is_none()) {
+        } else if !is_private && (is_abstract || !prop.initializer.is_none()) {
             // For abstract properties OR properties with initializers (non-private), use inferred type
+            // Private properties never get inferred types (prevents type leak)
             if let Some(type_id) = self.get_node_type(prop_idx) {
                 self.write(": ");
                 self.write(&self.print_type_id(type_id));
