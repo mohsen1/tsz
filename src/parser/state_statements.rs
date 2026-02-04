@@ -1881,13 +1881,18 @@ impl ParserState {
             if self.is_token(SyntaxKind::ExtendsKeyword) {
                 use crate::checker::types::diagnostics::diagnostic_codes;
                 let start_pos = self.token_pos();
-                if seen_extends {
+                let is_duplicate = seen_extends;
+                let is_after_implements = seen_implements;
+
+                if is_duplicate {
                     self.parse_error_at_current_token(
                         "extends clause already seen.",
                         diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN,
                     );
                 }
-                if seen_implements {
+                // Only emit "extends must precede implements" if not also a duplicate extends
+                // TypeScript suppresses TS1173 when TS1172 is also emitted at the same position
+                else if is_after_implements {
                     self.parse_error_at_current_token(
                         "extends clause must precede implements clause.",
                         diagnostic_codes::EXTENDS_CLAUSE_MUST_PRECEDE_IMPLEMENTS_CLAUSE,
