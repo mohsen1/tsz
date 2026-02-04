@@ -383,6 +383,40 @@ impl<'a> DeclarationEmitter<'a> {
 - Callable types (overloaded signatures)
 - Template literal types
 
+## Recent Work (2026-02-04)
+
+### Type Inference for Declaration Emit
+
+Fixed declaration emit to support type inference from initializers, matching TypeScript's behavior.
+
+**Problem:**
+```typescript
+// Input
+abstract class C {
+    abstract prop = 1  // Invalid but should infer type
+}
+
+// Expected output
+declare abstract class C {
+    abstract prop: number;  // Type inferred from initializer
+}
+
+// Was emitting
+declare abstract class C {
+    abstract prop;  // Missing type annotation
+}
+```
+
+**Solution:**
+1. **CLI cache fix** (`src/cli/driver.rs`): Always create `local_cache` to preserve type checking results
+2. **Type caching** (`src/checker/state_checking_members.rs`): Cache inferred types for property declarations
+3. **DeclarationEmitter** (`src/declaration_emitter.rs`): Use inferred types when annotation is missing
+4. **Test runner** (`scripts/emit/src/runner.ts`): Fixed DTS status display and comparison logic
+
+**Status:**
+- ✅ CLI declaration emit works with type inference
+- ⏳ WASM API needs type checking integration (larger change)
+
 ## Next Steps
 
 1. ✅ Reviewed existing DeclarationEmitter implementation
@@ -391,8 +425,10 @@ impl<'a> DeclarationEmitter<'a> {
 4. ✅ Created `src/emitter/type_printer.rs` module
 5. ✅ Implemented primitive type printing
 6. ✅ Implemented composite types (union, intersection, array, object, function, generics)
-7. **NEXT**: Integrate TypePrinter with DeclarationEmitter
-8. **NEXT**: Run tests and verify with `./scripts/emit/run.sh --dts-only`
+7. ✅ Integrated TypePrinter with DeclarationEmitter
+8. ✅ Fixed type inference for property declarations
+9. **OPTIONAL**: Add type checking to WASM API for full test support
+10. **TODO**: Test against more TypeScript baselines
 
 ## Resources
 
@@ -408,5 +444,6 @@ impl<'a> DeclarationEmitter<'a> {
 
 - **Test-driven development**: Run tests after every change
 - **Match tsc exactly**: Output must be byte-identical
-- **Start simple**: Primitives first, then composites
-- **Use existing infrastructure**: `scripts/emit/` is already set up
+- **CLI works**: Type inference is now working for CLI declaration emit
+- **WASM limitation**: Test runner uses WASM API which doesn't do type checking yet
+- **Architecture**: Type cache must be populated and passed to DeclarationEmitter
