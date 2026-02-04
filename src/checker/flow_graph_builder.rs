@@ -1329,14 +1329,87 @@ impl<'a> FlowGraphBuilder<'a> {
                     return;
                 };
 
-                if Self::is_assignment_operator_token(binary.operator_token) {
-                    let flow =
-                        self.create_flow_node(flow_flags::ASSIGNMENT, self.current_flow, expr_idx);
-                    self.current_flow = flow;
-                }
+                // Check for short-circuit operators (&&, ||, ??)
+                let is_short_circuit = binary.operator_token
+                    == crate::scanner::SyntaxKind::AmpersandAmpersandToken as u16
+                    || binary.operator_token == crate::scanner::SyntaxKind::BarBarToken as u16
+                    || binary.operator_token
+                        == crate::scanner::SyntaxKind::QuestionQuestionToken as u16;
 
-                self.handle_expression_for_assignments(binary.left);
-                self.handle_expression_for_assignments(binary.right);
+                if is_short_circuit {
+                    // Handle short-circuit expressions with proper flow branching
+                    let before_expr = self.current_flow;
+
+                    // Bind left operand and save the flow after it
+                    self.handle_expression_for_assignments(binary.left);
+                    let _after_left_flow = self.current_flow;
+
+                    // Reset to before the expression for creating condition nodes
+                    self.current_flow = before_expr;
+
+                    if binary.operator_token
+                        == crate::scanner::SyntaxKind::AmpersandAmpersandToken as u16
+                    {
+                        // For &&: right side is only evaluated when left is truthy
+                        let true_condition = self.create_flow_node(
+                            flow_flags::TRUE_CONDITION,
+                            before_expr,
+                            binary.left,
+                        );
+                        self.current_flow = true_condition;
+                        self.handle_expression_for_assignments(binary.right);
+                        let after_right_flow = self.current_flow;
+
+                        // Short-circuit path: left is falsy, right is not evaluated
+                        let false_condition = self.create_flow_node(
+                            flow_flags::FALSE_CONDITION,
+                            before_expr,
+                            binary.left,
+                        );
+
+                        // Merge both paths
+                        let merge = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+                        self.add_antecedent(merge, after_right_flow);
+                        self.add_antecedent(merge, false_condition);
+                        self.current_flow = merge;
+                    } else {
+                        // For || and ??: right side is only evaluated when left is falsy/nullish
+                        let false_condition = self.create_flow_node(
+                            flow_flags::FALSE_CONDITION,
+                            before_expr,
+                            binary.left,
+                        );
+                        self.current_flow = false_condition;
+                        self.handle_expression_for_assignments(binary.right);
+                        let after_right_flow = self.current_flow;
+
+                        // Short-circuit path: left is truthy, right is not evaluated
+                        let true_condition = self.create_flow_node(
+                            flow_flags::TRUE_CONDITION,
+                            before_expr,
+                            binary.left,
+                        );
+
+                        // Merge both paths
+                        let merge = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+                        self.add_antecedent(merge, after_right_flow);
+                        self.add_antecedent(merge, true_condition);
+                        self.current_flow = merge;
+                    }
+                } else {
+                    // Regular binary expression
+                    if Self::is_assignment_operator_token(binary.operator_token) {
+                        let flow = self.create_flow_node(
+                            flow_flags::ASSIGNMENT,
+                            self.current_flow,
+                            expr_idx,
+                        );
+                        self.current_flow = flow;
+                    }
+
+                    self.handle_expression_for_assignments(binary.left);
+                    self.handle_expression_for_assignments(binary.right);
+                }
             }
             syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 if let Some(cond) = self.arena.get_conditional_expr(node) {
