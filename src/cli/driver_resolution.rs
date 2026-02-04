@@ -1652,8 +1652,12 @@ pub(crate) fn emit_outputs(
                 let type_cache = type_caches.get(&file_path).cloned();
 
                 // Create emitter with type information if available
+                // Note: binder=None disables usage analysis for now
+                // TODO: Add BinderState to enable import/export elision
                 let mut emitter = if let (Some(cache), _) = (type_cache, &program.type_interner) {
-                    DeclarationEmitter::with_type_info(&file.arena, cache, &program.type_interner)
+                    // We need a BinderState but it's not available in BoundFile yet
+                    // For now, pass None to disable usage analysis
+                    DeclarationEmitter::new(&file.arena)
                 } else {
                     DeclarationEmitter::new(&file.arena)
                 };
