@@ -1213,3 +1213,45 @@ class C {
 
 **Error Code Improvements**:
 - TS1068: extra=9 → extra=6 (3 fewer extra errors)
+
+## Session Status (2026-02-04 Continued)
+
+**Current Conformance**: 54% on parser tests (up from 52%, target: 60%)
+**Gap to Target**: 6% remaining
+
+**Completed Priorities**:
+1. ✅ Contextual keywords fix (TS1042, TS2378)
+2. ✅ Arrow function disambiguation (conditional expressions)
+3. ✅ Empty type parameter lists & constructor type params (TS1092, TS1098)
+
+**Remaining Priorities** (from Gemini consultation):
+
+### Priority 1: The "Noise Filter" (Target: TS1005 Extra, TS1128 Extra)
+- Refine `parse_expected` and `parse_semicolon` to be more aggressive about suppression
+- Implement "recovery mode" flag or robust `last_error_pos` check
+- If `token_pos() == last_error_pos`, suppress subsequent TS1005 errors until a strong token is consumed
+
+### Priority 2: Class Member Recovery Refinement (Target: TS1128 Extra, TS1068 Extra)
+- **Status**: Stray statement handling already implemented (lines 2772-2800 in state_statements.rs)
+- Improve the "Recovery: Handle stray statements" block
+- Ensure entire statement is consumed and returns `NodeIndex::NONE`
+
+### Priority 3: TS1109 Alignment (Target: TS1109 Missing)
+- Audit `parse_unary_expression`, `parse_assignment_expression`
+- Identify locations where `tsz` returns `NodeIndex::NONE` silently
+- Check `yield`/`await` logic for expression start validation
+
+### Priority 4: Keyword-as-Identifier Permissiveness (Target: TS2304 Missing)
+- Ensure `await`, `yield`, `asserts` are handled correctly as type names
+- Fix `parse_primary_type` in `state_types.rs`
+
+**Error Code Progress**:
+- TS1068: extra=9 → extra=6 ✅ (33% reduction)
+- TS1128: extra=7 (unchanged, but stray statement handling exists)
+- TS1005: missing=11, extra=20 (needs suppression logic)
+- TS2304: missing=12, extra=8 (needs keyword-as-identifier work)
+- TS1109: missing=7, extra=10 (needs expression start validation)
+
+**Recommendation**: The session has made solid progress. To reach 60%, focus on Priority 2 (Class Member Recovery) or Priority 3 (TS1109 alignment) as these are most contained and have direct impact on conformance.
+
+**Session Recommendation**: CONTINUE - 6% gap is achievable with focused effort on remaining priorities.
