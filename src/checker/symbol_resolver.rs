@@ -1100,10 +1100,20 @@ impl<'a> CheckerState<'a> {
         if let Some(ref module_name) = symbol.import_module {
             // Check various ways a module can be resolved
             if self.ctx.binder.module_exports.contains_key(module_name) {
-                return false; // Module is resolved
+                return false; // Module is resolved (has exports)
+            }
+            // Check if this is a shorthand ambient module (no body/exports)
+            // These should be treated as unresolved imports (any type)
+            if self
+                .ctx
+                .binder
+                .shorthand_ambient_modules
+                .contains(module_name)
+            {
+                return true; // Shorthand ambient module - treat as unresolved/any
             }
             if self.is_ambient_module_match(module_name) {
-                return false; // Ambient module pattern matches
+                return false; // Ambient module pattern matches (with body/exports)
             }
             if let Some(ref resolved) = self.ctx.resolved_modules {
                 if resolved.contains(module_name) {

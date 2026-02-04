@@ -8,7 +8,23 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Fixed short-circuiting bug. Conformance recovered.
+**Status**: Fixing Shorthand Ambient Modules resolution to reduce TS2304 errors.
+
+**Problem**: 406 extra TS2304 (Cannot find name) errors indicate the binder is failing to resolve symbols.
+Specifically, shorthand ambient modules like `declare module "jquery";` are tracked in `shorthand_ambient_modules` but `resolve_import_with_reexports` doesn't check this set.
+
+**Impact**: When imports fail to resolve, the Checker cannot apply types or CFA, rendering previous Flow Graph Builder improvements ineffective for those nodes.
+
+**Implementation Plan** (from Gemini):
+1. Modify `BinderState::resolve_import_with_reexports` to check `self.shorthand_ambient_modules`
+2. If module specifier exists there, return a valid SymbolId (synthetic or any type)
+3. Enable imports like `import $ from "jquery"` to resolve successfully
+
+**Reference**: `docs/walkthrough/03-binder.md` documents this as a known gap.
+
+**Expected Impact**: Significant reduction in extra TS2304 errors (currently 406 extra).
+
+**File**: `src/binder/state.rs`
 
 **Completed** (commit 3cfc6b7f7):
 - Fixed bug where flow was branching from before_expr instead of after_left_flow
