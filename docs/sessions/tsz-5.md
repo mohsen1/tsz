@@ -52,11 +52,43 @@ Rate limited on API - Question 1 (Approach Validation) queued for when rate limi
 3. **DefId→SymbolId Mapping** - Via TypeResolver trait
 4. **Type-Only vs Value Usage** - Critical distinction for elision
 
+### Gemini Consultation #2 - 2026-02-04 (COMPLETED)
+
+**Question 2:** Architecture validation for UsageAnalyzer implementation.
+
+**Gemini's Response (Flash Model):**
+- ✅ **Use `collect_all_types()` utility** - Don't create new TypeVisitor
+- ✅ **Extract DefIds** using existing helpers: `lazy_def_id()`, `enum_components()`, `type_query_symbol()`, `unique_symbol_ref()`
+- ✅ **Map DefId -> SymbolId** via `TypeResolver::def_to_symbol_id()`
+
+**Result:** UsageAnalyzer implementation commit `7fd42f10b` followed Gemini's guidance correctly.
+
+### Gemini Consultation #3 - 2026-02-04 (COMPLETED)
+
+**Question 3:** Implementation review (Pro model).
+
+**Gemini's Findings:**
+
+**Architecture:** ✅ CORRECT
+- Hybrid AST/Semantic walk approach is correct
+- AST walk for explicit types, Semantic walk for inferred types
+
+**Critical Bugs Identified:**
+1. ❌ **Missing `TypeKey::Ref` handling** (legacy types during Phase 4.2 migration)
+2. ❌ **Missing `TypeKey::Object` with symbol** (class instance types not wrapped in Lazy)
+3. ❌ **Missing `ImportType` node** (e.g., `type T = import("./foo").Bar`)
+4. ❌ **`extract_type_data` is private** (need public method or alternative)
+
+**Non-Issues (Already Implemented):**
+1. ✅ `analyze_entity_name` IS implemented (uses `binder.get_node_symbol()`)
+2. ✅ Private members check WAS removed (analyzes all members correctly)
+3. ✅ `ModuleNamespace` handling IS present
+
+**Status:** Implementation is fundamentally correct. Missing handlers are edge cases that can be added incrementally after integration testing.
+
 ### Gemini Critical Review - 2026-02-04
 
 **Attempted Implementation Review (QUESTION 2):**
-
-I created `src/declaration_emitter/usage_analyzer.rs` and asked Gemini (Pro model) to review the implementation.
 
 **Gemini's Response: CRITICAL ARCHITECTURAL FLAWS**
 
