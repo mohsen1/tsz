@@ -80,9 +80,21 @@ When symbols are merged into the global symbol arena:
 
 Result: All "m3d" symbols from all scopes are merged into ONE global symbol ID.
 
-**Fix Required**: Change `merged_symbols` from `FxHashMap<String, SymbolId>` to be scope-aware. Should probably be `FxHashMap<(ScopeId, String), SymbolId>` or track scope membership differently.
+**Fix Required**: Change `merged_symbols` from `FxHashMap<String, SymbolId>` to be scope-aware.
 
-**File to Fix**: `src/parallel.rs` function `merge_bind_results_ref`, specifically the symbol remapping logic around lines 650-780.
+**Challenges**:
+1. Need to determine which ScopeId each symbol belongs to during merging
+2. Each BindResult has its own scopes (result.scopes) but we need a consistent ScopeId space
+3. Lib symbol merging may need special handling
+4. The fix must preserve correct symbol ID remapping for file_locals
+
+**File to Fix**: `src/parallel.rs` function `merge_bind_results_ref`, specifically the symbol remapping logic around lines 648-780.
+
+**Next Session Plan**:
+1. Read the full `merge_bind_results_ref` function to understand the symbol merging flow
+2. Identify how to track scope membership for each symbol
+3. Implement scope-aware symbol merging
+4. Test with the simple test case to verify 3 separate m3d symbols
 
 
 **Conformance Status**: 97/200 passed (48.5%)
