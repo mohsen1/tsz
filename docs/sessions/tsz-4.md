@@ -161,7 +161,41 @@ if !has_default_clause {
 
 **Remaining Work**:
 - TS2454 (variable TDZ) still not being reported for variables after switch - separate issue
-- Discriminant narrowing integration still needs work for assignment expressions in conditions
+
+### 2025-02-04: Next Task - Discriminant Narrowing for Assignment Expressions
+
+**Current Issue**: Test `test_assignment_expression_condition_narrows_discriminant` failing
+
+**Problem Pattern**:
+```typescript
+type D = { done: true, value: 1 } | { done: false, value: 2 };
+declare function fn(): D;
+let o: D;
+if ((o = fn()).done) {
+    const y: 1 = o.value;  // Should narrow o to { done: true, value: 1 }
+}
+```
+
+**Expected (tsc)**: No errors - `o` is narrowed to `{ done: true, value: 1 }`
+**Actual (tsz)**: TS2322 - Type '1 | 2' is not assignable to type '1'
+
+**Root Cause**:
+- Discriminant narrowing logic exists in `src/solver/narrowing.rs` ✅
+- Issue is AST traversal/integration in checker - doesn't unwrap `(Assignment).prop` pattern
+- Need to look through `ParenthesizedExpression` and `AssignmentExpression`
+
+**Implementation Steps**:
+1. Locate condition analysis in `src/checker/control_flow.rs`
+2. Add unwrapping logic for assignment expressions in conditions
+3. Extract target variable from `(x = expr).prop` pattern
+4. Apply narrowing to the extracted variable
+
+**Test Command**:
+```bash
+cargo nextest run test_assignment_expression_condition_narrows_discriminant
+```
+
+**Impact**: High - common pattern in iterators (`while (!(res = iter.next()).done)`) and result handling
 
 ## Notes
 
