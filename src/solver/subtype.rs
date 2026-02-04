@@ -1876,6 +1876,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             match s_prop {
                 Some(sp) => {
+                    // Check nominal identity for private/protected properties
+                    // Private and protected members are nominally typed - they must
+                    // originate from the same declaration (same parent_id)
+                    if t_prop.visibility != Visibility::Public {
+                        if sp.parent_id != t_prop.parent_id {
+                            return Some(SubtypeFailureReason::PropertyNominalMismatch {
+                                property_name: t_prop.name,
+                            });
+                        }
+                    }
+                    // Cannot assign private/protected source to public target
+                    else if sp.visibility != Visibility::Public {
+                        return Some(SubtypeFailureReason::PropertyVisibilityMismatch {
+                            property_name: t_prop.name,
+                            source_visibility: sp.visibility,
+                            target_visibility: t_prop.visibility,
+                        });
+                    }
+
                     // Check optional/required mismatch
                     if sp.optional && !t_prop.optional {
                         return Some(SubtypeFailureReason::OptionalPropertyRequired {
@@ -2055,6 +2074,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let Some(sp) =
                 self.lookup_property(&source_shape.properties, Some(source_shape_id), t_prop.name)
             {
+                // Check nominal identity for private/protected properties
+                // Private and protected members are nominally typed - they must
+                // originate from the same declaration (same parent_id)
+                if t_prop.visibility != Visibility::Public {
+                    if sp.parent_id != t_prop.parent_id {
+                        return Some(SubtypeFailureReason::PropertyNominalMismatch {
+                            property_name: t_prop.name,
+                        });
+                    }
+                }
+                // Cannot assign private/protected source to public target
+                else if sp.visibility != Visibility::Public {
+                    return Some(SubtypeFailureReason::PropertyVisibilityMismatch {
+                        property_name: t_prop.name,
+                        source_visibility: sp.visibility,
+                        target_visibility: t_prop.visibility,
+                    });
+                }
+
                 if sp.optional && !t_prop.optional {
                     return Some(SubtypeFailureReason::OptionalPropertyRequired {
                         property_name: t_prop.name,
