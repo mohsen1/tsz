@@ -2,15 +2,15 @@
 
 **Started**: 2026-02-04
 **Status**: 🟢 ACTIVE (Phase 4 in progress)
-**Latest Update**: 2026-02-04 - Tasks 1 & 2 complete, Task 3 ready to begin
-**Focus**: Best Common Type, Homomorphic Mapped Types, Inter-Parameter Constraints
+**Latest Update**: 2026-02-04 - Task 2 complete, starting Task 3
+**Focus**: Inter-Parameter Constraints
 
 ---
 
 ## Current Phase: Generic Inference & Nominal Hierarchy Integration (IN PROGRESS)
 
 **Started**: 2026-02-04
-**Status**: Task 1 complete, Task 2 ready to begin
+**Status**: Task 3 in progress
 
 ### Problem Statement
 
@@ -26,67 +26,33 @@ The current generic inference and type system has several gaps that cause `any` 
 #### Task 1: Nominal BCT Bridge (Binder-Solver Link) (HIGH) ✅ COMPLETE
 **Commits**: `bfcf9a683`, `d5d951612`
 **Status**: Complete with deferred limitation
-**Limitation**: Uses `is_subtype_of` without resolver. Nominal inheritance checks may fail for class hierarchies without structural similarity (e.g. private fields).
-**Action**: Defer fix to Task 1.1 (requires `SubtypeChecker` refactor for `?Sized` support)
+**Limitation**: Uses `is_subtype_of` without resolver. Nominal inheritance checks may fail for class hierarchies without structural similarity.
+**Action**: Defer fix to Task 1.1.
 
 #### Task 2: Homomorphic Mapped Type Preservation (HIGH) ✅ COMPLETE
 **Commit**: `5cc8b37e0`
 **File**: `src/solver/evaluate_rules/mapped.rs`
+**Description**: Implemented preservation of Array/Tuple/ReadonlyArray structure in mapped types.
 
-**Completed Implementation**:
-1. ✅ Added array/tuple preservation in `evaluate_mapped` (lines 233-283)
-   - Checks if source_object is Array/Tuple/ReadonlyArray
-   - Name remapping (as clause) breaks homomorphism
-2. ✅ Added `evaluate_mapped_array`: maps array element type with K=number
-   - Handles optional modifier (unions with undefined)
-   - Handles +readonly/-readonly modifiers
-3. ✅ Added `evaluate_mapped_array_with_readonly`: handles ReadonlyArray<T>
-   - Preserves original readonly status
-   - Uses TypeKey::ReadonlyType wrapper
-4. ✅ Added `evaluate_mapped_tuple`: maps each tuple element with K=0,1,2...
-   - **Critical**: Handles rest elements specially by mapping the array type
-   - Preserves optional/rest modifiers on tuple elements
-   - Fixed ReadonlyArray detection (removed empty properties check)
-
-**Examples**:
-- `Partial<[number, string]>` -> `[number?, string?]` (Tuple)
-- `Partial<number[]>` -> `(number | undefined)[]` (Array)
-- `ReadonlyArray<number>` with `-readonly` -> `number[]`
-
-#### Task 3: Inter-Parameter Constraint Propagation (MEDIUM)
+#### Task 3: Inter-Parameter Constraint Propagation (MEDIUM) 🔄 CURRENT
 **File**: `src/solver/infer.rs`
 
 **Goal**: Implement `strengthen_constraints` for fixed-point iteration over type parameter bounds.
 
+**Implementation Plan**:
+1. Identify type parameters that reference other type parameters in their bounds (e.g., `T extends U`).
+2. Propagate constraints: If `T` is constrained to `S`, and `T extends U`, then `S` should contribute to `U`'s constraints.
+3. Implement iterative strengthening until a fixed point is reached or recursion limit is hit.
+
 #### Task 1.1: Fix Nominal BCT Resolver (Refactor SubtypeChecker) (MEDIUM)
 **File**: `src/solver/subtype.rs`
-
 **Goal**: Allow `SubtypeChecker` to accept `dyn TypeResolver` (unsized) to support nominal hierarchy checks in BCT.
 
 #### Task 4: Contextual Return Inference (LOW)
 **File**: `src/solver/operations.rs`
-
-#### Task 3: Inter-Parameter Constraint Propagation (MEDIUM)
-**File**: `src/solver/infer.rs`
-
-**Goal**: Implement `strengthen_constraints` for fixed-point iteration over type parameter bounds.
-
-**Implementation**:
-1. If `T` has lower bound `L` and `T <: U`, then `L` becomes lower bound for `U`
-2. Critical for signatures like `function pipe<T, U>(val: T, fn: (x: T) => U): U`
-
-#### Task 4: Contextual Return Inference (LOW)
-**File**: `src/solver/operations.rs`
-
 **Goal**: Refine `resolve_generic_call` to collect constraints from `contextual_type` before resolving.
 
-**Implementation**:
-1. Use expected return type to constrain inference variables
-2. Example: `let x: string = identity(42)` should fail
-
 ---
-
-
 
 ## Session History: Previous Phases COMPLETE ✅
 
@@ -302,6 +268,9 @@ Please review: 1) Is this correct for TypeScript? 2) Did I miss any edge cases?
 - 2026-02-04: **REDEFINED** to "User-Defined Type Guards"
 - 2026-02-04: User-Defined Type Guards COMPLETE - Priority 2a & 2b done
 - 2026-02-04: **REDEFINED** to "CFA Hardening & Loop Refinement"
+- 2026-02-04: **REDEFINED** to "Generic Inference & Nominal Hierarchy Integration"
+- 2026-02-04: Completed Task 1 (Nominal BCT) and Task 2 (Homomorphic Mapped Types)
+- 2026-02-04: **REDEFINED** - focusing on Task 3 (Inter-Parameter Constraints)
 
 ---
 
