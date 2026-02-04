@@ -1,8 +1,8 @@
-# Session tsz-3 - instanceof Narrowing Implementation
+# Session tsz-3 - in Operator Narrowing Implementation
 
 **Started**: 2026-02-04
 **Status**: ACTIVE
-**Focus**: Control Flow Analysis - instanceof Type Narrowing
+**Focus**: Control Flow Analysis - in Operator Type Narrowing
 
 ## Completed Work
 
@@ -19,43 +19,51 @@
 - Test `test_instanceof_narrows_to_object_union_members` passes
 - Commit: `bcfb9d6a9`
 
-## Current Task: Implement instanceof Narrowing
+## Current Task: Implement in Operator Narrowing
 
 ### Problem Statement
-**SOLVED**: `instanceof` checks were parsed but ignored by the solver. Types were not narrowed in `if (x instanceof Class)` blocks.
+Currently, `in` checks are parsed but ignored by the solver. Types are not narrowed in `if ("prop" in x)` blocks, which means:
 
-### Solution Implemented
-Added `narrow_by_instanceof(&self, source_type: TypeId, constructor_type: TypeId, sense: bool) -> TypeId` to `NarrowingContext`:
-
-**Logic**:
-1. Extract instance type from constructor using `classify_for_instance_type`
-2. For positive checks (`x instanceof Class`): call `narrow_to_type(source, instance_type)`
-3. For negative checks (`!(x instanceof Class)`): call `narrow_excluding_type(source, instance_type)`
-
-**Example**:
 ```typescript
-class A { methodA() {} }
-class B { methodB() {} }
+interface A { a: string }
+interface B { b: number }
 function f(x: A | B) {
-    if (x instanceof A) {
-        x.methodA(); // ✅ Works - x is narrowed to A
+    if ("a" in x) {
+        // x should be narrowed to A
+        x.a; // Should work but x is still A | B
+    } else {
+        // x should be narrowed to B
+        x.b; // Should work but x is still A | B
     }
 }
 ```
 
-### Key Files Modified
-- `src/solver/narrowing.rs` - Main implementation (lines 361-493)
-- `src/solver/type_queries_extended.rs` - Used `classify_for_instance_type`
+### Implementation Plan
 
-### Next Steps
-Ask Gemini for the next task recommendation.
+**File**: `src/solver/narrowing.rs`
+
+1. **Locate** the `TypeGuard::InProperty` match arm in `narrow_type` (line ~1135)
+2. **Implement** helper method `narrow_by_property_presence(&self, source: TypeId, prop: Atom, sense: bool) -> TypeId`
+3. **Logic**:
+   - Handle `any` -> `any`, `never` -> `never`
+   - If `source` is a union, filter members:
+     - For `sense == true`: Keep members that *have* the property (required or optional)
+     - For `sense == false`: Keep members that *don't* have the property
+   - Use `object_shape_id` and `object_with_index_shape_id` to check properties
+   - Handle index signatures (string index implies any string property exists)
+   - Return union of matching members
+
+### Key Files
+- `src/solver/narrowing.rs` - Main implementation
+- `src/solver/visitor.rs` - Helper functions for type introspection
 
 ### Context
 **Previous Sessions**:
 1. Completed error formatting and module validation cleanup
 2. Fixed TS2304 poisoning issue
+3. Implemented instanceof narrowing
 
-**Key Insight**: This is distinct from tsz-2's "Application Type Expansion" task. This work enables proper control flow analysis for class types.
+**Key Insight**: This is the next logical narrowing feature after instanceof. The `in` operator is commonly used for discriminated unions and interface narrowing.
 
 Fix the "poisoning" effect where missing global symbols (TS2304) cause types to default to `any`, which:
 - Suppresses subsequent type errors
