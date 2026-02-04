@@ -306,10 +306,16 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("?");
         }
 
-        // Type
+        // Type - use explicit annotation if present, otherwise use inferred type
         if !prop.type_annotation.is_none() {
             self.write(": ");
             self.emit_type(prop.type_annotation);
+        } else if !prop.initializer.is_none() {
+            // No explicit type but has initializer - use inferred type
+            if let Some(type_id) = self.get_node_type(prop_idx) {
+                self.write(": ");
+                self.write(&self.print_type_id(type_id));
+            }
         }
 
         self.write(";");

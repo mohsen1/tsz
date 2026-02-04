@@ -660,7 +660,8 @@ fn compile_inner(
     let mut should_save_build_info = false;
 
     // Local cache for BuildInfo-loaded compilation state
-    let mut local_cache: Option<CompilationCache> = None;
+    // Always create a local cache to preserve type checking results for declaration emit
+    let mut local_cache: Option<CompilationCache> = Some(CompilationCache::default());
 
     // Load BuildInfo if incremental compilation is enabled and no cache was provided
     if cache.is_none() && (resolved.incremental || resolved.ts_build_info_file.is_some()) {

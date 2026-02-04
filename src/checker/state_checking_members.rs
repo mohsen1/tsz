@@ -1380,6 +1380,18 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(prop.name, &message, diagnostic_codes::IMPLICIT_ANY_MEMBER);
         }
 
+        // Cache the inferred type for the property node so DeclarationEmitter can use it
+        // Get type: either from annotation or inferred from initializer
+        let prop_type = if !prop.type_annotation.is_none() {
+            self.get_type_from_type_node(prop.type_annotation)
+        } else if !prop.initializer.is_none() {
+            self.get_type_of_node(prop.initializer)
+        } else {
+            TypeId::ANY
+        };
+
+        self.ctx.node_types.insert(member_idx.0, prop_type);
+
         // Restore static property initializer context
         if let Some(ref mut class_info) = self.ctx.enclosing_class {
             class_info.in_static_property_initializer = prev_static_prop_init;
