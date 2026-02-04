@@ -45,7 +45,21 @@ impl<'a> CheckerState<'a> {
             // For Lazy(DefId) types, resolve via the reverse DefId→SymbolId mapping
             TypeKey::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    let _ = self.get_type_of_symbol(sym_id);
+                    let result = self.get_type_of_symbol(sym_id);
+                    // Explicitly insert the DefId→TypeId mapping into type_env.
+                    // get_type_of_symbol may return a cached result, skipping the
+                    // insert_def code path. We must ensure the mapping exists so
+                    // the SubtypeChecker's TypeEnvironment resolver can resolve
+                    // Lazy(DefId) types during assignability checks.
+                    if result != TypeId::ERROR && result != TypeId::ANY {
+                        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                            env.insert_def(def_id, result);
+                        }
+                        // Recurse into the resolved type to ensure nested Lazy types
+                        // are also resolved. E.g., resolving a function type's Lazy(DefId)
+                        // must also resolve its parameter types' Lazy(DefId) references.
+                        self.ensure_refs_resolved(result);
+                    }
                 }
             }
 

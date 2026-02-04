@@ -512,7 +512,10 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_application_symbols_resolved(type_id);
 
-        let env = self.ctx.type_environment.borrow();
+        // Use type_env (not type_environment) because type_env is updated during
+        // type checking with user-defined DefId→TypeId mappings, while
+        // type_environment only has the initial lib symbols from build_type_environment().
+        let env = self.ctx.type_env.borrow();
         let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
         evaluator.evaluate(type_id)
     }
@@ -915,7 +918,11 @@ impl<'a> CheckerState<'a> {
             }
             SymbolResolutionTraversalKind::Lazy(def_id) => {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    let resolved = self.type_reference_symbol_type(sym_id);
+                    // Use get_type_of_symbol (not type_reference_symbol_type) because
+                    // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
+                    // which insert_type_env_symbol rejects as a self-recursive alias.
+                    // We need the concrete structural type for TypeEnvironment resolution.
+                    let resolved = self.get_type_of_symbol(sym_id);
                     self.insert_type_env_symbol(sym_id, resolved);
                 }
             }
