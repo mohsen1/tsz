@@ -919,10 +919,60 @@ impl TypeInterner {
         }
     }
 
+    /// Check if a type is a function or callable (order-sensitive in intersections).
+    ///
+    /// In TypeScript, intersection types are commutative for structural types
+    /// (objects, primitives) but non-commutative for call signatures.
+    /// For example: `((a: string) => void) & ((a: number) => void)` has a different
+    /// overload order than the reverse.
+    fn is_callable_type(&self, id: TypeId) -> bool {
+        matches!(
+            self.lookup(id),
+            Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_))
+        )
+    }
+
     fn normalize_intersection(&self, mut flat: TypeListBuffer) -> TypeId {
-        // Deduplicate and sort for consistent hashing
-        flat.sort_by_key(|id| id.0);
-        flat.dedup();
+        // FIX: Do not blindly sort all members. Callables must preserve order
+        // for correct overload resolution. Non-callables should be sorted for
+        // canonicalization.
+
+        // 1. Check if we have any callables (fast path optimization)
+        let has_callables = flat.iter().any(|&id| self.is_callable_type(id));
+
+        if !has_callables {
+            // Fast path: No callables, sort everything for canonicalization
+            flat.sort_by_key(|id| id.0);
+            flat.dedup();
+        } else {
+            // Slow path: Separate callables and others without heap allocation
+            // Use SmallVec to keep stack allocation benefits
+            let mut callables = SmallVec::<[TypeId; 4]>::new();
+
+            // Retain only non-callables in 'flat', move callables to 'callables'
+            // This preserves the order of callables as they are extracted
+            let mut i = 0;
+            while i < flat.len() {
+                if self.is_callable_type(flat[i]) {
+                    callables.push(flat.remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+
+            // 2. Sort non-callables (which are left in 'flat')
+            flat.sort_by_key(|id| id.0);
+            flat.dedup();
+
+            // 3. Deduplicate callables (preserving order)
+            // Using a set for O(1) lookups while maintaining insertion order
+            let mut seen = FxHashSet::default();
+            callables.retain(|id| seen.insert(*id));
+
+            // 4. Merge: Put non-callables first (canonical), then callables (ordered)
+            // This creates a canonical form where structural types appear before signatures
+            flat.extend(callables);
+        }
 
         // Handle special cases
         if flat.contains(&TypeId::ERROR) {
