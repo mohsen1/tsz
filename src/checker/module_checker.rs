@@ -11,6 +11,7 @@
 
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
+use crate::solver::types::Visibility;
 use std::collections::HashSet;
 
 // =============================================================================
@@ -440,6 +441,8 @@ impl<'a> CheckerState<'a> {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 });
             }
 
@@ -469,6 +472,8 @@ impl<'a> CheckerState<'a> {
                             optional: false,
                             readonly: false,
                             is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         });
                     }
                 }

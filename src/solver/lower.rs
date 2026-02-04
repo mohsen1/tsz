@@ -107,6 +107,8 @@ impl InterfaceParts {
                         optional: existing.optional && prop.optional,
                         readonly: existing.readonly && prop.readonly,
                         is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
@@ -118,6 +120,8 @@ impl InterfaceParts {
                         optional: methods.optional && prop.optional,
                         readonly: false,
                         is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
@@ -157,6 +161,8 @@ impl InterfaceParts {
                         optional: prop.optional && optional,
                         readonly: false,
                         is_method: false,
+                        visibility: Visibility::Public,
+                        parent_id: None,
                     };
                     entry.insert(PropertyMerge::Conflict(conflict));
                 }
@@ -963,6 +969,8 @@ impl<'a> TypeLowering<'a> {
                                     optional: sig.question_token,
                                     readonly: self.has_readonly_modifier(&sig.modifiers),
                                     is_method: true,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
                                 });
                             }
                         }
@@ -1159,6 +1167,8 @@ impl<'a> TypeLowering<'a> {
                         optional: methods.optional,
                         readonly: methods.readonly,
                         is_method: true,
+                        visibility: Visibility::Public,
+                        parent_id: None,
                     });
                 }
                 PropertyMerge::Conflict(prop) => properties.push(prop),
@@ -1524,6 +1534,8 @@ impl<'a> TypeLowering<'a> {
                 optional: sig.question_token,
                 readonly,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             })
         } else {
             None

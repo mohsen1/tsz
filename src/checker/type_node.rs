@@ -9,6 +9,7 @@
 use super::context::CheckerContext;
 use crate::parser::NodeIndex;
 use crate::solver::TypeId;
+use crate::solver::types::Visibility;
 use std::cell::Cell;
 
 /// Maximum recursion depth for type node checking to prevent stack overflow
@@ -606,6 +607,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             return_type,
                             type_predicate: None,
                             is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         });
                     }
                     CONSTRUCT_SIGNATURE => {
@@ -622,6 +625,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             return_type,
                             type_predicate: None,
                             is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         });
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
@@ -645,6 +650,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 type_predicate: None,
                                 is_constructor: false,
                                 is_method: true,
+                                visibility: Visibility::Public,
+                                parent_id: None,
                             };
                             let method_type = self.ctx.types.function(shape);
                             properties.push(PropertyInfo {
@@ -654,6 +661,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 optional: sig.question_token,
                                 readonly: self.has_readonly_modifier(&sig.modifiers),
                                 is_method: true,
+                                visibility: Visibility::Public,
+                                parent_id: None,
                             });
                         } else {
                             let type_id = if !sig.type_annotation.is_none() {
@@ -668,6 +677,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 optional: sig.question_token,
                                 readonly: self.has_readonly_modifier(&sig.modifiers),
                                 is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
                             });
                         }
                     }

@@ -6,6 +6,7 @@
 use crate::interner::Atom;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
 use crate::solver::subtype::TypeResolver;
+use crate::solver::types::Visibility;
 use crate::solver::types::*;
 
 use super::super::evaluate::TypeEvaluator;
@@ -214,6 +215,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 optional,
                 readonly,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             });
         }
 

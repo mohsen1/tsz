@@ -335,6 +335,8 @@ impl<'a> TypeInstantiator<'a> {
                         optional: p.optional,
                         readonly: p.readonly,
                         is_method: p.is_method,
+                        visibility: p.visibility,
+                        parent_id: p.parent_id,
                     })
                     .collect();
                 self.interner.object(instantiated)
@@ -353,6 +355,8 @@ impl<'a> TypeInstantiator<'a> {
                         optional: p.optional,
                         readonly: p.readonly,
                         is_method: p.is_method,
+                        visibility: p.visibility,
+                        parent_id: p.parent_id,
                     })
                     .collect();
                 let instantiated_string_idx =
@@ -447,6 +451,8 @@ impl<'a> TypeInstantiator<'a> {
                         optional: p.optional,
                         readonly: p.readonly,
                         is_method: p.is_method,
+                        visibility: p.visibility,
+                        parent_id: p.parent_id,
                     })
                     .collect();
 

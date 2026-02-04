@@ -10,6 +10,7 @@ use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
+use crate::solver::types::Visibility;
 use rustc_hash::FxHashSet;
 use tracing::{debug, trace};
 
@@ -1454,6 +1455,8 @@ impl<'a> CheckerState<'a> {
                                     optional: false,
                                     readonly: false,
                                     is_method: false,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
                                 });
                             }
                             let module_type = self.ctx.types.object(props);
@@ -1520,6 +1523,8 @@ impl<'a> CheckerState<'a> {
                                 optional: false,
                                 readonly: false,
                                 is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
                             });
                         }
                         let module_type = self.ctx.types.object(props);
@@ -1617,6 +1622,8 @@ impl<'a> CheckerState<'a> {
                                         optional: false,
                                         readonly: false,
                                         is_method: false,
+                                        visibility: Visibility::Public,
+                                        parent_id: None,
                                     });
                                 }
                                 let module_type = self.ctx.types.object(props);

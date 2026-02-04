@@ -3,6 +3,7 @@
 //! Types are represented as lightweight `TypeId` handles that point into
 //! an interning table. The actual structure is stored in `TypeKey`.
 
+use crate::binder::SymbolId;
 use crate::interner::Atom;
 use crate::solver::def::DefId;
 use serde::Serialize;
@@ -522,6 +523,18 @@ impl std::hash::Hash for OrderedFloat {
     }
 }
 
+/// Visibility modifier for class properties
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Default)]
+pub enum Visibility {
+    /// Public property - structural compatibility applies
+    #[default]
+    Public,
+    /// Private property - nominal compatibility only
+    Private,
+    /// Protected property - nominal compatibility only
+    Protected,
+}
+
 /// Property information for object types
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct PropertyInfo {
@@ -533,6 +546,10 @@ pub struct PropertyInfo {
     pub optional: bool,
     pub readonly: bool,
     pub is_method: bool,
+    /// Visibility modifier for nominal subtyping
+    pub visibility: Visibility,
+    /// Symbol that declared this property (for nominal identity checks)
+    pub parent_id: Option<SymbolId>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

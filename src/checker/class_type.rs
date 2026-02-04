@@ -27,6 +27,7 @@ use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
+use crate::solver::types::Visibility;
 use crate::solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
     TypeLowering, TypeSubstitution, instantiate_type,
@@ -202,6 +203,8 @@ impl<'a> CheckerState<'a> {
                             optional: prop.question_token,
                             readonly: self.has_readonly_modifier(&prop.modifiers),
                             is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         },
                     );
                 }
@@ -324,6 +327,8 @@ impl<'a> CheckerState<'a> {
                                 optional: param.question_token,
                                 readonly: self.has_readonly_modifier(&param.modifiers),
                                 is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
                             },
                         );
                     }
@@ -397,6 +402,8 @@ impl<'a> CheckerState<'a> {
                     optional: false,
                     readonly,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
             );
         }
@@ -428,6 +435,8 @@ impl<'a> CheckerState<'a> {
                     optional,
                     readonly: false,
                     is_method: true,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
             );
         }
@@ -447,6 +456,8 @@ impl<'a> CheckerState<'a> {
                 optional: false,
                 readonly: true,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             });
         }
 
@@ -1077,6 +1088,8 @@ impl<'a> CheckerState<'a> {
                             optional: prop.question_token,
                             readonly: self.has_readonly_modifier(&prop.modifiers),
                             is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         },
                     );
                 }
@@ -1227,6 +1240,8 @@ impl<'a> CheckerState<'a> {
                     optional: false,
                     readonly,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
             );
         }
@@ -1258,6 +1273,8 @@ impl<'a> CheckerState<'a> {
                     optional,
                     readonly: false,
                     is_method: true,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
             );
         }
