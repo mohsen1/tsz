@@ -1,11 +1,75 @@
-# Session tsz-3: CFA Hardening & Loop Refinement
+# Session tsz-3: Generic Inference & Nominal Hierarchy Integration
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Priority 2 COMPLETE, starting Priority 4)
-**Latest Update**: 2026-02-04 - Redefined focus to CFA Hardening
-**Focus**: Loop narrowing refinement, switch fallthrough, falsy completeness
+**Status**: 🟢 ACTIVE (Phase 4 starting)
+**Latest Update**: 2026-02-04 - Redefined focus to Generic Inference & Nominal Hierarchy
+**Focus**: Best Common Type, Homomorphic Mapped Types, Inter-Parameter Constraints
 
 ---
+
+## Current Phase: Generic Inference & Nominal Hierarchy Integration (IN PROGRESS)
+
+**Started**: 2026-02-04
+**Status**: Ready to begin Task 1
+
+### Problem Statement
+
+The current generic inference and type system has several gaps that cause `any` leakage and imprecision:
+
+1. **Nominal BCT**: `compute_best_common_type` cannot find common base classes (e.g., `[Dog, Cat] -> Animal`) because the Solver can't see the inheritance graph
+2. **Homomorphic Mapped Types**: `Partial<T[]>` turns arrays into plain objects, losing methods like `.push()`
+3. **Inter-Parameter Constraints**: Constraints don't flow between type parameters (e.g., `T extends U` doesn't propagate constraints from `U` to `T`)
+4. **Contextual Return Inference**: Generic calls don't fully utilize expected return types to constrain inference
+
+### Prioritized Tasks
+
+#### Task 1: Nominal BCT Bridge (Binder-Solver Link) (HIGH)
+**Files**: `src/solver/expression_ops.rs`, `src/solver/infer.rs`, `src/solver/subtype.rs`, `src/checker/context.rs`
+
+**Goal**: Enable `compute_best_common_type` to find common base classes using the inheritance graph.
+
+**Implementation**:
+1. Implement `get_base_type` method in `TypeResolver` trait (defined in `src/solver/subtype.rs`)
+2. Update implementation in `src/checker/context.rs` to query `InheritanceGraph`
+3. Update `compute_best_common_type` to use resolver for most specific common supertype
+
+**Example**: `[Dog, Cat]` should infer `Animal` (common base), not `Dog | Cat` (union)
+
+**Coordination**: Follow Two-Question Rule - touches sensitive Binder/Solver boundary
+
+#### Task 2: Homomorphic Mapped Type Preservation (MEDIUM)
+**File**: `src/solver/evaluate_rules/mapped.rs`
+
+**Goal**: Ensure mapped types preserve array/tuple structure instead of degrading to plain objects.
+
+**Implementation**:
+1. Modify `evaluate_mapped` to detect if source type is `Array` or `Tuple`
+2. Return new `Array`/`Tuple` with template applied to elements
+3. Ensure modifiers (readonly/optional) map correctly
+
+**Example**: `Partial<number[]>` should be `number[]` with optional elements, not `{ [n: number]: number }`
+
+#### Task 3: Inter-Parameter Constraint Propagation (MEDIUM)
+**File**: `src/solver/infer.rs`
+
+**Goal**: Implement `strengthen_constraints` for fixed-point iteration over type parameter bounds.
+
+**Implementation**:
+1. If `T` has lower bound `L` and `T <: U`, then `L` becomes lower bound for `U`
+2. Critical for signatures like `function pipe<T, U>(val: T, fn: (x: T) => U): U`
+
+#### Task 4: Contextual Return Inference (LOW)
+**File**: `src/solver/operations.rs`
+
+**Goal**: Refine `resolve_generic_call` to collect constraints from `contextual_type` before resolving.
+
+**Implementation**:
+1. Use expected return type to constrain inference variables
+2. Example: `let x: string = identity(42)` should fail
+
+---
+
+
 
 ## Session History: Previous Phases COMPLETE ✅
 
