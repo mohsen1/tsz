@@ -1253,6 +1253,10 @@ impl<'a> DeclarationEmitter<'a> {
                         if !decl.type_annotation.is_none() {
                             self.write(": ");
                             self.emit_type(decl.type_annotation);
+                        } else if let Some(type_id) = self.get_node_type(decl_idx) {
+                            // No explicit type, but we have inferred type from cache
+                            self.write(": ");
+                            self.write(&self.print_type_id(type_id));
                         }
                     }
 
