@@ -1315,7 +1315,8 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
-                let interface_type = lowering.lower_interface_declarations(&declarations);
+                let interface_type =
+                    lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
 
                 // Restore the type parameter scope
                 self.pop_type_parameters(updates);

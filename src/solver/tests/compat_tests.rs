@@ -4300,6 +4300,8 @@ fn test_void_return_exception_constructors() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // new () => Instance
@@ -4318,6 +4320,8 @@ fn test_void_return_exception_constructors() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Constructor returning instance IS assignable to void-returning constructor
