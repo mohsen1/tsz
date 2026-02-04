@@ -1907,7 +1907,15 @@ impl<'a> CheckerState<'a> {
                                             env.insert_def_with_params(def_id, ty, params);
                                         }
 
-                                        lib_types.push(ty);
+                                        // CRITICAL: Return Lazy(DefId) instead of the structural body.
+                                        // Application types only expand when the base is Lazy, not when
+                                        // it's the actual MappedType/Object/etc. This allows evaluate_application
+                                        // to trigger and substitute type parameters correctly.
+                                        use crate::solver::types::TypeKey;
+                                        let lazy_type =
+                                            self.ctx.types.intern(TypeKey::Lazy(def_id));
+                                        lib_types.push(lazy_type);
+
                                         // Type aliases don't merge across files, take the first one
                                         break;
                                     }
