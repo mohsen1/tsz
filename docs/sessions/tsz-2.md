@@ -8,19 +8,57 @@ Work is never done until all tests pass. This includes:
 - No cleanup work left undone
 - No large files (>3000 lines) left unaddressed
 
-## Status: ACTIVE - Excess Property Checks (TS2345/TS2322)
+## Status: ACTIVE - Argument Inference & Variance (TS2345/TS2322)
 
 **Date**: 2025-02-04
-**Focus**: Fix remaining "extra" errors from overly strict excess property checks
+**Focus**: Fix generic inference and function variance issues causing extra errors
 
 ## Context
 
-After fixing TS2741 (index signature assignability), reduced TS2322 errors by 84%.
-Now pivoting to fix remaining "extra" errors (TS2345: 31 extra, TS2322: 31 extra).
+After fixing TS2741 (index signature assignability), achieved 84% reduction in TS2322 errors.
+Now pivoting to TS2345/TS2322 extra errors caused by **generic inference failures** or **callback variance issues**.
 
-**Hypothesis**: Excess property checks are incorrectly flagging valid object literals when the target has an index signature that should allow extra properties.
+**Strategic Decision**: TS2345 and TS2322 share the same `is_assignable_to` logic, but TS2345 adds type inference. Fixing TS2345 will likely resolve remaining TS2322 errors too.
 
-**Rule**: If target has `[key: string]: T`, then ANY extra property in source is valid as long as it matches `T`. It is NOT an excess property error.
+## Current Phase: Diagnosis & Execution
+
+### Completed ✅
+- Fixed index signature assignability (TS2741) - 84% reduction in TS2322
+- Verified excess property checks correctly handle index signatures
+- Conformance: 49.2% pass rate (up from ~40%)
+
+### Current Phase: TS2345 Diagnosis
+
+**Todo**:
+- [ ] Analyze TS2345 extra error patterns
+  - Run: `./scripts/conformance.sh --code=2345 2>&1 | grep "extra" | head -20`
+  - Categorize into: Inference failures, Variance mismatches, Structure issues
+
+- [ ] Path A: If inference failures (most likely)
+  - Focus: `src/solver/operations.rs` (resolve_generic_call_inner)
+  - Focus: `src/solver/infer.rs`
+  - Check: Contextual typing for function arguments
+  - Check: Unconstrained type parameter handling (unknown vs error)
+
+- [ ] Path B: If variance/callback failures
+  - Focus: `src/solver/subtype_rules/functions.rs`
+  - Verify: `check_call_signature_subtype` bivariance logic
+  - Check: `src/solver/compat.rs` Lawyer configuration
+
+- [ ] Verify and commit
+  - Run full conformance to measure impact
+  - Commit with description of inference/variance fix
+
+### Investigation Notes
+
+**Excess Property Checking**: Already correctly handles index signatures
+- File: `src/checker/state_checking.rs`
+- Lines 886-889: Returns early if target has index signature
+- So TS2345/TS2322 extra errors must come from other sources
+
+**Blocked Issues** (deferred):
+- Enum computed properties in object literals (WIP reverted due to test failures)
+- Test: `objectLiteralEnumPropertyNames.ts`
 
 ### Current Conformance Stats (1k samples - AFTER INDEX SIG FIX)
 
