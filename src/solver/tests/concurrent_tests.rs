@@ -109,6 +109,7 @@ fn test_concurrent_function_creation() {
         .map(|_| {
             let shape = FunctionShape {
                 type_params: vec![TypeParamInfo {
+                    is_const: false,
                     name: interner.intern_string("T"),
                     constraint: None,
                     is_const: false,

@@ -224,18 +224,21 @@ fn test_base_constraint_assignability_compat() {
     let mut checker = CompatChecker::new(&interner);
 
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
             is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
             is_const: false,
     }));
     let v_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("V"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -3077,6 +3080,7 @@ fn test_mapped_type_over_number_keys_assignable() {
     let constraint = interner.intern(TypeKey::KeyOf(TypeId::NUMBER));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("K"),
             constraint: None,
             is_const: false,
@@ -3121,6 +3125,7 @@ fn test_mapped_type_over_string_keys_assignable() {
     let constraint = interner.intern(TypeKey::KeyOf(TypeId::STRING));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("K"),
             constraint: None,
             is_const: false,
@@ -3165,6 +3170,7 @@ fn test_mapped_type_over_boolean_keys_assignable() {
     let constraint = interner.intern(TypeKey::KeyOf(TypeId::BOOLEAN));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("K"),
             constraint: None,
             is_const: false,
@@ -3229,6 +3235,7 @@ fn test_mapped_type_key_remap_filters_keys() {
     let keys = interner.union(vec![key_a, key_b]);
 
     let key_param = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("K"),
         constraint: Some(keys),
         default: None,
@@ -3269,6 +3276,7 @@ fn test_conditional_tuple_wrapper_no_distribution_assignable() {
 
     let t_name = interner.intern_string("T");
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,

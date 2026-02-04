@@ -304,8 +304,8 @@ pub struct InferenceContext<'a> {
     interner: &'a dyn TypeDatabase,
     /// Unification table for inference variables
     table: InPlaceUnificationTable<InferenceVar>,
-    /// Map from type parameter names to inference variables
-    type_params: Vec<(Atom, InferenceVar)>,
+    /// Map from type parameter names to inference variables, with const flag
+    type_params: Vec<(Atom, InferenceVar, bool)>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -323,9 +323,9 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Create an inference variable for a type parameter
-    pub fn fresh_type_param(&mut self, name: Atom) -> InferenceVar {
+    pub fn fresh_type_param(&mut self, name: Atom, is_const: bool) -> InferenceVar {
         let var = self.fresh_var();
-        self.type_params.push((name, var));
+        self.type_params.push((name, var, is_const));
         var
     }
 
@@ -333,16 +333,24 @@ impl<'a> InferenceContext<'a> {
     ///
     /// This is useful when the caller needs to compute a unique placeholder name
     /// (and corresponding placeholder TypeId) after allocating the inference variable.
-    pub fn register_type_param(&mut self, name: Atom, var: InferenceVar) {
-        self.type_params.push((name, var));
+    pub fn register_type_param(&mut self, name: Atom, var: InferenceVar, is_const: bool) {
+        self.type_params.push((name, var, is_const));
     }
 
     /// Look up an inference variable by type parameter name
     pub fn find_type_param(&self, name: Atom) -> Option<InferenceVar> {
         self.type_params
             .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, v)| *v)
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, v, _)| *v)
+    }
+
+    /// Check if an inference variable is a const type parameter
+    pub fn is_var_const(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        self.type_params
+            .iter()
+            .any(|(_, v, is_const)| self.table.find(*v) == root && *is_const)
     }
 
     /// Probe the current value of an inference variable
@@ -435,7 +443,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         let mut visited = FxHashSet::default();
-        for &(atom, param_var) in &self.type_params {
+        for &(atom, param_var, _) in &self.type_params {
             if self.table.find(param_var) == root
                 && self.type_contains_param(ty, atom, &mut visited)
             {
@@ -448,7 +456,7 @@ impl<'a> InferenceContext<'a> {
     fn type_param_names_for_root(&mut self, root: InferenceVar) -> Vec<Atom> {
         self.type_params
             .iter()
-            .filter_map(|(name, var)| {
+            .filter_map(|(name, var, _)| {
                 if self.table.find(*var) == root {
                     Some(*name)
                 } else {
@@ -866,7 +874,7 @@ impl<'a> InferenceContext<'a> {
         // Clone type_params to avoid borrow conflict
         let type_params: Vec<_> = self.type_params.clone();
         let mut results = Vec::new();
-        for (name, var) in type_params {
+        for (name, var, _) in type_params {
             match self.probe(var) {
                 Some(ty) => results.push((name, ty)),
                 None => return Err(InferenceError::Unresolved(var)),
@@ -1075,8 +1083,11 @@ impl<'a> InferenceContext<'a> {
             });
         }
 
+        // Check if this is a const type parameter to preserve literal types
+        let is_const = self.is_var_const(root);
+
         let result = if !candidates.is_empty() {
-            self.resolve_from_candidates(&candidates)
+            self.resolve_from_candidates(&candidates, is_const)
         } else if !upper_bounds.is_empty() {
             // No lower bounds, use intersection of upper bounds
             if upper_bounds.len() == 1 {
@@ -1097,7 +1108,7 @@ impl<'a> InferenceContext<'a> {
         let type_params: Vec<_> = self.type_params.clone();
         let mut results = Vec::new();
 
-        for (name, var) in type_params {
+        for (name, var, _) in type_params {
             let ty = self.resolve_with_constraints(var)?;
             results.push((name, ty));
         }
@@ -1105,7 +1116,7 @@ impl<'a> InferenceContext<'a> {
         Ok(results)
     }
 
-    fn resolve_from_candidates(&self, candidates: &[InferenceCandidate]) -> TypeId {
+    fn resolve_from_candidates(&self, candidates: &[InferenceCandidate], is_const: bool) -> TypeId {
         // Check if we have circular candidates
         let has_circular = candidates
             .iter()
@@ -1131,7 +1142,12 @@ impl<'a> InferenceContext<'a> {
         if filtered_no_never.is_empty() {
             return TypeId::NEVER;
         }
-        let widened = self.widen_candidate_types(&filtered_no_never);
+        // If this is a const type parameter, skip widening to preserve literal types
+        let widened = if is_const {
+            filtered_no_never.iter().map(|c| c.type_id).collect()
+        } else {
+            self.widen_candidate_types(&filtered_no_never)
+        };
         self.best_common_type(&widened)
     }
 
@@ -2849,7 +2865,7 @@ impl<'a> InferenceContext<'a> {
         // to prevent infinite loops in pathological type structures
         let max_iterations = type_params.len().min(MAX_CONSTRAINT_ITERATIONS);
         for _ in 0..max_iterations {
-            for (name, var) in type_params.iter() {
+            for (name, var, _) in type_params.iter() {
                 let root = self.table.find(*var);
                 let info = self.table.probe_value(root);
 
@@ -2901,7 +2917,7 @@ impl<'a> InferenceContext<'a> {
     /// Validate that resolved types respect variance constraints.
     pub fn validate_variance(&mut self) -> Result<(), InferenceError> {
         let type_params: Vec<_> = self.type_params.clone();
-        for (_name, var) in type_params.iter() {
+        for (_name, var, _) in type_params.iter() {
             let resolved = match self.probe(*var) {
                 Some(ty) => ty,
                 None => continue,

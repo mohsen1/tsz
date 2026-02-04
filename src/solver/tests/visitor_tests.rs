@@ -61,12 +61,14 @@ fn test_type_kind_classification() {
     // Intersection types - use type parameters since the interner simplifies
     // primitive intersections to never and object intersections to merged objects
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
             is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -224,12 +226,14 @@ fn test_is_intersection_type() {
     // Use type parameters since the interner simplifies primitive intersections
     // to never and object intersections to merged objects
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
             is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -268,6 +272,7 @@ fn test_is_type_parameter() {
     let interner = TypeInterner::new();
 
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -372,6 +377,7 @@ fn test_contains_type_parameters() {
     let interner = TypeInterner::new();
 
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -458,6 +464,7 @@ fn test_type_list_extractors_for_union_and_intersection() {
     let interner = TypeInterner::new();
 
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -465,6 +472,7 @@ fn test_type_list_extractors_for_union_and_intersection() {
             is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("U"),
         constraint: None,
         is_const: false,
@@ -610,6 +618,7 @@ fn test_type_param_ref_and_lazy_extractors() {
     let interner = TypeInterner::new();
 
     let param_info = TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -642,6 +651,7 @@ fn test_application_mapped_and_conditional_extractors() {
 
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("K"),
             constraint: None,
             default: None,
@@ -750,6 +760,7 @@ fn test_contains_infer_types() {
     let interner = TypeInterner::new();
 
     let infer_type = interner.intern(TypeKey::Infer(TypeParamInfo {
+        is_const: false,
         name: interner.intern_string("R"),
         constraint: None,
         default: None,
@@ -791,6 +802,7 @@ fn test_meta_type_predicates() {
     });
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
+            is_const: false,
             name: interner.intern_string("K"),
             constraint: None,
             default: None,

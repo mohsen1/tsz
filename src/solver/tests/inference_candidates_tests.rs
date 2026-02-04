@@ -6,7 +6,7 @@ fn test_infer_candidates_disjoint_primitives_union() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     ctx.add_candidate(var, TypeId::NUMBER, InferencePriority::Argument);
     ctx.add_candidate(var, TypeId::STRING, InferencePriority::Argument);
 
@@ -21,7 +21,7 @@ fn test_infer_candidates_literal_widening_number() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let one = interner.literal_number(1.0);
     let two = interner.literal_number(2.0);
     ctx.add_candidate(var, one, InferencePriority::Argument);
@@ -66,7 +66,7 @@ fn test_infer_candidates_common_supertype() {
         },
     ]);
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     ctx.add_candidate(var, dog, InferencePriority::Argument);
     ctx.add_candidate(var, animal, InferencePriority::Argument);
 
@@ -80,7 +80,7 @@ fn test_infer_candidates_priority_argument_over_return() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     ctx.add_candidate(var, TypeId::NUMBER, InferencePriority::ReturnType);
     ctx.add_candidate(var, TypeId::STRING, InferencePriority::Argument);
 
@@ -94,7 +94,7 @@ fn test_infer_candidates_priority_literal_over_argument() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let arg_lit = interner.literal_string("arg");
     let lit = interner.literal_string("lit");
     ctx.add_candidate(var, arg_lit, InferencePriority::Argument);
@@ -110,7 +110,7 @@ fn test_infer_candidates_literal_priority_single() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let lit = interner.literal_number(3.0);
     ctx.add_candidate(var, lit, InferencePriority::Literal);
 
@@ -124,7 +124,7 @@ fn test_infer_candidates_widening_string_literals() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let a = interner.literal_string("a");
     let b = interner.literal_string("b");
     ctx.add_candidate(var, a, InferencePriority::Argument);
@@ -140,7 +140,7 @@ fn test_infer_candidates_widening_boolean_literals() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let t = interner.literal_boolean(true);
     let f = interner.literal_boolean(false);
     ctx.add_candidate(var, t, InferencePriority::Argument);
@@ -156,7 +156,7 @@ fn test_infer_candidates_upper_bound_filters_any() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     ctx.add_upper_bound(var, TypeId::STRING);
     ctx.add_candidate(var, TypeId::ANY, InferencePriority::Argument);
 
@@ -170,7 +170,7 @@ fn test_infer_candidates_upper_bound_keeps_literal() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let lit = interner.literal_string("hello");
     ctx.add_upper_bound(var, TypeId::STRING);
     ctx.add_candidate(var, lit, InferencePriority::Argument);
@@ -185,7 +185,7 @@ fn test_infer_candidates_upper_bound_intersection() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     let upper = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
     ctx.add_upper_bound(var, TypeId::STRING);
     ctx.add_upper_bound(var, TypeId::NUMBER);
@@ -200,7 +200,7 @@ fn test_infer_candidates_bounds_violation() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     ctx.add_upper_bound(var, TypeId::STRING);
     ctx.add_candidate(var, TypeId::NUMBER, InferencePriority::Argument);
 
@@ -217,7 +217,7 @@ fn test_infer_candidates_filters_by_max_priority() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     ctx.add_candidate(var, TypeId::STRING, InferencePriority::ReturnType);
     ctx.add_candidate(var, TypeId::NUMBER, InferencePriority::ReturnType);
     ctx.add_candidate(var, TypeId::NUMBER, InferencePriority::Argument);
@@ -232,7 +232,7 @@ fn test_infer_candidates_return_type_union() {
     let mut ctx = InferenceContext::new(&interner);
     let t_name = interner.intern_string("T");
 
-    let var = ctx.fresh_type_param(t_name);
+    let var = ctx.fresh_type_param(t_name, false);
     ctx.add_candidate(var, TypeId::STRING, InferencePriority::ReturnType);
     ctx.add_candidate(var, TypeId::NUMBER, InferencePriority::ReturnType);
 

@@ -477,9 +477,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // We use a TypeParameter with a special name to track it during constraint collection
             let placeholder_name = format!("__infer_{}", var.0);
             let placeholder_atom = self.interner.intern_string(&placeholder_name);
-            infer_ctx.register_type_param(placeholder_atom, var);
+            infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeKey::TypeParameter(TypeParamInfo {
-                is_const: false,
+                is_const: tp.is_const,
                 name: placeholder_atom,
                 constraint: tp.constraint,
                 default: None,
