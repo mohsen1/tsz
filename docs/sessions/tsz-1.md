@@ -1,17 +1,17 @@
 # Session tsz-1: Conformance Improvements
 
-**Started**: 2026-02-04 (Ninth iteration)
+**Started**: 2026-02-04 (Tenth iteration)
 **Status**: Active
-**Goal**: Continue reducing conformance failures from 46 to lower
+**Goal**: Continue reducing conformance failures from 28 to lower
 
 ## Previous Session Achievements (2026-02-04)
-- ✅ Fixed 3 test expectations
-- ✅ Conformance: 51 → 46 failing tests (-5)
+- ✅ Fixed 3 test expectations (51 → 46 failing tests)
+- ✅ **Fixed enum+namespace merging** (46 → 28 failing tests, **-18 tests**)
 
 ## Current Focus
 
 ### Immediate Tasks
-1. Review remaining 46 failing tests
+1. Review remaining 28 failing tests
 2. Focus on simple test expectation corrections
 3. Use tsz-tracing skill for complex debugging when needed
 
@@ -25,23 +25,33 @@
 - Document blockers quickly and move on
 - Focus on achievable wins
 
-## Current Focus: Deep Dive on Enum/Namespace Merging
+## Major Achievement: Enum/Namespace Merging Fix
 
-**Target Test**: test_enum_namespace_merging
-- **Issue**: Enum and namespace with same name not merging properly
-- **tsc**: No errors (enum and namespace merge successfully)
-- **tsz**: TS2345 "Argument of type 'Direction' is not assignable to parameter of type 'Direction'"
-- **Root Cause**: Two separate types created instead of one merged Symbol
+**Problem**: When an enum and namespace with the same name are declared, TypeScript merges them so that both enum members and namespace exports are accessible. For example:
 
-### Architectural Context
-- Maps to Item 44 in TS_UNSOUNDNESS_CATALOG.md (Module Augmentation Merging)
-- Binder responsibility: Merge all declarations for same SymbolId
-- **High Impact**: Fix may resolve multiple cascading errors
+```typescript
+enum Direction { Up = 1, Down = 2 }
+namespace Direction {
+    export function isVertical(d: Direction): boolean {
+        return d === Direction.Up || d === Direction.Down;
+    }
+}
+// Both Direction.Up and Direction.isVertical() should be accessible
+```
 
-### Investigation Plan
-1. Review TS_UNSOUNDNESS_CATALOG.md Item 44
-2. Use TSZ_LOG tracing to see symbol creation
-3. Find where enum/namespace merging should occur
-4. Implement fix in Binder
+**Root Cause**: The binder correctly merged the symbols (binder tests passed), but the checker was creating two separate types - one for the enum (`TypeKey::Enum`) and one for the namespace (`TypeKey::Lazy`) - without combining their exports.
 
-## Status: PIVOTING TO DEEP DIVE
+**Solution**: Implemented `merge_namespace_exports_into_object` in `namespace_checker.rs` and modified the enum type computation in `state_type_analysis.rs` to:
+1. Check if the enum symbol has `NAMESPACE_MODULE` flags (indicating a merged enum+namespace)
+2. Create an object type that includes both enum members and namespace exports
+3. Return this merged type instead of just `TypeKey::Enum`
+
+**Impact**: This fix resolves **18 failing conformance tests** (46 → 28), including:
+- `test_enum_namespace_merging` - Main test case
+- Multiple cascading failures where enum+namespace merging was not properly handled
+
+**Files Modified**:
+- `src/checker/namespace_checker.rs`: Added `merge_namespace_exports_into_object` function
+- `src/checker/state_type_analysis.rs`: Modified enum type computation to merge namespace exports
+
+## Status: Continuing with remaining 28 failing tests
