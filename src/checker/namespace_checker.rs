@@ -15,6 +15,7 @@ use crate::binder::SymbolId;
 use crate::checker::state::CheckerState;
 use crate::interner::Atom;
 use crate::solver::TypeId;
+use crate::solver::types::Visibility;
 use std::sync::Arc;
 
 // =============================================================================
@@ -91,6 +92,8 @@ impl<'a> CheckerState<'a> {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             });
         }
 
@@ -161,6 +164,8 @@ impl<'a> CheckerState<'a> {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             });
         }
 
@@ -347,6 +352,8 @@ impl<'a> CheckerState<'a> {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             });
         }
 

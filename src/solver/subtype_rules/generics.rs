@@ -9,6 +9,7 @@
 
 use crate::binder::SymbolId;
 use crate::solver::def::DefId;
+use crate::solver::types::Visibility;
 use crate::solver::types::*;
 use crate::solver::visitor::{
     application_id, index_access_parts, keyof_inner_type, lazy_def_id, literal_value,
@@ -594,6 +595,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 optional,
                 readonly,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             });
         }
 

@@ -180,6 +180,8 @@ switch (x.kind) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let member_b = types.object(vec![PropertyInfo {
         name: kind_name,
@@ -188,6 +190,8 @@ switch (x.kind) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let union = types.union(vec![member_a, member_b]);
@@ -236,6 +240,8 @@ if (x instanceof Foo) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let union = types.union(vec![TypeId::STRING, obj_type]);
 
@@ -283,6 +289,8 @@ if ("a" in x) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -291,6 +299,8 @@ if ("a" in x) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let union = types.union(vec![type_a, type_b]);
 
@@ -338,6 +348,8 @@ if ("a" in x) {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -346,6 +358,8 @@ if ("a" in x) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let union = types.union(vec![type_a, type_b]);
 
@@ -393,6 +407,8 @@ if (#a in x) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -401,6 +417,8 @@ if (#a in x) {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let union = types.union(vec![type_a, type_b]);
 

@@ -7,6 +7,7 @@
 use crate::binder::SymbolId;
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
+use crate::solver::types::Visibility;
 use crate::solver::{ContextualTypeContext, TypeId};
 
 impl<'a> CheckerState<'a> {
@@ -918,6 +919,8 @@ impl<'a> CheckerState<'a> {
             return_type: TypeId::SYMBOL,
             type_predicate: None,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         };
 
         let well_known = [
@@ -949,6 +952,8 @@ impl<'a> CheckerState<'a> {
                 optional: false,
                 readonly: true,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             });
         }
 

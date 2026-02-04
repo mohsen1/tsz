@@ -198,6 +198,8 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }];
 
         let obj_type = builder.build_object_type(properties);
@@ -219,6 +221,8 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }];
 
         // Create spread object { y: string, x: boolean }
@@ -230,6 +234,8 @@ mod tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: db.intern_string("x"),
@@ -238,6 +244,8 @@ mod tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ];
         let spread_type = db.object(spread_props);
@@ -273,6 +281,8 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Create properties { x: 1 } (where 1 is a literal number type)
@@ -284,6 +294,8 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }];
 
         let contextualized = builder.apply_contextual_types(properties, ctx_type);
@@ -305,6 +317,8 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let type2 = db.object(vec![PropertyInfo {
@@ -314,6 +328,8 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         let intersection = db.intersection2(type1, type2);

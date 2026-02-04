@@ -631,6 +631,8 @@ mod tests {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
                 PropertyInfo {
                     name: y_name,
@@ -639,6 +641,8 @@ mod tests {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 },
             ],
         );

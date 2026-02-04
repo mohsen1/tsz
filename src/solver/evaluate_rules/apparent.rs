@@ -5,6 +5,7 @@
 
 use crate::solver::apparent::apparent_primitive_members;
 use crate::solver::subtype::TypeResolver;
+use crate::solver::types::Visibility;
 use crate::solver::types::*;
 use crate::solver::visitor::{intrinsic_kind, literal_value, template_literal_id};
 use crate::solver::{ApparentMemberKind, TypeDatabase};
@@ -95,6 +96,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 }),
                 ApparentMemberKind::Method(return_type) => properties.push(PropertyInfo {
                     name,
@@ -103,6 +106,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     optional: false,
                     readonly: false,
                     is_method: true,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 }),
             }
         }

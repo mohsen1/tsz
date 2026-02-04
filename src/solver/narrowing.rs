@@ -29,6 +29,7 @@
 
 use crate::interner::Atom;
 use crate::solver::subtype::is_subtype_of;
+use crate::solver::types::Visibility;
 use crate::solver::types::*;
 use crate::solver::visitor::{
     intersection_list_id, is_function_type_db, is_literal_type_db, is_object_like_type_db,
@@ -735,6 +736,8 @@ impl<'a> NarrowingContext<'a> {
                 optional: false, // Property becomes required after `in` check
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             };
             let filter_obj = self.db.object(vec![required_prop]);
             let narrowed = self.db.intersection2(TypeId::OBJECT, filter_obj);
@@ -767,6 +770,8 @@ impl<'a> NarrowingContext<'a> {
                                 optional: false,
                                 readonly: false,
                                 is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
                             };
                             let filter_obj = self.db.object(vec![required_prop]);
                             self.db.intersection2(member, filter_obj)
@@ -780,6 +785,8 @@ impl<'a> NarrowingContext<'a> {
                                 optional: false,
                                 readonly: false,
                                 is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
                             };
                             let filter_obj = self.db.object(vec![required_prop]);
                             self.db.intersection2(member, filter_obj)
@@ -819,6 +826,8 @@ impl<'a> NarrowingContext<'a> {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 };
                 let filter_obj = self.db.object(vec![required_prop]);
                 self.db.intersection2(source_type, filter_obj)
@@ -832,6 +841,8 @@ impl<'a> NarrowingContext<'a> {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 };
                 let filter_obj = self.db.object(vec![required_prop]);
                 self.db.intersection2(source_type, filter_obj)

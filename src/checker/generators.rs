@@ -675,6 +675,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
 
         // return method signature: (value?: R) => IteratorResult<Y, R>
@@ -691,6 +693,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
 
         // throw method signature: (e?: any) => IteratorResult<Y, R>
@@ -707,6 +711,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
 
         // Create Generator object type
@@ -718,6 +724,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: true,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: return_name,
@@ -726,6 +734,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: true,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: throw_name,
@@ -734,6 +744,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: true,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ])
     }
@@ -781,6 +793,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
 
         // return method signature: (value?: R) => Promise<IteratorResult<Y, R>>
@@ -797,6 +811,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
 
         // throw method signature: (e?: any) => Promise<IteratorResult<Y, R>>
@@ -813,6 +829,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
 
         // Create AsyncGenerator object type
@@ -824,6 +842,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: true,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: return_name,
@@ -832,6 +852,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: true,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: throw_name,
@@ -840,6 +862,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: true,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ])
     }
@@ -869,6 +893,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: true, // done?: false
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: value_name,
@@ -877,6 +903,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -889,6 +917,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false, // done: true (required)
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: value_name,
@@ -897,6 +927,8 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -1243,6 +1275,8 @@ mod tests {
                 optional: false,
                 readonly: true,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: done_name,
@@ -1251,6 +1285,8 @@ mod tests {
                 optional: false,
                 readonly: true,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -1263,6 +1299,8 @@ mod tests {
             optional: false,
             readonly: true,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Create next method
@@ -1279,6 +1317,8 @@ mod tests {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         });
 
         // Create AsyncGenerator-like object
@@ -1290,6 +1330,8 @@ mod tests {
             optional: false,
             readonly: true,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         // Extract the element type

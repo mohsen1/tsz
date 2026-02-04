@@ -352,6 +352,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         };
         let next_method_type = self.ctx.types.function(next_method_shape);
 
@@ -364,6 +366,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         };
 
         self.ctx.types.object(vec![next_property])
@@ -397,6 +401,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                 optional: true,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: value_atom,
@@ -405,6 +411,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -417,6 +425,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             crate::solver::PropertyInfo {
                 name: value_atom,
@@ -425,6 +435,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ]);
 
@@ -528,6 +540,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         };
         let next_method_type = self.ctx.types.function(next_method_shape);
 
@@ -540,6 +554,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         };
 
         self.ctx.types.object(vec![next_property])

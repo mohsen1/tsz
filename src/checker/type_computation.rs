@@ -15,6 +15,7 @@ use crate::checker::state::CheckerState;
 use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
+use crate::solver::types::Visibility;
 use crate::solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
 
 // =============================================================================
@@ -604,6 +605,8 @@ impl<'a> CheckerState<'a> {
                 type_predicate,
                 is_constructor: false,
                 is_method: true,
+                visibility: Visibility::Public,
+                parent_id: None,
             };
             self.pop_type_parameters(type_param_updates);
             return self.ctx.types.function(shape);
@@ -660,6 +663,8 @@ impl<'a> CheckerState<'a> {
                     type_predicate,
                     is_constructor: false,
                     is_method: true,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 };
                 self.pop_type_parameters(type_param_updates);
                 let method_type = self.ctx.types.function(shape);
@@ -671,6 +676,8 @@ impl<'a> CheckerState<'a> {
                     optional: sig.question_token,
                     readonly: self.has_readonly_modifier(&sig.modifiers),
                     is_method: true,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 };
                 return self.ctx.types.object(vec![prop]);
             }
@@ -687,6 +694,8 @@ impl<'a> CheckerState<'a> {
                 optional: sig.question_token,
                 readonly: self.has_readonly_modifier(&sig.modifiers),
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             };
             return self.ctx.types.object(vec![prop]);
         }
@@ -1420,6 +1429,8 @@ impl<'a> CheckerState<'a> {
                             optional: false,
                             readonly: false,
                             is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         },
                     );
                 }
@@ -1494,6 +1505,8 @@ impl<'a> CheckerState<'a> {
                             optional: false,
                             readonly: false,
                             is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         },
                     );
                 }
@@ -1537,6 +1550,8 @@ impl<'a> CheckerState<'a> {
                             optional: false,
                             readonly: false,
                             is_method: true, // Object literal methods should be bivariant
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         },
                     );
                 }
@@ -1611,6 +1626,8 @@ impl<'a> CheckerState<'a> {
                             optional: false,
                             readonly: false,
                             is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         },
                     );
                 }

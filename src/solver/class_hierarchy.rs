@@ -170,6 +170,8 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }];
 
         let own_props = vec![
@@ -180,6 +182,8 @@ mod tests {
                 optional: true,
                 readonly: true,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
             PropertyInfo {
                 name: age_atom, // New
@@ -188,6 +192,8 @@ mod tests {
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             },
         ];
 

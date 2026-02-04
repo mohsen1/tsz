@@ -1279,6 +1279,8 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                             readonly: prop.readonly,
                             optional: prop.optional,
                             is_method: prop.is_method,
+                            visibility: prop.visibility,
+                            parent_id: prop.parent_id,
                         }),
                         from_index_signature: false,
                     };

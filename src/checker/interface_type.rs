@@ -23,6 +23,7 @@ use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
+use crate::solver::types::Visibility;
 
 // =============================================================================
 // Interface Type Resolution
@@ -172,6 +173,8 @@ impl<'a> CheckerState<'a> {
                         optional: sig.question_token,
                         readonly: self.has_readonly_modifier(&sig.modifiers),
                         is_method: member_node.kind == METHOD_SIGNATURE,
+                        visibility: Visibility::Public,
+                        parent_id: None,
                     });
                 }
             } else if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
@@ -809,6 +812,8 @@ impl<'a> CheckerState<'a> {
                             optional: sig.question_token,
                             readonly: self.has_readonly_modifier(&sig.modifiers),
                             is_method: member_node.kind == METHOD_SIGNATURE,
+                            visibility: Visibility::Public,
+                            parent_id: None,
                         });
                     }
                 }

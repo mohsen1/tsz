@@ -1228,6 +1228,8 @@ mod tests {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }]);
 
         match judge.get_property(obj, foo_atom) {

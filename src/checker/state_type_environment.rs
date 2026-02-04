@@ -8,6 +8,7 @@ use crate::checker::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
+use crate::solver::types::Visibility;
 use crate::solver::visitor::lazy_def_id;
 use crate::solver::{TypeId, TypeKey};
 
@@ -68,6 +69,8 @@ impl<'a> CheckerState<'a> {
                     optional: false,
                     readonly: true,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 });
             }
         }
@@ -450,6 +453,8 @@ impl<'a> CheckerState<'a> {
                 optional,
                 readonly,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             });
         }
 

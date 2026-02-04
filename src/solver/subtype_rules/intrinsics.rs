@@ -6,6 +6,7 @@
 //! - The `Function` type
 //! - Apparent primitive shapes (for object-like operations on primitives)
 
+use crate::solver::types::Visibility;
 use crate::solver::types::*;
 use crate::solver::visitor::{
     application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
@@ -304,6 +305,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     optional: false,
                     readonly: false,
                     is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 }),
                 ApparentMemberKind::Method(return_type) => properties.push(PropertyInfo {
                     name,
@@ -312,6 +315,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     optional: false,
                     readonly: false,
                     is_method: true,
+                    visibility: Visibility::Public,
+                    parent_id: None,
                 }),
             }
         }
