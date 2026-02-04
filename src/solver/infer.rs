@@ -1297,11 +1297,15 @@ impl<'a> InferenceContext<'a> {
         Some(first_base)
     }
 
-    /// Get the base type of a type (stripping literals, etc.)
+    /// Get the base type of a type.
+    ///
+    /// This handles both:
+    /// 1. Literal widening: `"hello"` -> `string`, `42` -> `number`
+    /// 2. Nominal hierarchy: `Dog` -> `Animal` (via resolver)
     fn get_base_type(&self, ty: TypeId) -> Option<TypeId> {
         match self.interner.lookup(ty) {
+            // Literal widening: extract intrinsic type
             Some(TypeKey::Literal(_)) => {
-                // Get the intrinsic type of the literal
                 match ty {
                     TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT => Some(ty),
                     _ => {
@@ -1317,6 +1321,16 @@ impl<'a> InferenceContext<'a> {
                             Some(ty)
                         }
                     }
+                }
+            }
+            // Nominal hierarchy: use resolver to get base class
+            Some(TypeKey::Lazy(_)) => {
+                // For class/interface types, try to get base class from resolver
+                if let Some(resolver) = self.resolver {
+                    resolver.get_base_type(ty, self.interner)
+                } else {
+                    // No resolver available - return type as-is
+                    Some(ty)
                 }
             }
             _ => Some(ty),

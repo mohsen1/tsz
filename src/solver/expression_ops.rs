@@ -6,6 +6,7 @@
 //! These functions operate purely on TypeIds and maintain no AST dependencies.
 
 use crate::solver::TypeDatabase;
+use crate::solver::is_subtype_of;
 use crate::solver::types::{IntrinsicKind, LiteralValue, TypeId, TypeKey};
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
@@ -98,20 +99,24 @@ pub fn compute_template_expression_type(_interner: &dyn TypeDatabase, parts: &[T
 /// # Arguments
 /// * `interner` - The type database/interner
 /// * `types` - Slice of type IDs to find the best common type of
+/// * `resolver` - Optional TypeResolver for nominal hierarchy lookups (class inheritance)
 ///
 /// # Returns
 /// * Empty slice: Returns `TypeId::NEVER`
 /// * Single type: Returns that type
 /// * All same type: Returns that type
-/// * Otherwise: Returns union of all types (Phase 1 behavior)
+/// * Otherwise: Returns union of all types (or common base class if available)
 ///
 /// # Note
-/// Phase 1 implements a simplified BCT that always falls back to union.
-/// Future phases will implement the full TypeScript algorithm:
+/// When `resolver` is provided, this implements the full TypeScript BCT algorithm:
 /// - Find the first candidate that is a supertype of all others
-/// - Handle literal widening (1 | 2 -> number)
-/// - Handle base class relationships
-pub fn compute_best_common_type(interner: &dyn TypeDatabase, types: &[TypeId]) -> TypeId {
+/// - Handle literal widening (via TypeChecker's pre-widening)
+/// - Handle base class relationships (Dog + Cat -> Animal)
+pub fn compute_best_common_type(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+    resolver: Option<&dyn crate::solver::TypeResolver>,
+) -> TypeId {
     // Handle empty cases
     if types.is_empty() {
         return TypeId::NEVER;
@@ -135,9 +140,60 @@ pub fn compute_best_common_type(interner: &dyn TypeDatabase, types: &[TypeId]) -
         return first;
     }
 
+    // Try to find common base class for nominal types (e.g., Dog + Cat -> Animal)
+    if let Some(r) = resolver {
+        // Collect candidate base types from the first type
+        let mut base_candidates = get_type_hierarchy(interner, r, types[0]);
+
+        // Filter candidates by checking if all other types are subtypes
+        for &ty in types.iter().skip(1) {
+            if base_candidates.is_empty() {
+                break; // No candidates left
+            }
+            base_candidates.retain(|&base| is_subtype_of(interner, ty, base));
+        }
+
+        // Return the most specific common base (first candidate after filtering)
+        if let Some(common_base) = base_candidates.first() {
+            return *common_base;
+        }
+    }
+
     // Phase 1: Default to union of all types
-    // Future phases will implement supertype checking
     interner.union(types.to_vec())
+}
+
+/// Get the type hierarchy for a type, from most derived to most base.
+/// Returns empty vec if the type is not a class/interface type.
+fn get_type_hierarchy(
+    interner: &dyn TypeDatabase,
+    resolver: &dyn crate::solver::TypeResolver,
+    ty: TypeId,
+) -> Vec<TypeId> {
+    let mut hierarchy = Vec::new();
+    collect_type_hierarchy(interner, resolver, ty, &mut hierarchy);
+    hierarchy
+}
+
+/// Recursively collect the type hierarchy for a class/interface.
+fn collect_type_hierarchy(
+    interner: &dyn TypeDatabase,
+    resolver: &dyn crate::solver::TypeResolver,
+    ty: TypeId,
+    hierarchy: &mut Vec<TypeId>,
+) {
+    // Prevent infinite recursion
+    if hierarchy.contains(&ty) {
+        return;
+    }
+
+    // Add current type to hierarchy
+    hierarchy.push(ty);
+
+    // Get base type from resolver (for class/interface types)
+    if let Some(base) = resolver.get_base_type(ty, interner) {
+        collect_type_hierarchy(interner, resolver, base, hierarchy);
+    }
 }
 
 // =============================================================================
@@ -328,7 +384,7 @@ mod tests {
     fn test_bct_empty() {
         let interner = TypeInterner::new();
         // BCT of empty set -> never
-        let result = compute_best_common_type(&interner, &[]);
+        let result = compute_best_common_type(&interner, &[], None);
         assert_eq!(result, TypeId::NEVER);
     }
 
@@ -336,7 +392,7 @@ mod tests {
     fn test_bct_single() {
         let interner = TypeInterner::new();
         // BCT of [string] -> string
-        let result = compute_best_common_type(&interner, &[TypeId::STRING]);
+        let result = compute_best_common_type(&interner, &[TypeId::STRING], None);
         assert_eq!(result, TypeId::STRING);
     }
 
@@ -344,8 +400,11 @@ mod tests {
     fn test_bct_all_same() {
         let interner = TypeInterner::new();
         // BCT of [string, string, string] -> string
-        let result =
-            compute_best_common_type(&interner, &[TypeId::STRING, TypeId::STRING, TypeId::STRING]);
+        let result = compute_best_common_type(
+            &interner,
+            &[TypeId::STRING, TypeId::STRING, TypeId::STRING],
+            None,
+        );
         assert_eq!(result, TypeId::STRING);
     }
 
@@ -353,7 +412,7 @@ mod tests {
     fn test_bct_different() {
         let interner = TypeInterner::new();
         // BCT of [string, number] -> string | number
-        let result = compute_best_common_type(&interner, &[TypeId::STRING, TypeId::NUMBER]);
+        let result = compute_best_common_type(&interner, &[TypeId::STRING, TypeId::NUMBER], None);
         // Result should be a union type (not equal to either input)
         assert_ne!(result, TypeId::STRING);
         assert_ne!(result, TypeId::NUMBER);
@@ -363,8 +422,11 @@ mod tests {
     fn test_bct_error_propagation() {
         let interner = TypeInterner::new();
         // BCT of [string, ERROR, number] -> ERROR
-        let result =
-            compute_best_common_type(&interner, &[TypeId::STRING, TypeId::ERROR, TypeId::NUMBER]);
+        let result = compute_best_common_type(
+            &interner,
+            &[TypeId::STRING, TypeId::ERROR, TypeId::NUMBER],
+            None,
+        );
         assert_eq!(result, TypeId::ERROR);
     }
 }
