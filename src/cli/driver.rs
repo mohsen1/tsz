@@ -1080,6 +1080,7 @@ fn build_program_with_cache(
                     lib_binders: Vec::new(),
                     flow_nodes: Default::default(),
                     node_flow: Default::default(),
+                    switch_clause_to_switch: Default::default(),
                     is_external_module: false, // Default to false for missing files
                 }
             }
@@ -2630,6 +2631,7 @@ fn create_binder_from_bound_file(
         program.shorthand_ambient_modules.clone(),
         file.flow_nodes.clone(),
         file.node_flow.clone(),
+        file.switch_clause_to_switch.clone(),
     );
 
     binder.declared_modules = program.declared_modules.clone();
