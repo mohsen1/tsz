@@ -25,7 +25,11 @@ Successfully fixed ClassDeclaration26.ts to match TypeScript's error output exac
 - When var/let + () pattern detected, emit TS1005 errors at '(' and '{'
 - Return NONE and parse statement for recovery to cause TS1128 at '}'
 
-**Next**: Investigate other failing conformance tests, particularly TS1005 errors (13 missing from earlier run).
+**Conformance Status**: 97/200 passed (48.5%)
+- Top error mismatches: TS1005 (13 missing), TS2304 (6 missing, 9 extra), TS2695 (11 missing)
+- Most TS1005 errors are from API tests with `noTypesAndSymbols: true` (JSON parsing with trailing commas)
+
+**Note**: Unit tests show ~20 failures from recent pull from origin/main (other sessions' work), not related to ClassDeclaration26.ts fix.
 
 ### Punted Items
 
