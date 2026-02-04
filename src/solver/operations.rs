@@ -205,6 +205,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 None
             }
 
+            fn visit_ref(&mut self, ref_id: u32) -> Self::Output {
+                // Resolve the reference by converting to TypeId and recursing
+                // This handles named types like `type Handler<T> = ...`
+                self.visit_type(self.db, TypeId(ref_id))
+            }
+
             fn visit_function(&mut self, shape_id: u32) -> Self::Output {
                 // Direct match: return the function shape
                 let shape = self.db.function_shape(FunctionShapeId(shape_id));
