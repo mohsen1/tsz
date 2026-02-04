@@ -86,18 +86,34 @@
 - test_infer_generic_property_from_number_index_signature_infinity
 - test_infer_generic_property_from_source_index_signature
 
-### Priority 3: Readonly TS2540 (Architectural - 4 tests deferred)
+### Priority 3: Readonly TS2540 (Architectural - 4 tests, IN PROGRESS)
 **Problem**: Readonly checks fail due to `Lazy` types
+- Element access like `config["name"]` doesn't check if property is readonly
+- Should error with TS2540 but currently errors with TS2318 instead
 
-**File**: `src/solver/compat.rs` (Lawyer layer)
+**Root Cause**: Property access resolution doesn't return `readonly` status, and `Lazy` types aren't properly resolved before checking writability.
 
-**Task**: Ensure `resolve_lazy_type` is called before checking property writability
+**Implementation Plan** (from Gemini consultation):
+
+**Files to modify**:
+1. `src/solver/operations_property.rs`:
+   - Update `PropertyAccessResult::Success` to include `readonly: bool`
+   - Update `resolve_property_access_inner` to:
+     - Handle `TypeKey::Lazy` by resolving first
+     - Return `readonly` status from property/index signature metadata
+     - Handle unions (any readonly = error) and intersections (all readonly = error)
+2. `src/checker/assignment_checker.rs`:
+   - Use `readonly` flag from `PropertyAccessResult` instead of manual checks
+3. `src/checker/property_checker.rs`:
+   - Clean up redundant `is_property_readonly` logic
 
 **Tests affected**:
 - test_readonly_element_access_assignment_2540
 - test_readonly_index_signature_element_access_assignment_2540
 - test_readonly_index_signature_variable_access_assignment_2540
 - test_readonly_method_signature_assignment_2540
+
+**Status**: Consulted Gemini for implementation guidance. Ready to implement.
 
 ## Remaining 32 Failing Tests - Categorized
 
