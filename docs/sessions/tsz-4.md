@@ -2,7 +2,7 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟢 COMPLETE - Function Overload Normalization (2026-02-04)
+## Status: 🟡 ACTIVE - 6th Task Defined (2026-02-04)
 
 Completed 5 tasks successfully:
 1. Class Heritage and Generics (type literal formatting fix)
@@ -1048,5 +1048,103 @@ export as namespace MyLib;
 ```
 
 ---
+
+## Next Task: Class Member Synthesis and Accessor Normalization (2026-02-04)
+
+**Gemini Consultation Summary:**
+
+Based on the completion of Function Overload Normalization, the next high-impact task for **tsz-4** is **Class Member Synthesis and Accessor Normalization** - transforming implementation-heavy class members into pure type signatures for `.d.ts` files.
+
+### Problem Description
+
+Current declaration emit may not correctly synthesize type information for class members that have implicit types from initializers or accessor implementations. The compiler must transform implementation details into type-only signatures.
+
+### Implementation Plan
+
+**Estimated Complexity: Medium (3-5 days)**
+
+#### Phase 1: Property Synthesis
+- Query `Checker` for inferred types of property initializers
+- Convert `prop = 123;` into `prop: number;`
+- Handle cases without explicit type annotations
+
+#### Phase 2: Accessor Normalization
+- Strip bodies from getters/setters while retaining return types
+- Convert `get x() { return 1; }` into `get x(): number;`
+- Merge separate `get` and `set` declarations if needed
+- Apply `readonly` to properties with only getters
+
+#### Phase 3: Parameter Property Synthesis
+- Convert parameter properties to class properties
+- Transform `constructor(public x: number) {}` into `x: number;` property + standard parameter
+
+#### Phase 4: Visibility & Modifiers
+- Ensure `private`, `protected`, `public`, `static`, `readonly` are preserved
+- Strip implementation details
+
+### Files to Modify
+- **`src/declaration_emitter/mod.rs`**: Primary workspace
+  - Update `emit_class_declaration` member walking loop
+  - Update `emit_property_declaration` for type synthesis
+  - Update `emit_accessor_declaration` for body stripping
+- **`src/checker/state.rs`**: May need to expose type query methods for emitter
+- **`src/parser/mod.rs`**: Check for relevant node types
+
+### Success Criteria
+
+**Property Inference:**
+```typescript
+// Input
+class C {
+    x = 1;
+    s = "hello";
+}
+
+// Output ✅
+declare class C {
+    x: number;
+    s: string;
+}
+```
+
+**Accessor Signatures:**
+```typescript
+// Input
+class C {
+    private _x: number;
+    get x(): number { return this._x; }
+    set x(value: number) { this._x = value; }
+}
+
+// Output ✅
+declare class C {
+    private _x: number;
+    get x(): number;
+    set x(value: number);
+}
+```
+
+**Parameter Properties:**
+```typescript
+// Input
+class C {
+    constructor(public x: number, readonly y: string) {}
+}
+
+// Output ✅
+declare class C {
+    x: number;
+    readonly y: string;
+    constructor(x: number, y: string);
+}
+```
+
+### Implementation Pitfalls
+- Must coordinate with tsz-5 UsageAnalyzer to track synthesized types
+- Accessor merging logic must match TypeScript's behavior exactly
+- Parameter properties need dual emission (as property and constructor param)
+- Readonly synthesis from getter-only properties
+
+------
 
 ## Previous Task: Type Predicates and Assertion Functions ✅
