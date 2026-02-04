@@ -287,4 +287,70 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+
+    /// Merge namespace exports into an object type for enum+namespace merging.
+    ///
+    /// When an enum and namespace are merged (same name), the namespace's exports
+    /// become accessible as properties on the enum object.
+    ///
+    /// ## TypeScript Example:
+    /// ```typescript
+    /// enum Direction {
+    ///   Up = 1,
+    ///   Down = 2
+    /// }
+    /// namespace Direction {
+    ///   export function isVertical(d: Direction): boolean {
+    ///     return d === Direction.Up || d === Direction.Down;
+    ///   }
+    /// }
+    /// // Direction.Up and Direction.isVertical() are both accessible
+    /// ```
+    pub(crate) fn merge_namespace_exports_into_object(
+        &mut self,
+        sym_id: SymbolId,
+        _enum_type: TypeId,
+    ) -> TypeId {
+        use crate::solver::PropertyInfo;
+        use rustc_hash::FxHashMap;
+
+        // Check recursion depth to prevent stack overflow
+        const MAX_MERGE_DEPTH: u32 = 32;
+        let depth = self.ctx.symbol_resolution_depth.get();
+        if depth >= MAX_MERGE_DEPTH {
+            return _enum_type; // Prevent infinite recursion in merge
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return _enum_type;
+        };
+        let Some(exports) = symbol.exports.as_ref() else {
+            return _enum_type;
+        };
+
+        let mut props: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+
+        // Merge ALL exports from the symbol (enum members + namespace exports)
+        // This allows accessing both enum members and namespace methods via EnumName.Member
+        for (name, member_id) in exports.iter() {
+            // Skip if this member is already being resolved (prevents infinite recursion)
+            if self.ctx.symbol_resolution_set.contains(member_id) {
+                continue; // Skip circular references
+            }
+
+            let type_id = self.get_type_of_symbol(*member_id);
+            let name_atom = self.ctx.types.intern_string(name);
+            props.entry(name_atom).or_insert(PropertyInfo {
+                name: name_atom,
+                type_id,
+                write_type: type_id,
+                optional: false,
+                readonly: false,
+                is_method: false,
+            });
+        }
+
+        let properties: Vec<PropertyInfo> = props.into_values().collect();
+        self.ctx.types.object(properties)
+    }
 }
