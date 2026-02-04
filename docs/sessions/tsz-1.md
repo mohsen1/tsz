@@ -117,18 +117,33 @@ This is a **high-complexity architectural issue**:
 - Involves the binder, type resolution, and solver integration
 - Affects all readonly property checks on interfaces, not just element access
 
-## Status: WORKING ON ARCHITECTURAL FIX
+## Detailed Investigation: TS2540 Readonly Properties
 
-Gemini recommends tackling this as a medium-complexity architectural issue rather than hunting for more simple fixes. This aligns with NORTH_STAR goals.
+### Root Cause Identified
 
-### Implementation Plan
-1. **Triage**: Check if readonly issue is isolated or part of a cluster (15 min timebox)
-2. **Binder Check**: Verify readonly modifiers are set on interface property symbols
-3. **Solver Check**: Verify Solver exposes readonly info via PropertyInfo
-4. **Checker Fix**: Ensure Checker queries Solver correctly (no manual TypeKey inspection)
-5. **Test**: Verify fix works for both dot and element access
+`property_is_readonly` in `src/solver/operations_property.rs` does NOT handle `TypeKey::Lazy` types. Interface types are stored as `TypeKey::Lazy(def_id)`, so when checking if a property is readonly, the function returns `false` immediately.
 
-### Architectural Principles
-- Checker should NOT inspect TypeKey manually (NORTH_STAR anti-pattern)
-- Checker should query Solver for property readonly status
-- Proper separation of concerns: Binder→Solver→Checker
+### Investigation Findings
+
+1. **Interface types ARE created with readonly flags**: The code in `interface_type.rs:173` correctly sets `readonly: self.has_readonly_modifier(&sig.modifiers)`
+
+2. **Lazy type evaluation**: Interfaces use `TypeKey::Lazy(def_id)` which needs to be expanded/resolved to access the actual properties
+
+3. **Missing case in `property_is_readonly`**: The function handles:
+   - ReadonlyType, Object, ObjectWithIndex, Union, Intersection ✓
+   - **Lazy ✗** - MISSING!
+
+4. **Attempted fix**: Adding `TypeKey::Lazy` case that calls `evaluate_type(interner, type_id)`
+   - **Problem**: `evaluate_type` needs resolver context to expand Lazy types
+   - `property_is_readonly` only has `&dyn TypeDatabase` without resolver
+   - Result: Test fails with no diagnostics (type evaluation broken)
+
+### Architectural Issue
+
+This requires understanding:
+- How lazy types are evaluated with proper resolver context
+- When types should be evaluated vs lazily resolved
+- The relationship between TypeDatabase, TypeResolver, and QueryCache
+
+### Status: NEEDS ARCHITECTURE EXPERTISE
+This is a complex lazy type evaluation issue that requires deep knowledge of the solver architecture. Recommend deferring to expert session or filing detailed issue.
