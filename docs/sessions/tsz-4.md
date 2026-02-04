@@ -2,40 +2,93 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟡 ACTIVE (Session Redefined - 2026-02-04)
+## Status: ✅ COMPLETE (2026-02-04)
 
-### New Task: Class Heritage and Generics (2026-02-04)
+All Class Heritage and Generics features verified working. Only type literal formatting bug was found and fixed.
+
+### New Task: Class Heritage and Generics (2026-02-04) ✅ COMPLETE
 
 **Gemini Consultation Summary:**
 
 Since tsz-5 (Import Elision) and tsz-7 (Import Generation) are handling the module system, the next high-impact area for tsz-4 is **Class Heritage and Declaration-level Generics**.
 
-### Problem Description
+### Investigation Results (2026-02-04)
 
-Currently, while tsz can emit basic class and interface members, it often misses:
-- **Class Heritage**: `class A extends B implements I1, I2`
-- **Generic Constraints & Defaults**: `interface Container<T extends string = "default">`
-- **Interface Heritage**: `interface I extends Base1, Base2`
-- **Accessor Synthesis**: Converting `get`/`set` pairs into appropriate property declarations
+**Discovery**: All core features were already implemented!
+- `emit_heritage_clauses()` - handles extends/implements
+- `emit_type_parameters()` - handles constraints and defaults
+- `emit_accessor_declaration()` - handles get/set pairs
 
-### Implementation Plan
+**Only Issue Found**: Type literal formatting bug
+- Type literals were emitting with unwanted indentation and newlines
+- Before: `{ id: string;\n  name: number; }`
+- After: `{ id: string; name: number; }`
 
-**Estimated Complexity: Medium (2-3 days)**
+**Fix Applied** (commit b5c709cbf):
+- Added `emit_interface_member_inline()` helper
+- Modified TYPE_LITERAL case to use inline emission with semicolon separators
+- All features now working correctly
 
-#### Phase 1: HeritageClause Emission (Day 1)
-- Implement `HeritageClause` emission for Classes and Interfaces
-- Handle `extends` and `implements` keywords
-- Parse heritage clauses from AST
+### Test Results (2026-02-04)
 
-#### Phase 2: Type Parameter Constraints & Defaults (Day 2)
-- Implement Type Parameter constraints (`extends T`)
-- Implement defaults (`= D`)
-- Apply across all declaration types (classes, interfaces, type aliases)
+**Class Heritage** ✅
+```typescript
+// Input
+class Base<T> {}
+interface I { x: number }
+export class Derived extends Base<string> implements I { x: number = 1; }
 
-#### Phase 3: Accessor Emission (Day 3)
-- Handle `get`/`set` emission
-- Getter-only becomes `readonly`
-- Edge cases (abstract accessors)
+// Output (matches TypeScript ✅)
+export declare class Derived extends Base<string> implements I {
+    x: number;
+}
+```
+
+**Generic Constraints & Defaults** ✅
+```typescript
+// Input
+export type Callback<T extends object = { id: string }> = (arg: T) => void;
+
+// Output (matches TypeScript ✅)
+export type Callback<T extends object = { id: string }> = (arg: T) => void;
+```
+
+**Interface Heritage** ✅
+```typescript
+// Input
+interface Base1 { a: number }
+interface Base2 { b: string }
+export interface Combined extends Base1, Base2 { c: boolean }
+
+// Output (matches TypeScript ✅)
+export interface Combined extends Base1, Base2 {
+    c: boolean;
+}
+```
+
+**Accessor Emission** ✅
+```typescript
+// Input
+export class Box {
+    private _val: number;
+    get value(): number { return this._val; }
+    set value(v: number) { this._val = v; }
+}
+
+// Output (matches TypeScript ✅)
+export declare class Box {
+    private _val;
+    get value(): number;
+    set value(v: number);
+}
+```
+
+### Actual Implementation Plan (What Was Done)
+
+**Estimated Complexity**: Low (1 hour)
+- Fixed type literal formatting issue
+- Added `emit_interface_member_inline()` helper
+- Verified all existing features work correctly
 
 ### Files to Modify
 - **`src/declaration_emitter.rs`**: Primary file for .d.ts orchestration
@@ -428,29 +481,41 @@ export declare function obj(x: Object = {}): void;
 
 **Impact:** The vast majority of real-world default parameters now work correctly.
 
-### Session Status: ACTIVE - Class Heritage and Generics
+### Session Status: ✅ COMPLETE - Class Heritage and Generics
 
-This session continues with declaration emit improvements:
+This session completed declaration emit improvements:
 1. Function overload support ✅
 2. Default parameter support ✅
 3. Parameter properties ✅
 4. Class member visibility ✅
 5. Abstract classes/methods ✅
 6. Namespace/module declarations ✅
-
-**Current Priority:** Class Heritage and Generics
-- HeritageClause emission (extends, implements)
-- Type parameter constraints and defaults
-- Accessor synthesis (get/set)
+7. **Class Heritage and Generics** ✅ (verified working, fixed type literal formatting)
 
 ---
 
-## Alternative Task (if Heritage is blocked): Computed Property Names
+## Latest Achievement: Type Literal Formatting Fix
 
+**Problem**: Type literals were emitting with unwanted indentation and newlines.
+**Solution**: Added `emit_interface_member_inline()` helper for inline type literal emission.
+**Result**: Type literals now emit correctly as `{ id: string; name: number }` instead of multiline format.
+
+**All Heritage and Generics Features Verified Working:**
+- Class heritage: `extends Base<string> implements I1, I2`
+- Generic constraints: `<T extends object>`
+- Generic defaults: `<T = { id: string }>`
+- Interface heritage: `extends Base1, Base2`
+- Accessor emission: get/set pairs
+
+---
+
+## Next Task Options
+
+### Option 1: Computed Property Names
 **Problem**: `export const sym = Symbol(); export class A { [sym]: number; }`
-
 **TSC Behavior**: Emits the literal or unique symbol reference. If simple string literal `["prop"]`, converts to standard property `prop`.
-
 **Files**: `src/declaration_emitter.rs`, `src/emitter/helpers.rs`
-
 **Complexity**: Low-Medium (1 day)
+
+### Option 2: Ask Gemini for Next High-Impact Task
+Since Class Heritage and Generics were already implemented, the next task should be identified by running conformance tests and asking Gemini for guidance on what would provide the biggest improvement.
