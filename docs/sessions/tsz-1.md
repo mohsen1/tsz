@@ -78,6 +78,32 @@ Working on fixing the parser to emit TS1136 "Property assignment expected" for i
 *2026-02-04 02:00 - Fixed is_const compilation errors (collaborative with tsz-4)*
 *2026-02-04 03:00 - Added TS1136 parser fix for invalid property names, test passes*
 *2026-02-04 03:30 - Fixed fresh_type_param calls missing is_const argument*
+*2026-02-04 04:00 - Investigated TS2304 emission: error_cannot_find_name_at NOT being called*
+*2026-02-04 04:15 - Added filter in TypeDiagnosticBuilder::cannot_find_name - not working yet*
+
+---
+
+## Investigation Notes: TS1136 vs TS2304
+
+**Test Case**: `Boolean({ x: 0,, })`
+- Expected: TS1136 "Property assignment expected"
+- Actual: TS2304 "Cannot find name ','."
+
+**Root Cause Identified**:
+- Parser correctly emits TS1136 (test passes)
+- `error_cannot_find_name_at()` is NOT being called for this case
+- TS2304 is created elsewhere in the type resolution system
+- Invalid identifier "," is added to AST for error recovery
+- Type resolution tries to resolve "," and emits TS2304
+
+**Attempts Made**:
+1. ✅ Parser fix in `parse_property_name()` - emits TS1136
+2. ❌ Check in `error_cannot_find_name_at()` - not called
+3. ❌ Check in `error_cannot_find_name_with_suggestions()` - not called
+4. ❌ Filter in `TypeDiagnosticBuilder::cannot_find_name()` - doesn't work
+
+**Next Approach**:
+Need to find where type resolution emits TS2304 and add filter there. The error bypasses error_cannot_find_name_at entirely.
 
 ---
 
