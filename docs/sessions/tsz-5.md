@@ -268,3 +268,27 @@ tsz-4 completed:
 - Abstract classes/methods ✅
 
 All features match TypeScript .d.ts output exactly.
+
+### Gemini Priority Guidance - 2026-02-04
+
+**Recommendation:** Continue with **Task #3 (Integration)**
+
+**Justification:**
+- Declaration Emitter is currently "dumb" - doesn't know which declarations are necessary
+- Integrating UsageAnalyzer transforms it into a functional tool
+- Completes major architectural milestone for Emitter component
+
+**Action Plan:**
+1. Task #3: Integrate UsageAnalyzer into DeclarationEmitter (HIGHEST PRIORITY)
+2. Task #5: Add missing type handlers during integration (as needed)
+
+**Critical Reminder (from AGENTS.md):**
+When working on Task #5 (modifying `src/solver/`), MUST follow mandatory workflow:
+- Question 1 (BEFORE): Ask Gemini for correct approach
+- Question 2 (AFTER): Ask Gemini to review for 3 CRITICAL BUGS
+
+**Expected Outcome:**
+- Dependency-aware declaration emission
+- Eliminates "Type cannot be named" errors in .d.ts files
+- +5-10% conformance pass rate increase
+
