@@ -8,45 +8,27 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Fixing parser/binder conformance test failures - focusing on TS1005 and TS1440 errors
+**Status**: Fixed TS1440/TS1068 for invalid var/let in class members - investigating remaining errors
 
-**Context**: Per session direction, shifted focus from constructor type bug (blocked/punted) to fixing binder/parser related conformance failures.
+**Fixed Issues**:
+1. ✅ TS1440 at line 3 col 18 for `public const var export foo`
+2. ✅ TS1068 at line 5 col 5 for `var constructor()`
 
-**Current Investigation - ClassDeclaration26.ts**:
-Test file expects errors we don't produce:
-```typescript
-class C {
-    public const var export foo = 10;
-    var constructor() { }
-}
-```
+**Changes Made** (commit 2b8dcd225):
+- Updated `parse_class_member_modifiers` to emit TS1440 when var/let is used as invalid modifier
+- Special case: emit TS1068 when var/let is followed by 'constructor'
+- Fixed const handling to skip const when followed by var/let
+- Fixed error position to be at the var/let token, not following token
 
-TypeScript errors:
-- Line 3 col 18: TS1440 - Variable declaration not allowed at this location
-- Line 5 col 5: TS1068 - Unexpected token. A constructor, method, accessor, or property was expected
-- Line 5 col 20, 23: TS1005 - ',' expected, '=>' expected
-- Line 6 col 1: TS1128 - Declaration or statement expected
+**Remaining Issues** for ClassDeclaration26.ts:
+- Line 5 col 20, 23: Missing TS1005 errors - ',' and '=>' expected
+- Line 6 col 1: Missing TS1128 - Declaration or statement expected
 
-Our errors:
-- Line 3 col 12: TS1248 - A class member cannot have the 'const' keyword
-- Line 3 col 22: TS1012 - Unexpected modifier
-- Line 5 col 9: TS1012 - Unexpected modifier
+These errors occur because after emitting TS1068 for `var constructor`, the parser tries to parse the rest as a valid constructor, when it should stop or emit additional errors about the malformed syntax.
 
-**Root Cause**: Our parser is too permissive. It treats `public const var export foo` as a valid property declaration with modifier errors, when it should recognize this as an attempted variable declaration and fail with TS1440 at the `var` keyword.
+**Next Step**: Need to handle the recovery after emitting TS1068 for `var constructor()` to produce the remaining TS1005 errors.
 
-**Code Path**:
-- `parse_class_member` calls `parse_class_member_modifiers`
-- Modifiers parser consumes `public`, `const` (both treated as modifiers)
-- When it sees `var`, it checks if followed by `(` or line break
-- Since `var` is followed by `export`, it emits "Unexpected modifier" (TS1012) but continues
-- Then `export` also emits "Unexpected modifier"
-- Parser continues and treats `foo` as property name
-
-**Fix Needed**: When `var`/`let`/`const` appears in an invalid modifier context (followed by another keyword like `export`), emit TS1440 at the var position instead of continuing to parse as a property.
-
-**Conformance Status** (max 200 tests):
-- 98/200 passed (49.0%)
-- Top error mismatches: TS1005 (missing=13), TS2304 (missing=6, extra=9), TS2695 (missing=10)
+**Conformance Status**: Testing in progress...
 
 ### Punted Items
 
