@@ -13,9 +13,9 @@ use crate::solver::subtype::TypeResolver;
 use crate::solver::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
-    ObjectShapeId, PropertyInfo, PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan,
-    TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
-    TypeParamInfo,
+    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, SymbolRef, TemplateLiteralId,
+    TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey,
+    TypeListId, TypeParamInfo,
 };
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -379,16 +379,16 @@ pub trait QueryDatabase: TypeDatabase {
     /// Uses separate cache from `is_subtype_of` to prevent cache poisoning.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool;
 
-    /// Look up a cached subtype result for the given type pair.
+    /// Look up a cached subtype result for the given key.
     /// Returns `None` if the result is not cached.
     /// Default implementation returns `None` (no caching).
-    fn lookup_subtype_cache(&self, _source: TypeId, _target: TypeId) -> Option<bool> {
+    fn lookup_subtype_cache(&self, _key: RelationCacheKey) -> Option<bool> {
         None
     }
 
-    /// Cache a subtype result for the given type pair.
+    /// Cache a subtype result for the given key.
     /// Default implementation is a no-op.
-    fn insert_subtype_cache(&self, _source: TypeId, _target: TypeId, _result: bool) {}
+    fn insert_subtype_cache(&self, _key: RelationCacheKey, _result: bool) {}
 
     fn new_inference_context(&self) -> crate::solver::infer::InferenceContext<'_> {
         crate::solver::infer::InferenceContext::new(self.as_type_database())
@@ -529,11 +529,11 @@ impl QueryDatabase for TypeInterner {
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
     eval_cache: RwLock<FxHashMap<TypeId, TypeId>>,
-    subtype_cache: RwLock<FxHashMap<(TypeId, TypeId), bool>>,
+    subtype_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
     /// CRITICAL: Separate cache for assignability to prevent cache poisoning.
     /// This ensures that loose assignability results (e.g., any is assignable to number)
     /// don't contaminate strict subtype checks.
-    assignability_cache: RwLock<FxHashMap<(TypeId, TypeId), bool>>,
+    assignability_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
 }
 
 impl<'a> QueryCache<'a> {
@@ -589,8 +589,8 @@ impl<'a> QueryCache<'a> {
     /// Helper to check a cache with poisoned lock handling.
     fn check_cache(
         &self,
-        cache: &RwLock<FxHashMap<(TypeId, TypeId), bool>>,
-        key: (TypeId, TypeId),
+        cache: &RwLock<FxHashMap<RelationCacheKey, bool>>,
+        key: RelationCacheKey,
     ) -> Option<bool> {
         match cache.read() {
             Ok(cached) => cached.get(&key).copied(),
@@ -601,8 +601,8 @@ impl<'a> QueryCache<'a> {
     /// Helper to insert into a cache with poisoned lock handling.
     fn insert_cache(
         &self,
-        cache: &RwLock<FxHashMap<(TypeId, TypeId), bool>>,
-        key: (TypeId, TypeId),
+        cache: &RwLock<FxHashMap<RelationCacheKey, bool>>,
+        key: RelationCacheKey,
         result: bool,
     ) {
         match cache.write() {
@@ -812,7 +812,9 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
-        let key = (source, target);
+        // TypeInterner doesn't have access to Lawyer flags, so use defaults
+        // TODO: This should ideally use the flags from CheckerContext
+        let key = RelationCacheKey::subtype(source, target, 0, 0);
         // Handle poisoned locks gracefully
         let cached = match self.subtype_cache.read() {
             Ok(cache) => cache.get(&key).copied(),
@@ -838,7 +840,8 @@ impl QueryDatabase for QueryCache<'_> {
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         // LOOSE: Use CompatChecker (The Lawyer)
         // This is for Checker diagnostics - full TypeScript compatibility rules
-        let key = (source, target);
+        // TODO: Pass actual flags from CheckerContext instead of defaults
+        let key = RelationCacheKey::assignability(source, target, 0, 0);
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
             return result;
@@ -854,16 +857,14 @@ impl QueryDatabase for QueryCache<'_> {
         result
     }
 
-    fn lookup_subtype_cache(&self, source: TypeId, target: TypeId) -> Option<bool> {
-        let key = (source, target);
+    fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
         match self.subtype_cache.read() {
             Ok(cache) => cache.get(&key).copied(),
             Err(e) => e.into_inner().get(&key).copied(),
         }
     }
 
-    fn insert_subtype_cache(&self, source: TypeId, target: TypeId, result: bool) {
-        let key = (source, target);
+    fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
         match self.subtype_cache.write() {
             Ok(mut cache) => {
                 cache.insert(key, result);
@@ -1280,13 +1281,12 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         self.query_cache.is_assignable_to(source, target)
     }
 
-    fn lookup_subtype_cache(&self, source: TypeId, target: TypeId) -> Option<bool> {
-        self.query_cache.lookup_subtype_cache(source, target)
+    fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
+        self.query_cache.lookup_subtype_cache(key)
     }
 
-    fn insert_subtype_cache(&self, source: TypeId, target: TypeId, result: bool) {
-        self.query_cache
-            .insert_subtype_cache(source, target, result)
+    fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
+        self.query_cache.insert_subtype_cache(key, result)
     }
 
     fn new_inference_context(&self) -> crate::solver::infer::InferenceContext<'_> {

@@ -4286,6 +4286,8 @@ fn test_void_return_exception_constructors() {
 
     // new () => void
     let void_ctor = interner.object(vec![PropertyInfo {
+        visibility: Visibility::Public,
+        parent_id: None,
         name: interner.intern_string("constructor"),
         type_id: interner.function(FunctionShape {
             params: Vec::new(),
@@ -4306,6 +4308,8 @@ fn test_void_return_exception_constructors() {
 
     // new () => Instance
     let instance_ctor = interner.object(vec![PropertyInfo {
+        visibility: Visibility::Public,
+        parent_id: None,
         name: interner.intern_string("constructor"),
         type_id: interner.function(FunctionShape {
             params: Vec::new(),
@@ -4357,6 +4361,8 @@ fn test_method_bivariance_allows_derived_methods() {
     }]);
 
     let base_method = interner.object(vec![PropertyInfo {
+        visibility: Visibility::Public,
+        parent_id: None,
         name: method_name,
         type_id: interner.function(FunctionShape {
             params: vec![ParamInfo {
@@ -4455,6 +4461,8 @@ fn test_method_bivariance_persists_with_strict_function_types() {
     }]);
 
     let base_with_method = interner.object(vec![PropertyInfo {
+        visibility: Visibility::Public,
+        parent_id: None,
         name: method_name,
         type_id: interner.function(FunctionShape {
             params: vec![ParamInfo {

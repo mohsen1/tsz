@@ -202,6 +202,56 @@ impl TypeId {
     }
 }
 
+/// Cache key for type relation queries (subtype, assignability, etc.).
+///
+/// This key includes Lawyer-layer configuration flags to ensure that results
+/// computed under different rules (strict vs non-strict) don't contaminate each other.
+///
+/// ## Fields
+///
+/// - `source`: The source type being compared
+/// - `target`: The target type being compared
+/// - `relation`: Distinguishes between different relation types (0 = subtype, 1 = assignability, etc.)
+/// - `flags`: Bitmask for boolean compiler options:
+///   - bit 0: strict_null_checks
+///   - bit 1: strict_function_types
+///   - bit 2: exact_optional_property_types
+///   - bit 3: no_unchecked_indexed_access
+///   - bit 4: disable_method_bivariance (Sound Mode)
+/// - `any_mode`: Controls how `any` is treated (0 = All, 1 = TopLevelOnly)
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RelationCacheKey {
+    pub source: TypeId,
+    pub target: TypeId,
+    pub relation: u8,
+    pub flags: u8,
+    pub any_mode: u8,
+}
+
+impl RelationCacheKey {
+    /// Create a new cache key for subtype checking.
+    pub fn subtype(source: TypeId, target: TypeId, flags: u8, any_mode: u8) -> Self {
+        Self {
+            source,
+            target,
+            relation: 0,
+            flags,
+            any_mode,
+        }
+    }
+
+    /// Create a new cache key for assignability checking.
+    pub fn assignability(source: TypeId, target: TypeId, flags: u8, any_mode: u8) -> Self {
+        Self {
+            source,
+            target,
+            relation: 1,
+            flags,
+            any_mode,
+        }
+    }
+}
+
 /// Interned list of TypeId values (e.g., unions/intersections).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypeListId(pub u32);

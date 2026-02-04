@@ -16,6 +16,7 @@ use crate::checker::types::diagnostics::Diagnostic;
 use crate::common::ModuleKind;
 use crate::parser::NodeIndex;
 use crate::solver::def::{DefId, DefinitionStore};
+use crate::solver::types::RelationCacheKey;
 use crate::solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId, judge::JudgeConfig};
 
 /// Compiler options for type checking.
@@ -182,7 +183,9 @@ pub struct TypeCache {
     pub node_types: FxHashMap<u32, TypeId>,
 
     /// Cache for type relation results (subtype checking).
-    pub relation_cache: FxHashMap<(TypeId, TypeId, u8), bool>,
+    /// Uses RelationCacheKey to ensure Lawyer-layer configuration (strict vs non-strict)
+    /// doesn't cause cache poisoning.
+    pub relation_cache: FxHashMap<RelationCacheKey, bool>,
 
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
@@ -313,7 +316,9 @@ pub struct CheckerContext<'a> {
     pub node_types: FxHashMap<u32, TypeId>,
 
     /// Cache for type relation results.
-    pub relation_cache: RefCell<FxHashMap<(TypeId, TypeId, u8), bool>>,
+    /// Uses RelationCacheKey to ensure Lawyer-layer configuration (strict vs non-strict)
+    /// doesn't cause cache poisoning.
+    pub relation_cache: RefCell<FxHashMap<RelationCacheKey, bool>>,
 
     /// Cached type environment for resolving Ref types during assignability checks.
     pub type_environment: Rc<RefCell<TypeEnvironment>>,
