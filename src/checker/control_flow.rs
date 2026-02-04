@@ -2110,6 +2110,7 @@ mod tests {
     use crate::parser::ParserState;
     use crate::solver::PropertyInfo;
     use crate::solver::TypeInterner;
+    use crate::solver::Visibility;
     use crate::solver::type_queries::{UnionMembersKind, classify_for_union_members};
 
     fn get_if_condition(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
