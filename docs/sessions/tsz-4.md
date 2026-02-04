@@ -2,9 +2,12 @@
 
 ## Current Work
 
-**SESSION STATUS**: ✅ COMPLETE
+**New Task**: Focus on low-hanging fruit conformance failures
 
-All primary objectives achieved. Compilation fixed, tests running.
+**Priority**: TS1042 (async modifier cannot be used here) - missing=6
+**Other targets**: TS1359 (9), TS2585 (9), TS2524 (7)
+
+Investigating async modifier validation in the parser.
 
 Fixed all missing `is_const` field compilation errors in `TypeParamInfo` initializations:
 - src/solver/tests/visitor_tests.rs (12 occurrences)
