@@ -1,7 +1,12 @@
-# Session tsz-1
+# Session tsz-1: Infrastructure & Stability
+
+**Goal**: Restore clean baseline (100% unit tests) and unblock TS1202 investigation.
+
+**Status**: In Progress (Refocused 2026-02-04)
+
 ## WORK IS NEVER DONE UNTIL ALL TESTS PASS
 Work is never done until all tests pass. This includes:
-- Unit tests (`cargo nextest run`)
+- Unit tests (`cargo nextest run`) - **Current: 366/368 passing**
 - Conformance tests (`./scripts/conformance.sh`)
 - No existing `#[ignore]` tests
 - No cleanup work left undone
@@ -324,3 +329,32 @@ The conformance.sh script expects this directory which contains:
 **Status**: Blocked on missing conformance test infrastructure
 
 **Recommendation**: Switch focus back to parser fixes (TS1005) or other error codes.
+
+## Current Tasks (Infrastructure Focus)
+
+### Task 1: Resolve missing `conformance-rust/` directory
+- **Priority**: HIGH - Blocks TS1202 investigation (29 errors)
+- **Context**: conformance.sh expects this directory but it doesn't exist
+- **Action Items**:
+  - Check if this should be a git submodule
+  - Verify if scripts/conformance.sh has correct paths
+  - May need to create or sync from upstream
+
+### Task 2: Fix 2 failing abstract class unit tests
+- **Priority**: HIGH - Required for 100% unit test baseline
+- **Current**: 366/368 tests passing
+- **Failing Tests**:
+  - `test_abstract_constructor_assignability`
+  - `test_abstract_mixin_intersection_ts2339`
+- **Likely Locations**:
+  - `src/checker/class_type.rs` (abstract checks)
+  - `src/solver/subtype_rules/objects.rs` (nominal subtyping)
+  - `src/solver/compat.rs` (abstract_constructor_assignability_override)
+
+### Task 3: Fix TS1202 false positives
+- **Priority**: MEDIUM - Blocked by Task 1
+- **Impact**: 29 extra errors in conformance
+- **Strategy**: Once infra is fixed, ensure module option from tsconfig is respected
+- **Code Location**: `src/checker/import_checker.rs:303`
+
+## History (Completed Work)
