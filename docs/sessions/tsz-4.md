@@ -2,14 +2,15 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟡 ACTIVE - 4th Task Defined (2026-02-04)
+## Status: 🟢 COMPLETE - Module System Fidelity (2026-02-04)
 
-Completed 3 tasks successfully:
+Completed 4 tasks successfully:
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
+4. Module System Fidelity (ambient modules, import equals, namespace exports)
 
-### Next Task: Module System Fidelity (2026-02-04)
+### Module System Fidelity ✅ COMPLETE (2026-02-04)
 
 ### Type Predicates and Assertion Functions ✅ COMPLETE (2026-02-04)
 
@@ -739,7 +740,64 @@ export declare class Container {
 
 ---
 
-## Next Task: Module System Fidelity (2026-02-04)
+### Module System Fidelity - Implementation Summary ✅
+
+**What Was Implemented:**
+
+1. **Ambient Module Keyword Detection** (lines 2027-2041)
+   - Fixed `emit_module_declaration` to distinguish between:
+     - String literal names → `declare module "fs"`
+     - Identifier names → `namespace Utilities`
+   - Uses `SyntaxKind::StringLiteral` check on module name node
+
+2. **Import Equals Declarations** (lines 2083-2120)
+   - Implemented `emit_import_equals_declaration()`
+   - Handles `import x = require("module")`
+   - Supports exported variant: `export import x = require("module")`
+   - Uses `ImportDeclData` from `get_import_decl()`
+   - Emits: `import_clause` as variable name, `module_specifier` as require() expression
+
+3. **Namespace Export Declarations** (lines 2122-2141)
+   - Implemented `emit_namespace_export_declaration()`
+   - Handles `export as namespace LibName`
+   - Uses `ExportDeclData` from `get_export_decl()`
+   - Emits: `export_clause` as namespace name
+
+4. **Statement Handlers** (lines 323-328)
+   - Added handlers for `IMPORT_EQUALS_DECLARATION`
+   - Added handlers for `NAMESPACE_EXPORT_DECLARATION`
+
+5. **Export Handler Update** (lines 1341-1347)
+   - Added case for exported import equals declarations
+   - Emits `export ` prefix before calling `emit_import_equals_declaration()`
+
+**Test Results (all match tsc exactly):**
+
+```typescript
+// Ambient modules
+declare module "fs" {
+    export function readFile(): void;
+}
+declare namespace Utilities {
+    export function helper(): void;
+}
+
+// Import equals
+import fs = require("fs");
+export import path = require("path");
+
+// Namespace exports
+export interface Foo {}
+export as namespace MyLib;
+```
+
+**Commit:** 8ba5ec49a (feat(tsz-4): add Module System Fidelity for declaration emit)
+
+**Note:** Global augmentation (`declare global`) already works correctly via existing module declaration code.
+
+---
+
+## Next Task: TBD (2026-02-04)
 
 **Gemini Consultation Summary:**
 
