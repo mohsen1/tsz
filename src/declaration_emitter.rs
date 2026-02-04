@@ -24,10 +24,13 @@
 //! }
 //! ```
 
+use crate::checker::TypeCache;
+use crate::emitter::type_printer::TypePrinter;
 use crate::parser::node::{Node, NodeArena};
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
+use crate::solver::TypeInterner;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 
 /// Declaration emitter for .d.ts files
@@ -38,6 +41,10 @@ pub struct DeclarationEmitter<'a> {
     source_map_text: Option<&'a str>,
     source_map_state: Option<SourceMapState>,
     pending_source_pos: Option<SourcePosition>,
+    /// Type cache for looking up inferred types
+    type_cache: Option<TypeCache>,
+    /// Type interner for printing types
+    type_interner: Option<&'a TypeInterner>,
 }
 
 struct SourceMapState {
@@ -54,6 +61,25 @@ impl<'a> DeclarationEmitter<'a> {
             source_map_text: None,
             source_map_state: None,
             pending_source_pos: None,
+            type_cache: None,
+            type_interner: None,
+        }
+    }
+
+    pub fn with_type_info(
+        arena: &'a NodeArena,
+        type_cache: TypeCache,
+        type_interner: &'a TypeInterner,
+    ) -> Self {
+        DeclarationEmitter {
+            arena,
+            writer: SourceWriter::with_capacity(4096),
+            indent_level: 0,
+            source_map_text: None,
+            source_map_state: None,
+            pending_source_pos: None,
+            type_cache: Some(type_cache),
+            type_interner: Some(type_interner),
         }
     }
 
@@ -665,9 +691,14 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
                         self.emit_node(decl.name);
+                        // Emit explicit type annotation if present
                         if !decl.type_annotation.is_none() {
                             self.write(": ");
                             self.emit_type(decl.type_annotation);
+                        } else if let Some(type_id) = self.get_node_type(decl_idx) {
+                            // No explicit type, but we have inferred type from cache
+                            self.write(": ");
+                            self.write(&self.print_type_id(type_id));
                         }
                     }
 
@@ -1726,6 +1757,26 @@ impl<'a> DeclarationEmitter<'a> {
     fn decrease_indent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;
+        }
+    }
+
+    /// Get the type of a node from the type cache, if available.
+    fn get_node_type(&self, node_id: NodeIndex) -> Option<crate::solver::types::TypeId> {
+        if let (Some(cache), _) = (&self.type_cache, &self.type_interner) {
+            cache.node_types.get(&node_id.0).copied()
+        } else {
+            None
+        }
+    }
+
+    /// Print a TypeId as TypeScript syntax using TypePrinter.
+    fn print_type_id(&self, type_id: crate::solver::types::TypeId) -> String {
+        if let Some(interner) = self.type_interner {
+            let printer = TypePrinter::new(interner);
+            printer.print_type(type_id)
+        } else {
+            // Fallback if no interner available
+            "any".to_string()
         }
     }
 }

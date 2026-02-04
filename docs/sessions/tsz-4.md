@@ -325,6 +325,7 @@ impl<'a> DeclarationEmitter<'a> {
 - `7142615c0` - docs: restructure tsz-4 session for declaration emit work
 - `d18a96de5` - feat: add TypePrinter module for declaration emit
 - `a41c2c492` - feat: implement composite type printing in TypePrinter
+- [NEW] - feat: integrate TypePrinter with DeclarationEmitter
 
 ## Progress
 
@@ -346,13 +347,20 @@ impl<'a> DeclarationEmitter<'a> {
 
 **Total: 389 lines of type printing code**
 
+**Phase 1.3: Integration Completed** ✅
+- Added `TypeCache::merge()` method to `src/checker/context.rs`
+- Modified `DeclarationEmitter` to accept `TypeCache` and `TypeInterner`
+- Updated `emit_outputs()` to pass type caches from compilation
+- Modified variable declaration emit to reify inferred types
+- Declaration emit now works end-to-end with type information
+- Verified: `tsz --declaration test.ts` generates correct `.d.ts` files
+
 ### 🚧 In Progress
 
-**Phase 1.3: Integration**
-- Integrate TypePrinter with DeclarationEmitter
-- Add Solver/Checker context access
-- Test with real TypeScript files
-- Run `./scripts/emit/run.sh --dts-only` to verify
+**Phase 1.4: Testing and Bug Fixes**
+- Run `./scripts/emit/run.sh --dts-only` to verify against TypeScript baselines
+- Fix any output mismatches
+- Handle edge cases (lazy types, enums, conditionals, etc.)
 
 ### 📋 TODO
 
