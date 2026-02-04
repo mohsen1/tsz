@@ -8,101 +8,57 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Switching focus to Binder - TS2300 (Duplicate Identifier)
-
-**Completed This Session**:
-1. **ClassDeclaration26.ts** (commit 8e21d5d71) - Fixed var constructor() pattern in class bodies
-2. **abstractPropertyNegative.ts** (commit 8a034be71) - Fixed getter/setter without body check
+**Status**: TS2300 scope-aware symbol merging completed. Moving to next priority.
 
 **Completed This Session**:
 1. **ClassDeclaration26.ts** (commit 8e21d5d71) - Fixed var constructor() pattern in class bodies
 2. **abstractPropertyNegative.ts** (commit 8a034be71) - Fixed getter/setter without body check
 3. **MODULE_DECLARATION in duplicate resolution** (commit 0a881e3cd) - Added MODULE_DECLARATION to `resolve_duplicate_decl_node` to fix namespace/class merging
+4. **Scope-aware symbol merging** (commit 8a78b95f0) - Fixed parallel binding to respect symbol scopes
 
-**Next Focus**: TS2300 - Duplicate Identifier Errors
+**TS2300 Fix Complete** (commit 8a78b95f0):
+Fixed the issue where symbols from different scopes (e.g., T1.m3d and T2.m3d) were being incorrectly merged into a single global symbol during parallel binding.
 
-**Root Cause Found** (commit 0a881e3cd):
-The checker's `resolve_duplicate_decl_node` function in `src/checker/symbol_resolver.rs` was missing MODULE_DECLARATION in its list of declaration node kinds. This caused namespace declarations to return None from `declaration_symbol_flags`, making them invisible to the duplicate checking logic.
+**Root Cause**: The `merge_bind_results_ref` function in `src/parallel.rs` used `merged_symbols: FxHashMap<String, SymbolId>` which mapped symbol NAMES to global IDs, IGNORING scope.
 
-**Test Case**: `cloduleTest2.ts`
-- Expected: [TS2339, TS2554, TS2576]
-- Actual: [TS2300, TS2300, TS2300, TS2300, TS2300, TS2554]
-- tsc emits NO TS2300 for this file (namespace/class merging is allowed)
-- tsz was emitting 5 TS2300 errors (one for each `declare class m3d`)
+**Solution**: Added `is_nested_symbol` check that determines if a symbol is from a nested scope by looking up its declaration's scope ID. Only symbols from ROOT scope (ScopeId(0)) are allowed to use the merged_symbols map for cross-file merging. Nested scope symbols always get new IDs and are never cross-file merged.
 
-**Remaining Issue**: Binder scope merging bug.
-The binder is creating ONE symbol with ALL 10 m3d declarations (5 namespaces + 5 classes from different scopes).
+**Test Results**:
+- cloduleTest2.ts: No TS2300 errors (matches tsc)
+- Simple test case (T1.m3d, T2.m3d, top-level m3d): No TS2300 errors (matches tsc)
+- Conformance: TS2300 improved from missing=407, extra=62 → missing=409, extra=56
 
-Expected behavior:
-- T1.m3d should be a LOCAL symbol to T1 (namespace + class merged within T1)
-- T2.m3d should be a LOCAL symbol to T2 (namespace + class merged within T2)
-- Top-level m3d should be its own symbol
-- Total: 5 separate m3d symbols
+**Previous Investigation** (for reference):
 
-Actual behavior:
-- All 10 declarations merged into 1 global m3d symbol
-- Checker sees class vs class in different scopes and emits TS2300
+**MODULE_DECLARATION Fix** (commit 0a881e3cd):
+The checker's `resolve_duplicate_decl_node` function was missing MODULE_DECLARATION, causing namespace declarations to be invisible to duplicate checking.
 
-**Investigation Status**:
-- `bind_module_declaration` calls `enter_scope(ContainerKind::Module, idx)` at line 1257 ✓
-- `declare_symbol` checks `self.current_scope.get(name)` which should be scope-local ✓
-- **VERIFIED WITH DEBUG OUTPUT**: Binder creates 3 separate m3d symbols in different scopes (ScopeId(1), ScopeId(5), ScopeId(0))
-- Each scope correctly has 2 declarations (namespace + class merged within that scope)
-- **PROBLEM**: Checker sees only ONE symbol with 6 declarations instead of 3 symbols with 2 each
+**Investigation Process**:
+- Binder correctly creates separate symbols in different scopes
+- `declare_symbol` uses scope-local lookups via `self.current_scope.get(name)`
+- Debug output showed: 3 separate m3d symbols in ScopeId(1), ScopeId(5), ScopeId(0)
+- Problem: Symbols were being consolidated between binding and checking
 
-**Hypothesis**: Symbols are being consolidated/merged somewhere between binding and checking.
+**ROOT CAUSE** (discovered in `src/parallel.rs`):
+The `merge_bind_results_ref` function used `merged_symbols: FxHashMap<String, SymbolId>` which mapped ONLY by NAME, ignoring scope completely.
 
-**Test Case for Reproduction**:
-```typescript
-namespace T1 {
-    namespace m3d { export var y = 2; }
-    declare class m3d { foo(): void; }
-}
-namespace T2 {
-    namespace m3d { export var y = 2; }
-    declare class m3d { foo(): void; }
-}
-namespace m3d { export var y = 2; }
-declare class m3d { foo(): void; }
-```
-tsc: No errors (3 separate m3d symbols)
-tsz: TS2300 on each `declare class m3d` (symbols incorrectly merged)
-
-**ROOT CAUSE FOUND** (critical discovery in `src/parallel.rs`):
-The bug is NOT in `declare_symbol` - the binder is working correctly!
-
-**The Problem**: In `src/parallel.rs:750-777`, the `merge_bind_results_ref` function has `merged_symbols: FxHashMap<String, SymbolId>` that maps symbol NAMES to global IDs, IGNORING scope!
-
-When symbols are merged into the global symbol arena:
+When merging symbols from different files:
 - T1.m3d gets inserted into merged_symbols["m3d"]
-- T2.m3d finds merged_symbols["m3d"] exists, so it MERGES with T1.m3d
+- T2.m3d finds merged_symbols["m3d"] exists and MERGES with T1.m3d
 - Top-level m3d also MERGES with the same symbol
 
-Result: All "m3d" symbols from all scopes are merged into ONE global symbol ID.
-
-**Fix Required**: Change `merged_symbols` from `FxHashMap<String, SymbolId>` to be scope-aware.
-
-**Challenges**:
-1. Need to determine which ScopeId each symbol belongs to during merging
-2. Each BindResult has its own scopes (result.scopes) but we need a consistent ScopeId space
-3. Lib symbol merging may need special handling
-4. The fix must preserve correct symbol ID remapping for file_locals
-
-**File to Fix**: `src/parallel.rs` function `merge_bind_results_ref`, specifically the symbol remapping logic around lines 648-780.
-
-**Next Session Plan**:
-1. Read the full `merge_bind_results_ref` function to understand the symbol merging flow
-2. Identify how to track scope membership for each symbol
-3. Implement scope-aware symbol merging
-4. Test with the simple test case to verify 3 separate m3d symbols
+Result: All "m3d" symbols from all scopes merged into ONE global symbol ID.
 
 
-**Conformance Status**: 97/200 passed (48.5%)
+**Conformance Status**: 4995/12638 passed (39.5%)
 Top error mismatches:
-- TS2300: 10 missing, 1 extra ← New focus
-- TS1005: 13 missing (mostly API tests with JSON parsing)
-- TS2304: 6 missing, 9 extra
-- TS2695: 11 missing
+- TS1005: missing=460, extra=1029
+- TS2304: missing=427, extra=406
+- TS2322: missing=266, extra=544
+- TS2339: missing=416, extra=285
+- TS2300: missing=409, extra=56 ← Fixed nested scope merging, still needs work
+- TS2345: missing=81, extra=445
+- TS2440: missing=475, extra=34
 
 ### Punted Items
 
@@ -136,7 +92,26 @@ According to the analysis of the codebase, the next priorities for complex types
 
 ---
 
-## History (Last 20)
+### 2025-02-04: Scope-Aware Symbol Merging in Parallel Binding - COMPLETED
+
+**Completed**:
+1. Fixed scope-aware symbol merging in `src/parallel.rs` (commit 8a78b95f0)
+2. Added `is_nested_symbol` check to prevent cross-scope merging
+3. Only ROOT scope symbols use merged_symbols map for cross-file merging
+4. Nested scope symbols always get new IDs
+
+**Test Results**:
+- cloduleTest2.ts: Fixed false positive TS2300 errors (now matches tsc)
+- Simple nested scope test: Fixed false positive TS2300 errors (now matches tsc)
+- Conformance: TS2300 improved from missing=407, extra=62 → missing=409, extra=56
+
+**Files Modified**:
+- `src/parallel.rs`: Added is_nested_symbol check in both lib and user symbol merging
+
+**Key Insight**:
+The merged_symbols FxHashMap was mapping by NAME only, allowing T1.m3d and T2.m3d to merge despite being in different scopes. The fix checks if a symbol is from a nested scope (scope.parent != ScopeId::NONE) and skips the merged_symbols lookup for those symbols.
+
+---
 
 ### 2025-02-04: Const Type Parameters (TS 5.0) - COMPLETED
 
