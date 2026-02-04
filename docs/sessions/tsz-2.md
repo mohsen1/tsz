@@ -12,6 +12,7 @@
 - TS2664: Tested on `ambientExternalModuleInAnotherExternalModule.ts` ✅ working
 - TS2664: Tested on `importDeclRefereingExternalModuleWithNoResolve.ts` ✅ working
 - TS2300: Tested on `anyDeclare.ts` ✅ working
+- TS2339: Tested on basic property access - matches TSC behavior ✅ working
 - Bivariance: Created test case - matches TSC behavior ✅
 
 **Latest Conformance Results** (500 tests):
