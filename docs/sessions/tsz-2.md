@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 2 Active - Task 6: Equality & Identity Narrowing
+**Status**: 🟢 Phase 2 Complete - Task 5: User-Defined Type Guards (COMPLETE)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -165,6 +165,10 @@ Please review:
 - 2026-02-04: COMPLETED Task 1: Lawyer-Layer Cache Partitioning
 - 2026-02-04: COMPLETED Task 2: CheckerState Refactoring
 - 2026-02-04: **REDEFINED** to Type Narrowing & Control Flow Analysis
+- 2026-02-04: COMPLETED Phase 1 (Tasks 1-4): Discriminant, Solver::narrow, Checker Integration, Truthiness
+- 2026-02-04: COMPLETED Phase 2 Task 5: User-Defined Type Guards
+- 2026-02-04: COMPLETED Phase 2 Task 6: Equality & Identity Narrowing
+- 2026-02-04: **PHASE 2 COMPLETE**
 
 ## Previous Work (Archived)
 
@@ -509,6 +513,50 @@ However, to achieve the goal of matching `tsc` behavior exactly, additional narr
 - 2026-02-04: COMPLETED Task 1-2: Cache Partitioning & CheckerState Refactoring
 - 2026-02-04: **REDEFINED** to Type Narrowing & Control Flow Analysis
 - 2026-02-04: **PHASE 1 COMPLETE** - Tasks 1-4: Discriminant, Solver::narrow, Integration, Truthiness
-- 2026-02-04: **PHASE 2 PROPOSED** - Advanced Narrowing & Definite Assignment Analysis
+- 2026-02-04: **PHASE 2 COMPLETE** - Tasks 5-6: User-Defined Type Guards, Equality & Identity Narrowing
+- 2026-02-04: ALL HIGH-PRIORITY NARROWING FEATURES IMPLEMENTED
+
+### Task 5 Complete ✅
+
+**Commit**: `58f9bbec9` - "feat(tsz-2): refactor extract_type_guard for CallExpression"
+
+**Changes Made**:
+1. Refactored `extract_type_guard` to handle CallExpression nodes
+   - Updated signature to return `Option<(TypeGuard, NodeIndex, bool)>` where bool is `is_optional`
+   - Added CALL_EXPRESSION check before binary expression check
+
+2. Implemented `extract_call_type_guard` helper method:
+   - Checks for optional chaining via `node_flags::OPTIONAL_CHAIN`
+   - Handles both `obj?.method()` and `func?.()` patterns
+   - Resolves callee type using `skip_parens_and_assertions`
+   - Returns `TypeGuard::Predicate` for "x is T" or `TypeGuard::Truthy` for "asserts x"
+
+3. Added CALL_EXPRESSION case to `narrow_type_by_condition_inner`:
+   - Skips narrowing on false branch when `is_optional=true` (TypeScript behavior)
+   - Delegates to Solver via `narrow_type`
+
+4. Fixed discriminant comparison to propagate `is_optional` flag
+5. Fixed asserts flag dereference bug in narrowing.rs
+
+**Gemini Guidance**: Followed Two-Question Rule (Question 1: Approach Validation, Question 2: Implementation Review)
+
+**Bugs Found & Fixed**:
+1. **Missing optional call detection**: Added `node_flags::OPTIONAL_CHAIN` check to catch `func?.()` pattern
+2. **Hardcoded is_optional in discriminant**: Changed to propagate actual `is_optional` value from `discriminant_comparison`
+
+### Task 6 Complete ✅
+
+**Commit**: `f2d4ae5d5` - "feat(tsz-2): implement equality & identity narrowing"
+
+**Changes Made**:
+1. Added loose equality support for `==` and `!=` operators
+2. Implemented bidirectional narrowing for `x === y` where both are references
+3. Added `is_unit_type()` helper that recursively checks unions
+
+**Critical Bug Fixed** (via Gemini Code Review):
+- **is_unit_type too restrictive**: Made it recursively check union members - all members must be unit types
+- Before: Returned false for unions, preventing narrowing like `x !== y` where y: "A" | "B"
+- After: Correctly handles unions of unit types
+
 
 ---
