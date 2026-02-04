@@ -1,9 +1,9 @@
 # Session tsz-3: Advanced CFA & Type Predicates
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Priority 1 COMPLETE: instanceof narrowing)
-**Latest Update**: 2026-02-04 - Completed instanceof narrowing with Lazy type resolution
-**Focus**: User-defined type guards, instanceof narrowing, loop refinement
+**Status**: 🟢 ACTIVE (Priority 2a COMPLETE: Assertion Guard CFA)
+**Latest Update**: 2026-02-04 - Completed Assertion Guard CFA integration
+**Focus**: User-defined type guards, assertion guards, this type predicates
 
 ---
 
@@ -16,8 +16,37 @@
 - Task 2-3: Lazy/Intersection Type Resolution ✅ (commit `5b0d2ee52`)
 - Task 4: Harden `in` Operator Narrowing ✅ (commit `bc80dd0fa`)
 - Task 5: Truthiness Narrowing for Literals ✅ (commit `97753bfef`)
+- Priority 1: instanceof Narrowing ✅ (commit `0aec78d51`)
 
 **Achievement**: Implemented comprehensive narrowing hardening for the Solver, following Two-Question Rule strictly for all changes. All code reviewed by Gemini Pro before committing.
+
+### Current Phase: User-Defined Type Guards (IN PROGRESS)
+
+**Started**: 2026-02-04
+**Status**: Priority 2a COMPLETE ✅
+
+#### Priority 2a: Assertion Guard CFA Integration ✅ COMPLETE
+
+**Completed**: 2026-02-04 (commit `58061e588`)
+
+**Problem**: Assertion guards (`asserts x is T`) weren't being applied in subsequent control flow after the assertion call. This was a major gap in type guard support (21.2% pass rate, 14/66 tests).
+
+**Solution**:
+1. **Truthiness narrowing** - Changed from weak null/undefined exclusion to comprehensive `TypeGuard::Truthy` narrowing (false, 0, "", NaN, 0n)
+2. **Intersection type support** - Added `Intersection` variant to `PredicateSignatureKind` enum
+3. **Union type safety** - Fixed `predicate_signature_for_type` to require ALL union members to have compatible predicates (not just first match)
+4. **Optional chaining** - Added check to skip narrowing when call is optional (`obj.method?.()`) since assertion might not execute
+
+**Files Modified**:
+- `src/checker/control_flow_narrowing.rs`: Fixed `apply_type_predicate_narrowing`, `predicate_signature_for_type`, `narrow_by_call_predicate`
+- `src/solver/type_queries.rs`: Added `Intersection` to `PredicateSignatureKind` enum and classify function
+
+**Validation**:
+- Manual test case confirmed: `unknown` → `string` narrowing works after `asserts x is T`
+- Gemini Pro review validated approach and caught critical Union safety bug
+- All pre-commit checks passed
+
+**Next**: Priority 2b - `is` type predicate support
 
 ---
 
