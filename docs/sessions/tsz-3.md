@@ -1,7 +1,8 @@
 # Session tsz-3: Solver-First Narrowing & Discriminant Hardening
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Phase 1 COMPLETE - CFA Infrastructure)
+**Status**: 🟢 ACTIVE (Tasks 1-3 COMPLETE, Tasks 4-5 PENDING)
+**Latest Update**: 2026-02-04 - Implemented Lazy/Intersection type resolution in discriminant narrowing
 **Focus**: Fix discriminant narrowing bugs and harden narrowing logic for complex types
 
 ---
@@ -78,57 +79,31 @@ These bugs prevent discriminant narrowing from working correctly with type alias
 
 ## Prioritized Tasks
 
-### Task 1: Fix Discriminant Subtype Direction
-**File**: `src/solver/narrowing.rs`
-**Function**: `narrow_by_discriminant`
+### ✅ Task 1: Fix Discriminant Subtype Direction (COMPLETE - 2026-02-04)
 
-**Problem**: The subtype check is reversed. When checking if `x.kind === "add"` narrows the type:
-- ✅ CORRECT: `is_subtype_of(literal_value, prop_type)` - checks if `"add" extends "add" | "remove"`
-- ❌ WRONG: `is_subtype_of(prop_type, literal_value)` - checks if `"add" | "remove"` extends `"add"`
+**Status**: Already fixed by revert of commit f2d4ae5d5
+**Result**: Current code has correct `is_subtype_of(literal_value, prop_type)` direction
 
-**Implementation**:
-1. Find the subtype check in `narrow_by_discriminant`
-2. Reverse the argument order to `is_subtype_of(literal, property_type)`
-3. Add test case: `{ kind: "a" | "b" }` narrowed by `x.kind === "a"`
+### ✅ Task 2 & 3: Lazy/Intersection Type Resolution (COMPLETE - 2026-02-04)
 
-### Task 2: Handle Optional Properties in Narrowing
-**File**: `src/solver/narrowing.rs`
-**Functions**: `narrow_by_discriminant`, `narrow_by_excluding_discriminant`
-
-**Problem**: Optional properties like `{ prop?: "a" }` are not handled correctly:
-- `x.prop === "a"` should narrow to include the variant (excluding `undefined`)
-- `x.prop !== "a"` should KEEP the variant (it could be `undefined`)
-
-**TypeScript Behavior**:
-```typescript
-type Action = { type?: "add" } | { type: "remove" };
-
-function foo(x: Action) {
-  if (x.type === "add") {
-    // x: { type: "add" }  (undefined excluded)
-  }
-  if (x.type !== "add") {
-    // x: { type?: "add" } | { type: "remove" }  (both variants kept!)
-  }
-}
-```
+**Commit**: `5b0d2ee52`
 
 **Implementation**:
-1. Check if property is optional via `PropertyInfo.optional`
-2. For `===` check: exclude `undefined` from the narrowed type
-3. For `!==` check: keep the variant (it could be `undefined`)
+1. Added `let resolved_member = self.resolve_type(member);` before checking object_shape_id
+2. Added Intersection type detection via `intersection_list_id`
+3. Created helper closures for property checking
+4. Fixed `.any()` vs `.all()` logic based on Gemini Pro review:
+   - **narrow_by_discriminant**: Uses `.any()` (if ANY part matches, keep)
+   - **narrow_by_excluding_discriminant**: Uses `.all()` (if ANY part excludes, exclude whole)
 
-### Task 3: Recursive Type Resolution in Narrowing
-**File**: `src/solver/narrowing.rs`
-**Function**: `get_property_type` (in `NarrowingContext`)
+**Gemini Review**: Two-Question Rule followed
+- Question 1 (Approach): ✅ Validated
+- Question 2 (Review): ✅ Found critical `.any()`/.`all()` bug, fixed
 
-**Problem**: Narrowing often happens on type aliases (e.g., `type Action = { type: string }`), which are `Lazy(DefId)` types. The current code doesn't resolve these before looking for discriminants.
-
-**Implementation**:
-1. Update `get_property_type` to handle `TypeKey::Lazy` by resolving via `TypeEvaluator`
-2. Handle `TypeKey::Intersection` by searching all members
-3. Use the `TypeResolver` from `tsz-2`'s bridge implementation
-4. Add test: discriminant narrowing on type aliases
+**Result**: Discriminant narrowing now works for:
+- Type aliases (Lazy types)
+- Intersection types
+- Discriminated unions with complex structural types
 
 ### Task 4: Harden `in` Operator Narrowing
 **File**: `src/solver/narrowing.rs`
