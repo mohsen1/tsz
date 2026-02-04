@@ -183,38 +183,57 @@ jobs:
           path: pkg/
           retention-days: 1
 
-  # Conformance - downloads WASM artifact instead of rebuilding
+  # Conformance - uses native Rust conformance runner
   conformance:
     name: Conformance Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: wasm-build
+    needs: build
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download WASM artifact
+      - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: wasm-pkg
-          path: pkg/
+          name: release-build
+          path: .target/release/
+
+      - name: Make binaries executable
+        run: chmod +x .target/release/tsz .target/release/tsz-conformance .target/release/generate-tsc-cache-tsserver || true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: scripts/conformance/package.json
-
-      - name: Install conformance dependencies
-        run: cd scripts/conformance && npm install
 
       - name: Fetch TypeScript conformance tests
         run: git submodule update --init --depth 1 -- TypeScript || echo "No TypeScript submodule"
 
+      - name: Install Rust (for conformance-rust build if needed)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache conformance-rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            conformance-rust/target
+          key: ${{ runner.os }}-conformance-${{ hashFiles('conformance-rust/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-conformance-
+
+      - name: Build conformance runner
+        run: |
+          cd conformance-rust
+          cargo build --release
+          # Copy binaries to expected location
+          mkdir -p ../.target/release
+          cp target/release/tsz-conformance ../.target/release/ || true
+          cp target/release/generate-tsc-cache-tsserver ../.target/release/ || true
+
       - name: Run conformance tests (quick)
         run: |
-          cd scripts/conformance
-          timeout 600 bash run.sh --max=500 --workers=4 || {
+          timeout 600 ./scripts/conformance.sh run --max 500 --workers 4 || {
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::warning::Conformance tests timed out"
