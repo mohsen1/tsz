@@ -96,30 +96,29 @@ const c: C = new D();             // ERROR (different declarations)
 outside the scope of conditional type work. The current structural behavior
 is CORRECT for classes without private members.
 
-#### Task 2: Implement Conditional Type Evaluation
-**File**: `src/solver/evaluate.rs`
+#### Task 2: Conditional Type Evaluation ✅ ALREADY IMPLEMENTED
+**File**: `src/solver/evaluate_rules/conditional.rs`
 
-**Function to implement**: `evaluate_conditional()`
+**Discovery (2026-02-04)**:
+Conditional type evaluation is **ALREADY FULLY IMPLEMENTED** in `evaluate_rules/conditional.rs`!
 
-**Requirements**:
-1. **Basic evaluation**: `T extends U ? X : Y`
-   - Check subtype: `is_subtype_of(T, U)`
-   - Return `X` if true, `Y` if false
+**What's Already Implemented**:
+1. **Basic evaluation**: `T extends U ? X : Y` ✅
+2. **Distributive behavior**: `(A | B) extends U ? X : Y` ✅
+3. **Recursion protection**: Tail-recursion elimination up to 1000 iterations ✅
+4. **`infer` keyword**: Full support with type substitution ✅
+5. **`any` handling**: Returns union of both branches ✅
+6. **Type parameter substitution**: Via `TypeSubstitution` ✅
 
-2. **Distributive behavior**:
-   - `(A | B) extends U ? X : Y` → `(A extends U ? X : Y) | (B extends U ? X : Y)`
-   - Distribute over unions in the `extends` clause
+**Key Features**:
+- Tail-recursion elimination for patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
+- `infer` type inference with constraints
+- Proper handling of distributive vs non-distributive conditionals
+- Deferred evaluation for unresolved type parameters
 
-3. **Recursion protection**:
-   - Detect infinite recursion in nested conditionals
-   - Use cycle detection similar to other evaluation functions
+**Status**: Task 2 COMPLETE (already implemented)
 
-**Edge Cases**:
-- `any`/`unknown` special handling
-- Lazy type resolution in extends clause
-- Type parameter substitution
-
-#### Task 3: Implement `infer` Keyword
+#### Task 3: Test and Verify Conditional Types
 **File**: `src/solver/infer.rs`
 
 **Function to implement**: `infer_from_conditional_type()`
