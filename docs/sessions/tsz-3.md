@@ -168,12 +168,36 @@ Ensure the checker correctly updates flow-sensitive type cache:
 
 ---
 
-## Session History
+## Next Steps
 
-- 2026-02-04: Previous session completed - all 8 narrowing bugs fixed
-- 2026-02-04: Session redefined - focus on switch exhaustiveness and CFA orchestration
-- 2026-02-04: Fixed cache bug - SWITCH_CLAUSE nodes now skip cache to enable proper traversal
-- 2026-02-04: **BINDER BUG FOUND**: `get_switch_for_clause` returns None for default clauses
+### Option A: Fix Lazy Type Resolution (HIGH IMPACT)
+**Problem**: `QueryDatabase::evaluate_type()` can't resolve Lazy types because it uses `NoopResolver`
+
+**Files to modify**:
+1. `src/solver/db.rs`: Update `BinderTypeDatabase` to implement `TypeResolver`
+2. `src/solver/db.rs`: Change `BinderTypeDatabase::evaluate_type()` to use `TypeEvaluator::with_resolver()`
+3. `src/solver/evaluate.rs`: Consider renaming `evaluate_type()` to `evaluate_pure_type()` to prevent misuse
+
+**Impact**: Fixes ALL discriminant narrowing on type aliases, not just fall-through
+
+**Test**: `test_fallthrough.ts` should pass after fix
+
+### Option B: Focus on Loop Narrowing (MEDIUM IMPACT)
+**Task 4**: Implement narrowing propagation for while/for loops
+
+**File**: `src/solver/flow_analysis.rs`
+
+**Test case**:
+```typescript
+while (x.type === 'a') {
+  // x should be narrowed to 'a'
+}
+```
+
+**Status**: ⏸️ Not started
+
+### Option C: Redefine Session
+If Lazy type resolution is too complex for this session, redefine tsz-3 to focus on what's working and defer Lazy resolution to a dedicated session.
 
 ## Root Cause Identified 🐛
 
