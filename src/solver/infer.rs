@@ -31,6 +31,8 @@ pub struct InferenceVar(pub u32);
 pub enum InferencePriority {
     /// Inferred from a return type (lowest).
     ReturnType,
+    /// Inferred from contextual typing (a hint, can be overridden by arguments).
+    Contextual,
     /// Inferred from a circular dependency.
     Circular,
     /// Inferred from an argument (standard).
