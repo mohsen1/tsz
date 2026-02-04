@@ -1972,6 +1972,12 @@ impl<'a> FlowAnalyzer<'a> {
         let node = self.arena.get(condition)?;
         let call = self.arena.get_call_expr(node)?;
 
+        // Task 10: Check for Array.isArray(x) calls
+        if let Some((guard, target)) = self.check_array_is_array(call, condition) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
         // 1. Check for optional chaining on the call
         let is_optional = self.is_optional_call(condition, call);
 
@@ -1999,6 +2005,47 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         Some((guard, target_node, is_optional))
+    }
+
+    /// Task 10: Check if a call is `Array.isArray(x)`.
+    ///
+    /// Returns `Some((guard, target))` if this is an Array.isArray call.
+    /// The `guard` will be `TypeGuard::Array`, and `target` is the argument expression.
+    fn check_array_is_array(
+        &self,
+        call: &CallExprData,
+        _condition: NodeIndex,
+    ) -> Option<(TypeGuard, NodeIndex)> {
+        // Get the callee (should be a property access: Array.isArray)
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+
+        // Check if the object of the property access is the identifier "Array"
+        let obj_text = self
+            .arena
+            .get(access.expression)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+
+        if obj_text != "Array" {
+            return None;
+        }
+
+        // Check if the property name is "isArray"
+        let prop_text = self
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+
+        if prop_text != "isArray" {
+            return None;
+        }
+
+        // Get the argument (first argument of Array.isArray call)
+        let arg = call.arguments.as_ref()?.nodes.first().copied()?;
+
+        Some((TypeGuard::Array, arg))
     }
 
     /// Check if a call expression uses optional chaining.
