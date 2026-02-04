@@ -1781,14 +1781,14 @@ impl<'a> NarrowingContext<'a> {
     ///
     /// This is the negation of `narrow_by_truthiness`.
     /// For example, narrowing `string | number` with falsy (sense=false)
-    /// yields `"" | 0` (the falsy literals).
+    /// yields `"" | 0 | NaN` (the falsy literals).
     ///
     /// TypeScript behavior:
     /// - `string` → `""`
     /// - `number` → `0 | NaN`
     /// - `boolean` → `false`
     /// - `bigint` → `0n`
-    /// - `null | undefined` → unchanged (already falsy)
+    /// - `null | undefined | void` → unchanged (already falsy)
     fn narrow_to_falsy(&self, source_type: TypeId) -> TypeId {
         // Handle special cases
         if source_type == TypeId::ANY {
@@ -1797,6 +1797,7 @@ impl<'a> NarrowingContext<'a> {
 
         // For UNKNOWN, narrow to the union of all falsy types
         // TypeScript allows narrowing unknown through type guards
+        // CRITICAL: Must include NaN (number has two falsy values: 0 and NaN)
         if source_type == TypeId::UNKNOWN {
             return self.db.union(vec![
                 TypeId::NULL,
@@ -1804,6 +1805,7 @@ impl<'a> NarrowingContext<'a> {
                 self.db.literal_boolean(false),
                 self.db.literal_string(""),
                 self.db.literal_number(0.0),
+                self.db.literal_number(f64::NAN),
                 self.db.literal_bigint("0"),
             ]);
         }
@@ -1820,13 +1822,15 @@ impl<'a> NarrowingContext<'a> {
     /// Returns Some(type) where type is the falsy representation:
     /// - `null` → `null`
     /// - `undefined` → `undefined`
+    /// - `void` → `void`
     /// - `boolean` → `false`
     /// - `string` → `""`
-    /// - `number` → `0`
+    /// - `number` → `0 | NaN`
     /// - `bigint` → `0n`
     fn falsy_component(&self, type_id: TypeId) -> Option<TypeId> {
         // Intrinsics that are already falsy
-        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        // CRITICAL: void is falsy (effectively undefined at runtime)
+        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED || type_id == TypeId::VOID {
             return Some(type_id);
         }
 
@@ -1837,8 +1841,12 @@ impl<'a> NarrowingContext<'a> {
         if type_id == TypeId::STRING {
             return Some(self.db.literal_string(""));
         }
+        // CRITICAL: number narrows to 0 | NaN (both are falsy)
         if type_id == TypeId::NUMBER {
-            return Some(self.db.literal_number(0.0));
+            return Some(self.db.union(vec![
+                self.db.literal_number(0.0),
+                self.db.literal_number(f64::NAN),
+            ]));
         }
         if type_id == TypeId::BIGINT {
             return Some(self.db.literal_bigint("0"));
