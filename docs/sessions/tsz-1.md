@@ -1,8 +1,55 @@
-# Session tsz-1: Core Solver Infrastructure & Conformance
+# Session tsz-1: Core Solver Correctness & Testability
 
 **Started**: 2026-02-04 (Pivoted to infrastructure focus)
 **Status**: Active (Redefined 2026-02-04)
-**Goal**: Core Solver Infrastructure - Recursion guards, nominal subtyping, intersection reduction
+**Goal**: Restore test suite, implement nominal subtyping, fix intersection reduction
+
+## Session Redefinition (2026-02-04 - Updated)
+
+**Gemini Consultation**: Asked for session redefinition after completing Property Access Recursion Guard.
+
+**New Priorities** (from Gemini):
+
+### Priority 1: Test Suite Restoration (Immediate Blocker) 🚨
+**Problem**: The `PropertyInfo` API change (adding `visibility` and `parent_id`) broke nearly every manual type instantiation in the test suite.
+
+**Task**: Update all `PropertyInfo` instantiations in `src/solver/tests/` and `src/checker/tests/`.
+
+**Goal**: Get `cargo test` (or `nextest`) to compile.
+
+**Why**: Cannot safely implement Priority 2 or 3 without a working test suite.
+
+### Priority 2: Nominal Subtyping Audit & Implementation
+**Problem**: `PropertyInfo` has the fields, but the "Judge" (`src/solver/subtype.rs`) may not be fully enforcing them, and the "Lawyer" (`src/solver/lawyer.rs`) might be missing `any` bypass rules for private members.
+
+**Files to modify**:
+- `src/solver/subtype.rs`: Function `object_subtype_of`
+- `src/solver/lawyer.rs`: Check for `any` propagation vs. private members
+
+**Edge Cases**:
+- Private properties should only be compatible if they originate from the same declaration (matching `parent_id`)
+- Protected properties have specific inheritance rules
+
+**Potential Pitfalls**: Forgetting that `any` usually bypasses structural checks but *cannot* always bypass nominal identity for private members in strict mode.
+
+### Priority 3: Intersection Reduction (Rule #21)
+**Problem**: Complex intersections like `string & number` or `{ kind: "a" } & { kind: "b" }` are not reducing to `never`, causing "black hole" types in conformance tests.
+
+**File to modify**: `src/solver/intern.rs`
+
+**Function**: `normalize_intersection`
+
+**Task**: Implement logic to detect disjoint types (primitives, or object literals with the same non-optional property having disjoint types).
+
+**Reference**: TypeScript Spec Rule #21.
+
+**Rationale**: These priorities provide maximum leverage:
+- Test restoration enables verification of all other work
+- Nominal subtyping is fundamental to class/interface correctness
+- Intersection reduction will likely provide the biggest jump in conformance pass rates
+
+**Mandatory Gemini Consultation**:
+When starting Priority 2 (Nominal Subtyping) or Priority 3 (Intersection Reduction), must use the **Two-Question Rule** for `src/solver/subtype.rs` and `src/solver/intern.rs`. These are high-risk files.
 
 ## Session Achievements (2026-02-04)
 
