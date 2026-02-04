@@ -48,6 +48,25 @@
 ### Total Progress
 - **51 → 32 failing tests (-19 tests total)**
 
+### Test Suite Restoration (2026-02-04)
+- ✅ **Fixed PropertyInfo test instantiations** (1000+ instances fixed)
+  - Added `visibility: Visibility::Public` and `parent_id: None` fields
+  - Fixed files in src/solver/tests/, src/tests/, src/checker/tests/
+  - Created Python script `fix_property_info.py` for automated fixing
+  - Created Python script `find_visibility_needs.py` to identify files needing exports
+- ✅ **Added Visibility re-exports**
+  - Added to `src/solver/mod.rs`: `pub use types::Visibility;`
+  - Added to `src/checker/mod.rs`: `pub use crate::solver::types::Visibility;`
+  - Added to `src/solver/intern.rs` and other solver modules for test access
+  - Added imports to individual test files where needed
+- ⚠️ **Status**: 259 compilation errors remaining (229 Visibility import errors)
+- **Commit**: `c66cf2172` - "feat: restore test suite after PropertyInfo API changes"
+
+**Next Steps**:
+1. Complete Visibility imports for remaining test files
+2. Run full test suite to verify Priority 3 fix
+3. Begin Priority 4: Nominal Subtyping Infrastructure audit
+
 ## Updated Priorities (Pivoted from test-fixing to infrastructure)
 
 ### ✅ Priority 1: Fix Type Alias Application Expansion (COMPLETE)
