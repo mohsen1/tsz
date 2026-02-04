@@ -415,3 +415,62 @@ Task 4 MUST come before Task 3 because:
 
 **Validation Step:**
 Consult Gemini before committing to verify visitor logic for TypeQuery and HeritageClause.
+
+---
+
+### Task 4 Implementation Plan (Gemini Consultation 2026-02-04)
+
+**Architectural Decision:** Approach A (UsageAnalyzer) is CORRECT
+
+Gemini confirmed: Modify `UsageAnalyzer` in `src/declaration_emitter`, NOT the Checker.
+- Checker tracks usage for diagnostics across entire implementation
+- UsageAnalyzer already correctly filters private/stripped code
+- Declaration emit has different rules than diagnostics
+
+**Critical Pitfall - The `typeof` Trap:**
+```typescript
+type T = typeof X;  // X is in "type position" syntactially but requires X as VALUE
+```
+Must toggle `in_value_pos` flag when entering `TypeQuery` nodes.
+
+**Implementation Table:**
+
+| File | Function | Action |
+|------|----------|--------|
+| `usage_analyzer.rs` | `mark_symbol_used` | Change signature to accept `UsageKind` |
+| `usage_analyzer.rs` | `analyze_type_node` | Set context to `UsageKind::Type` |
+| `usage_analyzer.rs` | `analyze_entity_name` | Apply current context to `mark_symbol_used` |
+| `usage_analyzer.rs` | `analyze_type_query` | **NEW**: Set context to `UsageKind::Value` |
+| `mod.rs` | `count_used_imports` | Return `(UsageKind, UsageKind)` for (default, named) |
+| `mod.rs` | `emit_import_declaration` | Check if all symbols are `UsageKind::Type` to emit `import type` |
+| `mod.rs` | `should_emit_import_specifier` | Return `Option<UsageKind>` instead of `bool` |
+
+**Step 1: Add UsageKind Bitset**
+```rust
+// src/declaration_emitter/usage_analyzer.rs
+bitflags::bitflags! {
+    pub struct UsageKind: u8 {
+        const Type = 1 << 0;
+        const Value = 1 << 1;
+    }
+}
+```
+
+**Step 2: Modify UsageAnalyzer struct**
+- Change `used_symbols: FxHashSet<SymbolId>` to `FxHashMap<SymbolId, UsageKind>`
+- Add `in_value_pos: bool` context flag
+
+**Step 3: Update mark_symbol_used()**
+- Accept `UsageKind` parameter
+- Use bitwise OR to handle symbols used as both types and values
+
+**Step 4: Update visitor functions**
+- `analyze_type_node()`: Set `in_value_pos = false` before recursing
+- `analyze_entity_name()`: Use `in_value_pos` to determine `UsageKind`
+- **Handle `TYPE_QUERY` nodes**: Set `in_value_pos = true` (typeof requires value)
+
+**Step 5: Update DeclarationEmitter**
+- Modify `emit_import_declaration()` to check `UsageKind` of all symbols
+- If all are `Type` only, emit `import type { ... }`
+- Otherwise emit standard `import { ... }`
+
