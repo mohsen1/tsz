@@ -40,7 +40,7 @@
 - Test `test_tail_recursive_conditional` now passes
 - Commit: `6b20e0180`
 
-## Current Task: Investigate Assignment Expression Narrowing
+## Current Task: Fix Assignment Expression in Condition Narrowing
 
 ### Problem Statement
 
@@ -57,21 +57,35 @@ if ((o = fn()).done) {
 ```
 
 **Expected**: No errors (narrowing works)
-**Actual**: TS2322 error - `o.value` is not narrowed to `1`
+**Actual**: TS2322 error - `o.value` is type `1 | 2` instead of `1`
 
-**Root Cause (Hypothesis)**: The flow analysis doesn't properly track narrowing when:
-1. Assignment happens in the condition expression (`o = fn()`)
-2. Property access (`o.done`) narrows the type
-3. The narrowed type should persist into the if block
+### Root Cause Found
 
-### Investigation Plan
+**Location**: `src/checker/flow_graph_builder.rs`, function `handle_expression_for_assignments` (line 1321)
 
-1. Check how flow analysis tracks assignments in condition expressions
-2. Verify if discriminant narrowing is being applied to the result of the assignment
-3. Check if the narrowed type is being propagated to the if block
+**The Bug**: The `handle_expression_for_assignments` function does NOT have a case for `syntax_kind_ext::ASSIGNMENT_EXPRESSION`.
+
+**Impact**: When code contains `(o = fn()).done`:
+1. The assignment `o = fn()` is type-checked correctly
+2. The property access `.done` is evaluated
+3. ❌ The assignment to `o` is NOT tracked in the flow graph
+4. ❌ Flow analysis doesn't know `o` has been assigned a new value
+5. ❌ No narrowing occurs when checking `.done`
+6. ❌ The narrowed type doesn't persist into the if block
+
+**Evidence**: The function handles:
+- ✅ BINARY_EXPRESSION (with short-circuit operators)
+- ✅ CONDITIONAL_EXPRESSION
+- ✅ CALL_EXPRESSION
+- ✅ PROPERTY_ACCESS_EXPRESSION
+- ✅ ELEMENT_ACCESS_EXPRESSION
+- ❌ **MISSING**: ASSIGNMENT_EXPRESSION
+
+### Solution
+
+Add handling for `ASSIGNMENT_EXPRESSION` in `handle_expression_for_assignments` to track the assignment in the flow graph, similar to how other expression types are handled.
 
 ### Key Files
-- `src/checker/flow_analysis.rs` - Flow analysis implementation
-- `src/checker/control_flow*.rs` - Control flow tracking
-- `src/solver/narrowing.rs` - Discriminant narrowing logic
-- `src/tests/checker_state_tests.rs` - Test at line 22821
+- `src/checker/flow_graph_builder.rs:1321` - `handle_expression_for_assignments` function
+- `src/checker/flow_graph_builder.rs:1447` - `is_assignment_operator_token` function (exists!)
+- `src/tests/checker_state_tests.rs:22821` - Failing test
