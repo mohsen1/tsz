@@ -714,6 +714,44 @@ impl<'a> DiagnosticBuilder<'a> {
 
     /// Create a "Cannot find name" diagnostic.
     pub fn cannot_find_name(&mut self, name: &str) -> TypeDiagnostic {
+        // Skip TS2304 for identifiers that are clearly not valid names.
+        // These are likely parse errors (e.g., ",", ";", "(") that were
+        // added to the AST for error recovery. The parse error should have
+        // already been emitted (e.g., TS1136 "Property assignment expected").
+        let is_obviously_invalid = name.len() == 1
+            && matches!(
+                name.chars().next(),
+                Some(
+                    ',' | ';'
+                        | ':'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '+'
+                        | '-'
+                        | '*'
+                        | '/'
+                        | '%'
+                        | '&'
+                        | '|'
+                        | '^'
+                        | '!'
+                        | '~'
+                        | '<'
+                        | '>'
+                        | '='
+                        | '.'
+                )
+            );
+
+        if is_obviously_invalid {
+            // Return a dummy diagnostic with empty message that will be ignored
+            return TypeDiagnostic::error("", 0);
+        }
+
         TypeDiagnostic::error(
             format!("Cannot find name '{}'.", name),
             codes::CANNOT_FIND_NAME,
