@@ -1127,3 +1127,36 @@ var v = { public get foo() { } };
 - Task #10: Fix trailing commas (PENDING)
 - Task #2: Fix semicolon recovery cascade (PRIORITY 2 - DEFERRED)
 - Task #9: Fix arrow function disambiguation (PENDING)
+
+### Arrow Function Disambiguation (COMPLETE 2026-02-04)
+
+**Problem**: Arrow functions in conditional expressions were being parsed incorrectly, causing TS1005 ("expected") errors.
+
+**Test Cases**:
+```typescript
+a ? (b) : c => d
+a ? b ? c : (d) : e => f
+```
+
+**Root Cause**: When parsing `a ? (b) : c => d`, the arrow function lookahead would see `(b) :` and incorrectly assume the `:` was a return type annotation for an arrow function starting at `(b)`. But in fact, the `:` belongs to the outer conditional `a ? ... : ...`.
+
+**Solution Implemented**:
+1. Added `CONTEXT_FLAG_IN_CONDITIONAL_TRUE` context flag in `src/parser/state.rs`
+2. Set flag before parsing `when_true` in conditional expressions, restore after
+3. Modified `look_ahead_is_arrow_function` to return false when this flag is set
+4. This prevents arrow functions from "stealing" the `:` that belongs to enclosing conditional
+
+**Files Modified**:
+- `src/parser/state.rs`: Added CONTEXT_FLAG_IN_CONDITIONAL_TRUE flag
+- `src/parser/state_expressions.rs`: 
+  - Set/restore flag in conditional expression parsing
+  - Check flag in arrow function lookahead
+
+**Conformance**: 53% on parser tests (up from 52%)
+
+**Commit**: `bc694ea3f` - "fix(parser): implement arrow function disambiguation in conditional expressions"
+
+**Related Tasks**:
+- ✅ Task #9: Fix arrow function disambiguation (COMPLETE)
+- Task #10: Fix trailing commas (PENDING)
+- Task #2: Fix semicolon recovery cascade (DEFERRED)
