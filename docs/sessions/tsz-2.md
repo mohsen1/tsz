@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 3 Active - Task 9: typeof Narrowing (COMPLETE)
+**Status**: 🟢 Phase 3 Complete - All Core Narrowing Tasks Complete
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -623,6 +623,46 @@ However, to achieve the goal of matching `tsc` behavior exactly, additional narr
 - The comment on line 642 said "// includes null" but the code was `TypeId::OBJECT`
 - For `UNKNOWN` it was correct, but for regular types it was wrong
 - This would have caused incorrect narrowing in real-world TypeScript code
+
+### Task 11 Complete ✅
+
+**Commit**: `22ae9368e` - "feat(tsz-2): implement Loop Flow Analysis with fixed-point iteration"
+
+**Discovery**: Previous loop handling used simplified mutation check (is_symbol_mutated_in_loop) which was unreliable.
+
+**Changes Made**:
+1. Implemented proper fixed-point iteration for loop variable types
+   - Added `analyze_loop_fixed_point` helper method
+   - MAX_ITERATIONS = 5 (TypeScript standard)
+   - Union entry type with back-edge types until stabilization
+   - Conservative widening: `union(entry, initial)` if not stabilized
+
+2. Fixed critical infinite recursion bug
+   - **Problem**: `get_flow_type -> check_flow -> LOOP_LABEL -> analyze_loop_fixed_point` caused stack overflow
+   - **Solution**: Inject `current_type` into cache before querying back-edges
+   - Cache key: `(FlowNodeId, SymbolId, TypeId)`
+   - Recursive traversal hits cache and stops at loop header
+
+3. Replaced mutation-based approach in LOOP_LABEL case
+   - Before: Check `is_symbol_mutated_in_loop`, widen to `initial_type` if true
+   - After: Fixed-point iteration unions entry with all back-edge types
+   - Correctly handles variables that change within loops
+
+**Gemini Guidance**: Followed Two-Question Rule
+- Question 1: Asked about approach - confirmed back-edges are marked in FlowNode graph
+- Question 2: Gemini found critical infinite recursion bug and provided cache injection fix
+
+**Example Handled**:
+```typescript
+let x: string | number = "a";
+while (cond) {
+    x; // Type stabilizes to "a" | number after fixed-point iteration
+    x = 1;
+}
+```
+
+**Technical Achievement**:
+This is the "final boss" of CFA correctness. Without fixed-point iteration, variables modified in loops would have incorrect types because the back-edge affects the entry type.
 
 
 ---
