@@ -278,12 +278,21 @@ So tsz finds Array/Boolean/etc in es5.d.ts (loaded via reference) and doesn't em
 
 **Impact**: ~700 missing TS2318 errors → improve conformance by ~5%
 
+**Investigation Findings**:
+- `check_missing_global_types` in `src/checker/type_checking.rs:2542` checks if core types exist
+- Currently uses `self.ctx.has_lib_loaded()` which returns true if ANY lib is loaded
+- Problem: tsz follows `/// <reference lib="es5" />` chains in lib files, so even with `--lib es6`, es5 gets loaded via reference
+- tsc only checks explicitly specified libs for core type existence
+
 **Implementation Plan**:
-1. Add `explicit_libs: Vec<String>` field to CheckOptions
-2. Pass explicit libs from CLI parsing to CheckOptions
-3. Store in CheckerContext during initialization
-4. Modify `check_missing_global_types` to filter by explicit libs
-5. Test with `--lib es6` flag
+1. Add `explicit_libs: Vec<String>` field to CheckerOptions in `src/checker/context.rs`
+2. Track lib names during loading (distinguish explicit vs referenced)
+3. Modify `check_missing_global_types` to check only explicit libs
+4. Update lib loading to track which libs were explicitly specified
+
+**Complexity**: Medium - requires changes to lib loading infrastructure and checker options
+
+**Status**: Investigation complete, implementation pending
 
 ## Notes
 
