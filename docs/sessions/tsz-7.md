@@ -4,7 +4,7 @@
 
 ## Status: ACTIVE
 
-### Session Progress (2026-02-04)
+### Session Progress (2026-02-04) - UPDATED
 
 **Phase 1: Track Foreign Symbols in UsageAnalyzer** ✅ COMPLETE
 
@@ -336,3 +336,36 @@ This is the "inverse" of TSZ-5:
 - TSZ-7: Add imports that are needed but missing (generation)
 
 Together, they provide complete import management for valid .d.ts files.
+
+---
+
+### Session Update (2026-02-04)
+
+**Completed Work:**
+- Phase 4 Task 1: Fix broken relative path calculation ✅
+- Phase 4 Task 2: Implement name collision handling ✅
+
+**Commits:**
+1. `feat(tsz-7): implement proper relative path calculation for imports`
+2. `feat(tsz-7): implement name collision handling for imports`
+3. `docs(tsz-7): mark Phase 4 Task 2 complete - name collision handling`
+4. `docs(tsz-7): update session with Gemini guidance and next steps`
+
+**Next Session Priorities:**
+1. Run specific declarationEmit tests for accurate baseline
+2. Implement Task 4: Track type-only vs value symbol usage
+3. Implement Task 3: Consolidate import emission logic
+
+**Gemini's Guidance:**
+- Run tests BEFORE implementing more features (validates current work)
+- Type-only tracking must come BEFORE consolidation (avoid rewrite)
+- Consolidation is final orchestration step
+
+**Conformance Baseline (All Tests):**
+- 37.9% (5090/13446) - Lower than 42.1% due to running ALL tests
+- Need declaration-specific baseline for accurate measurement
+
+**Technical Notes:**
+- Borrow checker issues resolved by cloning data before mutations
+- Used `std::path::Component` instead of `pathdiff` crate
+- Symbol table access via `table.iter()` not `symbols` (private field)
