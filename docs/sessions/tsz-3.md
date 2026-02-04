@@ -1,7 +1,7 @@
 # Session tsz-3: CFA Orchestration - Switch Exhaustiveness & Narrowing
 
 **Started**: 2026-02-04
-**Status**: ACTIVE
+**Status**: ✅ SWITCH EXHAUSTIVENESS COMPLETE
 **Focus**: Ensure switch statements correctly narrow types and identify exhausted unions
 
 ## Context
@@ -51,34 +51,43 @@ The narrowing functions are invoked and the discriminant narrowing logic runs.
 
 ---
 
-### Task 2: Lazy Type Resolution Bug 🐛 PRE-EXISTING BUG DISCOVERED
-**File**: `src/solver/narrowing.rs`, `src/solver/visitor.rs`
+### Task 2: Lazy Type Resolution Bug ✅ FIXED (Commit: fd12bb38e)
+**File**: `src/solver/narrowing.rs`, `src/checker/control_flow.rs`, `src/solver/flow_analysis.rs`
 
-**Bug Found**: `union_list_id` doesn't resolve Lazy types before checking if type is a union.
-
-**Symptom**:
-```
-Excluding discriminant value 100 from union with 1 members
-```
-
-The Action type should have 2 members (`{ type: "add" }` and `{ type: "remove" }`), but only 1 member is found.
+**Bug Fixed**: Lazy types (type aliases) were not being resolved before union narrowing.
 
 **Root Cause**:
-- Type 123 is a `Lazy` type reference to the Action type alias
-- `union_list_id` uses `extract_type_data` which calls `visit_lazy`
-- Default `visit_lazy` implementation returns `None` instead of resolving the type
-- The slice normalization treats the Lazy type as a single member
-- Narrowing operates on this single-member "union" and produces no change
+- `NarrowingContext` used `TypeDatabase` instead of `QueryDatabase`
+- Couldn't call `evaluate_type()` to resolve Lazy types to their underlying union types
+- Type aliases like `type Action = { type: "add" } | { type: "remove" }` were treated as single members
 
-**Trace**:
-```
-type 123 (Action) -> Lazy(DefId) -> should resolve to Union[{add}, {remove}]
-But: union_list_id(123) -> None -> slice normalization -> [123] -> 1 member
+**Solution**:
+1. Changed `NarrowingContext` to use `QueryDatabase` instead of `TypeDatabase`
+2. Added `resolve_type()` helper that evaluates Lazy types before narrowing
+3. Updated `narrow_by_discriminant` and `narrow_by_excluding_discriminant` to call
+   `resolve_type()` before checking for union members
+4. Updated `FlowAnalyzer`, `FlowTypeEvaluator` to use `QueryDatabase`
+
+**Test Result**: ✅ Switch exhaustiveness now works!
+```typescript
+type Action = { type: "add" } | { type: "remove" };
+
+function handle(action: Action) {
+  switch (action.type) {
+    case "add": break;
+    case "remove": break;
+    default:
+      const impossible: never = action; // Now works correctly!
+  }
+}
 ```
 
-**Status**: 🐛 Pre-existing bug - needs separate fix
-**Next**: Modify `union_list_id` or add helper to resolve Lazy types before extracting union members
-**Note**: This is NOT specific to switch statements - affects all union narrowing on type aliases
+**Impact**: This fix affects ALL union narrowing operations, not just switch statements.
+- Discriminant narrowing on type aliases now works
+- Control flow analysis with type aliases now works correctly
+- If/guard narrowing with type aliases now works correctly
+
+**Status**: ✅ Complete - commit pushed to main
 
 ---
 
@@ -113,8 +122,8 @@ Ensure the checker correctly updates flow-sensitive type cache:
 
 ## Success Criteria
 
-- [ ] Switch statements correctly narrow in each case
-- [ ] Exhausted unions narrow to `never` in default/after switch
+- [x] Switch statements correctly narrow in each case
+- [x] Exhausted unions narrow to `never` in default/after switch
 - [ ] Fall-through cases accumulate narrowing correctly
 - [ ] Flow cache is properly updated during switch traversal
 - [ ] All conformance tests for switch statements pass
