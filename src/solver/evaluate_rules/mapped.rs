@@ -227,6 +227,63 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None
         };
 
+        // HOMOMORPHIC ARRAY/TUPLE PRESERVATION
+        // If source_object is an Array or Tuple, preserve the structure instead of
+        // degrading to a plain Object. This preserves Array methods (push, pop, map)
+        // and tuple-specific behavior.
+        //
+        // Example: type Partial<T> = { [P in keyof T]?: T[P] }
+        //   Partial<[number, string]> should be [number?, string?] (Tuple)
+        //   Partial<number[]> should be (number | undefined)[] (Array)
+        //
+        // CRITICAL: Only preserve if there's NO name remapping (as clause).
+        // Name remapping breaks homomorphism and degrades to plain object.
+        if let Some(source) = source_object {
+            // Name remapping breaks homomorphism - don't preserve structure
+            if mapped.name_type.is_none() {
+                // Resolve the source to check if it's an Array or Tuple
+                let resolved = self.resolve_type_for_property_lookup(source);
+
+                match self.interner().lookup(resolved) {
+                    // Array type: map the element type
+                    Some(TypeKey::Array(element_type)) => {
+                        return self.evaluate_mapped_array(mapped, element_type);
+                    }
+
+                    // Tuple type: map each element
+                    Some(TypeKey::Tuple(tuple_id)) => {
+                        return self.evaluate_mapped_tuple(mapped, tuple_id);
+                    }
+
+                    // ReadonlyArray: map the element type and preserve readonly
+                    Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                        // Check if this is a ReadonlyArray (has readonly numeric index)
+                        // Note: We DON'T check properties.is_empty() because ReadonlyArray<T>
+                        // has methods like length, map, filter, etc. We only care about the index signature.
+                        let shape = self.interner().object_shape(shape_id);
+                        let has_readonly_index = shape
+                            .number_index
+                            .as_ref()
+                            .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
+
+                        if has_readonly_index {
+                            // This is ReadonlyArray<T> - map element type
+                            // Extract the element type from the number index signature
+                            if let Some(index) = &shape.number_index {
+                                return self.evaluate_mapped_array_with_readonly(
+                                    mapped,
+                                    index.value_type,
+                                    true,
+                                );
+                            }
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+        }
+
         // Build the resulting object properties
         let mut properties = Vec::new();
 
@@ -531,5 +588,168 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => None,
         }
+    }
+
+    /// Evaluate a homomorphic mapped type over an Array type.
+    ///
+    /// For example: `type Partial<T> = { [P in keyof T]?: T[P] }`
+    ///   `Partial<number[]>` should produce `(number | undefined)[]`
+    ///
+    /// We instantiate the template with `K = number` to get the mapped element type.
+    fn evaluate_mapped_array(&mut self, mapped: &MappedType, _element_type: TypeId) -> TypeId {
+        // Create substitution: type_param.name -> number
+        let mut subst = TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, TypeId::NUMBER);
+
+        // Substitute into the template to get the mapped element type
+        let mut mapped_element =
+            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+
+        // CRITICAL: Handle optional modifier (Partial<T[]> case)
+        // TypeScript adds undefined to the element type when ? modifier is present
+        if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+            mapped_element = self.interner().union2(mapped_element, TypeId::UNDEFINED);
+        }
+
+        // Check if readonly modifier should be applied
+        let is_readonly = matches!(mapped.readonly_modifier, Some(MappedModifier::Add));
+
+        // Create the new array type
+        if is_readonly {
+            // Wrap the array type in ReadonlyType to get readonly semantics
+            let array_type = self.interner().array(mapped_element);
+            self.interner().intern(TypeKey::ReadonlyType(array_type))
+        } else {
+            self.interner().array(mapped_element)
+        }
+    }
+
+    /// Evaluate a homomorphic mapped type over an Array type with explicit readonly flag.
+    ///
+    /// Used for ReadonlyArray<T> to preserve readonly semantics.
+    fn evaluate_mapped_array_with_readonly(
+        &mut self,
+        mapped: &MappedType,
+        _element_type: TypeId,
+        is_readonly: bool,
+    ) -> TypeId {
+        // Create substitution: type_param.name -> number
+        let mut subst = TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, TypeId::NUMBER);
+
+        // Substitute into the template to get the mapped element type
+        let mut mapped_element =
+            self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+
+        // CRITICAL: Handle optional modifier (Partial<T[]> case)
+        if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+            mapped_element = self.interner().union2(mapped_element, TypeId::UNDEFINED);
+        }
+
+        // Apply readonly modifier if present
+        let final_readonly = match mapped.readonly_modifier {
+            Some(MappedModifier::Add) => true,
+            Some(MappedModifier::Remove) => false,
+            None => is_readonly, // Preserve original readonly status
+        };
+
+        if final_readonly {
+            // Wrap the array type in ReadonlyType to get readonly semantics
+            let array_type = self.interner().array(mapped_element);
+            self.interner().intern(TypeKey::ReadonlyType(array_type))
+        } else {
+            self.interner().array(mapped_element)
+        }
+    }
+
+    /// Evaluate a homomorphic mapped type over a Tuple type.
+    ///
+    /// For example: `type Partial<T> = { [P in keyof T]?: T[P] }`
+    ///   `Partial<[number, string]>` should produce `[number?, string?]`
+    ///
+    /// We instantiate the template with `K = 0, 1, 2...` for each tuple element.
+    /// This preserves tuple structure including optional and rest elements.
+    fn evaluate_mapped_tuple(&mut self, mapped: &MappedType, tuple_id: TupleListId) -> TypeId {
+        use crate::solver::types::TupleElement;
+
+        let tuple_elements = self.interner().tuple_list(tuple_id);
+        let mut mapped_elements = Vec::new();
+
+        for (i, elem) in tuple_elements.iter().enumerate() {
+            // CRITICAL: Handle rest elements specially
+            // For rest elements (...T[]), we cannot use index substitution.
+            // We must map the array type itself.
+            if elem.rest {
+                // Rest elements like ...number[] need to be mapped as arrays
+                // Check if the rest type is an Array
+                let rest_type = elem.type_id;
+                let mapped_rest_type = match self.interner().lookup(rest_type) {
+                    Some(TypeKey::Array(inner_elem)) => {
+                        // Map the inner array element
+                        // Reuse the array mapping logic
+                        self.evaluate_mapped_array(mapped, inner_elem)
+                    }
+                    Some(TypeKey::Tuple(inner_tuple_id)) => {
+                        // Nested tuple in rest - recurse
+                        self.evaluate_mapped_tuple(mapped, inner_tuple_id)
+                    }
+                    _ => {
+                        // Fallback: try index substitution (may not work correctly)
+                        let index_type = self.interner().literal_number(i as f64);
+                        let mut subst = TypeSubstitution::new();
+                        subst.insert(mapped.type_param.name, index_type);
+                        self.evaluate(instantiate_type(self.interner(), mapped.template, &subst))
+                    }
+                };
+
+                // Handle optional modifier for rest elements
+                let final_rest_type =
+                    if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                        self.interner().union2(mapped_rest_type, TypeId::UNDEFINED)
+                    } else {
+                        mapped_rest_type
+                    };
+
+                mapped_elements.push(TupleElement {
+                    type_id: final_rest_type,
+                    name: elem.name,
+                    optional: elem.optional,
+                    rest: true,
+                });
+                continue;
+            }
+
+            // Non-rest elements: use index substitution
+            // Create a literal number type for this tuple position
+            let index_type = self.interner().literal_number(i as f64);
+
+            // Create substitution: type_param.name -> literal number
+            let mut subst = TypeSubstitution::new();
+            subst.insert(mapped.type_param.name, index_type);
+
+            // Substitute into the template to get the mapped element type
+            let mapped_type =
+                self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+
+            // Get the modifiers for this element
+            // Note: readonly is currently unused for tuple elements, but we preserve the logic
+            // in case TypeScript adds readonly tuple element support in the future
+            let (optional, _readonly) = match (mapped.optional_modifier, mapped.readonly_modifier) {
+                (Some(MappedModifier::Add), _) | (_, Some(MappedModifier::Add)) => (true, true),
+                (Some(MappedModifier::Remove), _) | (_, Some(MappedModifier::Remove)) => {
+                    (false, false)
+                }
+                (None, None) => (elem.optional, false), // Preserve original optional
+            };
+
+            mapped_elements.push(TupleElement {
+                type_id: mapped_type,
+                name: elem.name,
+                optional,
+                rest: elem.rest,
+            });
+        }
+
+        self.interner().tuple(mapped_elements)
     }
 }

@@ -25,24 +25,11 @@ The current generic inference and type system has several gaps that cause `any` 
 
 #### Task 1: Nominal BCT Bridge (Binder-Solver Link) (HIGH) ✅ COMPLETE
 **Commits**: `bfcf9a683`, `d5d951612`
+**Status**: Complete with deferred limitation
+**Limitation**: Uses `is_subtype_of` without resolver. Nominal inheritance checks may fail for class hierarchies without structural similarity (e.g. private fields).
+**Action**: Defer fix to Task 1.1 (requires `SubtypeChecker` refactor for `?Sized` support)
 
-**Files**: `src/solver/expression_ops.rs`, `src/solver/subtype.rs`, `src/checker/context.rs`
-
-**Completed Implementation**:
-1. ✅ Fixed `compute_best_common_type` to match TypeScript behavior:
-   - BCT must be one of the input types (NOT synthesized from hierarchy)
-   - `[Dog, Cat]` -> `Dog | Cat` (NOT `Animal` even if both extend Animal)
-   - `[Dog, Animal]` -> `Animal` (Animal is in the set and is a supertype)
-2. ✅ Removed `get_type_hierarchy` approach (was incorrectly finding ancestors not in the set)
-3. ✅ Removed CLASS flag restriction in `get_base_type` (now supports interfaces)
-4. ✅ Fixed narrowing bug: removed duplicate `narrow_to_falsy` implementation
-
-**Known Limitations**:
-- Uses `is_subtype_of` without resolver (SubtypeChecker requires `Sized` but `dyn TypeResolver` is unsized)
-- Nominal inheritance checks may fail for class hierarchies without structural similarity
-- Future work: Add `?Sized` support to `SubtypeChecker` or use QueryDatabase-based checking
-
-#### Task 2: Homomorphic Mapped Type Preservation (MEDIUM)
+#### Task 2: Homomorphic Mapped Type Preservation (HIGH) 🔄 IN PROGRESS
 **File**: `src/solver/evaluate_rules/mapped.rs`
 
 **Goal**: Ensure mapped types preserve array/tuple structure instead of degrading to plain objects.
@@ -51,8 +38,22 @@ The current generic inference and type system has several gaps that cause `any` 
 1. Modify `evaluate_mapped` to detect if source type is `Array` or `Tuple`
 2. Return new `Array`/`Tuple` with template applied to elements
 3. Ensure modifiers (readonly/optional) map correctly
+4. **Critical**: Match `tsc` behavior where `keyof T` implies homomorphic mapping
 
-**Example**: `Partial<number[]>` should be `number[]` with optional elements, not `{ [n: number]: number }`
+**Example**: `Partial<number[]>` should be `(number | undefined)[]`, not `{ [n: number]: number | undefined }`
+
+#### Task 3: Inter-Parameter Constraint Propagation (MEDIUM)
+**File**: `src/solver/infer.rs`
+
+**Goal**: Implement `strengthen_constraints` for fixed-point iteration over type parameter bounds.
+
+#### Task 1.1: Fix Nominal BCT Resolver (Refactor SubtypeChecker) (MEDIUM)
+**File**: `src/solver/subtype.rs`
+
+**Goal**: Allow `SubtypeChecker` to accept `dyn TypeResolver` (unsized) to support nominal hierarchy checks in BCT.
+
+#### Task 4: Contextual Return Inference (LOW)
+**File**: `src/solver/operations.rs`
 
 #### Task 3: Inter-Parameter Constraint Propagation (MEDIUM)
 **File**: `src/solver/infer.rs`
