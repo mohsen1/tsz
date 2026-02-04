@@ -52,7 +52,7 @@ so I can add a debug log."
 ./scripts/ask-gemini.mjs --solver "How does type inference work?"
 
 # NO CONTEXT - Gemini can't help without knowing what you're looking at
-./scripts/ask-gemini.mjs --solver "Why is the wrong type being used?"
+./scripts/ask-gemini.mjs  "Why is the wrong type being used?"
 ```
 
 ### Template for Debugging:
