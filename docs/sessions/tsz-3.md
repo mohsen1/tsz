@@ -1,82 +1,62 @@
 # Session tsz-3 - Discriminated Union Narrowing Fix
 
 **Started**: 2026-02-04
-**Status**: ACTIVE
+**Status**: AWAITING INVESTIGATION
 **Focus**: Fix discriminant narrowing to match TypeScript behavior
 
 ## Context
 
 Previous session (tsz-3-discriminant-narrowing-investigation) revealed that discriminant narrowing is fundamentally broken. Gemini has recommended fixing the `narrow_by_discriminant` logic.
 
-## Current Task: Fix Discriminated Union Narrowing Logic
+## Summary of Work Completed
 
-### Problem Statement
+### 1. Rewrote `narrow_by_discriminant` Function ✅
 
-Current implementation in `src/solver/narrowing.rs` uses `find_discriminants` which enforces strict rules that don't match TypeScript's behavior. TypeScript treats discriminant narrowing as a filtering operation, not strict structure validation.
+**Location**: `src/solver/narrowing.rs` lines ~232-328
 
-### Current Implementation (WRONG)
+**Changes**:
+- Removed dependency on `find_discriminants` (too strict)
+- Implemented filtering logic based on property value matching
+- Uses `is_subtype_of` to check if property type matches literal value
+- Excludes members without the property (x.prop === val implies prop exists)
 
-The `find_discriminants` function (used by `narrow_by_discriminant`) enforces:
-- Property must exist on **all** union members
-- Values must be **unique** across members
-- This is too strict and doesn't match tsc behavior
+**Verification**:
+- Unit tests pass (`test_narrow_by_discriminant`, `test_narrow_by_discriminant_no_match`)
+- All 62 narrowing tests pass
+- Code compiles without errors
 
-### Solution (from Gemini)
+### 2. Discovered Integration Issue ⚠️
 
-**Rewrite `narrow_by_discriminant`** to:
-1. Stop using `find_discriminants`
-2. Iterate through union members of `union_type`
-3. For each member, resolve the type of `property_name`
-4. If property type matches `literal_value` (or is a subtype), include the member
-5. If member doesn't have the property, exclude it (since `x.prop === val` implies prop exists)
-6. Return union of matching members
+**Problem**: Discriminant narrowing is NOT triggered during end-to-end type checking of source files.
 
-**Location**: `src/solver/narrowing.rs` lines ~232-328 (narrow_by_discriminant function)
+**Evidence**:
+- Added extensive debug logging throughout the narrowing code paths
+- Test case: `type D = { done: true, value: 1 } | { done: false, value: 2 }; if (o.done === true) { const y: 1 = o.value; }`
+- `narrow_by_discriminant` is never called when checking actual source files
+- `narrow_by_binary_expr` is never called
+- Flow narrowing infrastructure exists but is not triggered for if statements
 
-## Progress
+**What Works**:
+- Unit tests pass (control flow unit tests including `test_switch_discriminant_narrowing`)
+- Flow analysis infrastructure is in place
+- `apply_flow_narrowing` is called for identifiers
+- The narrowing logic itself is correct
 
-### Completed Work
+**What Doesn't Work**:
+- End-to-end type checking doesn't trigger discriminant narrowing for if statements
+- The connection between flow analysis and type checking appears broken
 
-1. **Rewrote `narrow_by_discriminant`** (commit pending):
-   - Removed dependency on `find_discriminants`
-   - Implemented filtering logic based on property value matching using `is_subtype_of`
-   - Added import for `is_subtype_of` from `subtype` module
-   - Code compiles successfully
+## Current Status
 
-2. **Investigation Findings**:
-   - Control flow unit tests pass (including `test_switch_discriminant_narrowing`)
-   - Flow narrowing infrastructure is in place (`apply_flow_narrowing` is called)
-   - The `narrow_by_discriminant` function is NOT being called in actual type checking
-   - Problem is earlier in the flow analysis - discriminant narrowing is not triggered for if statements
+The core `narrow_by_discriminant` rewrite is **complete and tested**. However, there's a deeper architectural issue: the flow narrowing is not being triggered during type checking of if statements in source files.
 
-### Current Issue
+**This requires investigation into:**
+1. How flow graph building integrates with type checking
+2. Why discriminant_comparison is not called for if statement conditions
+3. Whether flow analysis is enabled/built for regular source files
+4. The connection between binder flow nodes and checker narrowing
 
-**Root Cause**: The discriminant narrowing is NOT being triggered for if statement conditions.
-
-When testing with:
-```typescript
-type D = { done: true, value: 1 } | { done: false, value: 2 };
-let o: D;
-if (o.done === true) {
-    const y: 1 = o.value; // Should work but gets TS2322 error
-}
-```
-
-**Findings**:
-- `narrow_by_discriminant` is never called (added debug logging to confirm)
-- The flow analysis doesn't recognize `o.done === true` as a discriminant comparison
-- Switch statement discriminant narrowing works (unit test passes)
-- If statement discriminant narrowing doesn't work (integration test fails)
-
-### Next Steps
-
-Need to investigate why discriminant narrowing is not triggered for if statements:
-1. Check how flow graph is built for if statement conditions
-2. Verify `discriminant_comparison` is being called for binary expressions
-3. Ensure the flow node for the if statement is correctly set up
-4. Check if the problem is in `narrow_by_binary_expr` or earlier in the flow
-
-### Test Cases
+## Test Cases
 
 ```typescript
 // Case 1: Shared discriminant values
@@ -102,16 +82,26 @@ function f2(x: U2) {
 
 // Case 3: Simple discriminant (current test case)
 type D = { done: true, value: 1 } | { done: false, value: 2 };
-let o: D;
-if (o.done === true) {
-    const y: 1 = o.value; // Expected: no error, Actual: TS2322
+function test(o: D) {
+    if (o.done === true) {
+        const y: 1 = o.value; // Expected: no error, Actual: TS2322
+    }
 }
 ```
 
-### Implementation Plan
+## Next Steps (For Future Session)
 
-1. ✅ Rewrite `narrow_by_discriminant` to filter union members based on property value matching
-2. ⏳ Investigate why discriminant narrowing is not triggered for if statements
-3. ⏳ Debug flow graph construction for if statement conditions
-4. ⏳ Test with simple cases
-5. ⏳ Run conformance tests to verify improvement
+This session has completed the core rewrite but discovered an integration issue. The next session should:
+
+1. **Investigate flow graph integration**: Understand why flow narrowing isn't triggered for if statements
+2. **Check flow analysis initialization**: Verify that flow graphs are built for all source files
+3. **Debug discriminant_comparison path**: Add tracing to understand why discriminant_comparison returns None or isn't called
+4. **Consider alternative approaches**: Maybe if statements need different handling than switch statements
+5. **Test with conformance suite**: Once working, run TypeScript conformance tests
+
+## Commits
+
+- `39f3736af`: feat: rewrite narrow_by_discriminant to filter union members
+- `458d8e4cb`: debug: add extensive logging to discriminant narrowing code paths
+- `2b1732ae2`: chore: remove debug logging from narrowing code
+- `fb7389837`: Merge remote tracking branch 'origin/main'
