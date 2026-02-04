@@ -2722,7 +2722,7 @@ if (typeof x === "string" && x) {
 fn test_typeof_and_truthiness_narrows_in_then_block() {
     use crate::binder::BinderState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use crate::solver::{TypeInterner, Visibility};
 
     let source = r#"
 let x: string | number | null;

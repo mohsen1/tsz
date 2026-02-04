@@ -13,7 +13,7 @@ use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
-use crate::solver::{TypeId, TypeInterner, types::TypeKey};
+use crate::solver::{PropertyInfo, TypeId, TypeInterner, Visibility, types::TypeKey};
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
 
 // =============================================================================
@@ -5408,6 +5408,8 @@ fn test_contextual_typing_for_object_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: types.intern_string("age"),
@@ -5416,6 +5418,8 @@ fn test_contextual_typing_for_object_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -6056,7 +6060,7 @@ c.y;
 
 #[test]
 fn test_strict_null_checks_property_access() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
+    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, Visibility};
 
     // Test property access on nullable types
     let types = TypeInterner::new();
@@ -6069,6 +6073,8 @@ fn test_strict_null_checks_property_access() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Create union type: { x: number } | null
@@ -6094,7 +6100,7 @@ fn test_strict_null_checks_property_access() {
 
 #[test]
 fn test_strict_null_checks_undefined_type() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
+    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, Visibility};
 
     // Test property access on possibly undefined types
     let types = TypeInterner::new();
@@ -6107,6 +6113,8 @@ fn test_strict_null_checks_undefined_type() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Create union type: { y: string } | undefined
@@ -6130,7 +6138,9 @@ fn test_strict_null_checks_undefined_type() {
 
 #[test]
 fn test_strict_null_checks_both_null_and_undefined() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, TypeKey};
+    use crate::solver::{
+        PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, TypeKey, Visibility,
+    };
 
     // Test property access on type that is both null and undefined
     let types = TypeInterner::new();
@@ -6143,6 +6153,8 @@ fn test_strict_null_checks_both_null_and_undefined() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Create union type: { z: boolean } | null | undefined
@@ -6178,7 +6190,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
 
 #[test]
 fn test_strict_null_checks_non_nullable_success() {
-    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
+    use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, Visibility};
 
     // Test that non-nullable types succeed normally
     let types = TypeInterner::new();
@@ -6191,6 +6203,8 @@ fn test_strict_null_checks_non_nullable_success() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let evaluator = PropertyAccessEvaluator::new(&types);
@@ -9283,6 +9297,8 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
                 optional: false,
                 readonly: false,
                 is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
             }]);
             assert_eq!(elem, expected);
         }
