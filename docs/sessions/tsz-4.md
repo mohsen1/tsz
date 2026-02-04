@@ -2,7 +2,7 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟢 COMPLETE - Class Member Synthesis Already Implemented (2026-02-04)
+## Status: 🟡 ACTIVE - 7th Task Defined (2026-02-04)
 
 Completed 6 tasks successfully:
 1. Class Heritage and Generics (type literal formatting fix)
@@ -1208,6 +1208,97 @@ declare class C {
 - Parameter properties need dual emission (as property and constructor param)
 - Readonly synthesis from getter-only properties
 
-------
+---
+
+## Next Task: Visibility-Based Type Inlining and Accessibility Diagnostics (2026-02-04)
+
+**Gemini Consultation Summary:**
+
+Based on the successful completion of core synthesis and module fidelity tasks, the most critical "final boss" for Declaration Emit is **Visibility-Based Type Inlining and Accessibility Diagnostics** - ensuring exported APIs don't reference non-exported types.
+
+### Problem Description
+
+When generating a declaration file, `tsc` must ensure every type in a public signature is "reachable" by the consumer. If a function returns a non-exported type, the emitter must either inline the type, find an alias, or emit a TS4023/TS4058 diagnostic.
+
+### Implementation Plan
+
+**Estimated Complexity: High (4/5)**
+
+#### Phase 1: Visibility Tracking
+- Implement "Visibility Tracker" to determine if a `SymbolId` is reachable from export root
+- Check symbol visibility before emitting `TypeReference`
+- Coordinate with `binder` for symbol information
+
+#### Phase 2: Type Inlining
+- Replace non-exported type references with `TypeLiteral` expansions
+- Inline simple anonymous types and interfaces
+- Handle circular references correctly
+
+#### Phase 3: Accessibility Diagnostics
+- Implement TS4023 ("Exported variable ... has or is using name ... from external module ... but cannot be named")
+- Implement TS4058 (related accessibility errors)
+- Emit diagnostics when types cannot be named
+
+#### Phase 4: Private Member Handling
+- Ensure `private` members are emitted correctly
+- Handle `#private` (hard private) members with special rules
+- Preserve nominality without exposing types
+
+### Files to Modify
+- **`src/declaration_emitter/mod.rs`**: Primary workspace for type emission logic
+  - Update type printing to check visibility
+  - Implement inlining fallback logic
+- **`src/binder`**: Check for existing visibility tracking utilities
+- **`src/cli/diagnostics.rs`**: Define TS4023, TS4058 diagnostic codes
+
+### Success Criteria
+
+**Diagnostic Accuracy:**
+```typescript
+// Input
+interface Internal { x: number; }
+export function foo(): Internal { return { x: 1 }; }
+
+// Should emit TS4023 error
+// Output: Error TS4023: Exported variable 'foo' has or is using name 'Internal' from external module but cannot be named
+```
+
+**Correct Inlining:**
+```typescript
+// Input
+export function createOptions() {
+    return { enabled: true, count: 0 };
+}
+
+// Output ✅
+export declare function createOptions(): {
+    enabled: boolean;
+    count: number;
+};
+```
+
+**Private Members:**
+```typescript
+// Input
+class C {
+    #privateField: number;
+    private regularPrivate: string;
+}
+
+// Output ✅
+declare class C {
+    private #privateField: number;
+    private regularPrivate: string;
+}
+```
+
+### Implementation Pitfalls
+- High complexity - requires deep integration with Checker/Solver
+- Must coordinate with tsz-5 (Import/Export Elision)
+- Circular reference handling in type inlining
+- Diagnostic messages must match tsc exactly
+- Could be 3-5 days of work
+
+---------
 
 ## Previous Task: Type Predicates and Assertion Functions ✅
