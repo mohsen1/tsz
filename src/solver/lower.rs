@@ -1527,6 +1527,9 @@ impl<'a> TypeLowering<'a> {
             // Check for readonly modifier
             let readonly = self.has_readonly_modifier(&sig.modifiers);
 
+            // Get visibility (for type literals, always Public)
+            let visibility = self.get_visibility_from_modifiers(&sig.modifiers);
+
             Some(PropertyInfo {
                 name,
                 type_id: self.lower_type(sig.type_annotation),
@@ -1534,8 +1537,8 @@ impl<'a> TypeLowering<'a> {
                 optional: sig.question_token,
                 readonly,
                 is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
+                visibility,
+                parent_id: None, // Type literals don't have parent_id
             })
         } else {
             None
@@ -1556,6 +1559,27 @@ impl<'a> TypeLowering<'a> {
             }
         }
         false
+    }
+
+    /// Get visibility from modifiers list
+    /// Returns Private, Protected, or Public (default)
+    fn get_visibility_from_modifiers(&self, modifiers: &Option<NodeList>) -> Visibility {
+        use crate::scanner::SyntaxKind;
+
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx) {
+                    match mod_node.kind {
+                        x if x == SyntaxKind::PrivateKeyword as u16 => return Visibility::Private,
+                        x if x == SyntaxKind::ProtectedKeyword as u16 => {
+                            return Visibility::Protected;
+                        }
+                        _ => continue,
+                    }
+                }
+            }
+        }
+        Visibility::Public
     }
 
     /// Check if a modifiers list contains a const keyword (for const type parameters)
