@@ -1,22 +1,43 @@
-# Session tsz-2: Best Common Type (BCT) - Full Implementation
+# Session tsz-2: Type Inference & Evaluation Fixes
 
 **Started**: 2026-02-04
-**Focus**: Implement Rule #32 - Best Common Type algorithm with proper common base class detection and literal widening
+**Current Focus**: Application Type Expansion and Type Evaluation Fixes
 
-## Problem Statement
+## Background
 
-The Best Common Type (BCT) algorithm is the foundation for type inference in:
-- Array literals: `[1, 2]` → `number[]`
-- Conditional expressions: `cond ? a : b` → common type
-- Function return types: inferred from return statements
+Completed Best Common Type (BCT) implementation for class instance types. Now focused on fixing critical type evaluation issues.
 
-**Current Gap**: While `UnsoundnessAudit` marks BCT as "Fully Implemented," the actual code in `src/solver/infer.rs` reveals that the **Common Base Class** logic is a placeholder.
+## Current Session Plan (Redefined 2026-02-04)
 
-**Impact**: Without proper common base class detection:
-```typescript
-class Animal {}
-class Dog extends Animal {}
-class Cat extends Animal {}
+### Priority 1: Conformance Verification
+Run conformance tests to verify BCT implementation against TypeScript:
+```bash
+./scripts/conformance/run.sh --filter="arrayLiteral" --filter="bestCommonType"
+```
+
+### Priority 2: Application Type Expansion
+**File**: `src/solver/evaluate.rs` (lines 110-135)
+
+**Problem**: `Application(Ref(sym), args)` types (like `Reducer<S, A>`) pass through `evaluate` unchanged, causing:
+- Diagnostics to show internal IDs instead of expanded types
+- Broken inference for complex libraries (Redux, etc.)
+- BCT falling back to generic unions instead of finding common structural supertype
+
+**Task**: Implement `TypeEvaluator::evaluate_application` expansion logic
+
+### Priority 3: Nominal Subtyping Fix
+**File**: `src/solver/subtype.rs`
+
+**Problem**: Subtype check treats ObjectWithIndex types structurally instead of nominally
+- `is_subtype_of(Cat, Dog)` incorrectly returns `true`
+- Classes with private/protected members should use nominal (private brand) checking
+
+### Priority 4: BCT for Intersections
+**File**: `src/solver/expression_ops.rs`
+
+Extend BCT to handle intersection types correctly.
+
+---
 
 const animals = [new Dog(), new Cat()];
 // tsc infers: Animal[]
