@@ -299,10 +299,6 @@ impl<'a> NarrowingContext<'a> {
             members.len()
         );
 
-        // TODO: Resolve Lazy/Intersection types before checking properties
-        // This requires QueryDatabase access for resolve_property_access
-        // For now, we only handle direct object types without resolution
-
         let mut matching: Vec<TypeId> = Vec::new();
 
         for &member in members.iter() {
@@ -344,7 +340,16 @@ impl<'a> NarrowingContext<'a> {
                         // - prop is "a" | "b", checking for "a" -> match
                         // - prop is string, checking for "a" -> match
                         // - prop is "a", checking for "a" | "b" -> no match (correct)
-                        let matches = is_subtype_of(self.db, literal_value, prop_info.type_id);
+                        //
+                        // For optional properties, the effective type includes undefined.
+                        let effective_property_type = if prop_info.optional {
+                            self.db.union(vec![prop_info.type_id, TypeId::UNDEFINED])
+                        } else {
+                            prop_info.type_id
+                        };
+
+                        let matches =
+                            is_subtype_of(self.db, literal_value, effective_property_type);
 
                         if matches {
                             trace!(
@@ -509,8 +514,16 @@ impl<'a> NarrowingContext<'a> {
                         // Exclude member ONLY if property type is subtype of excluded value
                         // This means the property is ALWAYS the excluded value
                         // REVERSE of narrow_by_discriminant logic
+                        //
+                        // For optional properties, the effective type includes undefined.
+                        let effective_property_type = if prop_info.optional {
+                            self.db.union(vec![prop_info.type_id, TypeId::UNDEFINED])
+                        } else {
+                            prop_info.type_id
+                        };
+
                         let should_exclude =
-                            is_subtype_of(self.db, prop_info.type_id, excluded_value);
+                            is_subtype_of(self.db, effective_property_type, excluded_value);
 
                         if should_exclude {
                             trace!(
