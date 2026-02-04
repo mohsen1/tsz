@@ -32,5 +32,28 @@
 
 **Result**: ✅ Conformance improved from 51 to 50 failing tests
 
-## Status: READY FOR NEXT TASK
-Test fixed and committed. Ready to pick another simple failing test.
+## Investigation: Additional Tests
+
+### test_readonly_element_access_assignment_2540
+**Issue**: TS2540 not emitted when assigning to readonly property via element access
+
+**Investigation**:
+- Test case: `config["name"] = "error"` where `name` is readonly in interface
+- Code exists in `check_readonly_assignment()` at `src/checker/state_checking.rs:928`
+- Function `is_property_readonly()` exists and checks property readonly flag
+- Issue likely: Interface readonly properties not being flagged in type system
+
+**Complexity**: Medium - Requires understanding how interface readonly properties are represented in type system
+
+### test_import_alias_non_exported_member
+**Issue**: TS2694 not emitted for import alias of non-exported member
+
+**Investigation**:
+- Found explicit TODO in code: `src/checker/import_checker.rs:431`
+- Comment: "TODO: If left is resolved, check if right member exists (TS2694)"
+- Feature not yet implemented
+
+**Complexity**: Medium - Requires implementing export checking for qualified name imports
+
+## Status: NEEDING SIMPLER TEST
+Readonly and import alias issues are medium complexity. Need to find simpler diagnostic emission issue.
