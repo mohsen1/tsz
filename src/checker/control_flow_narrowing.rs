@@ -1892,7 +1892,19 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((TypeGuard::Typeof(type_name.to_string()), target));
         }
 
-        // Check for nullish comparison: x === null, x == null, x !== null
+        // Check for loose equality with null/undefined: x == null, x != null, x == undefined, x != undefined
+        // TypeScript treats these as nullish equality (narrows to null | undefined)
+        let is_loose_equality = bin.operator_token == SyntaxKind::EqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
+        if is_loose_equality {
+            if let Some(_nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
+                // For loose equality with null/undefined, use NullishEquality guard
+                // This narrows to null | undefined in true branch, excludes both in false
+                return Some((TypeGuard::NullishEquality, target));
+            }
+        }
+
+        // Check for strict nullish comparison: x === null, x !== null, x === undefined, x !== undefined
         if let Some(nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
             return Some((TypeGuard::LiteralEquality(nullish_type), target));
         }
