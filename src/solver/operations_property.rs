@@ -6,7 +6,7 @@
 //! Extracted from operations.rs to keep file sizes manageable.
 
 use crate::interner::Atom;
-use crate::solver::evaluate::evaluate_type;
+use crate::solver::evaluate::{TypeEvaluator, evaluate_type};
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
 use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
@@ -1079,6 +1079,30 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 }
             }
 
+            // Lazy types (interfaces, classes, type aliases) need evaluation
+            TypeKey::Lazy(_) => {
+                // Use TypeEvaluator with resolver to properly resolve Lazy types
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
+                let evaluated = evaluator.evaluate(obj_type);
+                if evaluated != obj_type {
+                    // Successfully evaluated - resolve property on the concrete type
+                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+                } else {
+                    // Evaluation didn't change the type - try apparent members
+                    let prop_atom =
+                        prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
+                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                        result
+                    } else {
+                        // Can't evaluate - return ANY to avoid false positives
+                        PropertyAccessResult::Success {
+                            type_id: TypeId::ANY,
+                            from_index_signature: false,
+                        }
+                    }
+                }
+            }
+
             _ => {
                 // Unknown type key - try apparent members before giving up
                 let prop_atom = prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
@@ -1548,6 +1572,13 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
 
 pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
     match interner.lookup(type_id) {
+        Some(TypeKey::Lazy(_)) => {
+            // Resolve lazy types (interfaces, classes, type aliases) before checking readonly
+            // Note: This function uses NoopResolver, which is correct for the readonly check
+            // The readonly metadata is stored in the type itself, not dependent on resolution
+            let resolved = evaluate_type(interner, type_id);
+            property_is_readonly(interner, resolved, prop_name)
+        }
         Some(TypeKey::ReadonlyType(inner)) => {
             if let Some(TypeKey::Array(_) | TypeKey::Tuple(_)) = interner.lookup(inner)
                 && is_numeric_index_name(prop_name)

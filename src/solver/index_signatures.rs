@@ -192,6 +192,12 @@ impl<'a> TypeVisitor for ReadonlyChecker<'a> {
         self.visit_type(self.db, inner_type)
     }
 
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        // Resolve lazy types (interfaces, classes, type aliases) before checking readonly
+        let resolved = crate::solver::evaluate::evaluate_type(self.db, TypeId(def_id));
+        self.visit_type(self.db, resolved)
+    }
+
     fn default_output() -> Self::Output {
         false
     }
@@ -274,6 +280,12 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
             string_index: None,
             number_index: None,
         }
+    }
+
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        // Resolve lazy types (interfaces, classes, type aliases) before collecting index info
+        let resolved = crate::solver::evaluate::evaluate_type(self.db, TypeId(def_id));
+        self.visit_type(self.db, resolved)
     }
 
     fn default_output() -> Self::Output {
