@@ -25,15 +25,23 @@
 - Document blockers quickly and move on
 - Focus on achievable wins
 
-## Test Investigation: test_enum_namespace_merging
+## Current Focus: Deep Dive on Enum/Namespace Merging
 
-**Issue**: TS2345 emitted for enum namespace merging
-- Test: enum and namespace with same name should merge
-- tsc: No errors (enum and namespace merge successfully)
-- tsz: "Argument of type 'Direction' is not assignable to parameter of type 'Direction'"
-- Root cause: Enum and namespace not being merged into single type
+**Target Test**: test_enum_namespace_merging
+- **Issue**: Enum and namespace with same name not merging properly
+- **tsc**: No errors (enum and namespace merge successfully)
+- **tsz**: TS2345 "Argument of type 'Direction' is not assignable to parameter of type 'Direction'"
+- **Root Cause**: Two separate types created instead of one merged Symbol
 
-**Status**: DEFERRED - Namespace/enum merging complexity
+### Architectural Context
+- Maps to Item 44 in TS_UNSOUNDNESS_CATALOG.md (Module Augmentation Merging)
+- Binder responsibility: Merge all declarations for same SymbolId
+- **High Impact**: Fix may resolve multiple cascading errors
 
-## Current Task: Finding Simple Fixes
-Continuing to review remaining 46 tests for simple expectation corrections.
+### Investigation Plan
+1. Review TS_UNSOUNDNESS_CATALOG.md Item 44
+2. Use TSZ_LOG tracing to see symbol creation
+3. Find where enum/namespace merging should occur
+4. Implement fix in Binder
+
+## Status: PIVOTING TO DEEP DIVE
