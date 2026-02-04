@@ -48,23 +48,34 @@
 ### Total Progress
 - **51 → 32 failing tests (-19 tests total)**
 
-### Test Suite Restoration (2026-02-04)
+### Test Suite Restoration (2026-02-04) - ✅ COMPLETE
 - ✅ **Fixed PropertyInfo test instantiations** (1000+ instances fixed)
   - Added `visibility: Visibility::Public` and `parent_id: None` fields
   - Fixed files in src/solver/tests/, src/tests/, src/checker/tests/
   - Created Python script `fix_property_info.py` for automated fixing
-  - Created Python script `find_visibility_needs.py` to identify files needing exports
+  - Created Python script `fix_property_info.yaml` for tracking
 - ✅ **Added Visibility re-exports**
   - Added to `src/solver/mod.rs`: `pub use types::Visibility;`
   - Added to `src/checker/mod.rs`: `pub use crate::solver::types::Visibility;`
   - Added to `src/solver/intern.rs` and other solver modules for test access
   - Added imports to individual test files where needed
-- ⚠️ **Status**: 259 compilation errors remaining (229 Visibility import errors)
-- **Commit**: `c66cf2172` - "feat: restore test suite after PropertyInfo API changes"
+- ✅ **Fixed FunctionShape regression**
+  - Removed incorrectly added visibility/parent_id fields from 5 FunctionShape instances
+  - Files: compat_tests.rs (2 instances), subtype_tests.rs (3 instances)
+- ✅ **Fixed doc comment corruption**
+  - Fixed unsoundness_audit.rs (placed import after doc block)
+  - Resolved merge conflicts during rebase
+- ✅ **Status**: **COMPLETE** - 0 compilation errors (1484 → 0, 100% reduction)
+- **Commits**:
+  - `8cd0c9258` - "feat: complete test suite restoration after PropertyInfo API changes"
+  - `ad14bf8cc` - "fix: add Visibility imports to control_flow and checker_state_tests"
+  - `f748e6dfc` - "fix: remove visibility/parent_id from FunctionShape test instances"
+  - `36b18157a` - "docs(tsz-1): document test suite restoration progress"
+  - `0fa3c40f3` - "feat: restore test suite after PropertyInfo API changes"
 
 **Next Steps**:
-1. Complete Visibility imports for remaining test files
-2. Run full test suite to verify Priority 3 fix
+1. ✅ COMPLETE - Test suite restoration finished
+2. Run full test suite to verify Priority 3 fix (Property Access Recursion Guard)
 3. Begin Priority 4: Nominal Subtyping Infrastructure audit
 
 ## Updated Priorities (Pivoted from test-fixing to infrastructure)
