@@ -30,7 +30,7 @@ pub use crate::solver::binary_ops::{BinaryOpEvaluator, BinaryOpResult, Primitive
 
 use crate::interner::Atom;
 use crate::solver::diagnostics::PendingDiagnostic;
-use crate::solver::infer::{InferenceContext, InferencePriority};
+use crate::solver::infer::InferenceContext;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -655,6 +655,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             })
             .collect();
 
+        // 2.5. Seed contextual constraints from return type BEFORE argument processing
+        // This enables downward inference: `let x: string = id(...)` should infer T = string
+        // Contextual hints use lower priority so explicit arguments can override
+        if let Some(ctx_type) = self.contextual_type {
+            let return_type_with_placeholders =
+                instantiate_type(self.interner, func.return_type, &substitution);
+            // CORRECT: return_type <: ctx_type
+            // In assignment `let x: Target = Source`, the relation is `Source <: Target`
+            // Therefore, the return value must be assignable to the expected type
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                return_type_with_placeholders, // source
+                ctx_type,                      // target
+                crate::solver::infer::InferencePriority::Contextual,
+            );
+        }
+
         // 3. Collect constraints from arguments
         let rest_tuple_inference =
             self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
@@ -696,25 +714,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             // arg_type <: target_type
-            self.constrain_types(&mut infer_ctx, &var_map, arg_type, target_type);
-        }
-        if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
-            self.constrain_types(&mut infer_ctx, &var_map, tuple_type, target_type);
-        }
-
-        // 3.5. Apply contextual type constraint to return type
-        // This enables inference from the expected type: `let x: string = id(...)` should infer T = string
-        if let Some(ctx_type) = self.contextual_type {
-            let return_type_with_placeholders =
-                instantiate_type(self.interner, func.return_type, &substitution);
-            // CORRECT: return_type <: ctx_type
-            // In assignment `let x: Target = Source`, the relation is `Source <: Target`
-            // Therefore, the return value must be assignable to the expected type
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,
-                return_type_with_placeholders, // source
-                ctx_type,                      // target
+                arg_type,
+                target_type,
+                crate::solver::infer::InferencePriority::Argument,
+            );
+        }
+        if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
+            self.constrain_types(
+                &mut infer_ctx,
+                &var_map,
+                tuple_type,
+                target_type,
+                crate::solver::infer::InferencePriority::Argument,
             );
         }
 
@@ -1341,6 +1355,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: TypeId,
         target: TypeId,
+        priority: crate::solver::infer::InferencePriority,
     ) {
         if !self.constraint_pairs.borrow_mut().insert((source, target)) {
             return;
@@ -1357,7 +1372,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Perform the actual constraint collection
-        self.constrain_types_impl(ctx, var_map, source, target);
+        self.constrain_types_impl(ctx, var_map, source, target, priority);
 
         // Decrement depth on return
         *self.constraint_recursion_depth.borrow_mut() -= 1;
@@ -1370,6 +1385,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: TypeId,
         target: TypeId,
+        priority: crate::solver::infer::InferencePriority,
     ) {
         if source == target {
             return;
@@ -1377,7 +1393,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // If target is an inference placeholder, add lower bound: source <: var
         if let Some(&var) = var_map.get(&target) {
-            ctx.add_candidate(var, source, InferencePriority::Argument);
+            ctx.add_candidate(var, source, priority);
             return;
         }
 
@@ -1395,23 +1411,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         match (source_key, target_key) {
             (Some(TypeKey::ReadonlyType(s_inner)), Some(TypeKey::ReadonlyType(t_inner))) => {
-                self.constrain_types(ctx, var_map, s_inner, t_inner);
+                self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
             }
             (Some(TypeKey::ReadonlyType(s_inner)), _) => {
-                self.constrain_types(ctx, var_map, s_inner, target);
+                self.constrain_types(ctx, var_map, s_inner, target, priority);
             }
             (_, Some(TypeKey::ReadonlyType(t_inner))) => {
-                self.constrain_types(ctx, var_map, source, t_inner);
+                self.constrain_types(ctx, var_map, source, t_inner, priority);
             }
             (
                 Some(TypeKey::IndexAccess(s_obj, s_idx)),
                 Some(TypeKey::IndexAccess(t_obj, t_idx)),
             ) => {
-                self.constrain_types(ctx, var_map, s_obj, t_obj);
-                self.constrain_types(ctx, var_map, s_idx, t_idx);
+                self.constrain_types(ctx, var_map, s_obj, t_obj, priority);
+                self.constrain_types(ctx, var_map, s_idx, t_idx, priority);
             }
             (Some(TypeKey::KeyOf(s_inner)), Some(TypeKey::KeyOf(t_inner))) => {
-                self.constrain_types(ctx, var_map, t_inner, s_inner);
+                self.constrain_types(ctx, var_map, t_inner, s_inner, priority);
             }
             (Some(TypeKey::TemplateLiteral(s_spans)), Some(TypeKey::TemplateLiteral(t_spans))) => {
                 let s_spans = self.interner.template_list(s_spans);
@@ -1433,60 +1449,60 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if let (TemplateSpan::Type(s_type), TemplateSpan::Type(t_type)) =
                         (s_span, t_span)
                     {
-                        self.constrain_types(ctx, var_map, *s_type, *t_type);
+                        self.constrain_types(ctx, var_map, *s_type, *t_type, priority);
                     }
                 }
             }
             (Some(TypeKey::IndexAccess(s_obj, s_idx)), _) => {
                 let evaluated = self.interner.evaluate_index_access(s_obj, s_idx);
                 if evaluated != source {
-                    self.constrain_types(ctx, var_map, evaluated, target);
+                    self.constrain_types(ctx, var_map, evaluated, target, priority);
                 }
             }
             (_, Some(TypeKey::IndexAccess(t_obj, t_idx))) => {
                 let evaluated = self.interner.evaluate_index_access(t_obj, t_idx);
                 if evaluated != target {
-                    self.constrain_types(ctx, var_map, source, evaluated);
+                    self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }
             }
             (Some(TypeKey::Conditional(cond_id)), _) => {
                 let cond = self.interner.conditional_type(cond_id);
                 let evaluated = self.interner.evaluate_conditional(cond.as_ref());
                 if evaluated != source {
-                    self.constrain_types(ctx, var_map, evaluated, target);
+                    self.constrain_types(ctx, var_map, evaluated, target, priority);
                 }
             }
             (_, Some(TypeKey::Conditional(cond_id))) => {
                 let cond = self.interner.conditional_type(cond_id);
                 let evaluated = self.interner.evaluate_conditional(cond.as_ref());
                 if evaluated != target {
-                    self.constrain_types(ctx, var_map, source, evaluated);
+                    self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }
             }
             (Some(TypeKey::Mapped(mapped_id)), _) => {
                 let mapped = self.interner.mapped_type(mapped_id);
                 let evaluated = self.interner.evaluate_mapped(mapped.as_ref());
                 if evaluated != source {
-                    self.constrain_types(ctx, var_map, evaluated, target);
+                    self.constrain_types(ctx, var_map, evaluated, target, priority);
                 }
             }
             (_, Some(TypeKey::Mapped(mapped_id))) => {
                 let mapped = self.interner.mapped_type(mapped_id);
                 let evaluated = self.interner.evaluate_mapped(mapped.as_ref());
                 if evaluated != target {
-                    self.constrain_types(ctx, var_map, source, evaluated);
+                    self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }
             }
             (Some(TypeKey::Union(s_members)), _) => {
                 let s_members = self.interner.type_list(s_members);
                 for &member in s_members.iter() {
-                    self.constrain_types(ctx, var_map, member, target);
+                    self.constrain_types(ctx, var_map, member, target, priority);
                 }
             }
             (_, Some(TypeKey::Intersection(t_members))) => {
                 let t_members = self.interner.type_list(t_members);
                 for &member in t_members.iter() {
-                    self.constrain_types(ctx, var_map, source, member);
+                    self.constrain_types(ctx, var_map, source, member, priority);
                 }
             }
             (_, Some(TypeKey::Union(t_members))) => {
@@ -1506,7 +1522,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if count == 1
                     && let Some(member) = non_nullable
                 {
-                    self.constrain_types(ctx, var_map, source, member);
+                    self.constrain_types(ctx, var_map, source, member, priority);
                     return;
                 }
 
@@ -1527,47 +1543,47 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && let Some(member) = placeholder_member
                     && !self.defaulted_placeholders.contains(&member)
                 {
-                    self.constrain_types(ctx, var_map, source, member);
+                    self.constrain_types(ctx, var_map, source, member, priority);
                 }
             }
             (Some(TypeKey::Array(s_elem)), Some(TypeKey::Array(t_elem))) => {
-                self.constrain_types(ctx, var_map, s_elem, t_elem);
+                self.constrain_types(ctx, var_map, s_elem, t_elem, priority);
             }
             (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::Array(t_elem))) => {
                 let s_elems = self.interner.tuple_list(s_elems);
                 for s_elem in s_elems.iter() {
                     if s_elem.rest {
                         let rest_elem_type = self.rest_element_type(s_elem.type_id);
-                        self.constrain_types(ctx, var_map, rest_elem_type, t_elem);
+                        self.constrain_types(ctx, var_map, rest_elem_type, t_elem, priority);
                     } else {
-                        self.constrain_types(ctx, var_map, s_elem.type_id, t_elem);
+                        self.constrain_types(ctx, var_map, s_elem.type_id, t_elem, priority);
                     }
                 }
             }
             (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::Tuple(t_elems))) => {
                 let s_elems = self.interner.tuple_list(s_elems);
                 let t_elems = self.interner.tuple_list(t_elems);
-                self.constrain_tuple_types(ctx, var_map, &s_elems, &t_elems);
+                self.constrain_tuple_types(ctx, var_map, &s_elems, &t_elems, priority);
             }
             // Array/Tuple to Object/ObjectWithIndex: constrain elements against index signatures
             (Some(TypeKey::Array(s_elem)), Some(TypeKey::Object(t_shape_id))) => {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 // Constrain array element type against target's string/number index signatures
                 if let Some(string_idx) = &t_shape.string_index {
-                    self.constrain_types(ctx, var_map, s_elem, string_idx.value_type);
+                    self.constrain_types(ctx, var_map, s_elem, string_idx.value_type, priority);
                 }
                 if let Some(number_idx) = &t_shape.number_index {
-                    self.constrain_types(ctx, var_map, s_elem, number_idx.value_type);
+                    self.constrain_types(ctx, var_map, s_elem, number_idx.value_type, priority);
                 }
             }
             (Some(TypeKey::Array(s_elem)), Some(TypeKey::ObjectWithIndex(t_shape_id))) => {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 // Constrain array element type against target's string/number index signatures
                 if let Some(string_idx) = &t_shape.string_index {
-                    self.constrain_types(ctx, var_map, s_elem, string_idx.value_type);
+                    self.constrain_types(ctx, var_map, s_elem, string_idx.value_type, priority);
                 }
                 if let Some(number_idx) = &t_shape.number_index {
-                    self.constrain_types(ctx, var_map, s_elem, number_idx.value_type);
+                    self.constrain_types(ctx, var_map, s_elem, number_idx.value_type, priority);
                 }
             }
             (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::Object(t_shape_id))) => {
@@ -1581,10 +1597,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         s_elem.type_id
                     };
                     if let Some(string_idx) = &t_shape.string_index {
-                        self.constrain_types(ctx, var_map, elem_type, string_idx.value_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            elem_type,
+                            string_idx.value_type,
+                            priority,
+                        );
                     }
                     if let Some(number_idx) = &t_shape.number_index {
-                        self.constrain_types(ctx, var_map, elem_type, number_idx.value_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            elem_type,
+                            number_idx.value_type,
+                            priority,
+                        );
                     }
                 }
             }
@@ -1599,10 +1627,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         s_elem.type_id
                     };
                     if let Some(string_idx) = &t_shape.string_index {
-                        self.constrain_types(ctx, var_map, elem_type, string_idx.value_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            elem_type,
+                            string_idx.value_type,
+                            priority,
+                        );
                     }
                     if let Some(number_idx) = &t_shape.number_index {
-                        self.constrain_types(ctx, var_map, elem_type, number_idx.value_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            elem_type,
+                            number_idx.value_type,
+                            priority,
+                        );
                     }
                 }
             }
@@ -1611,24 +1651,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_fn = self.interner.function_shape(t_fn_id);
                 // Contravariant parameters: target_param <: source_param
                 for (s_p, t_p) in s_fn.params.iter().zip(t_fn.params.iter()) {
-                    self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id);
+                    self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
                 }
                 if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {
-                    self.constrain_types(ctx, var_map, t_this, s_this);
+                    self.constrain_types(ctx, var_map, t_this, s_this, priority);
                 }
                 // Covariant return: source_return <: target_return
-                self.constrain_types(ctx, var_map, s_fn.return_type, t_fn.return_type);
+                self.constrain_types(ctx, var_map, s_fn.return_type, t_fn.return_type, priority);
             }
             (Some(TypeKey::Function(s_fn_id)), Some(TypeKey::Callable(t_callable_id))) => {
                 let s_fn = self.interner.function_shape(s_fn_id);
                 let t_callable = self.interner.callable_shape(t_callable_id);
                 for sig in &t_callable.call_signatures {
-                    self.constrain_function_to_call_signature(ctx, var_map, &s_fn, sig);
+                    self.constrain_function_to_call_signature(ctx, var_map, &s_fn, sig, priority);
                 }
                 if s_fn.is_constructor && t_callable.construct_signatures.len() == 1 {
                     let sig = &t_callable.construct_signatures[0];
                     if sig.type_params.is_empty() {
-                        self.constrain_function_to_call_signature(ctx, var_map, &s_fn, sig);
+                        self.constrain_function_to_call_signature(
+                            ctx, var_map, &s_fn, sig, priority,
+                        );
                     }
                 }
             }
@@ -1641,6 +1683,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &s_callable.call_signatures,
                     &t_callable.call_signatures,
                     false,
+                    priority,
                 );
                 self.constrain_matching_signatures(
                     ctx,
@@ -1648,6 +1691,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &s_callable.construct_signatures,
                     &t_callable.construct_signatures,
                     true,
+                    priority,
                 );
             }
             (Some(TypeKey::Callable(s_callable_id)), Some(TypeKey::Function(t_fn_id))) => {
@@ -1656,7 +1700,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if s_callable.call_signatures.len() == 1 {
                     let sig = &s_callable.call_signatures[0];
                     if sig.type_params.is_empty() {
-                        self.constrain_call_signature_to_function(ctx, var_map, sig, &t_fn);
+                        self.constrain_call_signature_to_function(
+                            ctx, var_map, sig, &t_fn, priority,
+                        );
                     }
                 } else if let Some(index) = self.select_signature_for_target(
                     &s_callable.call_signatures,
@@ -1665,13 +1711,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     false,
                 ) {
                     let sig = &s_callable.call_signatures[index];
-                    self.constrain_call_signature_to_function(ctx, var_map, sig, &t_fn);
+                    self.constrain_call_signature_to_function(ctx, var_map, sig, &t_fn, priority);
                 }
             }
             (Some(TypeKey::Object(s_shape_id)), Some(TypeKey::Object(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                self.constrain_properties(ctx, var_map, &s_shape.properties, &t_shape.properties);
+                self.constrain_properties(
+                    ctx,
+                    var_map,
+                    &s_shape.properties,
+                    &t_shape.properties,
+                    priority,
+                );
             }
             (
                 Some(TypeKey::ObjectWithIndex(s_shape_id)),
@@ -1679,46 +1731,80 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                self.constrain_properties(ctx, var_map, &s_shape.properties, &t_shape.properties);
+                self.constrain_properties(
+                    ctx,
+                    var_map,
+                    &s_shape.properties,
+                    &t_shape.properties,
+                    priority,
+                );
                 if let (Some(s_idx), Some(t_idx)) = (&s_shape.string_index, &t_shape.string_index) {
-                    self.constrain_types(ctx, var_map, s_idx.value_type, t_idx.value_type);
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        s_idx.value_type,
+                        t_idx.value_type,
+                        priority,
+                    );
                 }
                 if let (Some(s_idx), Some(t_idx)) = (&s_shape.number_index, &t_shape.number_index) {
-                    self.constrain_types(ctx, var_map, s_idx.value_type, t_idx.value_type);
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        s_idx.value_type,
+                        t_idx.value_type,
+                        priority,
+                    );
                 }
                 self.constrain_properties_against_index_signatures(
                     ctx,
                     var_map,
                     &s_shape.properties,
                     &t_shape,
+                    priority,
                 );
                 self.constrain_index_signatures_to_properties(
                     ctx,
                     var_map,
                     &s_shape,
                     &t_shape.properties,
+                    priority,
                 );
             }
             (Some(TypeKey::Object(s_shape_id)), Some(TypeKey::ObjectWithIndex(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                self.constrain_properties(ctx, var_map, &s_shape.properties, &t_shape.properties);
+                self.constrain_properties(
+                    ctx,
+                    var_map,
+                    &s_shape.properties,
+                    &t_shape.properties,
+                    priority,
+                );
                 self.constrain_properties_against_index_signatures(
                     ctx,
                     var_map,
                     &s_shape.properties,
                     &t_shape,
+                    priority,
                 );
             }
             (Some(TypeKey::ObjectWithIndex(s_shape_id)), Some(TypeKey::Object(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                self.constrain_properties(ctx, var_map, &s_shape.properties, &t_shape.properties);
+                self.constrain_properties(
+                    ctx,
+                    var_map,
+                    &s_shape.properties,
+                    &t_shape.properties,
+                    priority,
+                );
                 self.constrain_index_signatures_to_properties(
                     ctx,
                     var_map,
                     &s_shape,
                     &t_shape.properties,
+                    priority,
                 );
             }
             // Object/ObjectWithIndex to Array/Tuple: constrain index signatures to sequence element type
@@ -1726,20 +1812,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 // Constrain source's string/number index signatures against array element type
                 if let Some(string_idx) = &s_shape.string_index {
-                    self.constrain_types(ctx, var_map, string_idx.value_type, t_elem);
+                    self.constrain_types(ctx, var_map, string_idx.value_type, t_elem, priority);
                 }
                 if let Some(number_idx) = &s_shape.number_index {
-                    self.constrain_types(ctx, var_map, number_idx.value_type, t_elem);
+                    self.constrain_types(ctx, var_map, number_idx.value_type, t_elem, priority);
                 }
             }
             (Some(TypeKey::ObjectWithIndex(s_shape_id)), Some(TypeKey::Array(t_elem))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 // Constrain source's string/number index signatures against array element type
                 if let Some(string_idx) = &s_shape.string_index {
-                    self.constrain_types(ctx, var_map, string_idx.value_type, t_elem);
+                    self.constrain_types(ctx, var_map, string_idx.value_type, t_elem, priority);
                 }
                 if let Some(number_idx) = &s_shape.number_index {
-                    self.constrain_types(ctx, var_map, number_idx.value_type, t_elem);
+                    self.constrain_types(ctx, var_map, number_idx.value_type, t_elem, priority);
                 }
             }
             (Some(TypeKey::Object(s_shape_id)), Some(TypeKey::Tuple(t_elems))) => {
@@ -1753,10 +1839,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         t_elem.type_id
                     };
                     if let Some(string_idx) = &s_shape.string_index {
-                        self.constrain_types(ctx, var_map, string_idx.value_type, elem_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            string_idx.value_type,
+                            elem_type,
+                            priority,
+                        );
                     }
                     if let Some(number_idx) = &s_shape.number_index {
-                        self.constrain_types(ctx, var_map, number_idx.value_type, elem_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            number_idx.value_type,
+                            elem_type,
+                            priority,
+                        );
                     }
                 }
             }
@@ -1771,10 +1869,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         t_elem.type_id
                     };
                     if let Some(string_idx) = &s_shape.string_index {
-                        self.constrain_types(ctx, var_map, string_idx.value_type, elem_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            string_idx.value_type,
+                            elem_type,
+                            priority,
+                        );
                     }
                     if let Some(number_idx) = &s_shape.number_index {
-                        self.constrain_types(ctx, var_map, number_idx.value_type, elem_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            number_idx.value_type,
+                            elem_type,
+                            priority,
+                        );
                     }
                 }
             }
@@ -1783,12 +1893,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_app = self.interner.type_application(t_app_id);
                 if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                        self.constrain_types(ctx, var_map, *s_arg, *t_arg);
+                        self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                     }
                 }
             }
             (Some(TypeKey::Enum(_, s_mem)), Some(TypeKey::Enum(_, t_mem))) => {
-                self.constrain_types(ctx, var_map, s_mem, t_mem);
+                self.constrain_types(ctx, var_map, s_mem, t_mem, priority);
             }
             _ => {}
         }
@@ -1800,6 +1910,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source_props: &[PropertyInfo],
         target_props: &[PropertyInfo],
+        priority: crate::solver::infer::InferencePriority,
     ) {
         let mut source_idx = 0;
         let mut target_idx = 0;
@@ -1810,16 +1921,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             match source.name.cmp(&target.name) {
                 std::cmp::Ordering::Equal => {
-                    self.constrain_types(ctx, var_map, source.type_id, target.type_id);
+                    self.constrain_types(ctx, var_map, source.type_id, target.type_id, priority);
                     // Check write type compatibility for mutable targets
                     // A readonly source cannot satisfy a mutable target
                     if !target.readonly {
                         // If source is readonly but target is mutable, this is a mismatch
                         // We constrain with ERROR to signal the failure
                         if source.readonly {
-                            self.constrain_types(ctx, var_map, TypeId::ERROR, target.write_type);
+                            self.constrain_types(
+                                ctx,
+                                var_map,
+                                TypeId::ERROR,
+                                target.write_type,
+                                priority,
+                            );
                         }
-                        self.constrain_types(ctx, var_map, target.write_type, source.write_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            target.write_type,
+                            source.write_type,
+                            priority,
+                        );
                     }
                     source_idx += 1;
                     target_idx += 1;
@@ -1833,7 +1956,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // to properly infer type parameters (e.g., {} satisfies {a?: T})
                     if target.optional {
                         // Use undefined as the lower bound for missing optional properties
-                        self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            TypeId::UNDEFINED,
+                            target.type_id,
+                            priority,
+                        );
                     }
                     target_idx += 1;
                 }
@@ -1845,7 +1974,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let target = &target_props[target_idx];
             if target.optional {
                 // Use undefined as the lower bound for missing optional properties
-                self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id);
+                self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
             }
             target_idx += 1;
         }
@@ -1857,14 +1986,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &FunctionShape,
         target: &CallSignature,
+        priority: crate::solver::infer::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id);
+            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
         }
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_types(ctx, var_map, t_this, s_this);
+            self.constrain_types(ctx, var_map, t_this, s_this, priority);
         }
-        self.constrain_types(ctx, var_map, source.return_type, target.return_type);
+        self.constrain_types(
+            ctx,
+            var_map,
+            source.return_type,
+            target.return_type,
+            priority,
+        );
     }
 
     fn constrain_call_signature_to_function(
@@ -1873,14 +2009,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &CallSignature,
         target: &FunctionShape,
+        priority: crate::solver::infer::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id);
+            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
         }
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_types(ctx, var_map, t_this, s_this);
+            self.constrain_types(ctx, var_map, t_this, s_this, priority);
         }
-        self.constrain_types(ctx, var_map, source.return_type, target.return_type);
+        self.constrain_types(
+            ctx,
+            var_map,
+            source.return_type,
+            target.return_type,
+            priority,
+        );
     }
 
     fn constrain_call_signature_to_call_signature(
@@ -1889,14 +2032,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &CallSignature,
         target: &CallSignature,
+        priority: crate::solver::infer::InferencePriority,
     ) {
         for (s_p, t_p) in source.params.iter().zip(target.params.iter()) {
-            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id);
+            self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
         }
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_types(ctx, var_map, t_this, s_this);
+            self.constrain_types(ctx, var_map, t_this, s_this, priority);
         }
-        self.constrain_types(ctx, var_map, source.return_type, target.return_type);
+        self.constrain_types(
+            ctx,
+            var_map,
+            source.return_type,
+            target.return_type,
+            priority,
+        );
     }
 
     fn function_type_from_signature(&self, sig: &CallSignature, is_constructor: bool) -> TypeId {
@@ -1963,6 +2113,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_signatures: &[CallSignature],
         target_signatures: &[CallSignature],
         is_constructor: bool,
+        priority: crate::solver::infer::InferencePriority,
     ) {
         if source_signatures.is_empty() || target_signatures.is_empty() {
             return;
@@ -1973,7 +2124,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let target_sig = &target_signatures[0];
             if source_sig.type_params.is_empty() && target_sig.type_params.is_empty() {
                 self.constrain_call_signature_to_call_signature(
-                    ctx, var_map, source_sig, target_sig,
+                    ctx, var_map, source_sig, target_sig, priority,
                 );
             }
             return;
@@ -2001,7 +2152,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
                 if let Some(source_sig) = source_sig {
                     self.constrain_call_signature_to_call_signature(
-                        ctx, var_map, source_sig, target_sig,
+                        ctx, var_map, source_sig, target_sig, priority,
                     );
                 }
             }
@@ -2014,7 +2165,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 for target_sig in target_signatures {
                     if target_sig.type_params.is_empty() {
                         self.constrain_call_signature_to_call_signature(
-                            ctx, var_map, source_sig, target_sig,
+                            ctx, var_map, source_sig, target_sig, priority,
                         );
                     }
                 }
@@ -2033,7 +2184,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ) {
                     let source_sig = &source_signatures[index];
                     self.constrain_call_signature_to_call_signature(
-                        ctx, var_map, source_sig, target_sig,
+                        ctx, var_map, source_sig, target_sig, priority,
                     );
                 }
             }
@@ -2046,6 +2197,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source_props: &[PropertyInfo],
         target: &ObjectShape,
+        priority: crate::solver::infer::InferencePriority,
     ) {
         let string_index = target.string_index.as_ref();
         let number_index = target.number_index.as_ref();
@@ -2060,11 +2212,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if let Some(number_idx) = number_index
                 && utils::is_numeric_property_name(self.interner, prop.name)
             {
-                self.constrain_types(ctx, var_map, prop_type, number_idx.value_type);
+                self.constrain_types(ctx, var_map, prop_type, number_idx.value_type, priority);
             }
 
             if let Some(string_idx) = string_index {
-                self.constrain_types(ctx, var_map, prop_type, string_idx.value_type);
+                self.constrain_types(ctx, var_map, prop_type, string_idx.value_type, priority);
             }
         }
     }
@@ -2075,6 +2227,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &ObjectShape,
         target_props: &[PropertyInfo],
+        priority: crate::solver::infer::InferencePriority,
     ) {
         let string_index = source.string_index.as_ref();
         let number_index = source.number_index.as_ref();
@@ -2089,11 +2242,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if let Some(number_idx) = number_index
                 && utils::is_numeric_property_name(self.interner, prop.name)
             {
-                self.constrain_types(ctx, var_map, number_idx.value_type, prop_type);
+                self.constrain_types(ctx, var_map, number_idx.value_type, prop_type, priority);
             }
 
             if let Some(string_idx) = string_index {
-                self.constrain_types(ctx, var_map, string_idx.value_type, prop_type);
+                self.constrain_types(ctx, var_map, string_idx.value_type, prop_type, priority);
             }
         }
     }
@@ -2112,6 +2265,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
         source: &[TupleElement],
         target: &[TupleElement],
+        priority: crate::solver::infer::InferencePriority,
     ) {
         for (i, t_elem) in target.iter().enumerate() {
             if t_elem.rest {
@@ -2151,19 +2305,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         }
                     }
                     if tail.len() == 1 && tail[0].rest {
-                        self.constrain_types(ctx, var_map, tail[0].type_id, t_elem.type_id);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            tail[0].type_id,
+                            t_elem.type_id,
+                            priority,
+                        );
                     } else {
                         let tail_tuple = self.interner.tuple(tail);
-                        self.constrain_types(ctx, var_map, tail_tuple, t_elem.type_id);
+                        self.constrain_types(ctx, var_map, tail_tuple, t_elem.type_id, priority);
                     }
                     return;
                 }
                 let rest_elem_type = self.rest_element_type(t_elem.type_id);
                 for s_elem in source.iter().skip(i) {
                     if s_elem.rest {
-                        self.constrain_types(ctx, var_map, s_elem.type_id, t_elem.type_id);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            s_elem.type_id,
+                            t_elem.type_id,
+                            priority,
+                        );
                     } else {
-                        self.constrain_types(ctx, var_map, s_elem.type_id, rest_elem_type);
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            s_elem.type_id,
+                            rest_elem_type,
+                            priority,
+                        );
                     }
                 }
                 return;
@@ -2180,7 +2352,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return;
             }
 
-            self.constrain_types(ctx, var_map, s_elem.type_id, t_elem.type_id);
+            self.constrain_types(ctx, var_map, s_elem.type_id, t_elem.type_id, priority);
         }
     }
 
