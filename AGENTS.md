@@ -18,7 +18,7 @@ For ANY changes to `src/solver/` or `src/checker/`, you MUST follow this workflo
 
 #### Question 1: Approach Validation (PRE-implementation)
 ```bash
-./scripts/ask-gemini.mjs --solver "I need to implement [FEATURE/BUGFIX].
+./scripts/ask-gemini.mjs --include=src/solver "I need to implement [FEATURE/BUGFIX].
 Here's my understanding of the problem: [PROBLEM DESCRIPTION].
 Here's my planned approach: [YOUR PLAN].
 
@@ -28,7 +28,7 @@ Please provide: 1) File paths, 2) Function names, 3) Edge cases, 4) Potential pi
 
 #### Question 2: Implementation Review (POST-implementation)
 ```bash
-./scripts/ask-gemini.mjs --solver "I implemented [FEATURE/BUGFIX] in [FILE].
+./scripts/ask-gemini.mjs --include=src/solver "I implemented [FEATURE/BUGFIX] in [FILE].
 Here's what I changed: [PASTE CODE OR DESCRIBE CHANGES].
 
 Please review: 1) Is this correct? 2) Does it match TypeScript behavior? 3) Are there bugs?
@@ -130,7 +130,7 @@ Use for debugging:
 
 ### Good Question Pattern:
 ```bash
-./scripts/ask-gemini.mjs --solver "When checking this code:
+./scripts/ask-gemini.mjs --include=src/solver "When checking this code:
 \`\`\`typescript
 function identity<T>(x: T): T { return x; }
 const result = identity('hello'); // expected: string, got: unknown
@@ -142,16 +142,16 @@ so I can add a debug log."
 ### Bad Question Pattern:
 ```bash
 # TOO VAGUE - will get architectural overview, not actionable answer
-./scripts/ask-gemini.mjs --solver "How does type inference work?"
+./scripts/ask-gemini.mjs --include=src/solver "How does type inference work?"
 
 # NO CONTEXT - Gemini can't help without knowing what you're looking at
-./scripts/ask-gemini.mjs  "Why is the wrong type being used?"
+./scripts/ask-gemini.mjs --include=src/solver "Why is the wrong type being used?"
 ```
 
 ### Template for Pre-Implementation:
 ```bash
 # Use Flash (default) for approach validation - fast and sufficient
-./scripts/ask-gemini.mjs --solver "I need to implement [FEATURE].
+./scripts/ask-gemini.mjs --include=src/solver "I need to implement [FEATURE].
 Problem: [PROBLEM STATEMENT]
 My planned approach: [YOUR APPROACH]
 
@@ -162,7 +162,7 @@ Before I implement: 1) Is this the right approach? 2) What functions should I mo
 ### Template for Post-Implementation Review:
 ```bash
 # Use Pro (--pro flag) for implementation reviews - better at catching architectural bugs
-./scripts/ask-gemini.mjs --pro --solver "I implemented [FEATURE] in [FILE]:[FUNCTION].
+./scripts/ask-gemini.mjs --pro --include=src/solver "I implemented [FEATURE] in [FILE]:[FUNCTION].
 Changes: [PASTE CODE OR DIFF]
 
 Please review: 1) Is this logic correct for TypeScript? 2) Did I miss any edge cases?
@@ -171,7 +171,7 @@ Please review: 1) Is this logic correct for TypeScript? 2) Did I miss any edge c
 
 ### Template for Debugging:
 ```bash
-./scripts/ask-gemini.mjs --checker "[PROBLEM]: I'm seeing [ACTUAL] but expected [EXPECTED].
+./scripts/ask-gemini.mjs --include=src/checker "[PROBLEM]: I'm seeing [ACTUAL] but expected [EXPECTED].
 Code: [PASTE TYPESCRIPT]
 I traced to [FILE/FUNCTION] but need to find where [SPECIFIC DECISION] is made.
 What exact function handles this? I need to add logging."
@@ -242,18 +242,18 @@ This is not an exaggeration - it's a pattern proven by investigation.
 ### Examples:
 ```bash
 # Flash (default) - simple lookup
-./scripts/ask-gemini.mjs --solver "Where is discriminant narrowing implemented?"
+./scripts/ask-gemini.mjs --include=src/solver "Where is discriminant narrowing implemented?"
 
 # Flash (default) - approach validation
-./scripts/ask-gemini.mjs --solver "Should I use visitor pattern or direct TypeKey match?"
+./scripts/ask-gemini.mjs --include=src/solver "Should I use visitor pattern or direct TypeKey match?"
 
 # Pro - implementation review (CRITICAL)
-./scripts/ask-gemini.mjs --pro --solver "Review my discriminant narrowing implementation:
+./scripts/ask-gemini.mjs --pro --include=src/solver "Review my discriminant narrowing implementation:
 [PASTE CODE]
 Does this match TypeScript behavior?"
 
 # Pro - architectural question
-./scripts/ask-gemini.mjs --pro --solver "I need to add support for conditional type inference.
+./scripts/ask-gemini.mjs --pro --include=src/solver --include=src/checker "I need to add support for conditional type inference.
 What's the right approach? Which files need to change?"
 ```
 

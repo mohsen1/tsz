@@ -162,14 +162,12 @@ function extractSignature(text, type) {
 }
 
 // A CLI tool that uses yek (https://github.com/mohsen1/yek) to give Gemini full context of
-// this repo to ask questions. Use focused presets (--solver, --checker, etc.) to pack
-// the most relevant context for your question.
+// this repo to ask questions. Always explicitly include files or directories with --include.
 
 // Usage:
-// ./scripts/ask-gemini.mjs "How to add feature X?"
-// ./scripts/ask-gemini.mjs --solver "How does type inference work?"
-// ./scripts/ask-gemini.mjs --checker "How are diagnostics reported?"
-// ./scripts/ask-gemini.mjs --include="src/solver" "Custom path question"
+// ./scripts/ask-gemini.mjs --include=src/solver "How does type inference work?"
+// ./scripts/ask-gemini.mjs --include=src/checker --include=src/solver "Question about checker and solver"
+// ./scripts/ask-gemini.mjs --include=src/cli --include=src/lib.rs "CLI question"
 // ./scripts/ask-gemini.mjs --no-use-vertex "Use direct Gemini API instead of Vertex"
 
 // Flash model is faster and cheaper, use by default
@@ -352,82 +350,29 @@ function findOptimalTokenLimit(includePaths, filterTests, verbose = true, direct
 }
 
 // Important files that should always be included
-const IMPORTANT_FILES = {
-  // Core architecture and guidelines (always included)
-  core: [
-    'AGENTS.md',
-    'docs/architecture/NORTH_STAR.md',
-    'docs/DEVELOPMENT.md',
-  ],
-  // Category-specific important files
-  solver: [
-    'docs/walkthrough/05-solver.md',
-    'docs/specs/TS_UNSOUNDNESS_CATALOG.md',
-  ],
-  checker: [
-    'docs/walkthrough/04-checker.md',
-    'docs/specs/DIAGNOSTICS.md',
-  ],
-  binder: [
-    'docs/walkthrough/03-binder.md',
-  ],
-  parser: [
-    'docs/walkthrough/02-parser.md',
-    'docs/walkthrough/01-scanner.md',
-  ],
-  emitter: [
-    'docs/walkthrough/06-emitter.md',
-  ],
-  lsp: [
-    'docs/walkthrough/08-lsp-gaps.md',
-    'docs/todo/lsp/INDEX.md',
-  ],
-  types: [
-    'docs/walkthrough/05-solver.md',
-    'docs/walkthrough/04-checker.md',
-    'docs/specs/TS_UNSOUNDNESS_CATALOG.md',
-  ],
-  modules: [
-    'docs/architecture/TSC_LIB_LOADING.md',
-  ],
-  // General (no preset) important files
-  general: [
-    'docs/walkthrough/README.md',
-    'docs/specs/TS_UNSOUNDNESS_CATALOG.md',
-  ],
-};
+const IMPORTANT_FILES = [
+  'AGENTS.md',
+  'docs/architecture/NORTH_STAR.md',
+  'docs/DEVELOPMENT.md',
+];
 
 /**
- * Get all important files across all categories (for filtering).
+ * Get all important files (for filtering).
  * @returns {Set<string>} - Set of all important file paths
  */
 function getAllImportantFiles() {
-  const allFiles = new Set();
-  for (const category of Object.values(IMPORTANT_FILES)) {
-    if (Array.isArray(category)) {
-      for (const file of category) {
-        allFiles.add(file);
-      }
-    }
-  }
-  return allFiles;
+  return new Set(IMPORTANT_FILES);
 }
 
 /**
  * Read and include important files directly in context (bypassing yek's ignore patterns).
- * @param {string} category - Category name (solver, checker, etc.) or 'general' for no preset
  * @returns {string} - Formatted context string with important files
  */
-function includeImportantFiles(category = 'general') {
-  const important = [
-    ...IMPORTANT_FILES.core,
-    ...(IMPORTANT_FILES[category] || []),
-  ];
-  
+function includeImportantFiles() {
   const sections = [];
   let filesIncluded = 0;
   
-  for (const filePath of important) {
+  for (const filePath of IMPORTANT_FILES) {
     if (existsSync(filePath)) {
       try {
         const content = readFileSync(filePath, 'utf-8');
@@ -449,18 +394,12 @@ function includeImportantFiles(category = 'general') {
 /**
  * Merge important files into a paths array, avoiding duplicates.
  * @param {string[]} paths - Existing paths
- * @param {string} category - Category name (solver, checker, etc.) or 'general' for no preset
  * @returns {string[]} - Paths with important files added
  */
-function addImportantFiles(paths, category = 'general') {
-  const important = [
-    ...IMPORTANT_FILES.core,
-    ...(IMPORTANT_FILES[category] || []),
-  ];
-  
+function addImportantFiles(paths) {
   // Add important files that aren't already in paths
   const pathSet = new Set(paths);
-  for (const file of important) {
+  for (const file of IMPORTANT_FILES) {
     if (!pathSet.has(file)) {
       paths.push(file);
     }
@@ -468,44 +407,6 @@ function addImportantFiles(paths, category = 'general') {
   
   return paths;
 }
-
-// Focused presets for different areas of the codebase
-// Each preset uses directory wildcards to include all related files automatically
-// Focused presets - paths to include for each area (auto-sized to fit context)
-const PRESETS = {
-  solver: {
-    description: 'Type solver, inference, compatibility, and type operations',
-    paths: ['src/solver/', 'src/checker/state.rs', 'src/checker/context.rs'],
-  },
-  checker: {
-    description: 'Type checker, AST traversal, diagnostics, and error reporting',
-    paths: ['src/checker/', 'src/binder.rs'],
-  },
-  binder: {
-    description: 'Symbol binding, scopes, and control flow graph construction',
-    paths: ['src/binder/', 'src/binder.rs', 'src/checker/flow_graph_builder.rs'],
-  },
-  parser: {
-    description: 'Parser, scanner, and AST nodes',
-    paths: ['src/parser/', 'src/scanner.rs', 'src/scanner_impl.rs', 'src/span.rs'],
-  },
-  emitter: {
-    description: 'Code emission, transforms, source maps, and declaration files',
-    paths: ['src/emitter/', 'src/transforms/', 'src/declaration_emitter.rs', 'src/source_map.rs', 'src/source_writer.rs', 'src/printer.rs'],
-  },
-  lsp: {
-    description: 'Language server protocol implementation',
-    paths: ['src/lsp/', 'src/bin/tsz_lsp.rs', 'src/bin/tsz_server/'],
-  },
-  types: {
-    description: 'Type system overview (solver + checker type-related)',
-    paths: ['src/solver/', 'src/checker/', 'src/lowering_pass.rs'],
-  },
-  modules: {
-    description: 'Module resolution, imports, exports, and module graph',
-    paths: ['src/module_resolver.rs', 'src/module_graph.rs', 'src/imports.rs', 'src/exports.rs', 'src/transforms/module_*.rs', 'src/emitter/module_*.rs'],
-  },
-};
 
 const { values, positionals } = parseArgs({
   options: {
@@ -530,21 +431,10 @@ const { values, positionals } = parseArgs({
       short: 'h',
       default: false,
     },
-    // Focused presets
-    solver: { type: 'boolean', default: false },
-    checker: { type: 'boolean', default: false },
-    binder: { type: 'boolean', default: false },
-    parser: { type: 'boolean', default: false },
-    emitter: { type: 'boolean', default: false },
-    lsp: { type: 'boolean', default: false },
-    types: { type: 'boolean', default: false },
-    modules: { type: 'boolean', default: false },
     // Dry run - show what would be sent without calling API
     dry: { type: 'boolean', default: false },
     // Also print the full query payload (use with --dry)
     query: { type: 'boolean', default: false },
-    // List available presets
-    list: { type: 'boolean', default: false },
     // Use Vertex AI (default) or direct Gemini API (--no-use-vertex)
     'use-vertex': { type: 'boolean', default: true },
     // Include code skeletons (function/struct/enum/trait signatures) - on by default
@@ -554,29 +444,13 @@ const { values, positionals } = parseArgs({
   allowNegative: true,
 });
 
-if (values.list) {
-  console.log('\nAvailable presets:\n');
-  for (const [name, preset] of Object.entries(PRESETS)) {
-    console.log(`  --${name.padEnd(10)} ${preset.description}`);
-    console.log(`               Paths: ${preset.paths.slice(0, 3).join(', ')}${preset.paths.length > 3 ? '...' : ''}`);
-    console.log('');
-  }
-  process.exit(0);
-}
-
 if (values.help) {
   console.log(`
 Usage: ./scripts/ask-gemini.mjs [options] "your prompt"
 
-Focused Presets (pick one for best context):
-  --solver            Type solver, inference, compatibility
-  --checker           Type checker, diagnostics, AST traversal
-  --binder            Symbol binding, scopes, CFG
-  --parser            Parser, scanner, AST nodes
-  --emitter           Code emission, transforms, source maps
-  --lsp               Language server protocol
-  --types             Type system overview (solver + checker)
-  --modules           Module resolution, imports, exports
+Required:
+  -i, --include=PATH  Include specific file(s) or directory(ies). Can be specified
+                      multiple times. Always use explicit paths.
 
 Model Selection:
   --pro               Use Gemini Pro for complex architectural questions
@@ -584,14 +458,12 @@ Model Selection:
   --flash             Use Gemini Flash model (explicit, same as default)
 
 General Options:
-  -i, --include=PATH  Include specific path(s) (overrides preset)
   -t, --tokens=SIZE   Override yek token limit (default: auto-sized to ~90% of Gemini's 1M context)
   -m, --model=NAME    Specific Gemini model (overrides --pro/--flash)
   --dry               Show files that would be included without calling API
   --query             Print the full query payload (system prompt + context + prompt)
   --no-skeleton       Disable code skeleton extraction. Skeletons show fn/struct/enum/
                       trait/impl signatures for files NOT fully included in context.
-  --list              List all available presets with descriptions
   --no-use-vertex     Use direct Gemini API instead of Vertex AI (fallback for
                       rate limits or when Vertex credentials aren't available)
   -h, --help          Show this help message
@@ -608,33 +480,17 @@ Environment:
   GEMINI_API_KEY              Required for direct Gemini API (--no-use-vertex).
 
 Examples:
-  ./scripts/ask-gemini.mjs --solver "How does type inference work?"
-  ./scripts/ask-gemini.mjs --checker "How are diagnostics reported?"
-  ./scripts/ask-gemini.mjs --pro "Review this implementation for correctness"
-  ./scripts/ask-gemini.mjs --types "How does the type system handle generics?"
-  ./scripts/ask-gemini.mjs --parser "How does ASI work?"
-  ./scripts/ask-gemini.mjs --emitter "How are source maps generated?"
-  ./scripts/ask-gemini.mjs --lsp "How does go-to-definition work?"
-  ./scripts/ask-gemini.mjs --modules "How does module resolution work?"
-  ./scripts/ask-gemini.mjs --include=src/solver "Custom path question"
-  ./scripts/ask-gemini.mjs --no-use-vertex "Use direct Gemini API (fallback)"
-  ./scripts/ask-gemini.mjs --list  # Show all presets
+  ./scripts/ask-gemini.mjs --include=src/solver "How does type inference work?"
+  ./scripts/ask-gemini.mjs --include=src/checker --include=src/solver "How does assignability work?"
+  ./scripts/ask-gemini.mjs --include=src/cli --include=src/lib.rs "CLI question"
+  ./scripts/ask-gemini.mjs --include=src/parser --include=src/scanner "Parser question"
+  ./scripts/ask-gemini.mjs --include=src/emitter --include=src/transforms "Emitter question"
+  ./scripts/ask-gemini.mjs --include=src/lsp "LSP question"
+  ./scripts/ask-gemini.mjs --pro --include=src/solver "Review this implementation"
+  ./scripts/ask-gemini.mjs --no-use-vertex --include=src/solver "Use direct Gemini API"
 `);
   process.exit(0);
 }
-
-// Determine which preset is active (if any)
-const presetNames = Object.keys(PRESETS);
-const activePresets = presetNames.filter(name => values[name]);
-
-if (activePresets.length > 1) {
-  console.error(`Error: Multiple presets specified (${activePresets.join(', ')}). Please choose one.`);
-  console.error('Run with --list to see available presets.');
-  process.exit(1);
-}
-
-const activePreset = activePresets[0] ? PRESETS[activePresets[0]] : null;
-const presetName = activePresets[0] || null;
 
 // Use Pro model if --pro flag is set
 const effectiveModel = values.pro ? PRO_MODEL : values.model;
@@ -642,7 +498,7 @@ const effectiveModel = values.pro ? PRO_MODEL : values.model;
 // Token limit: explicit flag overrides auto-sizing
 const explicitTokenLimit = values.tokens || null;
 
-// Determine paths to include
+// Determine paths to include - always require explicit --include
 let includePaths = null;
 let directIncludePaths = []; // Paths to read directly (bypass yek ignore patterns)
 
@@ -651,17 +507,12 @@ if (values.include && values.include.length > 0) {
   const paths = values.include.flatMap(p => p.split(/\s+/)).filter(p => p);
   // All user-specified paths should be read directly (bypass yek ignore patterns)
   directIncludePaths = [...paths];
-  const pathsWithImportant = addImportantFiles(paths, 'general');
-  includePaths = pathsWithImportant.length > 0 ? pathsWithImportant.join(' ') : null;
-} else if (activePreset) {
-  // Preset active: add category-specific important files
-  const paths = [...activePreset.paths];
-  const pathsWithImportant = addImportantFiles(paths, presetName);
+  const pathsWithImportant = addImportantFiles(paths);
   includePaths = pathsWithImportant.length > 0 ? pathsWithImportant.join(' ') : null;
 } else {
-  // No preset: add general important files
+  // No --include specified: just use important files
   const paths = [];
-  const pathsWithImportant = addImportantFiles(paths, 'general');
+  const pathsWithImportant = addImportantFiles(paths);
   includePaths = pathsWithImportant.length > 0 ? pathsWithImportant.join(' ') : null;
 }
 
@@ -693,15 +544,12 @@ const prompt = positionals[0];
 
 if (!prompt && !isDryRun) {
   console.error('Error: No prompt provided.');
-  console.error('Usage: ./scripts/ask-gemini.mjs [--preset] "your prompt"');
-  console.error('Run with --help for more options, --list for presets.');
+  console.error('Usage: ./scripts/ask-gemini.mjs --include=PATH "your prompt"');
+  console.error('Run with --help for more options.');
   process.exit(1);
 }
 
 try {
-  if (presetName) {
-    console.log(`Using preset: --${presetName} (${activePreset.description})`);
-  }
   if (values.pro) {
     console.log(`Using model: ${effectiveModel} (Pro - for complex questions)`);
   } else {
@@ -768,7 +616,7 @@ try {
   }
 
   // Include important files directly (bypassing yek's ignore patterns)
-  const importantFilesContext = includeImportantFiles(presetName || 'general');
+  const importantFilesContext = includeImportantFiles();
   if (importantFilesContext) {
     console.log('  - Including important documentation files directly');
   }
@@ -824,63 +672,16 @@ try {
     url = `https://generativelanguage.googleapis.com/v1beta/models/${effectiveModel}:generateContent?key=${GEMINI_API_KEY}`;
   }
 
-  // Build system prompt based on preset
-  let systemPrompt = 'You are an expert on the tsz TypeScript compiler codebase (TypeScript compiler written in Rust).';
+  // Build system prompt
+  let systemPrompt = `You are an expert on the tsz TypeScript compiler codebase (TypeScript compiler written in Rust).
 
-  if (presetName) {
-    const presetContexts = {
-      solver: `You are focused on the TYPE SOLVER component. Key concepts:
+Key architecture concepts:
 - Solver handles WHAT (pure type operations and relations)
 - Checker handles WHERE (AST traversal, diagnostics)
-- Use visitor pattern from src/solver/visitor.rs for type operations
-- Key files: state.rs (main state), infer.rs (inference), compat.rs (assignability)`,
-
-      checker: `You are focused on the TYPE CHECKER component. Key concepts:
-- Checker is a thin wrapper that delegates type logic to solver
-- Checker extracts AST data, calls solver, reports errors with source locations
-- Control flow analysis lives in checker
-- Key files: state.rs (main state), control_flow.rs, error_reporter.rs`,
-
-      binder: `You are focused on the BINDER component. Key concepts:
 - Binder handles SYMBOLS (symbol table, scopes, control flow graph)
-- Binder never computes types - that's checker/solver's job
-- Binder creates symbols, manages scopes, builds CFG
-- Key file: binder/state.rs`,
+- Use visitor pattern from src/solver/visitor.rs for type operations
 
-      parser: `You are focused on the PARSER component. Key concepts:
-- Parser state machine in parser/state.rs
-- AST node definitions in parser/node.rs
-- Scanner handles lexical analysis
-- Focus on TypeScript-specific syntax (types, decorators, etc.)`,
 
-      emitter: `You are focused on the EMITTER component. Key concepts:
-- Transforms convert modern syntax to target (ES5, CommonJS, etc.)
-- Declaration emitter generates .d.ts files
-- Source maps track original positions
-- Key files: emitter/mod.rs, transforms/es5.rs`,
-
-      lsp: `You are focused on the LSP (Language Server Protocol) component. Key concepts:
-- project.rs manages file state and incremental updates
-- Each LSP feature (completions, hover, etc.) has its own module
-- Leverages checker for type information`,
-
-      types: `You are analyzing the TYPE SYSTEM as a whole. Key concepts:
-- Solver-first architecture: pure type logic in solver
-- Checker delegates to solver, handles AST and diagnostics
-- Visitor pattern for type operations (never manual TypeKey matches)
-- Type inference, compatibility, instantiation all in solver`,
-
-      modules: `You are focused on MODULE RESOLUTION. Key concepts:
-- module_resolver.rs handles finding modules
-- module_graph.rs tracks dependencies
-- imports.rs/exports.rs handle bindings
-- Transforms handle CommonJS/ESM conversion`,
-    };
-
-    systemPrompt += `\n\n${presetContexts[presetName] || ''}`;
-  }
-
-  systemPrompt += `
 
 IMPORTANT: The context includes:
 1. CODE SKELETONS showing function/struct/enum/trait/impl signatures across the codebase (API surface overview)
