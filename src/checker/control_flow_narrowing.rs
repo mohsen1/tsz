@@ -406,7 +406,8 @@ impl<'a> FlowAnalyzer<'a> {
             return narrowing.narrow_type(type_id, &TypeGuard::Truthy, true);
         }
 
-        self.narrow_to_falsy(type_id)
+        // Use Solver's narrow_to_falsy for correct NaN handling
+        narrowing.narrow_to_falsy(type_id)
     }
 
     pub(crate) fn narrow_by_instanceof(

@@ -29,6 +29,7 @@
 
 use crate::interner::Atom;
 use crate::solver::subtype::is_subtype_of;
+use crate::solver::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::solver::types::Visibility;
 use crate::solver::types::*;
 use crate::solver::visitor::{
@@ -1728,6 +1729,79 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow a type by removing definitely falsy values (truthiness check).
     ///
+    /// Narrow a type to its falsy component(s).
+    ///
+    /// This is used for the false branch of truthiness checks (e.g., `if (!x)`).
+    /// Returns the union of all falsy values that the type could be.
+    ///
+    /// Falsy values in TypeScript:
+    /// - null, undefined, void
+    /// - false (boolean literal)
+    /// - 0, -0, NaN (number literals)
+    /// - "" (empty string)
+    /// - 0n (bigint literal)
+    ///
+    /// CRITICAL: TypeScript does NOT narrow primitive types in falsy branches.
+    /// For `boolean`, `number`, `string`, and `bigint`, they stay as their primitive type.
+    /// For `unknown`, TypeScript does NOT narrow in falsy branches.
+    ///
+    /// Only literal types are narrowed (e.g., `0 | 1` -> `0`, `true | false` -> `false`).
+    pub fn narrow_to_falsy(&self, type_id: TypeId) -> TypeId {
+        let _span = span!(Level::TRACE, "narrow_to_falsy", type_id = type_id.0).entered();
+
+        // Handle ANY - suppresses all narrowing
+        if type_id == TypeId::ANY {
+            return TypeId::ANY;
+        }
+
+        // Handle UNKNOWN - TypeScript does NOT narrow unknown in falsy branches
+        if type_id == TypeId::UNKNOWN {
+            return TypeId::UNKNOWN;
+        }
+
+        let resolved = self.resolve_type(type_id);
+
+        // Handle Unions - recursively narrow each member and collect falsy components
+        if let UnionMembersKind::Union(members) = classify_for_union_members(self.db, resolved) {
+            let falsy_members: Vec<TypeId> = members
+                .iter()
+                .map(|&m| self.narrow_to_falsy(m))
+                .filter(|&m| m != TypeId::NEVER)
+                .collect();
+
+            return if falsy_members.is_empty() {
+                TypeId::NEVER
+            } else if falsy_members.len() == 1 {
+                falsy_members[0]
+            } else {
+                self.db.union(falsy_members)
+            };
+        }
+
+        // Handle primitive types
+        // CRITICAL: TypeScript does NOT narrow these primitives in falsy branches
+        if matches!(
+            resolved,
+            TypeId::BOOLEAN | TypeId::STRING | TypeId::NUMBER | TypeId::BIGINT
+        ) {
+            return resolved;
+        }
+        if matches!(resolved, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
+            return resolved;
+        }
+
+        // Handle literals - check if they're falsy
+        // This correctly handles `0` vs `1`, `""` vs `"a"`, `NaN` vs other numbers,
+        // `true` vs `false`, etc.
+        if let Some(_lit) = literal_value(self.db, resolved) {
+            if self.is_definitely_falsy(resolved) {
+                return type_id;
+            }
+        }
+
+        TypeId::NEVER
+    }
+
     /// This matches TypeScript's behavior where `if (x)` narrows out:
     /// - null, undefined, void
     /// - false (boolean literal)
