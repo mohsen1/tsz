@@ -2403,4 +2403,50 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // This calls back to the main check_statement which will delegate to StatementChecker
         CheckerState::check_statement(self, stmt_idx)
     }
+
+    fn check_switch_exhaustiveness(
+        &mut self,
+        stmt_idx: NodeIndex,
+        expression: NodeIndex,
+        case_block: NodeIndex,
+        has_default: bool,
+    ) {
+        // If there's a default clause, the switch is syntactically exhaustive
+        if has_default {
+            return;
+        }
+
+        // Get the discriminant type
+        let discriminant_type = self.get_type_of_node(expression);
+
+        // Create a FlowAnalyzer to check exhaustiveness
+        let analyzer = crate::checker::control_flow::FlowAnalyzer::new(
+            self.ctx.arena,
+            self.ctx.binder,
+            self.ctx.types,
+        );
+
+        // Create a narrowing context
+        let narrowing = crate::solver::NarrowingContext::new(self.ctx.types);
+
+        // Calculate the "no-match" type (what type the discriminant would have
+        // if none of the case clauses match)
+        let no_match_type = analyzer.narrow_by_default_switch_clause(
+            discriminant_type,
+            expression,
+            case_block,
+            expression, // target is the discriminant itself
+            &narrowing,
+        );
+
+        // If the no-match type is not `never`, the switch is not exhaustive
+        if no_match_type != crate::solver::TypeId::NEVER {
+            eprintln!(
+                "DEBUG: Switch statement at {:?} is not exhaustive. Discriminant type: {:?}, no-match type: {:?}",
+                stmt_idx, discriminant_type, no_match_type
+            );
+            // TODO: Emit diagnostic (TS2366 or custom error)
+            // For now, just log to verify the logic works
+        }
+    }
 }
