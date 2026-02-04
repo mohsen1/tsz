@@ -328,7 +328,10 @@ impl<'a> FlowAnalyzer<'a> {
                 // For BRANCH, we check all antecedents
                 // For LOOP_LABEL, we only require the first antecedent (entry flow) to be ready
                 let antecedents_to_check: Vec<FlowNodeId> = if is_switch_fallthrough {
-                    flow.antecedent.iter().skip(1).copied().collect()
+                    // CRITICAL FIX: Switch fallthrough needs ALL antecedents
+                    // - index 0: switch header (for narrowing calculation)
+                    // - index 1..: previous clauses that fell through (for union)
+                    flow.antecedent.clone()
                 } else if is_loop_header {
                     // For loops, only check the first antecedent (entry flow)
                     flow.antecedent.first().copied().into_iter().collect()
@@ -426,6 +429,16 @@ impl<'a> FlowAnalyzer<'a> {
                 let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
                 self.narrow_type_by_condition(pre_type, flow.node, reference, is_true_branch)
             } else if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
+                // CRITICAL FIX: Schedule antecedent 0 (switch header) for traversal
+                // Fallthrough cases are handled by the is_merge_point block above,
+                // but single-clause cases need this to continue traversal.
+                if let Some(&ant) = flow.antecedent.first() {
+                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                        worklist.push_back((ant, current_type));
+                        in_worklist.insert(ant);
+                    }
+                }
+
                 // Switch clause - apply switch-specific narrowing
                 self.handle_switch_clause_iterative(
                     reference,
@@ -637,9 +650,9 @@ impl<'a> FlowAnalyzer<'a> {
         current_type: TypeId,
         flow: &FlowNode,
         results: &FxHashMap<FlowNodeId, TypeId>,
-        worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
-        in_worklist: &mut FxHashSet<FlowNodeId>,
-        visited: FxHashSet<FlowNodeId>,
+        _worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
+        _in_worklist: &mut FxHashSet<FlowNodeId>,
+        _visited: FxHashSet<FlowNodeId>,
     ) -> TypeId {
         eprintln!(
             "DEBUG handle_switch_clause_iterative: ENTERED - flow.node={}, reference={}",
@@ -703,17 +716,6 @@ impl<'a> FlowAnalyzer<'a> {
             "DEBUG handle_switch_clause_iterative: clause_type={}",
             clause_type.0
         );
-
-        // Handle fallthrough
-        if flow.antecedent.len() > 1 {
-            // Add fallthrough antecedents to worklist
-            for &ant in flow.antecedent.iter().skip(1) {
-                if !in_worklist.contains(&ant) && !visited.contains(&ant) {
-                    worklist.push_back((ant, current_type));
-                    in_worklist.insert(ant);
-                }
-            }
-        }
 
         clause_type
     }
