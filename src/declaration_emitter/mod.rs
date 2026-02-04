@@ -306,20 +306,9 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// These must appear at the very top of the file, before any imports or declarations.
     fn emit_triple_slash_directives(&mut self, source_file: &crate::parser::node::SourceFileData) {
-        eprintln!(
-            "[DEBUG] emit_triple_slash_directives: {} comments",
-            source_file.comments.len()
-        );
-
         for comment in &source_file.comments {
             // Extract the comment text from the source file
             let text = &source_file.text[comment.pos as usize..comment.end as usize];
-
-            eprintln!(
-                "[DEBUG] Comment: '{}', starts_with ///: {}",
-                text,
-                text.starts_with("///")
-            );
 
             // Triple-slash directives start with ///
             if text.starts_with("///") {
@@ -330,7 +319,6 @@ impl<'a> DeclarationEmitter<'a> {
                     || trimmed.starts_with("<amd-module")
                     || trimmed.starts_with("<amd-dependency")
                 {
-                    eprintln!("[DEBUG] Emitting directive: {}", text);
                     self.write(text);
                     self.write_line();
                 }
