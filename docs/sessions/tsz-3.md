@@ -49,7 +49,7 @@ Implemented boolean predicates (`x is T`) with:
 ## Current Phase: CFA Hardening & Loop Refinement (IN PROGRESS)
 
 **Started**: 2026-02-04
-**Status**: Starting Priority 4 tasks
+**Status**: Task 4.1 COMPLETE ✅
 
 ### Problem Statement
 
@@ -62,7 +62,25 @@ The current CFA implementation is **too conservative** regarding loops and closu
 
 ### Prioritized Tasks
 
-#### Task 4.1: Loop Mutation Analysis (HIGH)
+#### Task 4.1: Loop Mutation Analysis (HIGH) ✅ COMPLETE
+**Commit**: `027d55f1a`
+
+**Goal**: Only widen let/var at LOOP_LABEL if the variable is mutated in the loop body.
+
+**Implementation**:
+- Created `is_symbol_mutated_in_loop()` with backward traversal from back-edges
+- Created `node_mutates_symbol()` to check assignment nodes
+- Created `assignment_targets_symbol()` for SymbolId-aware assignment checking
+- Added `loop_mutation_cache` to prevent O(N^2) complexity
+- Modified LOOP_LABEL handling to check mutations before widening
+
+**Critical Fix (Gemini Pro Review)**:
+- REMOVED array mutation check - Array methods like push() don't reassign variable
+- CFA tracks variable reassignments, not object content mutations
+
+**Expected Impact**: Significant improvement in narrowing precision for patterns where variables are narrowed before a loop but never reassigned inside.
+
+#### Task 4.2: Switch Union Aggregation (MEDIUM)
 **File**: `src/checker/control_flow.rs` (lines 335-365)
 
 **Goal**: Only widen let/var at LOOP_LABEL if the variable is mutated in the loop body.
