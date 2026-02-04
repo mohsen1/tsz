@@ -24,7 +24,9 @@ use crate::interner::Atom;
 use crate::parser::node::{BinaryExprData, NodeArena};
 use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::solver::{NarrowingContext, ParamInfo, TypeDatabase, TypeId, TypePredicate};
+use crate::solver::{
+    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeId, TypePredicate,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -103,7 +105,7 @@ impl<'a> FlowGraph<'a> {
 pub struct FlowAnalyzer<'a> {
     pub(crate) arena: &'a NodeArena,
     pub(crate) binder: &'a BinderState,
-    pub(crate) interner: &'a dyn TypeDatabase,
+    pub(crate) interner: &'a dyn QueryDatabase,
     pub(crate) node_types: Option<&'a FxHashMap<u32, TypeId>>,
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
     /// Optional cache for flow analysis results to avoid redundant graph traversals
@@ -135,7 +137,7 @@ impl<'a> FlowAnalyzer<'a> {
     pub fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        interner: &'a dyn TypeDatabase,
+        interner: &'a dyn QueryDatabase,
     ) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
         Self {
@@ -151,7 +153,7 @@ impl<'a> FlowAnalyzer<'a> {
     pub fn with_node_types(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        interner: &'a dyn TypeDatabase,
+        interner: &'a dyn QueryDatabase,
         node_types: &'a FxHashMap<u32, TypeId>,
     ) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));

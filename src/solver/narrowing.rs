@@ -28,14 +28,14 @@
 //! - **Solver**: Applies `TypeGuard` to types (WHAT)
 
 use crate::interner::Atom;
-use crate::solver::TypeDatabase;
 use crate::solver::subtype::is_subtype_of;
 use crate::solver::types::*;
 use crate::solver::visitor::{
     intersection_list_id, is_function_type_db, is_literal_type_db, is_object_like_type_db,
-    literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
+    lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
     type_param_info, union_list_id,
 };
+use crate::solver::{QueryDatabase, TypeDatabase};
 use tracing::{Level, span, trace};
 
 #[cfg(test)]
@@ -120,12 +120,26 @@ pub struct DiscriminantInfo {
 
 /// Narrowing context for type guards and control flow analysis.
 pub struct NarrowingContext<'a> {
-    interner: &'a dyn TypeDatabase,
+    db: &'a dyn QueryDatabase,
 }
 
 impl<'a> NarrowingContext<'a> {
-    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
-        NarrowingContext { interner }
+    pub fn new(db: &'a dyn QueryDatabase) -> Self {
+        NarrowingContext { db }
+    }
+
+    /// Resolve a type by evaluating Lazy types through the QueryDatabase.
+    ///
+    /// This ensures that type aliases and other Lazy references are resolved
+    /// to their actual types before performing narrowing operations.
+    fn resolve_type(&self, type_id: TypeId) -> TypeId {
+        if let Some(_def_id) = lazy_def_id(self.db, type_id) {
+            // Use QueryDatabase to resolve Lazy types to their underlying types
+            self.db.evaluate_type(type_id)
+        } else {
+            // Not a Lazy type, return as-is
+            type_id
+        }
     }
 
     /// Find discriminant properties in a union type.
@@ -141,8 +155,8 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let members = match union_list_id(self.interner, union_type) {
-            Some(members_id) => self.interner.type_list(members_id),
+        let members = match union_list_id(self.db, union_type) {
+            Some(members_id) => self.db.type_list(members_id),
             None => return vec![],
         };
 
@@ -156,8 +170,8 @@ impl<'a> NarrowingContext<'a> {
         let mut member_props: Vec<Vec<(Atom, TypeId)>> = Vec::new();
 
         for &member in members.iter() {
-            if let Some(shape_id) = object_shape_id(self.interner, member) {
-                let shape = self.interner.object_shape(shape_id);
+            if let Some(shape_id) = object_shape_id(self.db, member) {
+                let shape = self.db.object_shape(shape_id);
                 let props_vec: Vec<(Atom, TypeId)> = shape
                     .properties
                     .iter()
@@ -250,16 +264,19 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
+        // CRITICAL: Resolve Lazy types before checking for union members
+        // This ensures type aliases are resolved to their actual union types
+        let resolved_type = self.resolve_type(union_type);
+
         // Get union members - normalize single types to "union of 1" slice
         // This allows single-object narrowing to work correctly
         let single_member_storage;
         let members_list_storage;
-        let members: &[TypeId] = if let Some(members_id) = union_list_id(self.interner, union_type)
-        {
-            members_list_storage = self.interner.type_list(members_id);
+        let members: &[TypeId] = if let Some(members_id) = union_list_id(self.db, resolved_type) {
+            members_list_storage = self.db.type_list(members_id);
             &members_list_storage
         } else {
-            single_member_storage = [union_type];
+            single_member_storage = [resolved_type];
             &single_member_storage[..]
         };
 
@@ -271,7 +288,7 @@ impl<'a> NarrowingContext<'a> {
         eprintln!(
             "DEBUG narrow_by_discriminant: union_type={}, property={:?}, literal={}, members={}",
             union_type.0,
-            self.interner.resolve_atom_ref(property_name),
+            self.db.resolve_atom_ref(property_name),
             literal_value.0,
             members.len()
         );
@@ -296,8 +313,8 @@ impl<'a> NarrowingContext<'a> {
             }
 
             // Check if this member has the property
-            if let Some(shape_id) = object_shape_id(self.interner, member) {
-                let shape = self.interner.object_shape(shape_id);
+            if let Some(shape_id) = object_shape_id(self.db, member) {
+                let shape = self.db.object_shape(shape_id);
 
                 // Find the property
                 let prop_type = shape
@@ -316,7 +333,7 @@ impl<'a> NarrowingContext<'a> {
                         // - prop is "a" | "b", checking for "a" -> match
                         // - prop is string, checking for "a" -> match
                         // - prop is "a", checking for "a" | "b" -> no match (correct)
-                        if is_subtype_of(self.interner, literal_value, ty) {
+                        if is_subtype_of(self.db, literal_value, ty) {
                             trace!(
                                 "Member {} has property with type {}, literal {} matches",
                                 member.0, ty.0, literal_value.0
@@ -358,7 +375,7 @@ impl<'a> NarrowingContext<'a> {
                 matching.len(),
                 members.len()
             );
-            self.interner.union(matching)
+            self.db.union(matching)
         };
 
         eprintln!("DEBUG narrow_by_discriminant: result={}", result.0);
@@ -391,16 +408,19 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
+        // CRITICAL: Resolve Lazy types before checking for union members
+        // This ensures type aliases are resolved to their actual union types
+        let resolved_type = self.resolve_type(union_type);
+
         // Get union members - normalize single types to "union of 1" slice
         // This allows single-object narrowing to work correctly
         let single_member_storage;
         let members_list_storage;
-        let members: &[TypeId] = if let Some(members_id) = union_list_id(self.interner, union_type)
-        {
-            members_list_storage = self.interner.type_list(members_id);
+        let members: &[TypeId] = if let Some(members_id) = union_list_id(self.db, resolved_type) {
+            members_list_storage = self.db.type_list(members_id);
             &members_list_storage
         } else {
-            single_member_storage = [union_type];
+            single_member_storage = [resolved_type];
             &single_member_storage[..]
         };
 
@@ -423,8 +443,8 @@ impl<'a> NarrowingContext<'a> {
                 continue;
             }
 
-            if let Some(shape_id) = object_shape_id(self.interner, member) {
-                let shape = self.interner.object_shape(shape_id);
+            if let Some(shape_id) = object_shape_id(self.db, member) {
+                let shape = self.db.object_shape(shape_id);
                 let prop_type = shape
                     .properties
                     .iter()
@@ -436,7 +456,7 @@ impl<'a> NarrowingContext<'a> {
                         // Exclude member ONLY if property type is subtype of excluded value
                         // This means the property is ALWAYS the excluded value
                         // REVERSE of narrow_by_discriminant logic
-                        if is_subtype_of(self.interner, ty, excluded_value) {
+                        if is_subtype_of(self.db, ty, excluded_value) {
                             trace!(
                                 "Member {} has property type {} which is subtype of excluded {}, excluding",
                                 member.0, ty.0, excluded_value.0
@@ -469,7 +489,7 @@ impl<'a> NarrowingContext<'a> {
         } else if remaining_count == 1 {
             remaining[0]
         } else {
-            self.interner.union(remaining)
+            self.db.union(remaining)
         };
 
         eprintln!(
@@ -499,7 +519,7 @@ impl<'a> NarrowingContext<'a> {
                 "bigint" => TypeId::BIGINT,
                 "symbol" => TypeId::SYMBOL,
                 "undefined" => TypeId::UNDEFINED,
-                "object" => self.interner.union2(TypeId::OBJECT, TypeId::NULL),
+                "object" => self.db.union2(TypeId::OBJECT, TypeId::NULL),
                 "function" => self.function_type(),
                 _ => source_type,
             };
@@ -548,10 +568,10 @@ impl<'a> NarrowingContext<'a> {
         use crate::solver::type_queries_extended::InstanceTypeKind;
         use crate::solver::type_queries_extended::classify_for_instance_type;
 
-        let instance_type = match classify_for_instance_type(self.interner, constructor_type) {
+        let instance_type = match classify_for_instance_type(self.db, constructor_type) {
             InstanceTypeKind::Callable(shape_id) => {
                 // For callable types with construct signatures, get the return type of the construct signature
-                let shape = self.interner.callable_shape(shape_id);
+                let shape = self.db.callable_shape(shape_id);
                 // Find a construct signature and get its return type (the instance type)
                 if let Some(construct_sig) = shape.construct_signatures.first() {
                     construct_sig.return_type
@@ -563,7 +583,7 @@ impl<'a> NarrowingContext<'a> {
             }
             InstanceTypeKind::Function(shape_id) => {
                 // For function types, check if it's a constructor
-                let shape = self.interner.function_shape(shape_id);
+                let shape = self.db.function_shape(shape_id);
                 if shape.is_constructor {
                     // The return type is the instance type
                     shape.return_type
@@ -586,7 +606,7 @@ impl<'a> NarrowingContext<'a> {
                     } else if instance_types.len() == 1 {
                         instance_types[0]
                     } else {
-                        self.interner.intersection(instance_types)
+                        self.db.intersection(instance_types)
                     }
                 } else {
                     // For negation with intersection, we can't easily exclude
@@ -614,7 +634,7 @@ impl<'a> NarrowingContext<'a> {
                     } else if instance_types.len() == 1 {
                         instance_types[0]
                     } else {
-                        self.interner.union(instance_types)
+                        self.db.union(instance_types)
                     }
                 } else {
                     // For negation with union, we can't easily exclude
@@ -657,7 +677,7 @@ impl<'a> NarrowingContext<'a> {
             // In TypeScript, instanceof on an interface narrows to intersection, not NEVER
             if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
                 // Use intersection for interface vs class (or other non-assignable but overlapping types)
-                self.interner.intersection2(source_type, instance_type)
+                self.db.intersection2(source_type, instance_type)
             } else {
                 narrowed
             }
@@ -716,18 +736,18 @@ impl<'a> NarrowingContext<'a> {
                 readonly: false,
                 is_method: false,
             };
-            let filter_obj = self.interner.object(vec![required_prop]);
-            let narrowed = self.interner.intersection2(TypeId::OBJECT, filter_obj);
+            let filter_obj = self.db.object(vec![required_prop]);
+            let narrowed = self.db.intersection2(TypeId::OBJECT, filter_obj);
             trace!("Narrowing unknown to object & property = {}", narrowed.0);
             return narrowed;
         }
 
         // If source is a union, filter members based on property presence
-        if let Some(members_id) = union_list_id(self.interner, source_type) {
-            let members = self.interner.type_list(members_id);
+        if let Some(members_id) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members_id);
             trace!(
                 "Checking property {} in union with {} members",
-                self.interner.resolve_atom_ref(property_name),
+                self.db.resolve_atom_ref(property_name),
                 members.len()
             );
 
@@ -748,8 +768,8 @@ impl<'a> NarrowingContext<'a> {
                                 readonly: false,
                                 is_method: false,
                             };
-                            let filter_obj = self.interner.object(vec![required_prop]);
-                            self.interner.intersection2(member, filter_obj)
+                            let filter_obj = self.db.object(vec![required_prop]);
+                            self.db.intersection2(member, filter_obj)
                         } else {
                             // Property not found: Intersect with { prop: unknown }
                             // This handles open objects and unresolved Lazy types
@@ -761,8 +781,8 @@ impl<'a> NarrowingContext<'a> {
                                 readonly: false,
                                 is_method: false,
                             };
-                            let filter_obj = self.interner.object(vec![required_prop]);
-                            self.interner.intersection2(member, filter_obj)
+                            let filter_obj = self.db.object(vec![required_prop]);
+                            self.db.intersection2(member, filter_obj)
                         }
                     } else {
                         // Negative: !("prop" in member)
@@ -780,7 +800,7 @@ impl<'a> NarrowingContext<'a> {
                 return matching[0];
             } else {
                 trace!("Created union with {} members", matching.len());
-                return self.interner.union(matching);
+                return self.db.union(matching);
             }
         }
 
@@ -800,8 +820,8 @@ impl<'a> NarrowingContext<'a> {
                     readonly: false,
                     is_method: false,
                 };
-                let filter_obj = self.interner.object(vec![required_prop]);
-                self.interner.intersection2(source_type, filter_obj)
+                let filter_obj = self.db.object(vec![required_prop]);
+                self.db.intersection2(source_type, filter_obj)
             } else {
                 // Property not found (or Lazy type): Intersect with { prop: unknown }
                 // This handles open objects and unresolved Lazy types safely
@@ -813,8 +833,8 @@ impl<'a> NarrowingContext<'a> {
                     readonly: false,
                     is_method: false,
                 };
-                let filter_obj = self.interner.object(vec![required_prop]);
-                self.interner.intersection2(source_type, filter_obj)
+                let filter_obj = self.db.object(vec![required_prop]);
+                self.db.intersection2(source_type, filter_obj)
             }
         } else {
             // Negative: !("prop" in x)
@@ -843,8 +863,8 @@ impl<'a> NarrowingContext<'a> {
     /// Returns Some(type) if the property exists, None otherwise.
     fn get_property_type(&self, type_id: TypeId, property_name: Atom) -> Option<TypeId> {
         // Check intersection types - property exists if ANY member has it
-        if let Some(members_id) = intersection_list_id(self.interner, type_id) {
-            let members = self.interner.type_list(members_id);
+        if let Some(members_id) = intersection_list_id(self.db, type_id) {
+            let members = self.db.type_list(members_id);
             // Return the type from the first member that has the property
             for &member in members.iter() {
                 if let Some(prop_type) = self.get_property_type(member, property_name) {
@@ -855,8 +875,8 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Check object shape
-        if let Some(shape_id) = object_shape_id(self.interner, type_id) {
-            let shape = self.interner.object_shape(shape_id);
+        if let Some(shape_id) = object_shape_id(self.db, type_id) {
+            let shape = self.db.object_shape(shape_id);
 
             // Check if the property exists in the object's properties
             if let Some(prop) = shape.properties.iter().find(|p| p.name == property_name) {
@@ -872,7 +892,7 @@ impl<'a> NarrowingContext<'a> {
 
             // If the object has a number index signature and the property name is numeric
             if let Some(ref number_idx) = shape.number_index {
-                let prop_str = self.interner.resolve_atom_ref(property_name);
+                let prop_str = self.db.resolve_atom_ref(property_name);
                 if prop_str.chars().all(|c| c.is_ascii_digit()) {
                     return Some(number_idx.value_type);
                 }
@@ -882,8 +902,8 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Check object with index signature
-        if let Some(shape_id) = object_with_index_shape_id(self.interner, type_id) {
-            let shape = self.interner.object_shape(shape_id);
+        if let Some(shape_id) = object_with_index_shape_id(self.db, type_id) {
+            let shape = self.db.object_shape(shape_id);
 
             // Check properties first
             if let Some(prop) = shape.properties.iter().find(|p| p.name == property_name) {
@@ -896,7 +916,7 @@ impl<'a> NarrowingContext<'a> {
             }
 
             if let Some(ref number_idx) = shape.number_index {
-                let prop_str = self.interner.resolve_atom_ref(property_name);
+                let prop_str = self.db.resolve_atom_ref(property_name);
                 if prop_str.chars().all(|c| c.is_ascii_digit()) {
                     return Some(number_idx.value_type);
                 }
@@ -934,8 +954,8 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // If source is a union, filter members
-        if let Some(members) = union_list_id(self.interner, source_type) {
-            let members = self.interner.type_list(members);
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
             trace!(
                 "Narrowing union with {} members to type {}",
                 members.len(),
@@ -965,7 +985,7 @@ impl<'a> NarrowingContext<'a> {
                     "Found {} matching members, creating new union",
                     matching.len()
                 );
-                return self.interner.union(matching);
+                return self.db.union(matching);
             }
         }
 
@@ -986,8 +1006,8 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow a type to exclude members assignable to target.
     pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
-        if let Some(members) = intersection_list_id(self.interner, source_type) {
-            let members = self.interner.type_list(members);
+        if let Some(members) = intersection_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
             let mut narrowed_members = Vec::with_capacity(members.len());
             let mut changed = false;
             for &member in members.iter() {
@@ -1003,16 +1023,16 @@ impl<'a> NarrowingContext<'a> {
             if !changed {
                 return source_type;
             }
-            return self.interner.intersection(narrowed_members);
+            return self.db.intersection(narrowed_members);
         }
 
         // If source is a union, filter out matching members
-        if let Some(members) = union_list_id(self.interner, source_type) {
-            let members = self.interner.type_list(members);
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
             let remaining: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
-                    if intersection_list_id(self.interner, member).is_some() {
+                    if intersection_list_id(self.db, member).is_some() {
                         let narrowed = self.narrow_excluding_type(member, excluded_type);
                         if narrowed == TypeId::NEVER {
                             return None;
@@ -1039,7 +1059,7 @@ impl<'a> NarrowingContext<'a> {
             } else if remaining.len() == 1 {
                 return remaining[0];
             } else {
-                return self.interner.union(remaining);
+                return self.db.union(remaining);
             }
         }
 
@@ -1057,8 +1077,8 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow to function types only.
     fn narrow_to_function(&self, source_type: TypeId) -> TypeId {
-        if let Some(members) = union_list_id(self.interner, source_type) {
-            let members = self.interner.type_list(members);
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
             let functions: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
@@ -1081,7 +1101,7 @@ impl<'a> NarrowingContext<'a> {
             } else if functions.len() == 1 {
                 return functions[0];
             } else {
-                return self.interner.union(functions);
+                return self.db.union(functions);
             }
         }
 
@@ -1093,15 +1113,15 @@ impl<'a> NarrowingContext<'a> {
             source_type
         } else if source_type == TypeId::OBJECT {
             self.function_type()
-        } else if let Some(shape_id) = object_shape_id(self.interner, source_type) {
-            let shape = self.interner.object_shape(shape_id);
+        } else if let Some(shape_id) = object_shape_id(self.db, source_type) {
+            let shape = self.db.object_shape(shape_id);
             if shape.properties.is_empty() {
                 self.function_type()
             } else {
                 TypeId::NEVER
             }
-        } else if let Some(shape_id) = object_with_index_shape_id(self.interner, source_type) {
-            let shape = self.interner.object_shape(shape_id);
+        } else if let Some(shape_id) = object_with_index_shape_id(self.db, source_type) {
+            let shape = self.db.object_shape(shape_id);
             if shape.properties.is_empty()
                 && shape.string_index.is_none()
                 && shape.number_index.is_none()
@@ -1118,19 +1138,19 @@ impl<'a> NarrowingContext<'a> {
     /// Check if a type is a literal type.
     /// Uses the visitor pattern from solver::visitor.
     fn is_literal_type(&self, type_id: TypeId) -> bool {
-        is_literal_type_db(self.interner, type_id)
+        is_literal_type_db(self.db, type_id)
     }
 
     /// Check if a type is a function type.
     /// Uses the visitor pattern from solver::visitor.
     fn is_function_type(&self, type_id: TypeId) -> bool {
-        is_function_type_db(self.interner, type_id)
+        is_function_type_db(self.db, type_id)
     }
 
     /// Narrow a type to exclude function-like members (typeof !== "function").
     pub fn narrow_excluding_function(&self, source_type: TypeId) -> TypeId {
-        if let Some(members) = union_list_id(self.interner, source_type) {
-            let members = self.interner.type_list(members);
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
             let remaining: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
@@ -1153,7 +1173,7 @@ impl<'a> NarrowingContext<'a> {
             } else if remaining.len() == 1 {
                 return remaining[0];
             } else {
-                return self.interner.union(remaining);
+                return self.db.union(remaining);
             }
         }
 
@@ -1171,11 +1191,11 @@ impl<'a> NarrowingContext<'a> {
     /// Check if a type has typeof "object".
     /// Uses the visitor pattern from solver::visitor.
     fn is_object_typeof(&self, type_id: TypeId) -> bool {
-        is_object_like_type_db(self.interner, type_id)
+        is_object_like_type_db(self.db, type_id)
     }
 
     fn narrow_type_param(&self, source: TypeId, target: TypeId) -> Option<TypeId> {
-        let info = type_param_info(self.interner, source)?;
+        let info = type_param_info(self.db, source)?;
 
         let constraint = info.constraint.unwrap_or(TypeId::UNKNOWN);
         if constraint == source {
@@ -1192,16 +1212,16 @@ impl<'a> NarrowingContext<'a> {
             return None;
         }
 
-        Some(self.interner.intersection2(source, narrowed_constraint))
+        Some(self.db.intersection2(source, narrowed_constraint))
     }
 
     fn narrow_type_param_to_function(&self, source: TypeId) -> Option<TypeId> {
-        let info = type_param_info(self.interner, source)?;
+        let info = type_param_info(self.db, source)?;
 
         let constraint = info.constraint.unwrap_or(TypeId::UNKNOWN);
         if constraint == source || constraint == TypeId::UNKNOWN {
             let function_type = self.function_type();
-            return Some(self.interner.intersection2(source, function_type));
+            return Some(self.db.intersection2(source, function_type));
         }
 
         let narrowed_constraint = self.narrow_to_function(constraint);
@@ -1209,11 +1229,11 @@ impl<'a> NarrowingContext<'a> {
             return None;
         }
 
-        Some(self.interner.intersection2(source, narrowed_constraint))
+        Some(self.db.intersection2(source, narrowed_constraint))
     }
 
     fn narrow_type_param_excluding(&self, source: TypeId, excluded: TypeId) -> Option<TypeId> {
-        let info = type_param_info(self.interner, source)?;
+        let info = type_param_info(self.db, source)?;
 
         let constraint = info.constraint?;
         if constraint == source || constraint == TypeId::UNKNOWN {
@@ -1228,11 +1248,11 @@ impl<'a> NarrowingContext<'a> {
             return Some(TypeId::NEVER);
         }
 
-        Some(self.interner.intersection2(source, narrowed_constraint))
+        Some(self.db.intersection2(source, narrowed_constraint))
     }
 
     fn narrow_type_param_excluding_function(&self, source: TypeId) -> Option<TypeId> {
-        let info = type_param_info(self.interner, source)?;
+        let info = type_param_info(self.db, source)?;
 
         let constraint = info.constraint.unwrap_or(TypeId::UNKNOWN);
         if constraint == source || constraint == TypeId::UNKNOWN {
@@ -1247,18 +1267,18 @@ impl<'a> NarrowingContext<'a> {
             return Some(TypeId::NEVER);
         }
 
-        Some(self.interner.intersection2(source, narrowed_constraint))
+        Some(self.db.intersection2(source, narrowed_constraint))
     }
 
     pub(crate) fn function_type(&self) -> TypeId {
-        let rest_array = self.interner.array(TypeId::ANY);
+        let rest_array = self.db.array(TypeId::ANY);
         let rest_param = ParamInfo {
             name: None,
             type_id: rest_array,
             optional: false,
             rest: true,
         };
-        self.interner.function(FunctionShape {
+        self.db.function(FunctionShape {
             params: vec![rest_param],
             this_type: None,
             return_type: TypeId::ANY,
@@ -1286,7 +1306,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Literal to base type
-        if let Some(lit) = literal_value(self.interner, source) {
+        if let Some(lit) = literal_value(self.db, source) {
             match (lit, target) {
                 (LiteralValue::String(_), t) if t == TypeId::STRING => return true,
                 (LiteralValue::Number(_), t) if t == TypeId::NUMBER => return true,
@@ -1307,8 +1327,8 @@ impl<'a> NarrowingContext<'a> {
             return false;
         }
 
-        if let Some(members) = intersection_list_id(self.interner, source) {
-            let members = self.interner.type_list(members);
+        if let Some(members) = intersection_list_id(self.db, source) {
+            let members = self.db.type_list(members);
             if members
                 .iter()
                 .any(|member| self.is_assignable_to(*member, target))
@@ -1317,7 +1337,7 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        if target == TypeId::STRING && template_literal_id(self.interner, source).is_some() {
+        if target == TypeId::STRING && template_literal_id(self.db, source).is_some() {
             return true;
         }
 
@@ -1383,7 +1403,7 @@ impl<'a> NarrowingContext<'a> {
             TypeGuard::NullishEquality => {
                 if sense {
                     // Equality with null: narrow to null | undefined
-                    self.interner.union(vec![TypeId::NULL, TypeId::UNDEFINED])
+                    self.db.union(vec![TypeId::NULL, TypeId::UNDEFINED])
                 } else {
                     // Inequality: exclude null and undefined
                     let without_null = self.narrow_excluding_type(source_type, TypeId::NULL);
@@ -1490,7 +1510,7 @@ impl<'a> NarrowingContext<'a> {
 
 /// Convenience function for finding discriminants.
 pub fn find_discriminants(
-    interner: &dyn TypeDatabase,
+    interner: &dyn QueryDatabase,
     union_type: TypeId,
 ) -> Vec<DiscriminantInfo> {
     let ctx = NarrowingContext::new(interner);
@@ -1499,7 +1519,7 @@ pub fn find_discriminants(
 
 /// Convenience function for narrowing by discriminant.
 pub fn narrow_by_discriminant(
-    interner: &dyn TypeDatabase,
+    interner: &dyn QueryDatabase,
     union_type: TypeId,
     property_name: Atom,
     literal_value: TypeId,
@@ -1510,7 +1530,7 @@ pub fn narrow_by_discriminant(
 
 /// Convenience function for typeof narrowing.
 pub fn narrow_by_typeof(
-    interner: &dyn TypeDatabase,
+    interner: &dyn QueryDatabase,
     source_type: TypeId,
     typeof_result: &str,
 ) -> TypeId {
