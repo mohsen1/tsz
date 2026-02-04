@@ -688,6 +688,7 @@ impl<'a> CheckerState<'a> {
                         let atom = self.ctx.types.intern_string(param_name);
                         let type_id = self.ctx.types.intern(crate::solver::TypeKey::TypeParameter(
                             crate::solver::TypeParamInfo {
+                                is_const: false,
                                 name: atom,
                                 constraint: None,
                                 default: None,
@@ -746,6 +747,7 @@ impl<'a> CheckerState<'a> {
                         let atom = self.ctx.types.intern_string(&name);
                         let type_id = self.ctx.types.intern(crate::solver::TypeKey::TypeParameter(
                             crate::solver::TypeParamInfo {
+                                is_const: false,
                                 name: atom,
                                 constraint: None,
                                 default: None,
@@ -826,6 +828,7 @@ impl<'a> CheckerState<'a> {
             let name = ident.escaped_text.clone();
             let atom = self.ctx.types.intern_string(&name);
             let type_id = self.ctx.types.intern(TypeKey::TypeParameter(TypeParamInfo {
+                is_const: false,
                 name: atom,
                 constraint: None,
                 default: None,
