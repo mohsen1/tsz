@@ -342,8 +342,9 @@ impl<'a> CheckerState<'a> {
             // Case 4: Method overloads (signatures + 1 implementation) -> Valid, no error
 
             if property_count > 0 && method_count == 0 {
-                // All properties: only report subsequent declarations
-                for &idx in info.indices.iter().skip(1) {
+                // All properties: report ALL declarations (matching test expectation)
+                // Note: tsc emits TS2300 + TS2717, but TS2717 not yet implemented
+                for &idx in info.indices.iter() {
                     self.report_duplicate_class_member_ts2300(idx);
                 }
             } else if property_count > 0 && method_count > 0 {
