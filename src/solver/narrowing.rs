@@ -525,10 +525,28 @@ impl<'a> NarrowingContext<'a> {
         }
 
         if source_type == TypeId::UNKNOWN {
-            // For unknown, we don't know what properties it has
-            // If checking for property presence, we can't narrow
-            trace!("Source type is UNKNOWN, returning unchanged");
-            return source_type;
+            // For unknown, narrow to object & { prop: unknown } in the true branch
+            // This matches TypeScript's behavior where "prop" in x narrows x to have that property
+            if present {
+                // Create an object type with the property
+                let prop_name_str = self.interner.resolve_atom_ref(property_name);
+                let prop = PropertyInfo {
+                    name: property_name,
+                    type_id: TypeId::UNKNOWN,
+                    write_type: TypeId::UNKNOWN,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                };
+                let narrowed_object = self.interner.object(vec![prop]);
+                // Return intersection: object & { prop: unknown }
+                return self.interner.intersection2(TypeId::OBJECT, narrowed_object);
+            } else {
+                // False branch: property is not present, which is impossible for unknown
+                // since unknown could have any property. Return NEVER.
+                trace!("UNKNOWN in false branch for in operator, returning NEVER");
+                return TypeId::NEVER;
+            }
         }
 
         // If source is a union, filter members based on property presence
@@ -585,6 +603,18 @@ impl<'a> NarrowingContext<'a> {
     /// Returns true if the type has the property (required or optional),
     /// or has an index signature that would match the property.
     fn type_has_property(&self, type_id: TypeId, property_name: Atom) -> bool {
+        // TODO: Resolve Lazy types before checking properties
+        // This requires adding resolver access to NarrowingContext
+        // For now, Lazy types will not be properly handled
+
+        // Check intersection types - property exists if ANY member has it
+        if let Some(members_id) = intersection_list_id(self.interner, type_id) {
+            let members = self.interner.type_list(members_id);
+            return members
+                .iter()
+                .any(|&member| self.type_has_property(member, property_name));
+        }
+
         // Check object shape
         if let Some(shape_id) = object_shape_id(self.interner, type_id) {
             let shape = self.interner.object_shape(shape_id);
