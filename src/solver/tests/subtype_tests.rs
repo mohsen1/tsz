@@ -1,6 +1,6 @@
 use super::*;
 use crate::solver::def::DefId;
-use crate::solver::{TypeSubstitution, instantiate_type};
+use crate::solver::{TypeSubstitution, Visibility, instantiate_type};
 
 #[test]
 fn test_intrinsic_subtyping() {

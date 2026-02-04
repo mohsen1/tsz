@@ -5,7 +5,7 @@ use crate::solver::def::DefId;
 use crate::solver::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
     ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
-    TypeEnvironment, TypeParamInfo, TypeSubstitution, instantiate_type,
+    TypeEnvironment, TypeParamInfo, TypeSubstitution, Visibility, instantiate_type,
 };
 
 fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
