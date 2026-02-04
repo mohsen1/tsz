@@ -80,7 +80,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // check if source is derived from target (O(1) lookup)
         if let (Some(source_sym), Some(target_sym)) = (source.symbol, target.symbol) {
             if let Some(graph) = self.inheritance_graph {
-                if graph.is_derived_from(source_sym, target_sym) {
+                // Convert SymbolRef to SymbolId for InheritanceGraph
+                // Both types wrap u32, so we extract the inner value
+                use crate::binder::SymbolId;
+                let source_id = SymbolId(source_sym.0);
+                let target_id = SymbolId(target_sym.0);
+                if graph.is_derived_from(source_id, target_id) {
                     return SubtypeResult::True;
                 }
             }
