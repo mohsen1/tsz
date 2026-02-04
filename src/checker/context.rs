@@ -16,9 +16,7 @@ use crate::checker::types::diagnostics::Diagnostic;
 use crate::common::ModuleKind;
 use crate::parser::NodeIndex;
 use crate::solver::def::{DefId, DefinitionStore};
-use crate::solver::{
-    PropertyInfo, QueryDatabase, TypeEnvironment, TypeId, judge::JudgeConfig,
-};
+use crate::solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId, judge::JudgeConfig};
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
