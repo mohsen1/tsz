@@ -2,8 +2,8 @@
 
 **Started**: 2026-02-04
 **Status**: 🟢 ACTIVE (Phase 4 in progress)
-**Latest Update**: 2026-02-04 - Task 3 complete, awaiting next task assignment
-**Focus**: Inter-Parameter Constraints COMPLETE
+**Latest Update**: 2026-02-04 - Task 1.1 complete
+**Focus**: Nominal BCT with TypeResolver integration
 
 ---
 
@@ -56,9 +56,24 @@ The current generic inference and type system has several gaps that cause `any` 
 
 **Review**: Gemini Pro confirmed transitivity logic is correct for TypeScript's type system.
 
-#### Task 1.1: Fix Nominal BCT Resolver (Refactor SubtypeChecker) (MEDIUM)
-**File**: `src/solver/subtype.rs`
-**Goal**: Allow `SubtypeChecker` to accept `dyn TypeResolver` (unsized) to support nominal hierarchy checks in BCT.
+#### Task 1.1: Fix Nominal BCT Resolver (Refactor SubtypeChecker) (MEDIUM) ✅ COMPLETE
+**Commits**: `52060cf9b`
+**File**: `src/solver/expression_ops.rs`
+
+**Goal**: Allow BCT to use TypeResolver for nominal hierarchy checks.
+
+**Implementation**:
+- Made `compute_best_common_type` generic over `R: TypeResolver`
+- Added `check_subtype` helper that uses `SubtypeChecker::with_resolver` when available
+- Enables BCT to recognize class hierarchies (e.g., `[Dog, Animal] -> Animal`)
+
+**Key Insight**: `SubtypeChecker` already had TypeResolver support via generics. We just needed to:
+1. Pass the resolver from `compute_best_common_type` down to `SubtypeChecker`
+2. Use `Option<&R>` to allow calls without a resolver
+
+**Note**: `CheckerContext` already implements `get_base_type()` to return parent class information via the InheritanceGraph. No changes needed there.
+
+**Review**: Gemini Pro approved the implementation. The generic approach is correct and enables nominal inheritance checks.
 
 #### Task 4: Contextual Return Inference (LOW)
 **File**: `src/solver/operations.rs`
