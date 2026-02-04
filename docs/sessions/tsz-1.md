@@ -136,7 +136,7 @@ match alias_key {
 
 ## Investigation: Redux Pattern (test_redux_pattern_extract_state_with_infer)
 
-**Status**: IN PROGRESS - Not fixed yet, made progress on infer pattern infrastructure
+**Status**: ROOT CAUSE IDENTIFIED - Application expansion failure
 
 **Problem**: Redux pattern test fails - `ExtractedState` is not being inferred as `number`
 
@@ -148,25 +148,20 @@ type NumberReducer = Reducer<number, { type: string }>;
 type ExtractedState = ExtractState<NumberReducer>; // Should be number
 ```
 
-**Root Cause Investigation** (with Gemini consultation):
-1. `match_infer_pattern` is NOT being called at all
-2. The issue is earlier in conditional type evaluation - the `extends` check
-3. Debug logging shows no Application expansion code is reached
+**Root Cause** (identified via Gemini consultation):
+The `Application` type `ExtractState<NumberReducer>` is failing to expand in `src/solver/evaluate.rs`.
+- `evaluate_conditional` is NEVER called because Application expansion fails first
+- `TypeResolver::get_lazy_type_params(def_id)` returns `None`
+- The Solver treats the type as an opaque `Application` handle
+- `SubtypeChecker` compares nominally (and fails), bypassing conditional logic entirely
 
-**Changes Made** (following Gemini guidance):
+**Changes Made** (for future use when root cause is fixed):
 1. ✅ Added Application expansion to `match_infer_pattern`
-   - When pattern is Application and source is not, expand pattern to structural form
-   - Use `ApplicationEvaluator::evaluate_or_original(pattern)`
-   - Recurse with expanded pattern
-
 2. ✅ Removed overly-strict final subtype checks
-   - For infer pattern matching, once components match, pattern succeeds
-   - Final subtype check was failing due to function parameter contravariance
-   - Applied to: params+return, return-only, this-type, callable patterns
 
-**Next Steps** (require further investigation):
-- The issue is in conditional type evaluation BEFORE pattern matching
-- Need to trace why `extends` check is not calling `match_infer_pattern`
-- May need to investigate `evaluate_conditional_type` or similar function
+**Next Step** (requires investigation):
+Fix Application expansion in `src/solver/evaluate.rs` to properly resolve type parameters
+for type aliases with Lazy(DefId). The `get_lazy_type_params` function needs to return
+the correct type parameters for generic type aliases like `ExtractState<R>`.
 
 ## Status: Good progress - 35 failing tests remain
