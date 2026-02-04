@@ -3215,7 +3215,8 @@ fn test_object_with_index_satisfies_named_property_string_index() {
         is_method: false,
     }]);
 
-    assert!(checker.is_subtype_of(source, target));
+    // Index signatures do NOT satisfy required named properties (TS2741)
+    assert!(!checker.is_subtype_of(source, target));
 }
 
 #[test]
@@ -3302,7 +3303,8 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
         is_method: false,
     }]);
 
-    assert!(checker.is_subtype_of(source, target));
+    // Index signatures do NOT satisfy required named properties (TS2741)
+    assert!(!checker.is_subtype_of(source, target));
 }
 
 #[test]

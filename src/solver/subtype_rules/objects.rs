@@ -485,13 +485,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &ObjectShape,
         target_prop: &PropertyInfo,
     ) -> SubtypeResult {
-        let mut checked = false;
+        // FIX: Index signatures do NOT satisfy required named properties (TS2741).
+        // They only satisfy optional properties.
+        // For example: { [x: string]: any } is NOT assignable to { one: number }
+        // because 'one' is a required property that doesn't exist in the source.
+        if !target_prop.optional {
+            return SubtypeResult::False;
+        }
+
+        // For optional properties, still verify type compatibility
         let target_type = self.optional_property_type(target_prop);
 
         if utils::is_numeric_property_name(self.interner, target_prop.name)
             && let Some(number_idx) = &source.number_index
         {
-            checked = true;
             if number_idx.readonly && !target_prop.readonly {
                 return SubtypeResult::False;
             }
@@ -505,10 +512,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             {
                 return SubtypeResult::False;
             }
+            return SubtypeResult::True;
         }
 
         if let Some(string_idx) = &source.string_index {
-            checked = true;
             if string_idx.readonly && !target_prop.readonly {
                 return SubtypeResult::False;
             }
@@ -522,13 +529,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             {
                 return SubtypeResult::False;
             }
+            return SubtypeResult::True;
         }
 
-        if checked || target_prop.optional {
-            SubtypeResult::True
-        } else {
-            SubtypeResult::False
-        }
+        // No matching index signature for optional property - this is OK
+        SubtypeResult::True
     }
 
     /// Check that source properties are compatible with target index signatures.
