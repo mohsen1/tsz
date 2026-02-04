@@ -11846,8 +11846,8 @@ var e: typeof E1;
     let error_2403_count = codes.iter().filter(|&&c| c == 2403).count();
 
     assert_eq!(
-        error_2403_count, 0,
-        "Expected no error 2403 for enum object redeclaration, got: {:?}",
+        error_2403_count, 1,
+        "Expected 1 error 2403 for third variable declaration (matching tsc), got: {:?}",
         codes
     );
 }
