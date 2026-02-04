@@ -84,13 +84,18 @@ pub enum TypeGuard {
     /// Removes falsy types from a union: `null`, `undefined`, `false`, `0`, `""`, `NaN`.
     Truthy,
 
-    /// `x.prop === literal` (Discriminated Union narrowing)
+    /// `x.prop === literal` or `x.payload.type === "value"` (Discriminated Union narrowing)
     ///
     /// Narrows a union of object types based on a discriminant property.
-    /// For example, narrowing `{ kind: "A" } | { kind: "B" }` with
-    /// `Discriminant { property: "kind", value: "A" }` yields `{ kind: "A" }`.
+    ///
+    /// # Examples
+    /// - Top-level: `{ kind: "A" } | { kind: "B" }` with `path: ["kind"]` yields `{ kind: "A" }`
+    /// - Nested: `{ payload: { type: "user" } } | { payload: { type: "product" } }`
+    ///   with `path: ["payload", "type"]` yields `{ payload: { type: "user" } }`
     Discriminant {
-        property_name: Atom,
+        /// Property path from base to discriminant (e.g., ["payload", "type"])
+        property_path: Vec<Atom>,
+        /// The literal value to match against
         value_type: TypeId,
     },
 
@@ -119,6 +124,23 @@ pub enum TypeGuard {
         type_id: Option<TypeId>,
         asserts: bool,
     },
+
+    /// `Array.isArray(x)`
+    ///
+    /// Narrows a type to only array-like types (arrays, tuples, readonly arrays).
+    ///
+    /// # Examples
+    /// ```typescript
+    /// function process(x: string[] | number | { length: number }) {
+    ///   if (Array.isArray(x)) {
+    ///     x; // string[] (not number or the object)
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// This preserves element types - `string[] | number[]` stays as `string[] | number[]`,
+    /// it doesn't collapse to `any[]`.
+    Array,
 }
 
 /// Result of a narrowing operation.
@@ -264,6 +286,54 @@ impl<'a> NarrowingContext<'a> {
         discriminants
     }
 
+    /// Get the type of a property at a nested path within a type.
+    ///
+    /// # Examples
+    /// - `get_type_at_path(type, ["payload"])` -> type of `payload` property
+    /// - `get_type_at_path(type, ["payload", "type"])` -> type of `payload.type`
+    ///
+    /// Returns `None` if:
+    /// - The type doesn't have the property at any level in the path
+    /// - An intermediate type in the path is not an object type
+    fn get_type_at_path(&self, mut type_id: TypeId, path: &[Atom]) -> Option<TypeId> {
+        for (i, &prop_name) in path.iter().enumerate() {
+            // Handle ANY - any property access on any returns any
+            if type_id == TypeId::ANY {
+                return Some(TypeId::ANY);
+            }
+
+            // Resolve Lazy types
+            type_id = self.resolve_type(type_id);
+
+            // Handle Union - return union of property types from all members
+            if let Some(members_id) = union_list_id(self.db, type_id) {
+                let members = self.db.type_list(members_id);
+                let remaining_path = &path[i..];
+                let prop_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&member| self.get_type_at_path(member, remaining_path))
+                    .collect();
+
+                if prop_types.is_empty() {
+                    return None;
+                } else if prop_types.len() == 1 {
+                    return Some(prop_types[0]);
+                } else {
+                    return Some(self.db.union(prop_types));
+                }
+            }
+
+            // Get the property type from object shape
+            let shape_id = object_shape_id(self.db, type_id)?;
+            let shape = self.db.object_shape(shape_id);
+
+            let prop = shape.properties.iter().find(|p| p.name == prop_name)?;
+            type_id = prop.type_id;
+        }
+
+        Some(type_id)
+    }
+
     /// Narrow a union type based on a discriminant property check.
     ///
     /// Example: `action.type === "add"` narrows `Action` to `{ type: "add", value: number }`
@@ -272,17 +342,22 @@ impl<'a> NarrowingContext<'a> {
     /// the property could match the literal value. This is more flexible than the
     /// old `find_discriminants` approach which required ALL members to have the
     /// property with unique literal values.
+    ///
+    /// # Arguments
+    /// - `union_type`: The union type to narrow
+    /// - `property_path`: Path to the discriminant property (e.g., ["payload", "type"])
+    /// - `literal_value`: The literal value to match
     pub fn narrow_by_discriminant(
         &self,
         union_type: TypeId,
-        property_name: Atom,
+        property_path: &[Atom],
         literal_value: TypeId,
     ) -> TypeId {
         let _span = span!(
             Level::TRACE,
             "narrow_by_discriminant",
             union_type = union_type.0,
-            ?property_name,
+            property_path_len = property_path.len(),
             literal_value = literal_value.0
         )
         .entered();
@@ -309,9 +384,9 @@ impl<'a> NarrowingContext<'a> {
         );
 
         eprintln!(
-            "DEBUG narrow_by_discriminant: union_type={}, property={:?}, literal={}, members={}",
+            "DEBUG narrow_by_discriminant: union_type={}, property_path_len={}, literal={}, members={}",
             union_type.0,
-            self.db.resolve_atom_ref(property_name),
+            property_path.len(),
             literal_value.0,
             members.len()
         );
@@ -345,71 +420,35 @@ impl<'a> NarrowingContext<'a> {
                     None
                 };
 
-            // Helper function to check if a type has a matching property
+            // Helper function to check if a type has a matching property at the path
             let check_member_for_property = |check_type_id: TypeId| -> bool {
-                if let Some(shape_id) = object_shape_id(self.db, check_type_id) {
-                    let shape = self.db.object_shape(shape_id);
-
-                    // Find the property
-                    if let Some(prop_info) =
-                        shape.properties.iter().find(|p| p.name == property_name)
-                    {
-                        // CRITICAL: Use is_subtype_of(literal_value, property_type)
-                        // NOT the reverse! This was the bug in the reverted commit.
-                        //
-                        // Check if the literal value is a subtype of the property type.
-                        // This handles cases like:
-                        // - prop is "a" | "b", checking for "a" -> match
-                        // - prop is string, checking for "a" -> match
-                        // - prop is "a", checking for "a" | "b" -> no match (correct)
-                        //
-                        // For optional properties, the effective type includes undefined.
-                        let effective_property_type = if prop_info.optional {
-                            self.db.union(vec![prop_info.type_id, TypeId::UNDEFINED])
-                        } else {
-                            prop_info.type_id
-                        };
-
-                        let matches =
-                            is_subtype_of(self.db, literal_value, effective_property_type);
-
-                        if matches {
-                            trace!(
-                                "Member {} has property {:?} with type {}, literal {} matches",
-                                check_type_id.0,
-                                self.db.resolve_atom_ref(property_name),
-                                prop_info.type_id.0,
-                                literal_value.0
-                            );
-                        } else {
-                            trace!(
-                                "Member {} has property {:?} with type {}, literal {} does not match",
-                                check_type_id.0,
-                                self.db.resolve_atom_ref(property_name),
-                                prop_info.type_id.0,
-                                literal_value.0
-                            );
-                        }
-
-                        matches
-                    } else {
+                // Get the type at the property path
+                let prop_type = match self.get_type_at_path(check_type_id, property_path) {
+                    Some(t) => t,
+                    None => {
                         // Property doesn't exist on this member
-                        // (x.prop === value implies prop must exist, so we exclude this member)
-                        trace!(
-                            "Member {} does not have property {:?}",
-                            check_type_id.0,
-                            self.db.resolve_atom_ref(property_name)
-                        );
-                        false
+                        trace!("Member {} does not have property path", check_type_id.0);
+                        return false;
                     }
-                } else {
-                    // Non-object member (function, class, etc.)
+                };
+
+                // CRITICAL: Use is_subtype_of(literal_value, property_type)
+                // NOT the reverse! This was the bug in the reverted commit.
+                let matches = is_subtype_of(self.db, literal_value, prop_type);
+
+                if matches {
                     trace!(
-                        "Member {} is not an object type, excluding",
-                        check_type_id.0
+                        "Member {} has property path with type {}, literal {} matches",
+                        check_type_id.0, prop_type.0, literal_value.0
                     );
-                    false
+                } else {
+                    trace!(
+                        "Member {} has property path with type {}, literal {} does not match",
+                        check_type_id.0, prop_type.0, literal_value.0
+                    );
                 }
+
+                matches
             };
 
             // Check for property match
@@ -460,17 +499,22 @@ impl<'a> NarrowingContext<'a> {
     /// - prop is "a", exclude "a" -> exclude (property is always "a")
     /// - prop is "a" | "b", exclude "a" -> keep (could be "b")
     /// - prop doesn't exist -> keep (property doesn't match excluded value)
+    ///
+    /// # Arguments
+    /// - `union_type`: The union type to narrow
+    /// - `property_path`: Path to the discriminant property (e.g., ["payload", "type"])
+    /// - `excluded_value`: The literal value to exclude
     pub fn narrow_by_excluding_discriminant(
         &self,
         union_type: TypeId,
-        property_name: Atom,
+        property_path: &[Atom],
         excluded_value: TypeId,
     ) -> TypeId {
         let _span = span!(
             Level::TRACE,
             "narrow_by_excluding_discriminant",
             union_type = union_type.0,
-            ?property_name,
+            property_path_len = property_path.len(),
             excluded_value = excluded_value.0
         )
         .entered();
@@ -526,49 +570,36 @@ impl<'a> NarrowingContext<'a> {
             // Helper function to check if a member should be excluded
             // Returns true if member should be KEPT (not excluded)
             let should_keep_member = |check_type_id: TypeId| -> bool {
-                if let Some(shape_id) = object_shape_id(self.db, check_type_id) {
-                    let shape = self.db.object_shape(shape_id);
-
-                    // Find the property
-                    if let Some(prop_info) =
-                        shape.properties.iter().find(|p| p.name == property_name)
-                    {
-                        // Exclude member ONLY if property type is subtype of excluded value
-                        // This means the property is ALWAYS the excluded value
-                        // REVERSE of narrow_by_discriminant logic
-                        //
-                        // For optional properties, the effective type includes undefined.
-                        let effective_property_type = if prop_info.optional {
-                            self.db.union(vec![prop_info.type_id, TypeId::UNDEFINED])
-                        } else {
-                            prop_info.type_id
-                        };
-
-                        let should_exclude =
-                            is_subtype_of(self.db, effective_property_type, excluded_value);
-
-                        if should_exclude {
-                            trace!(
-                                "Member {} has property type {} which is subtype of excluded {}, excluding",
-                                check_type_id.0, prop_info.type_id.0, excluded_value.0
-                            );
-                            false // Member should be excluded
-                        } else {
-                            trace!(
-                                "Member {} has property type {} which is not subtype of excluded {}, keeping",
-                                check_type_id.0, prop_info.type_id.0, excluded_value.0
-                            );
-                            true // Member should be kept
-                        }
-                    } else {
+                // Get the type at the property path
+                let prop_type = match self.get_type_at_path(check_type_id, property_path) {
+                    Some(t) => t,
+                    None => {
                         // Property doesn't exist - keep the member
-                        // (property absence doesn't match excluded value)
-                        trace!("Member {} does not have property, keeping", check_type_id.0);
-                        true
+                        trace!(
+                            "Member {} does not have property path, keeping",
+                            check_type_id.0
+                        );
+                        return true;
                     }
+                };
+
+                // Exclude member ONLY if property type is subtype of excluded value
+                // This means the property is ALWAYS the excluded value
+                // REVERSE of narrow_by_discriminant logic
+                let should_exclude = is_subtype_of(self.db, prop_type, excluded_value);
+
+                if should_exclude {
+                    trace!(
+                        "Member {} has property path type {} which is subtype of excluded {}, excluding",
+                        check_type_id.0, prop_type.0, excluded_value.0
+                    );
+                    false // Member should be excluded
                 } else {
-                    // Non-object member - keep it
-                    true
+                    trace!(
+                        "Member {} has property path type {} which is not subtype of excluded {}, keeping",
+                        check_type_id.0, prop_type.0, excluded_value.0
+                    );
+                    true // Member should be kept
                 }
             };
 
@@ -1171,6 +1202,32 @@ impl<'a> NarrowingContext<'a> {
             return narrowed;
         }
 
+        // Task 13: Handle boolean -> literal narrowing
+        // When narrowing boolean to true or false, return the corresponding literal
+        if source_type == TypeId::BOOLEAN {
+            let is_target_true = if let Some(lit) = literal_value(self.db, target_type) {
+                matches!(lit, LiteralValue::Boolean(true))
+            } else {
+                target_type == TypeId::BOOLEAN_TRUE
+            };
+
+            if is_target_true {
+                trace!("Narrowing boolean to true");
+                return TypeId::BOOLEAN_TRUE;
+            }
+
+            let is_target_false = if let Some(lit) = literal_value(self.db, target_type) {
+                matches!(lit, LiteralValue::Boolean(false))
+            } else {
+                target_type == TypeId::BOOLEAN_FALSE
+            };
+
+            if is_target_false {
+                trace!("Narrowing boolean to false");
+                return TypeId::BOOLEAN_FALSE;
+            }
+        }
+
         // Check if source is assignable to target
         if self.is_assignable_to(source_type, target_type) {
             trace!("Source type is assignable to target, returning source");
@@ -1242,6 +1299,56 @@ impl<'a> NarrowingContext<'a> {
 
         if let Some(narrowed) = self.narrow_type_param_excluding(source_type, excluded_type) {
             return narrowed;
+        }
+
+        // Special case: boolean type (treat as true | false union)
+        // Task 13: Fix Boolean Narrowing Logic
+        // When excluding true or false from boolean, return the other literal
+        // When excluding both true and false from boolean, return never
+        if source_type == TypeId::BOOLEAN
+            || source_type == TypeId::BOOLEAN_TRUE
+            || source_type == TypeId::BOOLEAN_FALSE
+        {
+            // Check if excluded_type is a boolean literal
+            let is_excluding_true = if let Some(lit) = literal_value(self.db, excluded_type) {
+                matches!(lit, LiteralValue::Boolean(true))
+            } else {
+                excluded_type == TypeId::BOOLEAN_TRUE
+            };
+
+            let is_excluding_false = if let Some(lit) = literal_value(self.db, excluded_type) {
+                matches!(lit, LiteralValue::Boolean(false))
+            } else {
+                excluded_type == TypeId::BOOLEAN_FALSE
+            };
+
+            // Handle exclusion from boolean, true, or false
+            if source_type == TypeId::BOOLEAN {
+                if is_excluding_true {
+                    // Excluding true from boolean -> return false
+                    return TypeId::BOOLEAN_FALSE;
+                } else if is_excluding_false {
+                    // Excluding false from boolean -> return true
+                    return TypeId::BOOLEAN_TRUE;
+                }
+                // If excluding BOOLEAN, let the final is_assignable_to check handle it below
+            } else if source_type == TypeId::BOOLEAN_TRUE {
+                if is_excluding_true {
+                    // Excluding true from true -> return never
+                    return TypeId::NEVER;
+                }
+                // For other cases (e.g., excluding BOOLEAN from TRUE),
+                // let the final is_assignable_to check handle it below
+            } else if source_type == TypeId::BOOLEAN_FALSE {
+                if is_excluding_false {
+                    // Excluding false from false -> return never
+                    return TypeId::NEVER;
+                }
+                // For other cases, let the final is_assignable_to check handle it below
+            }
+            // CRITICAL: Do NOT return source_type here.
+            // Fall through to the standard is_assignable_to check below.
+            // This handles edge cases like narrow_excluding_type(TRUE, BOOLEAN) -> NEVER
         }
 
         // If source is assignable to excluded, return never
@@ -1614,15 +1721,15 @@ impl<'a> NarrowingContext<'a> {
             }
 
             TypeGuard::Discriminant {
-                property_name,
+                property_path,
                 value_type,
             } => {
                 if sense {
                     // Discriminant matches: narrow to matching union members
-                    self.narrow_by_discriminant(source_type, *property_name, *value_type)
+                    self.narrow_by_discriminant(source_type, property_path, *value_type)
                 } else {
                     // Discriminant doesn't match: exclude matching union members
-                    self.narrow_by_excluding_discriminant(source_type, *property_name, *value_type)
+                    self.narrow_by_excluding_discriminant(source_type, property_path, *value_type)
                 }
             }
 
@@ -1657,6 +1764,16 @@ impl<'a> NarrowingContext<'a> {
                             source_type
                         }
                     }
+                }
+            }
+
+            TypeGuard::Array => {
+                if sense {
+                    // Positive: Array.isArray(x) - narrow to array-like types
+                    self.narrow_to_array(source_type)
+                } else {
+                    // Negative: !Array.isArray(x) - exclude array-like types
+                    self.narrow_excluding_array(source_type)
                 }
             }
         }
@@ -1928,6 +2045,162 @@ impl<'a> NarrowingContext<'a> {
         };
         visitor.visit_type(self.db, type_id)
     }
+
+    /// Task 10: Narrow a type to only array-like types.
+    ///
+    /// Used for `Array.isArray(x)` in the true branch.
+    /// Keeps only arrays, tuples, and readonly arrays - preserves element types.
+    ///
+    /// # Examples
+    /// - `narrow_to_array(string[] | number)` → `string[]`
+    /// - `narrow_to_array(unknown)` → `any[]`
+    /// - `narrow_to_array(any)` → `any`
+    /// - `narrow_to_array(readonly [number, string])` → `readonly [number, string]`
+    fn narrow_to_array(&self, source_type: TypeId) -> TypeId {
+        // Handle ANY and UNKNOWN first
+        if source_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+
+        if source_type == TypeId::UNKNOWN {
+            // Unknown narrows to any[] (most general array type)
+            return self.db.array(TypeId::ANY);
+        }
+
+        // Handle Union: filter members, keeping only array-like types
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
+            let array_like: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    let narrowed = self.narrow_to_array(member);
+                    if narrowed == TypeId::NEVER {
+                        None
+                    } else {
+                        Some(narrowed)
+                    }
+                })
+                .collect();
+
+            if array_like.is_empty() {
+                return TypeId::NEVER;
+            } else if array_like.len() == 1 {
+                return array_like[0];
+            } else {
+                return self.db.union(array_like);
+            }
+        }
+
+        // Handle Intersections: if ANY member is array-like, the whole intersection is array-like
+        // e.g., string[] & { foo: string } is an array-like type
+        if let Some(members_id) = intersection_list_id(self.db, source_type) {
+            let members = self.db.type_list(members_id);
+            let is_array = members.iter().any(|&m| {
+                let resolved = self.resolve_type(m);
+                self.is_array_like(resolved) || self.narrow_to_array(resolved) != TypeId::NEVER
+            });
+
+            if is_array {
+                return source_type;
+            }
+        }
+
+        // Handle Type Parameters: intersect with any[]
+        if let Some(_info) = type_param_info(self.db, source_type) {
+            let any_array = self.db.array(TypeId::ANY);
+            return self.db.intersection2(source_type, any_array);
+        }
+
+        // Check if type is array-like (Array, Tuple, or ReadonlyArray)
+        if self.is_array_like(source_type) {
+            return source_type;
+        }
+
+        // Not array-like
+        TypeId::NEVER
+    }
+
+    /// Task 10: Exclude array-like types from a type.
+    ///
+    /// Used for `!Array.isArray(x)` in the false branch.
+    /// Removes arrays, tuples, and readonly arrays.
+    ///
+    /// # Examples
+    /// - `narrow_excluding_array(string[] | number)` → `number`
+    /// - `narrow_excluding_array(string[])` → `NEVER`
+    /// - `narrow_excluding_array(unknown)` → `unknown`
+    fn narrow_excluding_array(&self, source_type: TypeId) -> TypeId {
+        // Handle ANY and UNKNOWN
+        if source_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+
+        if source_type == TypeId::UNKNOWN {
+            // Unknown doesn't have a "not array" type representation
+            return TypeId::UNKNOWN;
+        }
+
+        // Handle Union: filter out array-like members
+        if let Some(members) = union_list_id(self.db, source_type) {
+            let members = self.db.type_list(members);
+            let non_array: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&member| {
+                    let narrowed = self.narrow_excluding_array(member);
+                    if narrowed == TypeId::NEVER {
+                        None
+                    } else {
+                        Some(narrowed)
+                    }
+                })
+                .collect();
+
+            if non_array.is_empty() {
+                return TypeId::NEVER;
+            } else if non_array.len() == 1 {
+                return non_array[0];
+            } else {
+                return self.db.union(non_array);
+            }
+        }
+
+        // Handle Type Parameters: check if constraint is definitely an array
+        // e.g., if T extends string[] and we check !Array.isArray(x), then x is never
+        if let Some(info) = type_param_info(self.db, source_type) {
+            if let Some(constraint) = info.constraint {
+                // If the constraint is definitely an array, then T is definitely an array.
+                // So !Array.isArray(T) is NEVER.
+                let narrowed_constraint = self.narrow_excluding_array(constraint);
+                if narrowed_constraint == TypeId::NEVER {
+                    return TypeId::NEVER;
+                }
+            }
+        }
+
+        // If array-like, return NEVER (excluded)
+        if self.is_array_like(source_type) {
+            return TypeId::NEVER;
+        }
+
+        // Not array-like, keep as-is
+        source_type
+    }
+
+    /// Check if a type is array-like (Array, Tuple, or ReadonlyArray).
+    ///
+    /// This unwraps ReadonlyType recursively to check the underlying type.
+    fn is_array_like(&self, type_id: TypeId) -> bool {
+        use crate::solver::type_queries;
+
+        // Check for ReadonlyType wrapper (unwrap recursively)
+        if let Some(TypeKey::ReadonlyType(inner)) = self.db.lookup(type_id) {
+            return self.is_array_like(inner);
+        }
+
+        // Check if type is Array, Tuple, or ReadonlyArray (wrapped)
+        type_queries::is_array_type(self.db, type_id)
+            || type_queries::is_tuple_type(self.db, type_id)
+    }
 }
 
 /// Visitor that narrows a type by filtering/intersecting with a narrower type.
@@ -2116,11 +2389,11 @@ pub fn find_discriminants(
 pub fn narrow_by_discriminant(
     interner: &dyn QueryDatabase,
     union_type: TypeId,
-    property_name: Atom,
+    property_path: &[Atom],
     literal_value: TypeId,
 ) -> TypeId {
     let ctx = NarrowingContext::new(interner);
-    ctx.narrow_by_discriminant(union_type, property_name, literal_value)
+    ctx.narrow_by_discriminant(union_type, property_path, literal_value)
 }
 
 /// Convenience function for typeof narrowing.

@@ -6,8 +6,24 @@
 //! These functions operate purely on TypeIds and maintain no AST dependencies.
 
 use crate::solver::TypeDatabase;
-use crate::solver::is_subtype_of;
 use crate::solver::types::{IntrinsicKind, LiteralValue, TypeId, TypeKey};
+use crate::solver::{TypeResolver, is_subtype_of};
+
+/// Helper to check subtype with optional resolver
+fn check_subtype<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: Option<&R>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    if let Some(res) = resolver {
+        // Create a SubtypeChecker with the resolver
+        let mut checker = crate::solver::subtype::SubtypeChecker::with_resolver(interner, res);
+        checker.is_subtype_of(source, target)
+    } else {
+        is_subtype_of(interner, source, target)
+    }
+}
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
 ///
@@ -112,10 +128,10 @@ pub fn compute_template_expression_type(_interner: &dyn TypeDatabase, parts: &[T
 /// - Find the first candidate that is a supertype of all others
 /// - Handle literal widening (via TypeChecker's pre-widening)
 /// - Handle base class relationships (Dog + Cat -> Animal)
-pub fn compute_best_common_type(
+pub fn compute_best_common_type<R: TypeResolver>(
     interner: &dyn TypeDatabase,
     types: &[TypeId],
-    _resolver: Option<&dyn crate::solver::TypeResolver>,
+    resolver: Option<&R>,
 ) -> TypeId {
     // Handle empty cases
     if types.is_empty() {
@@ -151,10 +167,10 @@ pub fn compute_best_common_type(
     //              [Dog, Animal] -> Animal (Animal is in the set and is a supertype)
     for &candidate in &widened {
         // Check if all types are subtypes of this candidate
-        // TODO: Use resolver for nominal inheritance checks once SubtypeChecker supports ?Sized
+        // Use resolver when available for nominal inheritance checks (e.g., Dog <: Animal)
         if widened
             .iter()
-            .all(|&ty| is_subtype_of(interner, ty, candidate))
+            .all(|&ty| check_subtype(interner, resolver, ty, candidate))
         {
             // Found a valid BCT - return it
             return candidate;

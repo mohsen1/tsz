@@ -1576,14 +1576,10 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION,
                 );
                 return TypeId::ERROR;
-            } else if self.should_check_definite_assignment(sym_id, idx) {
-                let skip_type = self.skip_definite_assignment_for_type(declared_type);
-                if !skip_type && !self.is_definitely_assigned_at(idx) {
-                    self.error_variable_used_before_assigned_at(name, idx);
-                    return TypeId::ERROR;
-                }
             }
-            return self.apply_flow_narrowing(idx, declared_type);
+            // Use check_flow_usage to integrate both DAA and type narrowing
+            // This handles TS2454 errors and applies flow-based narrowing
+            return self.check_flow_usage(idx, declared_type, sym_id);
         }
 
         // Intrinsic names - use constant TypeIds
