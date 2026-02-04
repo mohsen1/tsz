@@ -2,15 +2,15 @@
 
 **Started**: 2026-02-04
 **Status**: 🟢 ACTIVE (Phase 4 in progress)
-**Latest Update**: 2026-02-04 - Task 2 complete, starting Task 3
-**Focus**: Inter-Parameter Constraints
+**Latest Update**: 2026-02-04 - Task 3 complete, awaiting next task assignment
+**Focus**: Inter-Parameter Constraints COMPLETE
 
 ---
 
 ## Current Phase: Generic Inference & Nominal Hierarchy Integration (IN PROGRESS)
 
 **Started**: 2026-02-04
-**Status**: Task 3 in progress
+**Status**: Task 3 complete ✅
 
 ### Problem Statement
 
@@ -34,15 +34,27 @@ The current generic inference and type system has several gaps that cause `any` 
 **File**: `src/solver/evaluate_rules/mapped.rs`
 **Description**: Implemented preservation of Array/Tuple/ReadonlyArray structure in mapped types.
 
-#### Task 3: Inter-Parameter Constraint Propagation (MEDIUM) 🔄 CURRENT
+#### Task 3: Inter-Parameter Constraint Propagation (MEDIUM) ✅ COMPLETE
+**Commits**: `c515d8fbb`, `5d84a37aa`
 **File**: `src/solver/infer.rs`
 
 **Goal**: Implement `strengthen_constraints` for fixed-point iteration over type parameter bounds.
 
-**Implementation Plan**:
-1. Identify type parameters that reference other type parameters in their bounds (e.g., `T extends U`).
-2. Propagate constraints: If `T` is constrained to `S`, and `T extends U`, then `S` should contribute to `U`'s constraints.
-3. Implement iterative strengthening until a fixed point is reached or recursion limit is hit.
+**Implementation**:
+- Fixed inverted logic in `propagate_lower_bound` (was adding upper bounds instead of lower bounds)
+- Fixed no-op bug in `propagate_upper_bound` (was adding bounds back to same variable)
+- Added `strengthen_constraints()` call in `resolve_all_with_constraints`
+
+**Transitivity Rules**:
+- Lower bounds flow UP: L <: S <: T → L is also lower bound of T
+- Upper bounds flow DOWN: T <: U <: V → T is also lower bound of V
+- Upper bounds do NOT flow UP (T's upper bounds ≠ U's upper bounds)
+
+**Safety**:
+- Iteration limit: Max 100 iterations prevents infinite loops
+- `exclude_param`: Prevents immediate back-propagation (T → U won't propagate back to T in same call)
+
+**Review**: Gemini Pro confirmed transitivity logic is correct for TypeScript's type system.
 
 #### Task 1.1: Fix Nominal BCT Resolver (Refactor SubtypeChecker) (MEDIUM)
 **File**: `src/solver/subtype.rs`
