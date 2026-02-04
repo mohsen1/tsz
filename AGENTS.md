@@ -35,6 +35,13 @@ Your goal is to keep making progress. If you get stuck, do not stop. Instead:
   - implementation strategies
   - fixing bugs and failing tests
 
+- Use tsz-tracing skill for debugging:
+  - conformance test failures
+  - type inference issues
+  - narrowing and control flow analysis
+  - assignability check problems
+  - Example: `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -- file.ts`
+
 
 ## Required Reading
 
