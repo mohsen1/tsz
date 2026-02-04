@@ -2,9 +2,9 @@
 
 ## Date: 2026-02-04
 
-## Status: ACTIVE - Type Inference Progress
+## Status: ACTIVE - Object Printing Fixed ✅
 
-**Committed**: ecb5ef44, 294a0e781, e26fcc9a3, 180ce2bde, be0bd43f1, de8b72d5c
+**Committed**: ecb5ef44, 294a0e781, e26fcc9a3, 180ce2bde, be0bd43f1, de8b72d5c, 2dbc85b33
 
 ### Session Summary
 
@@ -116,7 +116,38 @@ declare enum Mixed { A = 0, B = 5, C = 6, D = 10 }
 - ✅ String enums, mixed numeric and string enums, const enums
 - ✅ Namespace/module context handling
 
-### Latest Work: Const Type Inference (Partial Implementation)
+### Latest Work: Atom Printing Fix ✅ (2dbc85b33)
+
+**Fixed**: TypePrinter now correctly resolves atoms from TypeInterner.
+
+**Problem**:
+```typescript
+// Before (BROKEN)
+export declare const obj: { <atom:116>: number; <atom:270>: string };
+```
+
+**Solution**: Added `resolve_atom()` method to TypePrinter that calls `TypeInterner::resolve_atom()` instead of using placeholder atom IDs.
+
+**Result**:
+```typescript
+// After (FIXED)
+export declare const obj: { a: number; b: string };
+export declare const nested: { a: { b: string } };
+export declare const simple: { x: number };
+```
+
+**Test Results**:
+```typescript
+export const simple = { x: 1 };           // → { x: number } ✅
+export const nested = { a: { b: "hi" } };  // → { a: { b: string } } ✅
+export const withType = { x: 1 as number }; // → { x: number } ✅
+export interface Point { x: number; y: number; }
+export const point: Point = { x: 1, y: 2 }; // → Point ✅
+```
+
+**Impact**: This fixes all property names, type parameter names, and function parameter names in declaration emit. The broken `<atom:ID>` output is now resolved to actual property names.
+
+### Const Type Inference (de8b72d5c)
 
 **Commit**: de8b72d5c
 
