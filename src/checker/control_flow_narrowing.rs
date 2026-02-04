@@ -255,8 +255,10 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
     ) -> Option<TypeId> {
-        // CRITICAL: If call is optional (obj.method?.()), assertion might not run
-        // TypeScript does NOT apply narrowing when the call is skipped due to optional chaining
+        // CRITICAL: Optional chaining behavior for type predicates
+        // If call is optional (obj?.method(x)):
+        //   - If true branch: method was called, so narrowing applies
+        //   - If false branch: method might not have been called, so NO narrowing
         // Check if the callee expression is an optional property access
         if let Some(callee_node) = self.arena.get(call.expression) {
             if (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -264,7 +266,10 @@ impl<'a> FlowAnalyzer<'a> {
                 && let Some(access) = self.arena.get_access_expr(callee_node)
                 && access.question_dot_token
             {
-                return None;
+                // For optional chaining, only narrow the true branch
+                if !is_true_branch {
+                    return None;
+                }
             }
         }
 
@@ -296,15 +301,19 @@ impl<'a> FlowAnalyzer<'a> {
             }
             PredicateSignatureKind::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
-                if shape.call_signatures.len() != 1 {
-                    return None;
+                // TODO(Safety): This is a heuristic. We are picking the first signature with a predicate.
+                // Correct behavior requires using the specific overload selected by the checker during resolution.
+                // If the checker selected a non-predicate overload (e.g. (x: number) => boolean),
+                // but we pick a predicate overload (x: string) => x is string, we may narrow incorrectly.
+                for sig in &shape.call_signatures {
+                    if let Some(predicate) = &sig.type_predicate {
+                        return Some(PredicateSignature {
+                            predicate: predicate.clone(),
+                            params: sig.params.clone(),
+                        });
+                    }
                 }
-                let sig = &shape.call_signatures[0];
-                let predicate = sig.type_predicate.clone()?;
-                Some(PredicateSignature {
-                    predicate,
-                    params: sig.params.clone(),
-                })
+                None
             }
             PredicateSignatureKind::Union(members) => {
                 // CRITICAL FIX: For Union, ALL members must have the same predicate
@@ -350,13 +359,23 @@ impl<'a> FlowAnalyzer<'a> {
         match predicate.target {
             TypePredicateTarget::Identifier(name) => {
                 let param_index = params.iter().position(|param| param.name == Some(name))?;
+                // TODO: Handle spread arguments correctly.
+                // Currently assumes 1:1 mapping which breaks for `fn(...args)`.
                 let args = call.arguments.as_ref()?.nodes.as_slice();
                 args.get(param_index).copied()
             }
             TypePredicateTarget::This => {
-                let callee_node = self.arena.get(call.expression)?;
-                let access = self.arena.get_access_expr(callee_node)?;
-                Some(access.expression)
+                // CRITICAL: Skip parens/assertions to find the actual access node
+                // Handles cases like (obj.isString)() and (obj.isString as any)()
+                let callee_idx = self.skip_parens_and_assertions(call.expression);
+                let callee_node = self.arena.get(callee_idx)?;
+
+                // Check for PropertyAccess or ElementAccess
+                if let Some(access) = self.arena.get_access_expr(callee_node) {
+                    return Some(access.expression);
+                }
+
+                None
             }
         }
     }
