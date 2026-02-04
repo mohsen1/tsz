@@ -10,30 +10,33 @@ Improve diagnostic readability and clean up technical debt by:
 1. Fixing class instance type formatting in error messages
 2. Consolidating duplicate module validation logic
 
-## Task 1: Fix Class Instance Type Formatting
+## Task 1: Fix Class Instance Type Formatting ✅ COMPLETE
 
 ### Problem
-Class instances are being printed as structural object literals (listing all properties including `toString`, `hasOwnProperty`, etc.) instead of the class name.
+Class instances were being printed as structural object literals (listing all properties including `toString`, `hasOwnProperty`, etc.) instead of the class name.
 
-**Example**:
+### Solution Implemented
+Modified `src/solver/format.rs` TypeFormatter:
+1. When formatting `TypeKey::Object` or `TypeKey::ObjectWithIndex`, check `ObjectShape.symbol`
+2. If symbol is set (class instance type), use the symbol name instead of expanding properties
+3. Falls back to definition store, then property expansion for anonymous objects
+
+### Result
+**Before**:
 ```
-Current:  error: '{ isPrototypeOf: { ... }; propertyIsEnumerable: { ... }; name: string }'
-Expected: error: 'Giraffe'
+error TS2345: Argument of type '{ isPrototypeOf: { ... }; propertyIsEnumerable: { ... }; name: string }'
 ```
 
-### Location
-- `src/solver/format.rs` - TypeFormatter implementation
+**After**:
+```
+error TS2345: Argument of type 'Giraffe'
+```
 
-### Action
-Modify `TypeFormatter` to prioritize class names:
-1. When formatting a type, check if it corresponds to a class instance (via `DefId` or `SymbolId`)
-2. If it's a class instance with a `symbol` set, print the class name
-3. Ensure this doesn't break mixin pattern formatting where structural details are relevant
+### Commit
+`43955b57f` - feat: use class symbol names in type formatter
 
-### Files
-- `src/solver/format.rs` - Main implementation
-- `src/checker/class_type.rs` - Where class instance types are created (sets `symbol` field)
-- `TypeScript/tests/cases/compiler/arrayLiteralContextualType.ts` - Test case
+### Note
+The test `arrayLiteralContextualType.ts` still reports errors where tsc doesn't, but this is now a type inference issue (showing `'Giraffe | Elephant[]'`), not a formatting issue. The formatting is working correctly.
 
 ## Task 2: Consolidate Module Validation
 
