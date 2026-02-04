@@ -640,6 +640,7 @@ impl<'a> CheckerState<'a> {
                 // Constraints are not resolved here - that happens in the proper
                 // check_function_declaration flow with full scope context.
                 let info = crate::solver::TypeParamInfo {
+                    is_const: false,
                     name: atom,
                     constraint: None,
                     default: None,

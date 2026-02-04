@@ -588,6 +588,7 @@ impl<'a> CheckerState<'a> {
 
             // Create unconstrained type parameter initially
             let info = crate::solver::TypeParamInfo {
+                is_const: false,
                 name: atom,
                 constraint: None,
                 default: None,
@@ -673,6 +674,7 @@ impl<'a> CheckerState<'a> {
             };
 
             let info = crate::solver::TypeParamInfo {
+                is_const: false,
                 name: atom,
                 constraint,
                 default,
