@@ -2,15 +2,16 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟡 ACTIVE - 7th Task Defined (2026-02-04)
+## Status: 🟢 ACTIVE - 7th Task Complete (2026-02-04)
 
-Completed 6 tasks successfully:
+Completed 7 tasks successfully:
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
 4. Module System Fidelity (ambient modules, import equals, namespace exports)
 5. **Function Overload Normalization** (functions, constructors, methods)
 6. **Class Member Synthesis and Default Export Synthesis** (property inference, accessors, parameter props, default exports)
+7. **Visibility-Based Type Inlining** (local types, recursion depth, symbol visibility)
 
 ### Class Member Synthesis and Default Export Synthesis ✅ COMPLETE (2026-02-04)
 
@@ -1298,6 +1299,53 @@ declare class C {
 - Circular reference handling in type inlining
 - Diagnostic messages must match tsc exactly
 - Could be 3-5 days of work
+
+---------
+
+### Visibility-Based Type Inlining ✅ COMPLETE (2026-02-04)
+
+**Gemini Consultation Summary:**
+
+Approach validated by Gemini before implementation. Key architectural decisions:
+1. Use `TypePrinter` (not `TypeFormatter`) for declaration emit
+2. Pass `SymbolArena` and `TypeCache` from `DeclarationEmitter` to `TypePrinter`
+3. Use `TypeCache.def_to_symbol` and `TypeCache.symbol_types` for resolution
+4. Implement recursion depth checking to prevent infinite loops
+
+**Implementation:**
+- Updated `TypePrinter` struct with `symbol_arena`, `type_cache`, `current_depth`, `max_depth`
+- Added `is_symbol_visible()` helper to check if a type should be inlined
+- Updated `print_lazy_type()` to inline non-visible types recursively
+- Updated `DeclarationEmitter::print_type_id()` to pass symbol arena and type cache
+
+**Test Results:**
+```typescript
+// Input
+export function createLocal() {
+    type Local = { x: number; y: string };
+    return { x: 42, y: "hello" } as Local;
+}
+
+// Output ✅ (matches tsc exactly)
+export declare function createLocal(): {
+    x: number;
+    y: string;
+};
+```
+
+**Behavior:**
+- **Local types** (inside functions): Inlined as structural types
+- **Module-level types**: Emitted as interfaces, referenced by name
+- **Exported types**: Referenced by name (not inlined)
+- **Recursion depth**: Max 10 levels to prevent infinite loops
+
+**Commits:**
+- b159e3956 (feat(tsz-4): implement Visibility-Based Type Inlining for declaration emit)
+
+**Edge Cases Handled:**
+- Recursive type references (depth limiting)
+- Nested object types (correctly inlined)
+- Function-local type aliases (correctly inlined)
 
 ---------
 
