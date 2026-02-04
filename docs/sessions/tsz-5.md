@@ -22,15 +22,21 @@ This session builds on that foundation to implement advanced TypeScript features
 
 ---
 
-## Priority 1: User-Defined Type Guards
+## Priority 1: User-Defined Type Guards ✅ COMPLETE
 
 ### Problem
 Currently, calls to functions returning `arg is T` or `asserts arg is T` do not trigger narrowing in the `FlowAnalyzer`.
 
+### Status
+**Feature Already Implemented!** The infrastructure exists in:
+- `src/checker/control_flow_narrowing.rs` - `narrow_by_call_predicate` implementation
+- `src/checker/control_flow.rs` - Called from `narrow_type_by_condition_inner`
+- Tests: `test_user_defined_type_predicate_narrows_branches`, `test_user_defined_type_predicate_alias_narrows`
+
 ### Tasks
-- [ ] **FlowAnalyzer Update**: Recognize `TypePredicate` nodes in function return types during call expression checking in `src/checker/flow_analysis.rs`.
-- [ ] **NarrowingContext Integration**: Update `NarrowingContext` in `src/solver/narrowing.rs` to apply the predicate type to the target symbol.
-- [ ] **Asserts Support**: Implement "assertion" narrowing where the flow following the call is narrowed regardless of a conditional check.
+- [x] **FlowAnalyzer Update**: Recognize `TypePredicate` nodes in function return types during call expression checking in `src/checker/flow_analysis.rs`.
+- [x] **NarrowingContext Integration**: Update `NarrowingContext` in `src/solver/narrowing.rs` to apply the predicate type to the target symbol.
+- [x] **Asserts Support**: Implement "assertion" narrowing where the flow following the call is narrowed regardless of a conditional check.
 
 ---
 
