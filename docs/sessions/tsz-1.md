@@ -80,10 +80,11 @@ Working on fixing the parser to emit TS1136 "Property assignment expected" for i
 *2026-02-04 03:30 - Fixed fresh_type_param calls missing is_const argument*
 *2026-02-04 04:00 - Investigated TS2304 emission: error_cannot_find_name_at NOT being called*
 *2026-02-04 04:15 - Added filter in TypeDiagnosticBuilder::cannot_find_name - not working yet*
+*2026-02-04 05:00 - Added debug logging - confirmed neither function is being called*
 
 ---
 
-## Investigation Notes: TS1136 vs TS2304
+## Investigation Notes: TS1136 vs TS2304 - BLOCKED
 
 **Test Case**: `Boolean({ x: 0,, })`
 - Expected: TS1136 "Property assignment expected"
