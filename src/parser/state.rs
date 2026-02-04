@@ -67,6 +67,16 @@ pub(crate) struct IncrementalParseResult {
 
 /// A high-performance parser using Node architecture.
 ///
+/// Error suppression distance in tokens
+///
+/// If we emitted an error within this distance, suppress subsequent errors
+/// to prevent cascading TS1005 and other noise errors.
+///
+/// This value was chosen empirically to match TypeScript's behavior:
+/// - Too small: Cascading errors aren't suppressed effectively
+/// - Too large: Genuine secondary errors are suppressed
+const ERROR_SUPPRESSION_DISTANCE: u32 = 3;
+
 /// This parser produces the same AST semantically as ParserState,
 /// but uses the cache-optimized NodeArena for storage.
 pub struct ParserState {
@@ -135,6 +145,28 @@ impl ParserState {
         } else {
             true
         }
+    }
+
+    /// Centralized error suppression heuristic
+    ///
+    /// Prevents cascading errors by suppressing error reports if we've already
+    /// emitted an error recently (within ERROR_SUPPRESSION_DISTANCE tokens).
+    ///
+    /// This standardizes the inconsistency where:
+    /// - `parse_expected()` uses strict equality `!=`
+    /// - `parse_semicolon()` uses `abs_diff > 3`
+    ///
+    /// Returns true if we should report an error, false if we should suppress it
+    fn should_report_error(&self) -> bool {
+        // Always report first error
+        if self.last_error_pos == 0 {
+            return true;
+        }
+        let current = self.token_pos();
+        // Report if we've advanced past the suppression distance
+        // This prevents multiple errors for the same position while still
+        // catching genuine secondary errors
+        current.abs_diff(self.last_error_pos) > ERROR_SUPPRESSION_DISTANCE
     }
 
     /// Exit recursion scope
@@ -333,7 +365,8 @@ impl ParserState {
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
             // when the real issue is a single missing token
-            if force_emit || self.token_pos() != self.last_error_pos {
+            // Use centralized error suppression heuristic
+            if force_emit || self.should_report_error() {
                 // Additional check: suppress error for missing closing tokens when we're
                 // at a clear statement boundary or EOF (reduces false-positive TS1005 errors)
                 let should_suppress = if force_emit {
@@ -447,7 +480,8 @@ impl ParserState {
     pub(crate) fn error_expression_expected(&mut self) {
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading TS1109 errors when TS1005 or other errors already reported
-        if self.token_pos() != self.last_error_pos {
+        // Use centralized error suppression heuristic
+        if self.should_report_error() {
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Expression expected",
@@ -466,7 +500,8 @@ impl ParserState {
     pub(crate) fn error_identifier_expected(&mut self) {
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading errors when a missing token causes identifier to be expected
-        if self.token_pos() != self.last_error_pos {
+        // Use centralized error suppression heuristic
+        if self.should_report_error() {
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Identifier expected",
@@ -530,7 +565,8 @@ impl ParserState {
 
     /// Error: TS1359 - Identifier expected. '{0}' is a reserved word that cannot be used here.
     pub(crate) fn error_reserved_word_identifier(&mut self) {
-        if self.token_pos() != self.last_error_pos {
+        // Use centralized error suppression heuristic
+        if self.should_report_error() {
             use crate::checker::types::diagnostics::diagnostic_codes;
             let word = self.current_keyword_text();
             self.parse_error_at_current_token(
@@ -549,7 +585,8 @@ impl ParserState {
     pub(crate) fn error_token_expected(&mut self, token: &str) {
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading errors when parse_semicolon() and similar functions call this
-        if self.token_pos() != self.last_error_pos {
+        // Use centralized error suppression heuristic
+        if self.should_report_error() {
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 &format!("'{}' expected", token),
@@ -648,10 +685,8 @@ impl ParserState {
             // emitted. This happens when a prior parse failure (e.g., missing identifier,
             // unsupported syntax) causes the parser to not consume tokens, then
             // parse_semicolon is called and fails too.
-            // We check if last_error_pos is close to current position (within 3 chars)
-            // to catch cascading errors that advanced only slightly.
-            let current = self.token_pos();
-            if self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3 {
+            // Use centralized error suppression heuristic
+            if self.should_report_error() {
                 self.error_token_expected(";");
             }
         }
@@ -1113,10 +1148,8 @@ impl ParserState {
                 self.current_token = SyntaxKind::GreaterThanGreaterThanEqualsToken;
             }
             _ => {
-                // Only emit error if we haven't already emitted one at this position
-                if self.token_pos() != self.last_error_pos {
-                    self.error_token_expected(">");
-                }
+                // error_token_expected already has error suppression check
+                self.error_token_expected(">");
             }
         }
     }
