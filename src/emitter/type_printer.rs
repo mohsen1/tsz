@@ -3,6 +3,8 @@
 //! This module handles type reification: converting the Solver's internal TypeId
 //! representation into printable TypeScript syntax for declaration emit (.d.ts files).
 
+use crate::binder::{SymbolArena, SymbolId, symbol_flags};
+use crate::checker::TypeCache;
 use crate::interner::Atom;
 use crate::solver::TypeInterner;
 use crate::solver::types::{TypeId, TypeKey};
@@ -16,9 +18,18 @@ use crate::solver::types::{TypeId, TypeKey};
 /// assert_eq!(printer.print_type(TypeId::STRING), "string");
 /// assert_eq!(printer.print_type(TypeId::NUMBER), "number");
 /// ```
+#[derive(Clone)]
 pub struct TypePrinter<'a> {
     interner: &'a TypeInterner,
     string_interner_cache: std::sync::Arc<dyn Fn(Atom) -> String + Sync + Send>,
+    /// Symbol arena for checking symbol visibility
+    symbol_arena: Option<&'a SymbolArena>,
+    /// Type cache for resolving Lazy(DefId) types
+    type_cache: Option<&'a TypeCache>,
+    /// Current recursion depth (to prevent infinite loops)
+    current_depth: u32,
+    /// Maximum recursion depth
+    max_depth: u32,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -29,7 +40,58 @@ impl<'a> TypePrinter<'a> {
                 // Resolve the atom from the interner
                 format!("<atom:{}>", atom.0)
             }),
+            symbol_arena: None,
+            type_cache: None,
+            current_depth: 0,
+            max_depth: 10,
         }
+    }
+
+    /// Set the symbol arena for visibility checking.
+    pub fn with_symbols(mut self, symbol_arena: &'a SymbolArena) -> Self {
+        self.symbol_arena = Some(symbol_arena);
+        self
+    }
+
+    /// Set the type cache for resolving Lazy(DefId) types.
+    pub fn with_type_cache(mut self, type_cache: &'a TypeCache) -> Self {
+        self.type_cache = Some(type_cache);
+        self
+    }
+
+    /// Set the maximum recursion depth for type inlining.
+    pub fn with_max_depth(mut self, max_depth: u32) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
+    /// Check if a symbol is visible (exported) from the current module.
+    ///
+    /// A symbol is visible if:
+    /// 1. It has the EXPORT_VALUE flag or is_exported field is true
+    /// 2. Its parent is not a Function or Method (not a local type)
+    fn is_symbol_visible(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+
+        // Check if it's exported
+        if symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
+            // Check parentage - if parent is a function/method, it's local and must be inlined
+            if !symbol.parent.is_none() {
+                if let Some(parent) = arena.get(symbol.parent) {
+                    if parent.has_any_flags(symbol_flags::FUNCTION | symbol_flags::METHOD) {
+                        return false; // Local to function, must inline
+                    }
+                }
+            }
+            return true;
+        }
+
+        false
     }
 
     /// Resolve an atom to its string representation.
@@ -303,9 +365,52 @@ impl<'a> TypePrinter<'a> {
         self.resolve_atom(param_info.name)
     }
 
-    fn print_lazy_type(&self, _def_id: crate::solver::def::DefId) -> String {
-        // TODO: Implement lazy type resolution
-        "any".to_string()
+    fn print_lazy_type(&self, def_id: crate::solver::def::DefId) -> String {
+        // Check recursion depth
+        if self.current_depth >= self.max_depth {
+            return "any".to_string();
+        }
+
+        // Try to get the SymbolId for this DefId using TypeCache
+        let sym_id = if let Some(cache) = self.type_cache {
+            cache.def_to_symbol.get(&def_id).copied()
+        } else {
+            None
+        };
+
+        // If we have a symbol and it's visible, use the name
+        if let Some(sym_id) = sym_id {
+            if self.is_symbol_visible(sym_id) {
+                // Get the symbol name
+                if let Some(arena) = self.symbol_arena {
+                    if let Some(symbol) = arena.get(sym_id) {
+                        return symbol.escaped_name.clone();
+                    }
+                }
+            }
+        }
+
+        // Symbol is not visible or we don't have symbol info - inline the type
+        // Try to resolve DefId to TypeId using the symbol_types cache
+        let type_id = if let Some(sym_id) = sym_id {
+            if let Some(cache) = self.type_cache {
+                cache.symbol_types.get(&sym_id).copied()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(type_id) = type_id {
+            // Recursively print the type with increased depth
+            let mut printer = self.clone();
+            printer.current_depth += 1;
+            printer.print_type(type_id)
+        } else {
+            // Fallback to "any" if we can't resolve
+            "any".to_string()
+        }
     }
 
     fn print_enum(&self, _def_id: crate::solver::def::DefId, _members_id: TypeId) -> String {
