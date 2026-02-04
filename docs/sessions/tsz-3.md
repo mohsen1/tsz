@@ -1,8 +1,8 @@
-# Session tsz-3: CFA Orchestration - Switch Exhaustiveness & Narrowing
+# Session tsz-3: CFA Orchestration - Fall-through & Loop Narrowing
 
 **Started**: 2026-02-04
-**Status**: ✅ SWITCH EXHAUSTIVENESS COMPLETE
-**Focus**: Ensure switch statements correctly narrow types and identify exhausted unions
+**Status**: ACTIVE
+**Focus**: Ensure control flow analysis handles fall-through cases and loops correctly
 
 ## Context
 
@@ -26,68 +26,60 @@ Correct exhaustiveness checking is critical for:
 
 ## Tasks
 
-### Task 1: Switch Narrowing Verification ✅ COMPLETE (Fixed switch clause mapping)
-**File**: `src/checker/control_flow.rs`, `src/binder/state_binding.rs`, `src/parallel.rs`
+### ✅ COMPLETED: Switch Exhaustiveness (2026-02-04)
 
-**Fixed Issue**: The binder's `switch_clause_to_switch` map was not preserved through the binding/checking pipeline.
+#### Task 1: Switch Clause Mapping ✅ COMPLETE (Commit: bdac7f8df)
+**Fixed Issue**: The binder's `switch_clause_to_switch` map was lost during binding/checking pipeline.
 
-**Root Cause**:
-- `bind_switch_statement` populated `switch_clause_to_switch` during binding
-- This map was NOT included in `BindResult` or `BoundFile`
-- During checking, a new `BinderState` was created with an empty map
-- `get_switch_for_clause` returned `None`, causing early return
-
-**Solution** (Commit: bdac7f8df):
-1. Added `switch_clause_to_switch: FxHashMap<u32, NodeIndex>` to `BindResult` and `BoundFile`
-2. Populate the map when creating `BindResult` from binder using `std::mem::take`
-3. Include the map when creating `BoundFile` from `BindResult`
-4. Pass the map to `from_bound_state_with_scopes_and_augmentations`
-5. Updated all 3 call sites in `src/parallel.rs` and `src/cli/driver.rs`
-
-**Result**: ✅ `handle_switch_clause_iterative` is now being called correctly!
-The narrowing functions are invoked and the discriminant narrowing logic runs.
-
-**Status**: ✅ Switch clause mapping fixed - commit pushed to main
-
----
-
-### Task 2: Lazy Type Resolution Bug ✅ FIXED (Commit: fd12bb38e)
-**File**: `src/solver/narrowing.rs`, `src/checker/control_flow.rs`, `src/solver/flow_analysis.rs`
-
+#### Task 2: Lazy Type Resolution ✅ COMPLETE (Commit: fd12bb38e)
 **Bug Fixed**: Lazy types (type aliases) were not being resolved before union narrowing.
 
-**Root Cause**:
-- `NarrowingContext` used `TypeDatabase` instead of `QueryDatabase`
-- Couldn't call `evaluate_type()` to resolve Lazy types to their underlying union types
-- Type aliases like `type Action = { type: "add" } | { type: "remove" }` were treated as single members
-
-**Solution**:
-1. Changed `NarrowingContext` to use `QueryDatabase` instead of `TypeDatabase`
-2. Added `resolve_type()` helper that evaluates Lazy types before narrowing
-3. Updated `narrow_by_discriminant` and `narrow_by_excluding_discriminant` to call
-   `resolve_type()` before checking for union members
-4. Updated `FlowAnalyzer`, `FlowTypeEvaluator` to use `QueryDatabase`
-
-**Test Result**: ✅ Switch exhaustiveness now works!
+**Test Result**:
 ```typescript
 type Action = { type: "add" } | { type: "remove" };
-
 function handle(action: Action) {
   switch (action.type) {
     case "add": break;
     case "remove": break;
     default:
-      const impossible: never = action; // Now works correctly!
+      const impossible: never = action; // ✅ Works!
   }
 }
 ```
 
-**Impact**: This fix affects ALL union narrowing operations, not just switch statements.
-- Discriminant narrowing on type aliases now works
-- Control flow analysis with type aliases now works correctly
-- If/guard narrowing with type aliases now works correctly
+---
 
-**Status**: ✅ Complete - commit pushed to main
+### 🔄 CURRENT TASK: Fall-through & Loop Narrowing
+
+#### Task 3: Fall-through Narrowing (HIGH PRIORITY)
+**Goal**: Ensure fall-through cases correctly union narrowed types
+**Test Case**:
+```typescript
+switch (x) {
+  case 'a':
+  case 'b':
+    // x should be narrowed to 'a' | 'b'
+    break;
+}
+```
+**File**: `src/checker/control_flow.rs`
+**Status**: ⏸️ Not started
+
+#### Task 4: Loop Narrowing (HIGH PRIORITY)
+**Goal**: Implement narrowing propagation for while/for loops
+**Test Case**:
+```typescript
+while (x.type === 'a') {
+  // x should be narrowed to 'a'
+}
+```
+**File**: `src/solver/flow_analysis.rs`
+**Status**: ⏸️ Not started
+
+#### Task 5: CFA Completeness Validation
+**Goal**: Validate that flow cache is correctly updated during complex CFA traversal
+**File**: `src/checker/flow_analysis.rs`
+**Status**: ⏸️ Not started
 
 ---
 
