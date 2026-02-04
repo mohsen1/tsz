@@ -308,7 +308,7 @@ Gemini's recommended priority order for remaining Phase 4 work:
 
 **Next Steps:**
 1. Run specific declarationEmit tests for accurate baseline
-2. Implement Task 4 (type-only vs value tracking)
+2. Implement Task 4 (type-only vs value tracking) ✅ COMPLETE
 3. Implement Task 3 (consolidation)
 
 ### Dependencies
@@ -336,6 +336,67 @@ This is the "inverse" of TSZ-5:
 - TSZ-7: Add imports that are needed but missing (generation)
 
 Together, they provide complete import management for valid .d.ts files.
+
+---
+
+### Session Update (2026-02-04) - Phase 4 Task 4 Complete
+
+**Phase 4 Task 4: Track type-only vs value symbol usage** ✅ COMPLETE
+
+**Implementation Summary:**
+
+1. **Added UsageKind bitset struct** to `src/declaration_emitter/usage_analyzer.rs`:
+   ```rust
+   pub struct UsageKind {
+       bits: u8,
+   }
+
+   impl UsageKind {
+       pub const NONE: UsageKind = UsageKind { bits: 0 };
+       pub const TYPE: UsageKind = UsageKind { bits: 1 };
+       pub const VALUE: UsageKind = UsageKind { bits: 2 };
+
+       pub const fn is_type(self) -> bool { ... }
+       pub const fn is_value(self) -> bool { ... }
+   }
+
+   impl BitOr and BitOrAssign for combining usage kinds
+   ```
+
+2. **Modified UsageAnalyzer struct**:
+   - Changed `used_symbols: FxHashSet<SymbolId>` to `FxHashMap<SymbolId, UsageKind>`
+   - Added `in_value_pos: bool` context flag
+
+3. **Updated mark_symbol_used()**:
+   - Changed signature to accept `UsageKind` parameter
+   - Uses entry API with bitwise OR to handle symbols used as both types and values
+
+4. **Updated analyze_entity_name()**:
+   - Uses `in_value_pos` to determine `UsageKind::TYPE` vs `UsageKind::VALUE`
+   - Critical for correctly tracking context
+
+5. **Updated walk_type_id()**:
+   - Most type references marked as `UsageKind::TYPE`
+   - **TypeQuery (typeof) marked as `UsageKind::VALUE`** - critical edge case!
+
+6. **Updated DeclarationEmitter**:
+   - Changed `used_symbols` field to `Option<FxHashMap<SymbolId, UsageKind>>`
+   - Changed `.contains()` to `.contains_key()` for HashMap API
+
+**Critical Edge Cases Handled:**
+- `typeof X` requires X as VALUE even in type position
+- Symbols used as both types and values are tracked with bitwise OR
+- Context flag properly saved/restored in `analyze_type_node()`
+
+**Commit:** `feat(tsz-7): implement type-only vs value symbol usage tracking`
+
+**Testing:**
+- Build: Successful ✅
+- Basic declaration emit: Working ✅
+
+**Next Steps:**
+1. Run specific declarationEmit tests for accurate baseline
+2. Implement Task 3: Consolidate import emission logic (final step)
 
 ---
 
