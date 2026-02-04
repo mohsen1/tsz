@@ -293,6 +293,13 @@ pub trait QueryDatabase: TypeDatabase {
         crate::solver::evaluate::evaluate_keyof(self.as_type_database(), operand)
     }
 
+    fn narrow(&self, type_id: TypeId, narrower: TypeId) -> TypeId
+    where
+        Self: Sized,
+    {
+        crate::solver::narrowing::NarrowingContext::new(self).narrow(type_id, narrower)
+    }
+
     fn resolve_property_access(
         &self,
         object_type: TypeId,
