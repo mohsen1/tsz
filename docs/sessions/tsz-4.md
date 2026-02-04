@@ -324,38 +324,45 @@ impl<'a> DeclarationEmitter<'a> {
 
 - `7142615c0` - docs: restructure tsz-4 session for declaration emit work
 - `d18a96de5` - feat: add TypePrinter module for declaration emit
+- `a41c2c492` - feat: implement composite type printing in TypePrinter
 
 ## Progress
 
 ### ✅ Completed (2026-02-04)
 
-**Phase 1.1: TypePrinter Module Created**
+**Phase 1.1: TypePrinter Module Created** ✅
 - Created `src/emitter/type_printer.rs` module
 - Implemented intrinsic type printing (all primitives)
-- Added skeleton methods for all TypeKey variants
-- Module compiles and all tests pass
-- Fast path for TypeId < 100 (built-in types)
-- Uses `TypeInterner::lookup()` for user-defined types
+- 246 lines added, all tests pass
 
-**Committed:**
-- 246 lines added
-- Test suite: 23 passed
-- All pre-commit checks passed
+**Phase 1.2: Composite Type Printing** ✅
+- Union types: `A | B | C` (joined with " | ")
+- Intersection types: `A & B & C` (joined with " & ")
+- Tuple types: `[A, B, C]` with optional/rest support
+- Object types: `{ prop: Type; ... }`
+- Function types: `<T>(a: Type, b: Type) => ReturnType`
+- Generic type applications: `Base<Args>`
+- 143 lines added, all tests pass
+
+**Total: 389 lines of type printing code**
 
 ### 🚧 In Progress
-
-**Phase 1.2: Composite Type Printing**
-- Need to implement: union, intersection, array printing
-- Need to implement: object literal printing
-- Need to implement: function type printing
-
-### 📋 TODO
 
 **Phase 1.3: Integration**
 - Integrate TypePrinter with DeclarationEmitter
 - Add Solver/Checker context access
 - Test with real TypeScript files
 - Run `./scripts/emit/run.sh --dts-only` to verify
+
+### 📋 TODO
+
+**Remaining TypePrinter Work:**
+- Lazy type resolution (DefId → Symbol name)
+- Enum type printing with members
+- Conditional types
+- Mapped types
+- Callable types (overloaded signatures)
+- Template literal types
 
 ## Next Steps
 
@@ -364,9 +371,9 @@ impl<'a> DeclarationEmitter<'a> {
 3. ✅ Got implementation plan from Gemini
 4. ✅ Created `src/emitter/type_printer.rs` module
 5. ✅ Implemented primitive type printing
-6. **NEXT**: Implement composite types (union, intersection, array)
-7. **NEXT**: Integrate with DeclarationEmitter
-8. **NEXT**: Run tests and fix failures
+6. ✅ Implemented composite types (union, intersection, array, object, function, generics)
+7. **NEXT**: Integrate TypePrinter with DeclarationEmitter
+8. **NEXT**: Run tests and verify with `./scripts/emit/run.sh --dts-only`
 
 ## Resources
 
