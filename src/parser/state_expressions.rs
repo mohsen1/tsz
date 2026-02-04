@@ -389,6 +389,16 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::LessThanToken);
 
+        // Check for empty type parameter list: <>
+        // TypeScript reports TS1098: "Type parameter list cannot be empty"
+        if self.is_token(SyntaxKind::GreaterThanToken) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Type parameter list cannot be empty.",
+                diagnostic_codes::TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY,
+            );
+        }
+
         while !self.is_greater_than_or_compound() && !self.is_token(SyntaxKind::EndOfFileToken) {
             let param = self.parse_type_parameter();
             params.push(param);

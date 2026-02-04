@@ -336,6 +336,7 @@ pub mod diagnostic_codes {
     pub const SETTER_PARAMETER_CANNOT_HAVE_INITIALIZER: u32 = 1052; // A 'set' accessor parameter cannot have an initializer.
     pub const SETTER_CANNOT_HAVE_REST_PARAMETER: u32 = 1053; // A 'set' accessor cannot have rest parameter.
     pub const GETTER_MUST_NOT_HAVE_PARAMETERS: u32 = 1054;
+    pub const TYPE_PARAMETERS_CANNOT_APPEAR_ON_CONSTRUCTOR: u32 = 1092; // Type parameters cannot appear on a constructor declaration.
     pub const ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS: u32 = 1094;
     pub const SETTER_CANNOT_HAVE_RETURN_TYPE: u32 = 1095;
     pub const TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY: u32 = 1098;

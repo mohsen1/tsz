@@ -2529,6 +2529,19 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ConstructorKeyword);
 
+        // Check for type parameters on constructor (invalid but parse for better error reporting)
+        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+            // Report TS1092: Type parameters cannot appear on a constructor declaration
+            self.parse_error_at_current_token(
+                "Type parameters cannot appear on a constructor declaration.",
+                diagnostic_codes::TYPE_PARAMETERS_CANNOT_APPEAR_ON_CONSTRUCTOR,
+            );
+            // Parse the type parameters for error recovery (will be validated later)
+            Some(self.parse_type_parameters())
+        } else {
+            None
+        };
+
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
         self.parse_expected(SyntaxKind::CloseParenToken);
@@ -2556,7 +2569,7 @@ impl ParserState {
             end_pos,
             crate::parser::node::ConstructorData {
                 modifiers,
-                type_parameters: None,
+                type_parameters,
                 parameters,
                 body,
             },
