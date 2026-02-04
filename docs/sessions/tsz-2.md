@@ -62,9 +62,18 @@ Work is never done until all tests pass. This includes:
 **Ignored Tests**: 61 tests marked `#[ignore]` - candidates for investigation
 
 **Next Steps**:
-- Fix abstract class constructor type representation
+- Fix abstract class constructor type representation (complex type system issue)
 - Investigate and enable ignored tests that now pass
 - Improve conformance pass rate further
+- Consider refactoring large test files (>3000 lines)
+
+**Large Files (>3000 lines) Identified**:
+- `src/tests/checker_state_tests.rs`: 33,279 lines - contains failing tests
+- `src/solver/tests/subtype_tests.rs`: 29,222 lines
+- `src/solver/tests/infer_tests.rs`: 15,743 lines
+- Multiple source_map test files: 13K-19K lines each
+- `src/solver/tests/evaluate_tests.rs`: 45,503 lines
+- `src/transforms/tests/class_es5_tests.rs`: 48,974 lines
 
 ### Commits Pushed
 ```
