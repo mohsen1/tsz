@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 2 Complete - Task 5: User-Defined Type Guards (COMPLETE)
+**Status**: 🟢 Phase 3 Active - Task 9: typeof Narrowing (IN PROGRESS)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -489,6 +489,42 @@ However, to achieve the goal of matching `tsc` behavior exactly, additional narr
 **Files to modify**:
 - `src/checker/`: Add definite assignment checker
 - `src/binder/`: Track initialization state
+
+#### Task 9: typeof Narrowing (HIGH PRIORITY - Added 2026-02-04)
+
+**Goal**: Implement `typeof` narrowing (e.g., `if (typeof x === "string")` narrows to `string`).
+
+**Implementation**:
+- Recognize `typeof` expressions in binary comparisons
+- Add `TypeGuard::Typeof(String)` to Solver
+- Implement filtering logic to handle typeof strings ("string", "number", "object", etc.)
+- Handle special case: "object" includes objects, arrays, null, etc.
+
+**Why High Priority**: Fundamental building block used frequently in TypeScript. Without it, CFA feels "broken" to users.
+
+**Files to modify**:
+- `src/checker/control_flow_narrowing.rs`: Recognize typeof in `extract_type_guard`
+- `src/solver/narrowing.rs`: Add TypeGuard::Typeof and filtering logic
+
+**Edge Cases**:
+- `typeof null === "object"` (TypeScript quirk)
+- `typeof` on functions returns "function"
+- Handle `any` (narrows to specific type) and `unknown`
+
+#### Task 10: Array.isArray Narrowing (MEDIUM PRIORITY)
+
+**Goal**: Implement `Array.isArray()` narrowing (e.g., `if (Array.isArray(x))` narrows to `any[]`).
+
+**Implementation**:
+- Recognize `Array.isArray()` call pattern
+- Add type guard for array check
+- Narrow to array type in true branch
+
+**Why Medium Priority**: Important pattern but less common than typeof
+
+**Files to modify**:
+- `src/checker/control_flow_narrowing.rs`: Recognize Array.isArray pattern
+- `src/solver/narrowing.rs`: Add array type guard handling
 
 ### Coordination Notes
 
