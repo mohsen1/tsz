@@ -29,8 +29,9 @@ for &arg_idx in &args.nodes {
 }
 ```
 
-### Fix Location
-**Attempted fix in `src/checker/type_node.rs`** - INCOMPLETE
+### Fix Status - BLOCKED on Architecture
+
+**Attempted fix in `src/checker/type_node.rs`** (commit 414469fb2) - INCOMPLETE
 
 Added explicit walk of return type in `get_type_from_function_type()`:
 ```rust
@@ -39,11 +40,25 @@ if !func_data.type_annotation.is_none() {
 }
 ```
 
-**Issue**: This doesn't work because `self.check()` -> `compute_type()` -> `get_type_from_type_reference()` in `TypeNodeChecker` doesn't emit TS2304. It just delegates to `TypeLowering`.
+**Why it doesn't work**:
+- `self.check()` -> `compute_type()` -> `get_type_from_type_reference()` in `TypeNodeChecker`
+- `TypeNodeChecker::get_type_from_type_reference()` delegates to `TypeLowering`
+- `TypeLowering` computes types but doesn't emit diagnostics (by design)
+- TS2304 emission happens in `CheckerState::get_type_from_type_reference()` (state_type_resolution.rs:140-141)
+- Function types are NOT explicitly handled in `state_type_resolution.rs`
 
-The TS2304 emission happens in `state_type_resolution.rs::get_type_from_type_reference()` (lines 140-141), but function types are NOT explicitly handled there - they fall through to the default case which uses `TypeLowering`.
+**Architecture Issue**:
+- `TypeNodeChecker` is low-level - computes types, no diagnostics
+- `CheckerState` is high-level - emits diagnostics like TS2304
+- Function types need explicit handling in `CheckerState` to walk return types through diagnostic pipeline
+- Currently function types fall through to default case which bypasses TS2304 emission
 
-**Next approach**: Need to add explicit function type handling in `state_type_resolution.rs` that walks the return type through the full diagnostic pipeline.
+**Required Fix**: Add explicit function type handling in `state_type_resolution.rs` that:
+1. Detects function type nodes
+2. Explicitly walks the return type using `self.get_type_from_type_node()`
+3. Then delegates to TypeLowering for the actual type computation
+
+This is a non-trivial architectural fix requiring careful implementation.
 
 ### Priority Candidates (from session history)
 
