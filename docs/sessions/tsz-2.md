@@ -43,60 +43,70 @@ These features are core to modern TypeScript's type system. Without them:
 
 ## Implementation Plan
 
-### Phase 1: Conditional Types (HIGH PRIORITY)
+### Phase 1: Nominal Subtyping Implementation (HIGH PRIORITY)
 
-#### Task 1: Nominal Subtyping ⚠️ BLOCKED
-**File**: `src/solver/subtype.rs`
+#### Task 1: Add Visibility Enum and ParentId to PropertyInfo ✅ COMPLETED (2026-02-04)
+**Status**: COMPLETE
 
-**Status**: BLOCKED by missing PropertyInfo visibility flags
+**Commits**:
+- `d0b548766`: feat(solver): add Visibility enum and parent_id to PropertyInfo
+- `dfc2ea9e4`: fix: remove visibility/parent_id from FunctionShape and CallSignature
 
-**Investigation (2026-02-04)**:
-- Attempted to fix nominal subtyping for private/protected members
-- **Discovery**: `PropertyInfo` in `src/solver/types.rs` does NOT track visibility flags
-- TypeScript only enforces nominal typing when target has private/protected members
-- Classes without private members are structurally compatible (correct!)
+**What Was Implemented**:
+1. Added `PropertyVisibility` enum (Public, Private, Protected) to `src/solver/types.rs`
+2. Added `visibility: Visibility` field to `PropertyInfo`
+3. Added `parent_id: Option<SymbolId>` field to `PropertyInfo`
+4. Updated all 50+ PropertyInfo construction sites across the codebase
+5. All properties default to `Visibility::Public` with `parent_id: None`
 
-**Root Cause**:
-```rust
-// Current PropertyInfo (missing visibility flags)
-pub struct PropertyInfo {
-    pub name: Atom,
-    pub type_id: TypeId,
-    pub write_type: TypeId,
-    pub optional: bool,
-    pub readonly: bool,
-    pub is_method: bool,
-    // MISSING: private, protected, public flags
-}
-```
+**Next Steps**: Tasks 2-4 will implement the logic to use these fields
 
-**Correct Fix Required**:
-1. Add visibility flags to `PropertyInfo`
-2. Check if target has private/protected members
-3. Only enforce nominal inheritance if target has private/protected members
-4. Classes without private members remain structurally compatible
+#### Task 2: Update Lowering Logic to Populate Visibility 🔄 IN PROGRESS
+**File**: `src/solver/lower.rs`
 
-**Why Previous Attempt Failed**:
-- Applied nominal check to ALL classes with symbols
-- Made classes nominal like Java/C# (WRONG for TypeScript)
-- Incorrectly rejected valid structural compatibility
+**Requirements**:
+1. Check modifiers list for `PrivateKeyword` and `ProtectedKeyword`
+2. Map modifiers to `Visibility` enum:
+   - `SyntaxKind::PrivateKeyword` -> `Visibility::Private`
+   - `SyntaxKind::ProtectedKeyword` -> `Visibility::Protected`
+   - Default -> `Visibility::Public`
+3. Populate `parent_id` with the declaring class symbol
+4. Interfaces should always be `Public` with `None` parent_id
 
-**Example**:
-```typescript
-class A { x: number = 1; }        // No private members - STRUCTURAL
-class B { x: number = 2; }        // No private members - STRUCTURAL
-const a: A = new B();             // VALID (structural)
+**Functions to Modify**:
+- `lower_type_element()` - Property signatures
+- Class member lowering - Detect private/protected modifiers
+- Interface lowering - Ensure Public/None
 
-class C { private x: number = 1; } // Has private - NOMINAL
-class D { private x: number = 2; } // Has private - NOMINAL
-const c: C = new D();             // ERROR (different declarations)
-```
+#### Task 3: Implement Property Compatibility Checking
+**File**: `src/solver/subtype_rules/objects.rs`
 
-**Decision**: Defer this task. It requires PropertyInfo enhancement which is
-outside the scope of conditional type work. The current structural behavior
-is CORRECT for classes without private members.
+**Function**: `check_property_compatibility()`
 
-#### Task 2: Conditional Type Evaluation ✅ ALREADY IMPLEMENTED
+**Requirements**:
+1. If `target.visibility` is `Private` or `Protected`:
+   - Source MUST have matching `parent_id` (nominal check)
+   - Return `SubtypeResult::False` if mismatch
+2. If `target.visibility` is `Public`:
+   - Standard structural compatibility
+3. Handle `any` propagation (Lawyer layer handles this)
+
+#### Task 4: Handle Inheritance and Overriding
+**File**: `src/solver/class_hierarchy.rs`
+
+**Function**: `merge_properties()`
+
+**Requirements**:
+1. When derived class overrides base property:
+   - Update `parent_id` to derived class symbol
+   - Preserve visibility from base (private stays private)
+2. Handle protected member inheritance correctly
+
+---
+
+### Phase 2: Conditional Types (LOWER PRIORITY)
+
+#### Task 5: Conditional Type Evaluation ✅ ALREADY IMPLEMENTED
 **File**: `src/solver/evaluate_rules/conditional.rs`
 
 **Discovery (2026-02-04)**:
