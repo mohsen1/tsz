@@ -8,7 +8,27 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Implementing Short-Circuiting Control Flow in Flow Graph Builder
+**Status**: Implemented short-circuiting, but conformance decreased slightly. Needs investigation.
+
+**Completed** (commit d2b60ee12):
+- Implemented short-circuit operator detection (&&, ||, ??)
+- Added proper flow branching for &&, ||, ??
+- Created BRANCH_LABEL merge points
+- Manual tests pass (matches tsc)
+
+**Conformance Results**:
+- 5035/12638 passed (39.8%)
+- Decreased by 4 tests (5039 → 5035)
+- TS2339: missing=410, extra=286 (was missing=410, extra=285) - +1 extra error
+- TS2322: missing=273, extra=464 (was missing=271, extra=465) - +2 missing, -1 extra
+
+**Issue**: The conformance decreased slightly, which suggests the implementation may have a bug.
+Possible issues:
+1. The flow before/after handling might not be preserving state correctly
+2. The antecedent linking might be incorrect
+3. Need to investigate which tests are now failing
+
+**Next**: Investigate the failing tests to understand what went wrong.
 
 **Task**: Port short-circuit expression logic from state_binding.rs into FlowGraphBuilder
 
