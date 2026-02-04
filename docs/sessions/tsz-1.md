@@ -1160,3 +1160,56 @@ a ? b ? c : (d) : e => f
 - ✅ Task #9: Fix arrow function disambiguation (COMPLETE)
 - Task #10: Fix trailing commas (PENDING)
 - Task #2: Fix semicolon recovery cascade (DEFERRED)
+
+### Empty Type Parameter Lists & Constructor Type Params (COMPLETE 2026-02-04)
+
+**Problem**: Parser was failing to parse empty type parameter lists `<>` and type parameters on constructors, reporting generic errors instead of specific ones.
+
+**Test Cases**:
+```typescript
+class C {
+  constructor<>() { }
+}
+```
+
+**Root Cause**: 
+1. Parser didn't check for empty type parameter lists
+2. Constructor parsing didn't handle type parameters at all
+
+**Solution Implemented**:
+1. Added check in `parse_type_parameters` to detect empty lists (`<>`) and report TS1098
+2. Modified `parse_constructor_with_modifiers` to:
+   - Check for `<` after `constructor` keyword
+   - Parse type parameters even though they're invalid
+   - Report TS1092 ("Type parameters cannot appear on a constructor declaration")
+3. Added TS1092 diagnostic code to diagnostics.rs
+
+**Before**:
+```typescript
+class C {
+  constructor<>() { }
+}
+// TS1005: '(' expected
+// TS1068: Unexpected token...
+```
+
+**After** (matches TypeScript):
+```typescript
+class C {
+  constructor<>() { }
+}
+// TS1098: Type parameter list cannot be empty
+// TS1092: Type parameters cannot appear on a constructor declaration
+```
+
+**Files Modified**:
+- `src/checker/types/diagnostics.rs`: Added TS1092 error code
+- `src/parser/state_expressions.rs`: Added empty type parameter list check
+- `src/parser/state_statements.rs`: Added constructor type parameter parsing
+
+**Conformance**: 54% on parser tests (up from 53%)
+
+**Commit**: `7638c28b0` - "fix(parser): handle empty type parameter lists and constructor type params"
+
+**Error Code Improvements**:
+- TS1068: extra=9 → extra=6 (3 fewer extra errors)
