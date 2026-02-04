@@ -2,7 +2,7 @@
 
 ## Date: 2026-02-04
 
-## Status: MAJOR MILESTONE - Core Declaration Emit Complete ✅
+## Status: PHASE 1 COMPLETE ✅ - Ready for Phase 2
 
 ### Session Summary
 
@@ -137,10 +137,25 @@ enum Color { Red, Green, Blue }  // → declare enum Color { Red = 0, Green = 1,
 
 ### Remaining Work
 
-**Lower Priority (future sessions):**
-1. Function overloads (emit all signatures)
-2. Import/Export elision (remove unused imports)
-3. Class member visibility (private/protected fields)
+**PHASE 2: Structural API Fidelity** (Next Session Priorities)
+
+**Priority 1: Function Overloads** (Highest Impact)
+- Emit all overload signatures, not just implementation
+- Access `Symbol.declarations` (plural) from Binder
+- Modify emitter to iterate over all function signatures
+- **File Reference**: `src/emitter/types.rs`, `src/binder.rs`
+
+**Priority 2: Class Member Visibility**
+- Respect private/protected modifiers in class member emit
+- Check `ModifierFlags` in `src/parser/flags.rs`
+- Ensure private members are emitted correctly (tsc keeps them for shape)
+
+**Priority 3: Import/Export Elision**
+- Remove unused imports from .d.ts output
+- Requires "usage" pass or visitor to mark referenced SymbolIds
+- Prevents "Module not found" errors in output
+
+**Lower Priority:**
 4. Literal initializers for primitive consts (= 42 vs : number)
 5. Union type return types for variables
 
