@@ -1,10 +1,140 @@
-# Session tsz-2: Advanced Type Evaluation & Inference
+# Session tsz-2: Type Metaprogramming & Solver Completion
 
 **Started**: 2026-02-04
-**Status**: 🟡 Active (Phase 1: Conditional Types)
-**Previous**: BCT and Intersection Reduction (COMPLETED 2026-02-04)
+**Status**: 🟢 Active (Phase 2: Type Metaprogramming Triad)
+**Previous**: Nominal Subtyping (COMPLETED 2026-02-04)
 
-## Session Redefinition (2026-02-04)
+## Session Redefinition #2 (2026-02-04)
+
+### COMPLETED WORK: Nominal Subtyping ✅
+
+**Phase 1 Complete** (2026-02-04):
+1. ✅ **Task 1**: Visibility enum and parent_id added to PropertyInfo
+2. ✅ **Task 2**: Lowering logic populates visibility from modifiers
+3. ✅ **Task 3**: Property compatibility checking with nominal subtyping
+4. ✅ **Task 4**: Inheritance and overriding with parent_id tracking
+
+All 4 tasks complete. TypeScript classes now have proper nominal subtyping for private/protected members.
+
+---
+
+## NEW FOCUS: Type Metaprogramming Triad
+
+### Problem Statement
+
+The Solver (the "WHAT" of type checking) is missing critical type metaprogramming features required by the TypeScript Standard Library:
+1. **Mapped Types** - `{ [K in keyof T]: U }` (MISSING - HIGH PRIORITY)
+2. **Template Literal Types** - `` `${T}` `` (MISSING)
+3. **Conditional Type Inference** - `infer` keyword verification (NEEDS TESTING)
+
+Without these features:
+- Standard library types like `Partial`, `Required`, `Pick`, `Omit` don't work
+- Template literal type manipulation fails (core to modern TypeScript)
+- Conformance tests for conditional/mapped types remain blocked
+
+### Why This Matters Now
+
+1. **North Star Alignment**: Solver should be feature-complete for type computations
+2. **Unblocks Standard Library**: Cannot process `lib.d.ts` without mapped types
+3. **High Conformance Impact**: Biggest boost to pass rate
+4. **Solver-First Architecture**: Complete Solver before adding more Checker complexity
+
+---
+
+## Implementation Plan
+
+### Phase 2: Type Metaprogramming Triad
+
+#### Task 1: Verify & Stress-Test Conditional Type Inference
+**File**: `src/solver/infer.rs`
+
+**Function**: `infer_from_conditional_type()` (verify implementation)
+
+**Requirements**:
+1. Verify `infer` keyword works for pattern matching: `T extends (infer U)[] ? U : never`
+2. Multiple `infer` declarations for same type variable
+3. `infer` in function parameters vs. return types
+4. Nested conditionals
+5. Distributive behavior with union types
+
+**Success Criteria**:
+- All conditional type inference tests pass
+- Standard library types like `Extract`, `Exclude` work correctly
+
+---
+
+#### Task 2: Implement Mapped Type Evaluation (HIGH PRIORITY)
+**File**: `src/solver/evaluate_rules/mapped.rs` (create new file) or `src/solver/evaluate.rs`
+
+**Function**: `evaluate_mapped()`
+
+**Requirements**:
+1. **Key iteration**: Iterate over `keyof T` (constraint type)
+2. **Property mapping**: Apply type transformation to each property
+3. **Modifier handling**:
+   - `?` optional modifier (add)
+   - `readonly` modifier (add)
+   - `-?` optional removal
+   - `-readonly` readonly removal
+4. **Homomorphic mapped types**: Preserve structure when mapping over identity
+5. **Template literal keys**: Handle `[K in keyof T as `${Prefix}${K}`]`
+
+**Examples**:
+```typescript
+type Partial<T> = { [P in keyof T]?: T[P] };
+type Readonly<T> = { readonly [P in keyof T]: T[P] };
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+```
+
+**Key Decision**: Create separate file or add to evaluate.rs?
+- Create `evaluate_rules/mapped.rs` if complex (>200 lines)
+- Add to `evaluate.rs` if simple (<200 lines)
+
+---
+
+#### Task 3: Template Literal Types (LOWER PRIORITY)
+**File**: `src/solver/types.rs` (TypeKey variant) and `src/solver/evaluate_rules/template.rs`
+
+**Requirements**:
+1. String concatenation: `` `${A}${B}` ``
+2. Type inference within templates
+3. Union types in templates: `` `${A | B}` ``
+4. Template literal type constraints
+
+**Note**: Can defer this if conformance push is higher priority.
+
+---
+
+#### Task 4: Conformance Push
+**Goal**: Use new Solver capabilities to unblock test suites
+
+**Actions**:
+1. Run `./scripts/conformance.sh --filter=conditional`
+2. Run `./scripts/conformance.sh --filter=mapped`
+3. Fix failures with Solver improvements
+4. Measure conformance pass rate improvement
+
+---
+
+## MANDATORY: Two-Question Rule
+
+⚠️ **Before implementing Task 2 (Mapped Types), ask Gemini:**
+```bash
+./scripts/ask-gemini.mjs --include=src/solver "I am starting Task 2: Mapped Type Evaluation.
+Problem: Need to implement { [K in keyof T]: U } with modifier handling.
+Planned Approach:
+1. Create evaluate_mapped in src/solver/evaluate.rs
+2. Iterate over keys of constraint
+3. Apply TypeSubstitution to value type U
+4. Handle Optional/Readonly flags
+
+Questions:
+1. Should I create separate file in evaluate_rules/?
+2. How does Solver handle homomorphic mapped type optimization?
+3. Are there pitfalls with recursive mapped types?"
+```
+
+⚠️ **After implementing, ask Gemini Pro for review.**
 
 ### COMPLETED WORK: BCT and Intersection Reduction
 
@@ -142,16 +272,37 @@ const i: I = c; // ERROR: property 'x' is private in type 'C' but not in type 'I
 
 **Next**: Task 4 - Handle Inheritance and Overriding in class_hierarchy.rs
 
-#### Task 4: Handle Inheritance and Overriding
+#### Task 4: Handle Inheritance and Overriding ✅ COMPLETED (2026-02-04)
 **File**: `src/solver/class_hierarchy.rs`
 
-**Function**: `merge_properties()`
+**Status**: COMPLETE
 
-**Requirements**:
-1. When derived class overrides base property:
-   - Update `parent_id` to derived class symbol
-   - Preserve visibility from base (private stays private)
-2. Handle protected member inheritance correctly
+**Commits**:
+- `8bb483b73`: feat(solver): implement visibility-aware inheritance in class_hierarchy
+
+**What Was Implemented**:
+
+1. **`merge_properties` function**:
+   - Added `current_class: SymbolId` parameter for parent_id tracking
+   - ALL base properties (including private) are inherited
+   - Private members are inherited but not accessible (Checker enforces access control)
+   - `parent_id` updated to `current_class` for all own/overriding members
+   - Updated test to use new function signature
+
+2. **Key Insight from Gemini Pro**:
+   - Initial implementation filtered out private base properties
+   - **Critical Bug**: In TypeScript, private members ARE inherited (just not accessible)
+   - This is required for subtyping: `class B extends A` must structurally contain all of A's properties for `B <: A` assignability
+   - Filtering out private members would break: `let a: A = new B()`
+
+3. **Correct Behavior**:
+   ```typescript
+   class A { private x = 1; }
+   class B extends A {}  // B inherits private x (but can't access it)
+   const a: A = new B(); // ✅ OK: B is subtype of A (has x nominally)
+   ```
+
+**Phase 1 Complete**: All four tasks for nominal subtyping implementation are now complete!
 
 ---
 

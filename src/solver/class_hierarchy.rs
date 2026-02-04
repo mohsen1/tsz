@@ -57,7 +57,8 @@ impl<'a> ClassTypeBuilder<'a> {
         let base_props = self.get_properties_of_type(base_type);
 
         // Merge: own members override base properties
-        let merged = self.merge_properties(base_props, own_members);
+        // Pass the class symbol to handle parent_id updates during merge
+        let merged = self.merge_properties(base_props, own_members, symbol);
 
         self.create_object_type(merged, symbol)
     }
@@ -90,21 +91,31 @@ impl<'a> ClassTypeBuilder<'a> {
     }
 
     /// Merge base properties with own members.
-    /// Own members override base properties with the same name.
+    ///
+    /// Requirements:
+    /// - ALL properties (including private) are inherited.
+    /// - Private members are inherited but not accessible (Checker handles access control).
+    /// - parent_id is updated to the current class for all own/overriding members.
     fn merge_properties(
         &self,
         base: Vec<PropertyInfo>,
         own: Vec<PropertyInfo>,
+        current_class: SymbolId,
     ) -> Vec<PropertyInfo> {
         let mut result_map: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
 
-        // Add base properties first
+        // 1. Add ALL base properties (private members are inherited but inaccessible)
+        // This is critical for subtyping: derived class must structurally contain
+        // all base class properties for assignability to work
         for prop in base {
             result_map.insert(prop.name, prop);
         }
 
-        // Override with own members (last-write-wins)
-        for prop in own {
+        // 2. Override with own members (last-write-wins)
+        for mut prop in own {
+            // 3. Update parent_id to the current class
+            // This stamps the property as belonging to the derived class
+            prop.parent_id = Some(current_class);
             result_map.insert(prop.name, prop);
         }
 
@@ -197,7 +208,8 @@ mod tests {
             },
         ];
 
-        let merged = builder.merge_properties(base_props, own_props);
+        let dummy_symbol = SymbolId::from_u32(999);
+        let merged = builder.merge_properties(base_props, own_props, dummy_symbol);
 
         assert_eq!(merged.len(), 2);
         // name should be overridden
