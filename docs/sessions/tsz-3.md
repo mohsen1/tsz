@@ -2,32 +2,17 @@
 
 ## Current Work
 
-**Task**: Const Type Parameters (TS 5.0) Implementation - COMPLETED
+**Status**: Ready for next task
 
-Working on implementing const type parameters (TypeScript 5.0 feature) in the tsz compiler.
+Last completed: Const Type Parameters (TS 5.0) Implementation (2025-02-04)
 
-### Completed Implementation (2025-02-04)
+### Potential Next Tasks
 
-**Summary**: Full implementation of const type parameter infrastructure and core literal preservation logic.
+Based on the Gemini analysis, the next priority areas for complex types are:
 
-**What Was Implemented**:
-1. Updated `InferenceContext` in `src/solver/infer.rs` to track `is_const` flag for type parameters (3-tuple format)
-2. Added `is_var_const` helper to check if an inference variable is const
-3. Updated `resolve_from_candidates` to skip widening when `is_const` is true
-4. Updated all callers of `fresh_type_param` and `register_type_param` across the codebase
-5. Fixed all test files to pass the `is_const` flag
-
-**Tests Added**:
-- `test_const_type_param_preserves_literal_number` - Verifies const type params preserve number literals
-- `test_const_type_param_preserves_literal_string` - Verifies const type params preserve string literals
-- `test_const_type_param_multiple_literals_preserved` - Verifies multiple different literals still widen
-
-**Test Results**: All 545 inference tests pass, including 3 new const type parameter tests.
-
-**Files Modified**:
-- `src/solver/infer.rs`: Core const type parameter logic
-- `src/solver/operations.rs`: Pass `is_const` flag when creating type parameter placeholders
-- `src/solver/tests/*.rs`: Updated all test calls to `fresh_type_param` with `is_const` flag
+1. **Variance Calculation** - Full structural variance calculation for generic types
+2. **Instantiation Caching** - Performance optimization for repeated generic instantiations
+3. **Readonly Inference for Const Type Params** - Add readonly modifiers to object/array types inferred with const type parameters (future enhancement)
 
 ### Next Priority Areas (from Gemini analysis)
 
