@@ -8,7 +8,21 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Implementing Labeled Statement Support in Flow Graph Builder
+**Status**: Labeled statement support completed. Testing conformance impact.
+
+**Completed** (commit 32772dbb3):
+- Implemented labeled statement support in FlowGraphBuilder
+- Added `label: NodeIndex` field to FlowContext struct
+- Implemented `build_labeled_statement` method for LABELED_STATEMENT nodes
+- Updated `handle_break` and `handle_continue` to check for labels and search flow_stack
+- Labeled breaks/continues now correctly find their target by matching label text
+
+**Test Results**:
+- Manual test with labeled break/continue: No errors (matches tsc)
+- Build succeeded
+- Ready for conformance testing
+
+**Next**: Run conformance tests to measure impact on TS2322 and TS2339 errors.
 
 **Task**: Add support for labeled statements and directed breaks/continues in the FlowGraphBuilder to fix control flow analysis.
 
