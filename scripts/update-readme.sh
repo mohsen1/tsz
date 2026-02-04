@@ -77,7 +77,7 @@ generate_bar() {
 
 # Format number with commas: format_num 12345 -> 12,345
 format_num() {
-    echo "$1" | sed ':a;s/\B[0-9]\{3\}\>$/,&/;ta'
+    printf "%'d" "$1" 2>/dev/null || echo "$1"
 }
 
 # Update a section in README between markers
@@ -87,13 +87,19 @@ update_section() {
     local end_marker="$2"
     local new_content="$3"
     local tmpfile=$(mktemp)
-    
-    awk -v start="$start_marker" -v end="$end_marker" -v content="$new_content" '
-        $0 ~ start { print; print content; skip=1; next }
-        $0 ~ end { skip=0 }
+    local content_file=$(mktemp)
+
+    # Write content to temp file
+    printf "%s\n" "$new_content" > "$content_file"
+
+    awk -v start="$start_marker" -v end="$end_marker" '
+        BEGIN { skip = 0 }
+        $0 ~ start { print; skip = 1; next }
+        $0 ~ end { skip = 0; getline; print ""; while ((getline line < "'"$content_file"'") > 0) print line; close("'$"$content_file"'"); next }
         !skip { print }
     ' "$README" > "$tmpfile"
-    
+
+    rm "$content_file"
     mv "$tmpfile" "$README"
 }
 
