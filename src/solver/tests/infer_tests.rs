@@ -101,6 +101,7 @@ fn test_inference_occurs_check() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let array_t = interner.array(t_type);
@@ -119,6 +120,7 @@ fn test_inference_occurs_check_function_this_type() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let func = interner.function(FunctionShape {
@@ -379,6 +381,7 @@ fn test_resolve_circular_upper_bound_defaults_unknown() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let name_next = interner.intern_string("next");
@@ -407,6 +410,7 @@ fn test_resolve_self_upper_bound_with_concrete() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -430,11 +434,13 @@ fn test_resolve_mutual_circular_upper_bounds_unknown() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -461,11 +467,13 @@ fn test_resolve_mutual_circular_upper_bounds_with_concrete() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -493,11 +501,13 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let name_next = interner.intern_string("next");
@@ -542,11 +552,13 @@ fn test_resolve_mutual_recursive_object_bounds_unknown() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let name_next = interner.intern_string("next");
@@ -4932,6 +4944,7 @@ fn test_infer_union_target_with_placeholder_member() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let param_type = interner.union(vec![t_type, TypeId::STRING]);
@@ -4940,6 +4953,7 @@ fn test_infer_union_target_with_placeholder_member() {
         type_params: vec![TypeParamInfo {
             name: t_name,
             constraint: None,
+            is_const: false,
             default: None,
         }],
         params: vec![ParamInfo {
@@ -4968,6 +4982,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let param_type = interner.union(vec![t_type, TypeId::NEVER]);
@@ -4976,6 +4991,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
         type_params: vec![TypeParamInfo {
             name: t_name,
             constraint: None,
+            is_const: false,
             default: None,
         }],
         params: vec![ParamInfo {
@@ -5008,11 +5024,13 @@ fn test_resolve_circular_extends_with_concrete_bound() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5041,11 +5059,13 @@ fn test_resolve_circular_extends_bound_order() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5074,11 +5094,13 @@ fn test_resolve_usage_based_inference_from_bound_param() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5199,11 +5221,13 @@ fn test_resolve_all_with_circular_extends_unknown() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5238,16 +5262,19 @@ fn test_circular_extends_three_way_cycle() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let v_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5277,6 +5304,7 @@ fn test_circular_extends_self_reference() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5305,11 +5333,13 @@ fn test_circular_extends_with_lower_bound() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5343,11 +5373,13 @@ fn test_circular_extends_both_have_lower_bounds() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5382,11 +5414,13 @@ fn test_circular_extends_unify_propagates() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5421,11 +5455,13 @@ fn test_circular_extends_conflicting_lower_bounds() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5464,16 +5500,19 @@ fn test_circular_extends_three_way_with_one_lower_bound() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let v_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5510,11 +5549,13 @@ fn test_circular_extends_with_union_lower_bound() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5549,11 +5590,13 @@ fn test_circular_extends_with_literal_types() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5594,21 +5637,25 @@ fn test_circular_extends_four_way_cycle() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let v_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let w_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: w_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5642,11 +5689,13 @@ fn test_circular_extends_with_concrete_upper_and_lower() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5685,11 +5734,13 @@ fn test_circular_extends_chain_with_endpoint_bound() {
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let v_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -5733,11 +5784,13 @@ fn test_circular_extends_multiple_lower_bounds_same_param() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -6429,6 +6482,7 @@ fn test_method_return_type_inference_basic() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -6437,6 +6491,7 @@ fn test_method_return_type_inference_basic() {
         type_params: vec![TypeParamInfo {
             name: t_name,
             constraint: None,
+            is_const: false,
             default: None,
         }],
         params: vec![],
@@ -6465,6 +6520,7 @@ fn test_method_parameter_type_inference() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -6473,6 +6529,7 @@ fn test_method_parameter_type_inference() {
         type_params: vec![TypeParamInfo {
             name: t_name,
             constraint: None,
+            is_const: false,
             default: None,
         }],
         params: vec![ParamInfo {
@@ -6506,6 +6563,7 @@ fn test_method_this_type_inference() {
     let this_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: this_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -6514,6 +6572,7 @@ fn test_method_this_type_inference() {
         type_params: vec![TypeParamInfo {
             name: this_name,
             constraint: None,
+            is_const: false,
             default: None,
         }],
         params: vec![],
@@ -6552,6 +6611,7 @@ fn test_method_generic_parameter_inference() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -6561,6 +6621,7 @@ fn test_method_generic_parameter_inference() {
         type_params: vec![TypeParamInfo {
             name: t_name,
             constraint: None,
+            is_const: false,
             default: None,
         }],
         params: vec![ParamInfo {
@@ -14748,6 +14809,7 @@ fn test_conditional_type_inference_basic() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -14789,6 +14851,7 @@ fn test_variance_computation_covariant() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -14820,6 +14883,7 @@ fn test_variance_computation_contravariant() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -14857,6 +14921,7 @@ fn test_variance_computation_invariant() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -14922,6 +14987,7 @@ fn test_variance_string() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -14964,11 +15030,13 @@ fn test_strengthen_constraints() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let _u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15039,6 +15107,7 @@ fn test_contains_inference_var() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15080,6 +15149,7 @@ fn test_variance_conditional_type() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15117,6 +15187,7 @@ fn test_complex_generic_inference() {
     let _t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15189,6 +15260,7 @@ fn test_template_literal_contains_inference_var() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15220,6 +15292,7 @@ fn test_template_literal_does_not_contain_unrelated_var() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15271,11 +15344,13 @@ fn test_template_literal_multiple_inference_positions() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15307,6 +15382,7 @@ fn test_template_literal_infer_from_conditional() {
         name: t_name,
         constraint: Some(TypeId::STRING),
         default: None,
+        is_const: false,
     }));
 
     // Create template literal: `get${T}`
@@ -15348,6 +15424,7 @@ fn test_template_literal_inference_context_integration() {
     let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
         name: k_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15381,6 +15458,7 @@ fn test_nested_template_literal_in_conditional() {
     let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
         name: k_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15395,6 +15473,7 @@ fn test_nested_template_literal_in_conditional() {
     let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15425,6 +15504,7 @@ fn test_template_literal_inference_end_to_end() {
     let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
         name: k_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15470,6 +15550,7 @@ fn test_template_literal_inference_no_match() {
     let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
         name: k_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15515,6 +15596,7 @@ fn test_template_literal_inference_prefix_suffix() {
     let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15561,12 +15643,14 @@ fn test_template_literal_inference_multiple_infers() {
     let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
         name: a_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
         name: b_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -15614,6 +15698,7 @@ fn test_template_literal_inference_distributive() {
     let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
         name: k_name,
         constraint: None,
+        is_const: false,
         default: None,
     }));
 

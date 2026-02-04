@@ -541,6 +541,7 @@ fn test_narrow_by_typeof_negation_function_type_param_with_union_constraint() {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
+        is_const: false,
     }));
     let union = interner.union(vec![param, TypeId::BOOLEAN]);
 
@@ -573,6 +574,7 @@ fn test_narrow_by_typeof_negation_function_type_param_to_never() {
         name: interner.intern_string("T"),
         constraint: Some(func),
         default: None,
+        is_const: false,
     }));
 
     let narrowed = ctx.narrow_excluding_function(param);
@@ -587,6 +589,7 @@ fn test_narrow_by_typeof_type_param_with_union_constraint() {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
+        is_const: false,
     }));
     let union = interner.union(vec![param, TypeId::BOOLEAN]);
 
@@ -618,6 +621,7 @@ fn test_narrow_by_typeof_function_type_param_with_union_constraint() {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
+        is_const: false,
     }));
     let union = interner.union(vec![param, TypeId::BOOLEAN]);
 
@@ -633,6 +637,7 @@ fn test_narrow_by_typeof_function_type_param_with_non_function_constraint() {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
+        is_const: false,
     }));
 
     let narrowed = narrow_by_typeof(&interner, param, "function");
@@ -646,6 +651,7 @@ fn test_narrow_by_typeof_function_unconstrained_type_param() {
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -661,6 +667,7 @@ fn test_narrow_by_typeof_type_param_with_non_overlapping_constraint() {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
+        is_const: false,
     }));
 
     let narrowed = narrow_by_typeof(&interner, param, "string");
@@ -673,6 +680,7 @@ fn test_narrow_by_typeof_unconstrained_type_param() {
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -893,6 +901,7 @@ fn test_narrow_excluding_type_param_with_union_constraint() {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
+        is_const: false,
     }));
     let union = interner.union(vec![param, TypeId::BOOLEAN]);
 
@@ -911,6 +920,7 @@ fn test_narrow_excluding_type_param_with_non_overlapping_constraint() {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
+        is_const: false,
     }));
 
     let narrowed = ctx.narrow_excluding_type(param, TypeId::STRING);
@@ -926,6 +936,7 @@ fn test_narrow_excluding_type_param_to_never() {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
+        is_const: false,
     }));
 
     let narrowed = ctx.narrow_excluding_type(param, TypeId::STRING);

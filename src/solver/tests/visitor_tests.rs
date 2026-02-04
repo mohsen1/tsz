@@ -64,11 +64,13 @@ fn test_type_kind_classification() {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
+        is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
+        is_const: false,
     }));
     let inter = interner.intersection(vec![t_param, u_param]);
     assert_eq!(
@@ -225,11 +227,13 @@ fn test_is_intersection_type() {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
+        is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
+        is_const: false,
     }));
     let inter = interner.intersection(vec![t_param, u_param]);
     assert!(is_intersection_type(&interner, inter));
@@ -267,6 +271,7 @@ fn test_is_type_parameter() {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
+        is_const: false,
     }));
     assert!(is_type_parameter(&interner, param));
     assert!(!is_type_parameter(&interner, TypeId::STRING));
@@ -370,6 +375,7 @@ fn test_contains_type_parameters() {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
+        is_const: false,
     }));
 
     // Array<T>
@@ -454,11 +460,13 @@ fn test_type_list_extractors_for_union_and_intersection() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
+        is_const: false,
         default: None,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
+        is_const: false,
         default: None,
     }));
 
@@ -603,6 +611,7 @@ fn test_type_param_ref_and_lazy_extractors() {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
+        is_const: false,
     };
     let param_type = interner.intern(TypeKey::TypeParameter(param_info.clone()));
     assert_eq!(type_param_info(&interner, param_type), Some(param_info));
@@ -634,6 +643,7 @@ fn test_application_mapped_and_conditional_extractors() {
             name: interner.intern_string("K"),
             constraint: None,
             default: None,
+            is_const: false,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -741,6 +751,7 @@ fn test_contains_infer_types() {
         name: interner.intern_string("R"),
         constraint: None,
         default: None,
+        is_const: false,
     }));
     let union = interner.union(vec![TypeId::STRING, infer_type]);
 
@@ -781,6 +792,7 @@ fn test_meta_type_predicates() {
             name: interner.intern_string("K"),
             constraint: None,
             default: None,
+            is_const: false,
         },
         constraint: TypeId::STRING,
         name_type: None,
