@@ -2,6 +2,14 @@
 
 **Goal**: Match `tsc` behavior exactly. Every error, inference, and edge case must be identical to TypeScript's compiler.
 
+## WORK IS NEVER DONE UNTIL ALL TESTS PASS
+Work is never done until all tests pass. This includes:
+- Unit tests (`cargo nextest run`)
+- Conformance tests (`./scripts/conformance.sh`)
+- No existing `#[ignore]` tests
+- No cleanup work left undone
+- No large files (>3000 lines) left unaddressed
+
 ## CRITICAL: Check Session Coordination
 
 Before starting work, check [docs/sessions/](docs/sessions/) to understand what other sessions are working on. Your session is determined by your directory name (tsz-1, tsz-2, tsz-3, tsz-4).
