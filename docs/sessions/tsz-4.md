@@ -2,9 +2,9 @@
 
 ## Date: 2026-02-04
 
-## Status: ✅ COMPLETE (2026-02-04)
+## Status: 🟡 ACTIVE (2026-02-04)
 
-All Class Heritage and Generics features verified working. Only type literal formatting bug was found and fixed.
+Previous task (Class Heritage and Generics) verified as already implemented. New task identified by Gemini.
 
 ### New Task: Class Heritage and Generics (2026-02-04) ✅ COMPLETE
 
@@ -509,13 +509,89 @@ This session completed declaration emit improvements:
 
 ---
 
-## Next Task Options
+## Next Task: Computed Property Names and `unique symbol` Support (2026-02-04)
 
-### Option 1: Computed Property Names
-**Problem**: `export const sym = Symbol(); export class A { [sym]: number; }`
-**TSC Behavior**: Emits the literal or unique symbol reference. If simple string literal `["prop"]`, converts to standard property `prop`.
-**Files**: `src/declaration_emitter.rs`, `src/emitter/helpers.rs`
-**Complexity**: Low-Medium (1 day)
+**Gemini Consultation Summary:**
 
-### Option 2: Ask Gemini for Next High-Impact Task
-Since Class Heritage and Generics were already implemented, the next task should be identified by running conformance tests and asking Gemini for guidance on what would provide the biggest improvement.
+This task involves two related areas:
+1. **Computed Property Names**: Implement support for `[s]: number` and `["prop"]: string`
+2. **`unique symbol`**: Support the `unique` modifier for symbol declarations
+
+### Problem Description
+
+TypeScript has specific normalization rules:
+- String literal computed keys `["a"]` should simplify to `a`
+- Symbol-based keys must remain computed `[s]`
+- `const x = Symbol()` must emit as `const x: unique symbol`
+
+### Implementation Plan
+
+**Estimated Complexity: Medium (1-2 days)**
+
+#### Phase 1: Key Normalization
+- Update `emit_node` to handle `SyntaxKind::ComputedPropertyName`
+- Add helper to check if computed property contains literal
+- String literals → emit as identifier
+- Numeric literals → emit as number
+- Expressions → keep brackets
+
+#### Phase 2: Unique Symbol Support
+- Update `emit_variable_declaration_statement` to detect `Symbol()` initializers
+- Emit `unique symbol` type for const symbol declarations
+- Ensure only `const` and `readonly static` get `unique` keyword
+
+### Files to Modify
+- **`src/declaration_emitter/mod.rs`**: Primary changes
+  - Update `emit_node` for `ComputedPropertyName`
+  - Update `emit_property_declaration` and `emit_method_declaration`
+  - Update `emit_variable_declaration_statement` for `unique symbol`
+- **`src/emitter/type_printer.rs`**: Ensure `unique symbol` prints correctly
+
+### Success Criteria
+
+**Key Normalization:**
+```typescript
+// Input
+class C { ["prop"]: string; }
+
+// Output
+class C { prop: string; }
+```
+
+**Computed Symbols:**
+```typescript
+// Input
+const s = Symbol();
+class C { [s]: number; }
+
+// Output
+declare const s: unique symbol;
+declare class C { [s]: number; }
+```
+
+**Unique Symbols:**
+```typescript
+// Input
+export const MySym = Symbol();
+
+// Output
+export declare const MySym: unique symbol;
+```
+
+**Method Names:**
+```typescript
+// Input
+interface I { [Symbol.iterator](): void; }
+
+// Output
+interface I { [Symbol.iterator](): void; }
+```
+
+### Implementation Pitfalls
+- `unique symbol` only valid on `const` or `readonly static`, not `let`/`var`
+- Custom symbols `[mySym]` require tsz-7 auto-imports to work
+- Must check `NodeFlags` and `ModifierFlags` carefully
+
+---
+
+## Previous Task: Class Heritage and Generics ✅
