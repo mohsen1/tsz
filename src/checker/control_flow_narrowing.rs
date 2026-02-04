@@ -1863,9 +1863,7 @@ impl<'a> FlowAnalyzer<'a> {
         let bin = self.arena.get_binary_expr(cond_node)?;
 
         // Check for instanceof operator: x instanceof MyClass
-        if let Some(operator_node) = self.arena.get(bin.operator_token)
-            && operator_node.kind == SyntaxKind::InstanceOfKeyword as u16
-        {
+        if bin.operator_token == SyntaxKind::InstanceOfKeyword as u16 {
             // Target is the left side
             let target = bin.left;
             // Get the constructor type from the right side
@@ -1877,9 +1875,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Check for in operator: "prop" in x
-        if let Some(operator_node) = self.arena.get(bin.operator_token)
-            && operator_node.kind == SyntaxKind::InKeyword as u16
-        {
+        if bin.operator_token == SyntaxKind::InKeyword as u16 {
             // Target is the right side (the object being checked)
             let target = bin.right;
             // Get the property name from the left side

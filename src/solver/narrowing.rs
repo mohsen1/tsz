@@ -1536,12 +1536,26 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
 
-            TypeGuard::Instanceof(class_type) => {
+            TypeGuard::Instanceof(instance_type) => {
                 if sense {
-                    self.narrow_by_instanceof(source_type, *class_type, true)
+                    // Positive: x instanceof Class
+                    // CRITICAL: The payload is already the Instance Type (extracted by Checker)
+                    // We narrow to it directly using narrow_to_type, not narrow_by_instanceof
+                    // which would try to extract the instance type again from a constructor.
+                    let narrowed = self.narrow_to_type(source_type, *instance_type);
+
+                    // Fallback: If standard narrowing returns NEVER but source wasn't NEVER,
+                    // it might be an interface vs class check (which is allowed in TS).
+                    // Use intersection in that case.
+                    if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
+                        self.db.intersection2(source_type, *instance_type)
+                    } else {
+                        narrowed
+                    }
                 } else {
-                    // Negation: !(x instanceof Class)
-                    self.narrow_by_instanceof(source_type, *class_type, false)
+                    // Negative: !(x instanceof Class)
+                    // Exclude the instance type
+                    self.narrow_excluding_type(source_type, *instance_type)
                 }
             }
 
