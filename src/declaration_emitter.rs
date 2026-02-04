@@ -1769,6 +1769,23 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("\"");
                 }
             }
+            k if k == SyntaxKind::NullKeyword as u16 => {
+                self.write("null");
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 => {
+                self.write("true");
+            }
+            k if k == SyntaxKind::FalseKeyword as u16 => {
+                self.write("false");
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                // Array literal in default parameter: emit as []
+                self.write("[]");
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                // Object literal in default parameter: emit as {}
+                self.write("{}");
+            }
             _ => self.emit_node(expr_idx),
         }
 
