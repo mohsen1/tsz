@@ -1898,7 +1898,15 @@ impl<'a> CheckerState<'a> {
                                     if ty != TypeId::ERROR {
                                         // Cache type parameters for Application expansion
                                         let def_id = self.ctx.get_or_create_def_id(sym_id);
-                                        self.ctx.insert_def_type_params(def_id, params);
+                                        self.ctx.insert_def_type_params(def_id, params.clone());
+
+                                        // CRITICAL: Register the type body in TypeEnvironment so that
+                                        // evaluate_application can resolve it via resolve_lazy(def_id).
+                                        // Without this, Partial<T>, Pick<T,K>, etc. resolve to unknown.
+                                        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                                            env.insert_def_with_params(def_id, ty, params);
+                                        }
+
                                         lib_types.push(ty);
                                         // Type aliases don't merge across files, take the first one
                                         break;
