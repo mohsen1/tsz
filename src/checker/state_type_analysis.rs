@@ -1692,6 +1692,44 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Resolve Lazy(DefId) types before classification. Type aliases like
+        // `type Direction = "north" | "south"` are Lazy until resolved.
+        if let Some(crate::solver::TypeKey::Lazy(def_id)) = self.ctx.types.lookup(ctx_type) {
+            // Try type_env first
+            let resolved = {
+                let env = self.ctx.type_env.borrow();
+                env.get_def(def_id)
+            };
+            if let Some(resolved) = resolved
+                && resolved != ctx_type
+            {
+                return self.contextual_type_allows_literal_inner(resolved, literal_type, visited);
+            }
+            // If not resolved, try ensure_refs_resolved to populate type_env
+            self.ensure_refs_resolved(ctx_type);
+            let resolved = {
+                let env = self.ctx.type_env.borrow();
+                env.get_def(def_id)
+            };
+            if let Some(resolved) = resolved
+                && resolved != ctx_type
+            {
+                return self.contextual_type_allows_literal_inner(resolved, literal_type, visited);
+            }
+            return false;
+        }
+
+        // Evaluate KeyOf and IndexAccess types to their concrete form before
+        // classification. E.g., keyof Person → "name" | "age".
+        if let Some(crate::solver::TypeKey::KeyOf(_))
+        | Some(crate::solver::TypeKey::IndexAccess(..)) = self.ctx.types.lookup(ctx_type)
+        {
+            let evaluated = self.evaluate_type_with_env(ctx_type);
+            if evaluated != ctx_type && evaluated != TypeId::ERROR {
+                return self.contextual_type_allows_literal_inner(evaluated, literal_type, visited);
+            }
+        }
+
         match classify_for_contextual_literal(self.ctx.types, ctx_type) {
             ContextualLiteralAllowKind::Members(members) => members.iter().any(|&member| {
                 self.contextual_type_allows_literal_inner(member, literal_type, visited)

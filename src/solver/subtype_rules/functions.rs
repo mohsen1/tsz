@@ -857,27 +857,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
-    /// Evaluate a meta-type (conditional, index access, mapped, etc.) to its concrete form.
-    /// Uses TypeEvaluator to reduce types like `T extends U ? X : Y` to either X or Y.
+    /// Evaluate a meta-type (conditional, index access, mapped, keyof, etc.) to its
+    /// concrete form. Uses TypeEvaluator with the resolver to correctly resolve
+    /// Lazy(DefId) types at all nesting levels (e.g., KeyOf(Lazy(DefId))).
     ///
-    /// When a QueryDatabase is available (via `with_query_db`), routes through Salsa
-    /// for memoization. Otherwise falls back to creating a fresh TypeEvaluator.
-    ///
-    /// For Lazy(DefId) types, the resolver is tried first because the checker may
-    /// have populated DefId→TypeId mappings (e.g., for interfaces/type aliases) that
-    /// the query_db's resolver-less evaluator cannot resolve.
+    /// Always uses TypeEvaluator with the resolver instead of query_db.evaluate_type()
+    /// because the checker populates DefId→TypeId mappings in the TypeEnvironment that
+    /// the query_db's resolver-less evaluator cannot access.
     pub(crate) fn evaluate_type(&self, type_id: TypeId) -> TypeId {
-        // For Lazy types, always try the resolver first. The checker populates
-        // the TypeEnvironment with DefId→TypeId mappings that the query_db's
-        // evaluate_type (which uses a no-resolver evaluator) cannot resolve.
-        if let Some(def_id) = crate::solver::visitor::lazy_def_id(self.interner, type_id) {
-            if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
-                return resolved;
-            }
-        }
-        if let Some(db) = self.query_db {
-            return db.evaluate_type(type_id);
-        }
         use crate::solver::evaluate::TypeEvaluator;
         let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
         evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
