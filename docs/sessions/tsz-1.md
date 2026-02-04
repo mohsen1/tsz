@@ -275,3 +275,33 @@ This is a non-trivial architectural fix requiring careful implementation.
 - **Problem**: Arrow function `() => var x` was emitting TS2304 instead of TS1005 "'{' expected"
 - **Solution**: Added check in `parse_arrow_function_expression_with_async()` to detect statement starts that aren't expressions
 - **Commit**: `969968b8c`
+
+### Summary of Fixes - 2026-02-04
+
+Completed **5 parser fixes** in this session:
+
+1. **ClassDeclaration26** (commit 3c0332859)
+   - Look-ahead logic for var/let as class member modifiers
+
+2. **TS1109 throw statement** (commit 679cf3ad8)
+   - Emit TS1109 when throw; is missing expression
+
+3. **TS1005 arrow functions** (commit 969968b8c)
+   - Emit "'{' expected" for arrow functions with statement body
+
+4. **TS1005 argument lists** (commit 14b077780)
+   - Emit "',' expected" for missing commas in function arguments
+
+5. **TS1005 array/object literals** (commit 3e29d20e3)
+   - Emit "',' expected" for missing commas in arrays and objects
+
+### Test Results
+- ✅ All 287 parser tests passing
+- ✅ 366/368 unit tests passing (2 pre-existing abstract class failures)
+- ✅ No new regressions
+- Conformance: 45.5% (up from 38%)
+
+### Files Modified
+- src/parser/state_statements.rs (class member modifiers)
+- src/parser/state_declarations.rs (throw statement)
+- src/parser/state_expressions.rs (arrow functions, arguments, arrays, objects)
