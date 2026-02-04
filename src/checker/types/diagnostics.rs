@@ -206,6 +206,8 @@ pub mod diagnostic_messages {
     pub const CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE: &str =
         "Cannot redeclare block-scoped variable '{0}'.";
     pub const VARIABLE_USED_BEFORE_ASSIGNED: &str = "Variable '{0}' is used before being assigned.";
+    pub const BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION: &str =
+        "Block-scoped variable '{0}' used before its declaration.";
     /// TS1155: 'using' declarations must be initialized
     pub const CONST_DECLARATIONS_MUST_BE_INITIALIZED: &str =
         "'using' declarations must be initialized.";
@@ -443,6 +445,7 @@ pub mod diagnostic_codes {
     // Variable declaration errors
     pub const SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_SAME_TYPE: u32 = 2403; // Subsequent variable declarations must have the same type
     pub const CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE: u32 = 2451; // Cannot redeclare block-scoped variable '{0}'.
+    pub const BLOCK_SCOPED_VARIABLE_USED_BEFORE_DECLARATION: u32 = 2448; // Block-scoped variable '{0}' used before its declaration.
     pub const VARIABLE_USED_BEFORE_ASSIGNED: u32 = 2454; // Variable '{0}' is used before being assigned.
 
     // Null/undefined errors - generic (when name is not available)
