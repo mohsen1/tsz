@@ -5,16 +5,21 @@
 
 use crate::binder::SymbolId;
 use crate::interner::Atom;
+use crate::solver::def::DefId;
 use crate::solver::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::solver::intern::TypeInterner;
 use crate::solver::narrowing;
+use crate::solver::subtype::TypeResolver;
 use crate::solver::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, IndexInfo, MappedType, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId,
-    PropertyInfo, PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement,
-    TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
+    FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
+    ObjectShapeId, PropertyInfo, PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan,
+    TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey, TypeListId,
+    TypeParamInfo,
 };
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 /// Query interface for the solver.
@@ -890,15 +895,24 @@ impl QueryDatabase for QueryCache<'_> {
 /// This is used by the Checker to provide the TypeDatabase with the ability to
 /// resolve base classes (extends clauses) for nominal types.
 pub struct BinderTypeDatabase<'a> {
-    pub query_cache: QueryCache<'a>,
+    pub query_cache: &'a QueryCache<'a>,
     pub binder: &'a crate::binder::BinderState,
+    pub type_env: Rc<RefCell<crate::solver::subtype::TypeEnvironment>>,
+    /// Cached array base type params (to avoid RefCell lifetime issues)
+    cached_array_base_params: std::sync::Mutex<Option<Box<[TypeParamInfo]>>>,
 }
 
 impl<'a> BinderTypeDatabase<'a> {
-    pub fn new(interner: &'a TypeInterner, binder: &'a crate::binder::BinderState) -> Self {
+    pub fn new(
+        query_cache: &'a QueryCache<'a>,
+        binder: &'a crate::binder::BinderState,
+        type_env: Rc<RefCell<crate::solver::subtype::TypeEnvironment>>,
+    ) -> Self {
         Self {
-            query_cache: QueryCache::new(interner),
+            query_cache,
             binder,
+            type_env,
+            cached_array_base_params: std::sync::Mutex::new(None),
         }
     }
 
@@ -1080,13 +1094,96 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
     }
 }
 
+impl TypeResolver for BinderTypeDatabase<'_> {
+    fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.type_env.borrow().resolve_ref(symbol, interner)
+    }
+
+    fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.type_env.borrow().resolve_lazy(def_id, interner)
+    }
+
+    fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
+        self.type_env.borrow().get_type_params(symbol)
+    }
+
+    fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        self.type_env.borrow().get_lazy_type_params(def_id)
+    }
+
+    fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
+        self.type_env.borrow().def_to_symbol_id(def_id)
+    }
+
+    fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
+        self.type_env.borrow().symbol_to_def_id(symbol)
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.type_env.borrow().get_boxed_type(kind)
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        self.type_env.borrow().get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        // NOTE: Cannot easily return &[] from RefCell due to lifetime issues
+        // Returning empty slice for now - this is acceptable since array types
+        // are typically handled through other mechanisms
+        &[]
+    }
+
+    fn get_lazy_export(&self, def_id: DefId, name: Atom) -> Option<TypeId> {
+        self.type_env.borrow().get_lazy_export(def_id, name)
+    }
+
+    fn get_lazy_enum_member(&self, def_id: DefId, name: Atom) -> Option<TypeId> {
+        self.type_env.borrow().get_lazy_enum_member(def_id, name)
+    }
+
+    fn is_numeric_enum(&self, def_id: DefId) -> bool {
+        self.type_env.borrow().is_numeric_enum(def_id)
+    }
+
+    fn get_base_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.type_env.borrow().get_base_type(type_id, interner)
+    }
+}
+
 impl QueryDatabase for BinderTypeDatabase<'_> {
     fn as_type_database(&self) -> &dyn TypeDatabase {
         self
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
-        self.query_cache.evaluate_type(type_id)
+        use crate::solver::evaluate::TypeEvaluator;
+
+        // Handle poisoned locks gracefully
+        let cached = match self.query_cache.eval_cache.read() {
+            Ok(cache) => cache.get(&type_id).copied(),
+            Err(e) => e.into_inner().get(&type_id).copied(),
+        };
+
+        if let Some(result) = cached {
+            return result;
+        }
+
+        // CRITICAL: Use TypeEvaluator with SELF as resolver (since we implemented TypeResolver)
+        // This ensures Lazy types are resolved using the TypeEnvironment
+        let mut evaluator = TypeEvaluator::with_resolver(self.as_type_database(), self);
+
+        let result = evaluator.evaluate(type_id);
+
+        match self.query_cache.eval_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(type_id, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(type_id, result);
+            }
+        }
+        result
     }
 
     fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {

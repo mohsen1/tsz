@@ -1,8 +1,15 @@
-# Session tsz-3: CFA Orchestration - Fall-through & Loop Narrowing
+# Session tsz-3: CFA Core & Resolution
 
 **Started**: 2026-02-04
 **Status**: ACTIVE
-**Focus**: Ensure control flow analysis handles fall-through cases and loops correctly
+**Focus**: Fix Lazy type resolution to unblock complex narrowing, then complete fall-through and loop orchestration
+
+## Context
+
+Previous session completed all 8 narrowing bug fixes (discriminant, instanceof, in operator). This session builds on that work by:
+1. Fixing the fundamental Lazy type resolution bug in the Solver
+2. Completing fall-through narrowing orchestration
+3. Implementing loop narrowing
 
 ## Context
 
@@ -49,9 +56,35 @@ function handle(action: Action) {
 
 ---
 
-### 🔄 CURRENT TASK: Fall-through & Loop Narrowing
+### 🔄 CURRENT TASK: Fix Lazy Type Resolution (CRITICAL)
 
-#### Task 3: Fall-through Narrowing (HIGH PRIORITY)
+#### Task 3.1: Implement TypeResolver for BinderTypeDatabase
+**Goal**: Fix `QueryDatabase::evaluate_type()` to resolve Lazy types using TypeEnvironment
+
+**Root Cause**: `BinderTypeDatabase::evaluate_type()` uses `NoopResolver`, which returns `ERROR` for Lazy types
+
+**Solution** (from Gemini Pro consultation):
+1. Add `type_env: &'a TypeEnvironment` field to `BinderTypeDatabase`
+2. Implement `TypeResolver` trait for `BinderTypeDatabase` (delegates to `type_env`)
+3. Override `evaluate_type()` to use `TypeEvaluator::with_resolver(self, self)`
+
+**File**: `src/solver/db.rs`
+
+**Status**: 🔄 IN PROGRESS
+
+---
+
+### COMPLETED TASKS
+
+#### Task 1: Switch Clause Mapping ✅ COMPLETE (Commit: bdac7f8df)
+
+#### Task 2: Lazy Type Resolution ✅ COMPLETE (Commit: fd12bb38e)
+**Bug Fixed**: Lazy types (type aliases) were not being resolved before union narrowing.
+**Note**: This fix was incomplete - it added `resolve_type()` but `evaluate_type()` still uses `NoopResolver`
+
+#### Task 3: Fall-through Narrowing (LITERAL TYPES) ✅ COMPLETE
+**Test**: `test_fallthrough_simple.ts` passes - fall-through union works for literal types
+**Test**: `test_fallthrough.ts` fails - fall-through for type aliases blocked by Lazy resolution bug
 **Goal**: Ensure fall-through cases correctly union narrowed types
 **Test Case**:
 ```typescript
