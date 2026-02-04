@@ -352,3 +352,31 @@ Please review: 1) Is this logic correct for TypeScript? 2) Did I miss any edge c
 **TypeScript Behaviors to Match**:
 - **Transparency**: Type aliases are transparent - `Partial<T>` is just a name for a Mapped type
 - **Recursive Aliases**: Must support `type Tree<T> = T | Tree<T>[]` by registering DefId before body is fully computed
+
+## FIX IMPLEMENTED (2026-02-04)
+
+**Root Cause Found**: `resolve_lib_type_by_name` only called `insert_def_type_params` 
+but never `insert_def_with_params`, causing TypeEnvironment to have no entry for lib type aliases.
+
+**Location**: `src/checker/type_checking_queries.rs` lines 1899-1901
+
+**Fix Applied**: Added `insert_def_with_params` call to register type body in TypeEnvironment:
+```rust
+// Cache type parameters for Application expansion
+let def_id = self.ctx.get_or_create_def_id(sym_id);
+self.ctx.insert_def_type_params(def_id, params.clone());
+
+// CRITICAL: Register the type body in TypeEnvironment
+if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+    env.insert_def_with_params(def_id, ty, params);
+}
+
+lib_types.push(ty);
+```
+
+**Commit**: `ae03bafeb` - "fix: register lib type aliases in TypeEnvironment for resolve_lazy"
+
+**Expected Impact**: Should unblock `evaluate_mapped` to be triggered, improving mapped type 
+conformance from 32.1% (18/56 tests).
+
+**Next**: Run conformance tests to validate fix.
