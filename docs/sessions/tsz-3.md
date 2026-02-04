@@ -1,9 +1,9 @@
 # Session tsz-3: Generic Inference & Nominal Hierarchy Integration
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Phase 4 in progress)
-**Latest Update**: 2026-02-04 - Task 1.1 complete
-**Focus**: Nominal BCT with TypeResolver integration
+**Status**: 🟡 AWAITING CONTINUATION (Phase 4 partially complete)
+**Latest Update**: 2026-02-04 - Tasks 1, 2, 3, 1.1 complete; Task 4 deferred
+**Focus**: Generic Inference & Nominal Hierarchy Integration
 
 ---
 
@@ -75,9 +75,21 @@ The current generic inference and type system has several gaps that cause `any` 
 
 **Review**: Gemini Pro approved the implementation. The generic approach is correct and enables nominal inheritance checks.
 
-#### Task 4: Contextual Return Inference (LOW)
+#### Task 4: Contextual Return Inference (LOW) ⏸️ DEFERRED
 **File**: `src/solver/operations.rs`
 **Goal**: Refine `resolve_generic_call` to collect constraints from `contextual_type` before resolving.
+
+**Status**: Implementation started but requires extensive refactoring.
+
+**Issue**: Adding `InferencePriority` parameter to `constrain_types` requires updating:
+- `constrain_types_impl` (to propagate priority)
+- `constrain_properties` (helper function)
+- `constrain_function_to_call_signature` (helper function)
+- `constrain_call_signature_to_function` (helper function)
+- `constrain_callable_signatures` (helper function)
+- `constrain_properties_against_index_signatures` (helper function)
+
+**Note**: This refactoring is better suited for a focused session where it can be completed and tested thoroughly. The existing code already has contextual type inference (Step 3.5 in `resolve_generic_call_inner`), but it doesn't use priority differentiation.
 
 ---
 
