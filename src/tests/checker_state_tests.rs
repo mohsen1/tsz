@@ -27131,11 +27131,11 @@ class DuplicateProperties {
 
     println!("All diagnostics: {:?}", checker.ctx.diagnostics);
 
-    // The symbol-level duplicate check emits TS2300 on both declarations
+    // tsc emits TS2300 only on the second property (TS2717 is also emitted but not yet implemented)
     assert_eq!(
         codes.iter().filter(|&&c| c == 2300).count(),
-        2,
-        "Expected 2 TS2300 errors for duplicate class members, got: {:?}",
+        1,
+        "Expected 1 TS2300 error for duplicate class members (on second property), got: {:?}",
         codes
     );
 }
