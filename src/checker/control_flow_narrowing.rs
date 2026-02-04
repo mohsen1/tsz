@@ -901,10 +901,19 @@ impl<'a> FlowAnalyzer<'a> {
         expr: NodeIndex,
         target: NodeIndex,
     ) -> Option<(Atom, bool)> {
+        eprintln!(
+            "DEBUG discriminant_property_info: expr={}, target={}",
+            expr.0, target.0
+        );
         let expr = self.skip_parenthesized(expr);
         let node = self.arena.get(expr)?;
 
+        eprintln!(
+            "DEBUG discriminant_property_info: expr node kind={}",
+            node.kind
+        );
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            eprintln!("DEBUG discriminant_property_info: is property access");
             let access = self.arena.get_access_expr(node)?;
             // Unwrap assignment expressions to get the actual target
             // e.g., in (o = fn()).done, access.expression is the assignment,
@@ -913,6 +922,10 @@ impl<'a> FlowAnalyzer<'a> {
             let access_target = self.skip_parenthesized(access_target);
             let access_target_node = self.arena.get(access_target)?;
 
+            eprintln!(
+                "DEBUG discriminant_property_info: access_target={}",
+                access_target.0
+            );
             // If the expression is an assignment, use the left-hand side
             let effective_target = if access_target_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             {
@@ -926,12 +939,21 @@ impl<'a> FlowAnalyzer<'a> {
                 access_target
             };
 
+            eprintln!(
+                "DEBUG discriminant_property_info: effective_target={}, target={}",
+                effective_target.0, target.0
+            );
             if !self.is_matching_reference(effective_target, target) {
+                eprintln!("DEBUG discriminant_property_info: NOT a matching reference");
                 return None;
             }
             let name_node = self.arena.get(access.name_or_argument)?;
             let ident = self.arena.get_identifier(name_node)?;
             let name = self.interner.intern_string(&ident.escaped_text);
+            eprintln!(
+                "DEBUG discriminant_property_info: FOUND property {:?}",
+                name
+            );
             return Some((name, access.question_dot_token));
         }
 
