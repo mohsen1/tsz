@@ -1,8 +1,8 @@
 # Session tsz-3: Solver-First Narrowing & Discriminant Hardening
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Tasks 1-3 COMPLETE, Tasks 4-5 PENDING)
-**Latest Update**: 2026-02-04 - Implemented Lazy/Intersection type resolution in discriminant narrowing
+**Status**: 🟢 ACTIVE (Tasks 1-4 COMPLETE, Task 5 PENDING)
+**Latest Update**: 2026-02-04 - Implemented in operator hardening with Lazy type resolution
 **Focus**: Fix discriminant narrowing bugs and harden narrowing logic for complex types
 
 ---
@@ -105,26 +105,34 @@ These bugs prevent discriminant narrowing from working correctly with type alias
 - Intersection types
 - Discriminated unions with complex structural types
 
-### Task 4: Harden `in` Operator Narrowing
-**File**: `src/solver/narrowing.rs`
-**Function**: `narrow_by_property_presence`
+### ✅ Task 4: Harden `in` Operator Narrowing (COMPLETE - 2026-02-04)
 
-**Problem**: The `in` operator narrowing needs to filter union types based on property presence:
-- `"prop" in x` keeps only union members that *could* have that property
-- Must handle index signatures (properties that exist via index signature)
+**Commit**: `bc80dd0fa`
 
-**TypeScript Behavior**:
-```typescript
-type A = { x: number };
-type B = { y: string };
-type C = { [key: string]: boolean };
+**Implementation**:
+1. Added `is_property_required` helper function
+   - Checks both `object_shape_id` and `object_with_index_shape_id`
+   - Handles Intersection types recursively
+   - Returns true only if property is required (!optional)
 
-function foo(obj: A | B | C) {
-  if ("x" in obj) {
-    // obj: A | C  (B excluded, C kept via index signature)
-  }
-}
-```
+2. Updated `get_property_type`:
+   - Added `resolve_type()` call at entry
+   - Resolves Lazy types before checking for properties
+
+3. Updated `narrow_by_property_presence`:
+   - Added `resolve_type()` in union loop for each member
+   - Negative branch uses `is_property_required` helper
+   - Correctly handles ObjectWithIndex (interfaces/classes)
+
+**Gemini Review**: Two-Question Rule followed
+- Question 1 (Approach): ✅ Validated
+- Question 2 (Review): ✅ Found missing ObjectWithIndex check, fixed
+
+**Result**: `in` operator narrowing now works for:
+- Type aliases (Lazy types)
+- Interfaces/classes with index signatures
+- Required vs optional property distinction
+- Negative narrowing (`!("prop" in x)`)
 
 ### Task 5: Truthiness Narrowing for Literals
 **File**: `src/solver/narrowing.rs`
