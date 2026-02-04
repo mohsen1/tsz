@@ -41,6 +41,7 @@ use crate::solver::TypeInterner;
 use crate::solver::type_queries;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::Arc;
 
 /// Declaration emitter for .d.ts files
 pub struct DeclarationEmitter<'a> {
@@ -58,6 +59,10 @@ pub struct DeclarationEmitter<'a> {
     binder: Option<&'a BinderState>,
     /// Set of symbols used in exported declarations (for import elision)
     used_symbols: Option<FxHashSet<SymbolId>>,
+    /// Set of foreign symbols that need imports (for import generation)
+    foreign_symbols: Option<FxHashSet<SymbolId>>,
+    /// The current file's arena (for distinguishing local vs foreign symbols)
+    current_arena: Option<Arc<NodeArena>>,
     /// Map of module → symbol names to auto-generate imports for
     /// Pre-calculated in driver where MergedProgram is available
     required_imports: FxHashMap<String, Vec<String>>,
@@ -85,6 +90,8 @@ impl<'a> DeclarationEmitter<'a> {
             type_interner: None,
             binder: None,
             used_symbols: None,
+            foreign_symbols: None,
+            current_arena: None,
             required_imports: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
@@ -108,6 +115,8 @@ impl<'a> DeclarationEmitter<'a> {
             type_interner: Some(type_interner),
             binder: Some(binder),
             used_symbols: None,
+            foreign_symbols: None,
+            current_arena: None,
             required_imports: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
@@ -152,19 +161,35 @@ impl<'a> DeclarationEmitter<'a> {
         self.required_imports = imports;
     }
 
+    /// Set the current file's arena for distinguishing local vs foreign symbols.
+    ///
+    /// This enables UsageAnalyzer to track which symbols need imports.
+    pub fn set_current_arena(&mut self, arena: Arc<NodeArena>) {
+        self.current_arena = Some(arena);
+    }
+
     /// Emit declaration for a source file
     pub fn emit(&mut self, root_idx: NodeIndex) -> String {
         self.reset_writer();
         self.indent_level = 0;
 
         // Run usage analyzer if we have all required components
-        if let (Some(cache), Some(interner), Some(binder)) =
-            (&self.type_cache, self.type_interner, self.binder)
-        {
-            let mut analyzer =
-                usage_analyzer::UsageAnalyzer::new(self.arena, binder, cache, interner);
+        if let (Some(cache), Some(interner), Some(binder), Some(current_arena)) = (
+            &self.type_cache,
+            self.type_interner,
+            self.binder,
+            &self.current_arena,
+        ) {
+            let mut analyzer = usage_analyzer::UsageAnalyzer::new(
+                self.arena,
+                binder,
+                cache,
+                interner,
+                current_arena.clone(),
+            );
             let used = analyzer.analyze(root_idx);
             self.used_symbols = Some(used.clone());
+            self.foreign_symbols = Some(analyzer.get_foreign_symbols().clone());
         }
 
         let Some(root_node) = self.arena.get(root_idx) else {

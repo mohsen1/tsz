@@ -22,6 +22,7 @@ use crate::scanner::SyntaxKind;
 use crate::solver::TypeInterner;
 use crate::solver::visitor;
 use rustc_hash::FxHashSet;
+use std::sync::Arc;
 
 /// Usage analyzer for determining which symbols are referenced in exported declarations.
 pub struct UsageAnalyzer<'a> {
@@ -39,6 +40,10 @@ pub struct UsageAnalyzer<'a> {
     visited_nodes: FxHashSet<NodeIndex>,
     /// Visited TypeIds (for cycle detection)
     visited_types: FxHashSet<crate::solver::TypeId>,
+    /// The current file's arena (for distinguishing local vs foreign symbols)
+    current_arena: Arc<NodeArena>,
+    /// Set of symbols from other modules that need imports
+    foreign_symbols: FxHashSet<SymbolId>,
 }
 
 impl<'a> UsageAnalyzer<'a> {
@@ -48,6 +53,7 @@ impl<'a> UsageAnalyzer<'a> {
         binder: &'a BinderState,
         type_cache: &'a TypeCache,
         type_interner: &'a TypeInterner,
+        current_arena: Arc<NodeArena>,
     ) -> Self {
         Self {
             arena,
@@ -57,6 +63,8 @@ impl<'a> UsageAnalyzer<'a> {
             used_symbols: FxHashSet::default(),
             visited_nodes: FxHashSet::default(),
             visited_types: FxHashSet::default(),
+            current_arena,
+            foreign_symbols: FxHashSet::default(),
         }
     }
 
@@ -821,7 +829,37 @@ impl<'a> UsageAnalyzer<'a> {
     }
 
     /// Mark a symbol as used in the public API.
+    ///
+    /// Categorizes symbols as:
+    /// - Global/lib symbols: Ignored (don't need imports)
+    /// - Local symbols: Added to used_symbols (for elision logic)
+    /// - Foreign symbols: Added to both used_symbols AND foreign_symbols (for import generation)
     fn mark_symbol_used(&mut self, sym_id: SymbolId) {
+        // Check if this is a lib/global symbol
+        if self.binder.lib_symbol_ids.contains(&sym_id) {
+            // Global symbol - don't track for imports
+            return;
+        }
+
+        // Check if this symbol is from the current file
+        let is_local = self
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| Arc::ptr_eq(arena, &self.current_arena))
+            .unwrap_or(false);
+
+        // Always add to used_symbols (for elision)
         self.used_symbols.insert(sym_id);
+
+        // If it's from another file, track as foreign (for import generation)
+        if !is_local {
+            self.foreign_symbols.insert(sym_id);
+        }
+    }
+
+    /// Get the set of foreign symbols that need imports.
+    pub fn get_foreign_symbols(&self) -> &FxHashSet<SymbolId> {
+        &self.foreign_symbols
     }
 }

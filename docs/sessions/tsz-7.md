@@ -4,6 +4,35 @@
 
 ## Status: ACTIVE
 
+### Session Progress (2026-02-04)
+
+**Phase 1: Track Foreign Symbols in UsageAnalyzer** ✅ COMPLETE
+
+**Implementation Summary:**
+1. Added `current_arena: Arc<NodeArena>` to UsageAnalyzer struct
+2. Added `foreign_symbols: FxHashSet<SymbolId>` to track foreign symbols
+3. Modified `mark_symbol_used()` to categorize symbols:
+   - **Global/lib symbols**: Ignored (checked via `binder.lib_symbol_ids`)
+   - **Local symbols**: Added to `used_symbols` only
+   - **Foreign symbols**: Added to both `used_symbols` AND `foreign_symbols`
+4. Added `get_foreign_symbols()` getter method
+5. Updated DeclarationEmitter to:
+   - Store `current_arena: Option<Arc<NodeArena>>`
+   - Store `foreign_symbols: Option<FxHashSet<SymbolId>>`
+   - Added `set_current_arena()` method
+   - Pass `current_arena` to UsageAnalyzer in `emit()`
+6. Updated driver to call `emitter.set_current_arena(file.arena.clone())`
+
+**Architecture Decision:**
+Uses `Arc<NodeArena>` comparison (`Arc::ptr_eq()`) instead of `file_idx` to determine local vs foreign symbols. This follows tsz's design where `NodeArena` is the source of truth for file identity.
+
+**Testing:**
+- Conformance: 269/639 (42.1%) - no regressions
+- Compilation: Successful
+
+**Commits:**
+- (To be added after commit)
+
 ### Session Goal
 
 Implement automatic import generation for .d.ts files. When TypeScript generates declaration files, it automatically adds imports for types that are used but not explicitly imported. This session implements the same behavior.
@@ -41,37 +70,40 @@ export declare function factory(): Helper;  // ERROR: Cannot find name 'Helper'
 
 Building on TSZ-5's UsageAnalyzer infrastructure:
 
-1. **Identify Foreign Symbols**: Detect used symbols that are:
-   - Not declared in current file
-   - Not present in existing import statements
+1. **Identify Foreign Symbols**: ✅ COMPLETE - Detect used symbols that are:
+   - Not from lib files (checked via `lib_symbol_ids`)
+   - From different arenas (checked via `Arc::ptr_eq()`)
 
-2. **Resolve Module Paths**: Use Binder/Symbol info to find source module
+2. **Resolve Module Paths**: ⏭ NEXT - Map SymbolId → source module path
 
-3. **Synthesize Imports**: Inject ImportDeclaration nodes before emitting file
+3. **Synthesize Imports**: ⏭ PENDING - Inject ImportDeclaration nodes before emitting file
 
-4. **Handle Edge Cases**:
+4. **Handle Edge Cases**: ⏭ PENDING
    - Name collisions (aliasing: `import { X as X_1 }`)
    - Type-only vs value imports
    - Re-exports
 
 ### Implementation Plan
 
-**Phase 1: Track Foreign Symbols in UsageAnalyzer**
-- Add `foreign_symbols: FxHashSet<SymbolId>` field
-- During analysis, identify symbols from other modules
-- Use `BinderState::get_symbol_declaration()` to find origin
+**Phase 1: Track Foreign Symbols in UsageAnalyzer** ✅ COMPLETE
+- ✅ Add `foreign_symbols: FxHashSet<SymbolId>` field
+- ✅ Add `current_arena: Arc<NodeArena>` field
+- ✅ Modify `mark_symbol_used()` to categorize symbols (global/local/foreign)
+- ✅ Add `get_foreign_symbols()` getter
+- ✅ Update DeclarationEmitter to store and pass current_arena
+- ✅ Update driver to call `set_current_arena()`
 
-**Phase 2: Module Path Resolution**
+**Phase 2: Module Path Resolution** ⏭ NEXT
 - Map SymbolId → source module path
 - Leverage `module_exports` from MergedProgram
 - Handle both direct imports and namespace imports
 
-**Phase 3: Import Synthesis**
+**Phase 3: Import Synthesis** ⏭ PENDING
 - Add method to DeclarationEmitter to emit missing imports
 - Insert before other declarations in .d.ts
 - Format: `import { TypeName } from './module';`
 
-**Phase 4: Testing & Refinement**
+**Phase 4: Testing & Refinement** ⏭ PENDING
 - Conformance tests for multi-file scenarios
 - Edge case handling (name collisions, type-only imports)
 
@@ -90,7 +122,7 @@ Building on TSZ-5's UsageAnalyzer infrastructure:
 
 ### Conformance Baseline
 
-Current: 42.3% (270/639)
+Current: 42.1% (269/639)
 Target: Significant increase by fixing missing import errors
 
 ### Notes
