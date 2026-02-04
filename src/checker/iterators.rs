@@ -352,8 +352,6 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
         };
         let next_method_type = self.ctx.types.function(next_method_shape);
 
@@ -540,8 +538,6 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             type_predicate: None,
             is_constructor: false,
             is_method: true,
-            visibility: Visibility::Public,
-            parent_id: None,
         };
         let next_method_type = self.ctx.types.function(next_method_shape);
 
