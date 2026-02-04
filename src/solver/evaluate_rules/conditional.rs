@@ -199,7 +199,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
 
+            eprintln!(
+                "DEBUG evaluate_conditional: check_type={} extends_type={}",
+                check_type.0, extends_type.0
+            );
+            eprintln!(
+                "  type_contains_infer={}",
+                self.type_contains_infer(extends_type)
+            );
+
             if self.type_contains_infer(extends_type) {
+                eprintln!("  Calling match_infer_pattern...");
                 let mut bindings = FxHashMap::default();
                 let mut visited = FxHashSet::default();
                 if self.match_infer_pattern(
@@ -209,8 +219,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &mut visited,
                     &mut checker,
                 ) {
+                    eprintln!("  match_infer_pattern succeeded, bindings={:?}", bindings);
                     let substituted_true = self.substitute_infer(cond.true_type, &bindings);
                     return self.evaluate(substituted_true);
+                } else {
+                    eprintln!("  match_infer_pattern FAILED");
                 }
 
                 // Check if the result branch is directly a conditional for tail-recursion
