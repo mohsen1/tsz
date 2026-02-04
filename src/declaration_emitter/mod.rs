@@ -3337,7 +3337,18 @@ impl<'a> DeclarationEmitter<'a> {
     /// Print a TypeId as TypeScript syntax using TypePrinter.
     fn print_type_id(&self, type_id: crate::solver::types::TypeId) -> String {
         if let Some(interner) = self.type_interner {
-            let printer = TypePrinter::new(interner);
+            let mut printer = TypePrinter::new(interner);
+
+            // Add symbol arena if available for visibility checking
+            if let Some(binder) = self.binder {
+                printer = printer.with_symbols(&binder.symbols);
+            }
+
+            // Add type cache if available for resolving Lazy(DefId) types
+            if let Some(cache) = &self.type_cache {
+                printer = printer.with_type_cache(cache);
+            }
+
             printer.print_type(type_id)
         } else {
             // Fallback if no interner available
