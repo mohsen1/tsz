@@ -1,389 +1,199 @@
-# Session tsz-2: Intersection Reduction and Advanced Type Operations
+# Session tsz-2: Advanced Type Evaluation & Inference
 
 **Started**: 2026-02-04
-**Status**: ✅ **SUCCESSFULLY COMPLETED** (2026-02-04)
-**Duration**: 1 day
+**Status**: 🟡 Active (Phase 1: Conditional Types)
+**Previous**: BCT and Intersection Reduction (COMPLETED 2026-02-04)
 
-## Session Summary
+## Session Redefinition (2026-02-04)
 
-This session successfully implemented the core Best Common Type (BCT) infrastructure for tsz,
-enabling proper type inference for array literals and complex type scenarios.
+### COMPLETED WORK: BCT and Intersection Reduction
 
-### Major Accomplishments
+**Previous session accomplishments** (2026-02-04):
+1. ✅ **Intersection Reduction** - Recursive evaluation for meta-types
+2. ✅ **BCT for Intersections** - Extract common members from intersection types
+3. ✅ **Lazy Type Support** - BCT works with Lazy(DefId) classes
+4. ✅ **Literal Widening** - Array literals like [1, 2] infer as number[]
+5. ✅ **Intersection Sorting Fix** - Preserve callable order for overload resolution
 
-1. **Intersection Reduction** - Recursive evaluation for meta-types inside intersections/unions
-2. **BCT for Intersections** - Extract common members from intersection types
-3. **Lazy Type Support** - BCT works with classes defined as Lazy(DefId)
-4. **Literal Widening** - Array literals like [1, 2] correctly infer as number[]
-
-### Test Results
-
-✅ All 18 BCT tests pass
-✅ No regressions introduced
-✅ Implementation confirmed correct by Gemini Pro
-✅ Matches TypeScript's BCT behavior (Rule #32, Rule #10)
-
-### Code Quality
-
-- Followed Two-Question Rule for all solver/checker changes
-- All changes reviewed by Gemini Pro
-- Clean git history with descriptive commits
-- Comprehensive test coverage
+**Test Results**: All 18 BCT tests pass, no regressions
 
 ---
 
-## Completed Work
+## NEW FOCUS: Advanced Type Evaluation
 
-✅ **BCT Implementation**: get_base_type for ObjectWithIndex class instances
-✅ **Nominal Subtyping Fix**: check_nominal_inheritance for class instances
-✅ **Conformance Baseline**: 5357/12847 passed (41.7%)
-✅ **Application Expansion**: Verified working correctly
+### Problem Statement
 
-## Current Session Plan (Redefined 2026-02-04)
+The Solver (the "WHAT" of type checking) lacks two of TypeScript's most powerful features:
+1. **Conditional Types** - `T extends U ? X : Y`
+2. **Mapped Types** - `{ [K in keyof T]: U }`
 
-### ✅ Priority 1: Intersection Reduction (COMPLETED 2026-02-04)
-**Status**: Implemented and committed (commit 7bf0f0fc6)
+These features are core to modern TypeScript's type system. Without them:
+- Standard library types like `Exclude`, `Extract`, `Partial`, `Required` don't work
+- Complex narrowing scenarios fail (narrowing often involves conditional types)
+- Conformance tests remain blocked (many use conditional/mapped types)
 
-**What was implemented**:
-- Added recursive evaluation for `Intersection` and `Union` types
-- Implemented `evaluate_intersection()` and `evaluate_union()` methods
-- This enables "deferred reduction" where meta-types inside intersections/unions
-  are evaluated first, then re-interned to trigger normalization
+### Why This Matters Now
 
-**Key changes in src/solver/evaluate.rs**:
-1. Added `TypeKey::Intersection` case to main `evaluate()` match statement
-2. Added `TypeKey::Union` case to main `evaluate()` match statement
-3. Implemented recursive evaluation methods that:
-   - Evaluate each member using `self.evaluate(member)`
-   - Re-intern the result to trigger normalization
-   - Properly handle recursion depth limits and cycle detection
-
-**Tests added** (all passing):
-- `test_intersection_reduction_disjoint_primitives`: string & number -> never ✅
-- `test_intersection_reduction_any`: string & any -> any ✅
-- `test_union_reduction_duplicates`: string | string -> string ✅
-- `test_union_reduction_literal_into_base`: "hello" | string -> string ✅
-
-**Gemini Pro Review**: Implementation confirmed correct ✅
-
-### ✅ Priority 2 & 3: BCT for Intersections + Lazy Support (COMPLETED 2026-02-04)
-**Status**: Implemented and committed (commit 7dfee5155)
-
-**What was implemented**:
-Enhanced `collect_class_hierarchy` in `src/solver/infer.rs` to handle:
-1. **Intersection types** - Recurse into all members to extract commonality
-2. **Lazy types** - Follow extends chain via resolver
-
-**Key changes in src/solver/infer.rs**:
-- Added `TypeKey::Intersection(members_id)` case to `collect_class_hierarchy`
-- Added `TypeKey::Lazy(_)` case to `collect_class_hierarchy`
-- Added test `test_best_common_type_with_intersections` to verify functionality
-
-**How it works**:
-- For intersections: Recursively collects hierarchy from each member
-  - Example: `[A & B, A & C]` will collect A, B, and C as candidates
-  - `find_common_base_class` then filters by subtype relationship
-- For Lazy: Calls `get_extends_clause` to traverse the inheritance chain
-- Uses existing cycle detection (`hierarchy.contains(&ty)`)
-
-**Gemini Review**:
-- ✅ Lazy type handling is correct
-- ⚠️ Noted: `normalize_intersection` in `intern.rs` sorts by TypeId
-  - This destroys source order for call signatures (overload resolution)
-  - **Not a blocker for BCT** since BCT uses `is_subtype` checks
-  - Documented as separate issue for future work
-
-**Tests**:
-- All 16 existing BCT tests pass ✅
-- New test `test_best_common_type_with_intersections` passes ✅
-
-### ✅ Priority 4: Literal Widening for BCT (COMPLETED 2026-02-04)
-**Status**: Implemented and committed (commit c3d5d36d0)
-
-**What was implemented**:
-Added literal widening to `compute_best_common_type` in `src/solver/expression_ops.rs`
-to match TypeScript's behavior for array literal inference.
-
-**Key changes in src/solver/expression_ops.rs**:
-- Added `widen_literals()`: Widens each literal to its primitive type
-  - Example: `[1, 2]` -> `[number, number]`
-  - Example: `["a", "b"]` -> `[string, string]`
-  - Example: `[1, "a"]` -> `[number, string]` (mixed types supported)
-- Added `find_common_base_type()`: Finds common base for literals
-- Added `get_base_type()`: Extracts primitive type from literals
-- Added `all_types_are_narrower_than_base()`: Validates subtype relationships
-- Updated `compute_best_common_type()` to use widening in BCT algorithm
-
-**Bugs fixed during implementation**:
-- Initial implementation aborted widening on mixed types (e.g., `[1, "a"]`)
-- Gemini Pro caught this: TypeScript widens each literal individually
-- Fixed to unconditionally widen literals, preserving non-literals
-
-**Impact**:
-- Before: `[1, 2]` inferred as `(1 | 2)[]`
-- After: `[1, 2]` inferred as `number[]` ✅
-- Matches TypeScript's Rule #10 (Literal Widening)
-
-**Tests**:
-- All 18 BCT tests pass ✅
-- Including `test_best_common_type_literal_widening` ✅
-
-**Gemini Pro Review**: Confirmed correct after fixing mixed-type widening bug ✅
+1. **North Star Alignment**: Solver is the "central type computation engine"
+2. **Unblocks tsz-3 (CFA)**: Complex narrowing requires conditional type evaluation
+3. **Unblocks tsz-4 (Emit)**: TypePrinter needs evaluated types for .d.ts files
+4. **High Impact**: Biggest boost to conformance pass rate
 
 ---
 
-## Summary
+## Implementation Plan
 
-**Session Status**: Continue current session (momentum built in Solver)
+### Phase 1: Conditional Types (HIGH PRIORITY)
 
-**Next Step**: Ask Gemini Question 1 for Intersection Reduction approach
+#### Task 1: Verify Nominal Subtyping First
+**File**: `src/solver/subtype.rs`
 
-### ✅ Priority 1: Conformance Testing (COMPLETE)
-**Status**: Baseline established
-- **Result**: 5357/12847 passed (41.7%)
-- **Time**: 84.5s
-- **Key issues**:
-  - TS2322 (assignability): 544 extra errors (tsz stricter than tsc)
-  - TS2345 (argument compatibility): 448 extra errors
-- These extra strictness errors align with nominal subtyping bug
+**Known Issue from Previous Session**:
+> "is_subtype_of treats ObjectWithIndex types structurally instead of nominally"
+> Example: `is_subtype_of(Cat, Dog)` returns `true` (WRONG!)
 
-### ✅ Priority 2: Application Type Expansion (COMPLETE)
-**Status**: Already implemented and working
-- evaluate_application is wired up in evaluate function
-- DefIds created for type aliases
-- Type parameters stored in def_type_params map
-- TODO in evaluate.rs was outdated
+**Action**: Verify `is_subtype_of` correctly uses `check_nominal_inheritance` for class-based types.
 
-### ✅ Priority 3: Nominal Subtyping Fix (COMPLETE)
-**Status**: Implemented and committed
-**Commit**: `27f1d1a67`
-
-**What was fixed**:
-- Classes are now checked for nominal identity before structural comparison
-- Added `check_nominal_inheritance` helper function (line 1560)
-- Uses `get_base_type` to walk inheritance chain
-- Returns False if classes have different symbols and no inheritance relationship
-
-**Test verification**:
+**Test**:
 ```typescript
 class A { private x: string; }
 class B { private x: string; }
-const a: A = new B(); // Error: Type 'B' is not assignable to type 'A'
+const a: A = new B(); // Should error: Type 'B' is not assignable to type 'A'
 ```
 
-**Known issue**: Pre-existing test failure unrelated to this change
-- `test_generic_parameter_without_constraint_fallback_to_unknown` was already failing
+#### Task 2: Implement Conditional Type Evaluation
+**File**: `src/solver/evaluate.rs`
 
-### Priority 4: BCT for Intersections (NEXT)
-**File**: `src/solver/expression_ops.rs`
+**Function to implement**: `evaluate_conditional()`
 
-**Problem**: BCT doesn't find commonality between intersection types
-- `(A & B)` and `(A & C)` should result in `A` (or `A & (B | C)`)
-- Currently likely returns flat union `(A & B) | (A & C)`
+**Requirements**:
+1. **Basic evaluation**: `T extends U ? X : Y`
+   - Check subtype: `is_subtype_of(T, U)`
+   - Return `X` if true, `Y` if false
 
-**Task**:
-- Implement common member extraction for intersections
-- Modify `compute_best_common_type` to handle intersection types
-- Example: `(Dog & Serializable) | (Cat & Serializable)` → `Animal & Serializable`
+2. **Distributive behavior**:
+   - `(A | B) extends U ? X : Y` → `(A extends U ? X : Y) | (B extends U ? X : Y)`
+   - Distribute over unions in the `extends` clause
 
-**⚠️ MANDATORY**: Follow Two-Question Rule before implementing:
-```bash
-./scripts/ask-gemini.mjs --include=src/solver "I need to implement BCT for Intersections.
-What is the best way to extract common members from intersections without infinite loops?"
+3. **Recursion protection**:
+   - Detect infinite recursion in nested conditionals
+   - Use cycle detection similar to other evaluation functions
+
+**Edge Cases**:
+- `any`/`unknown` special handling
+- Lazy type resolution in extends clause
+- Type parameter substitution
+
+#### Task 3: Implement `infer` Keyword
+**File**: `src/solver/infer.rs`
+
+**Function to implement**: `infer_from_conditional_type()`
+
+**Requirements**:
+1. Pattern matching: `T extends (infer U)[] ? U : never`
+2. Extract type variables from extends clause
+3. Return inferred type or constraint
+4. Handle multiple `infer` declarations
+
+**Examples**:
+```typescript
+type UnpackedArray<T> = T extends (infer U)[] ? U : T;
+type T0 = UnpackedArray<number[]>; // number
+type T1 = UnpackedArray<string>; // string
 ```
-
-### Priority 5: Intersection Reduction
-**File**: `src/solver/intern.rs`
-
-**Problem**: Intersections with disjoint types should reduce to `never`
-- `string & number` should consistently reduce to `never`
-- Need to resolve `Lazy(DefId)` types before checking disjointness
-
-**Task**:
-- Enhance `intersection_has_disjoint_primitives`
-- Ensure `Lazy` types are resolved before disjointness check
-
-### Priority 6: Refine get_base_type for Lazy
-**File**: `src/checker/context.rs`
-
-**Task**:
-- Review `TypeResolver::get_base_type` implementation
-- Ensure correct handling of `Lazy` -> `DefId` -> `SymbolId` -> `InheritanceGraph` path
-- Test with class-like structures
 
 ---
 
-**Steps**:
-1. Implement `widen_literal_type` - widen `1 | 2` to `number`
-2. Respect `const` contexts (preserve literals)
-3. Update `resolve_from_candidates` to integrate widening
+### Phase 2: Mapped Types (LOWER PRIORITY)
 
-### Task 3: Tournament Reduction Refinement
-**File**: `src/solver/infer.rs`
+#### Task 4: Implement Mapped Type Evaluation
+**File**: `src/solver/evaluate.rs`
 
-**Steps**:
-1. Optimize `best_common_type` with tournament algorithm
-2. Handle interface merging
-3. Handle `any`/`unknown` per tsc rules
+**Function to implement**: `evaluate_mapped()`
 
-### Task 4: Array Literal Integration
-**File**: `src/solver/array_literal.rs`
+**Requirements**:
+1. **Key iteration**: Iterate over `keyof T`
+2. **Property mapping**: Apply type transformation to each property
+3. **Modifier handling**:
+   - `?` optional modifier
+   - `readonly` modifier
+   - `-?` and `-readonly` removal modifiers
 
-**Steps**:
-1. Update `ArrayLiteralBuilder` to use refined BCT logic
-2. Ensure `build_array_type` uses `best_common_type`
+**Examples**:
+```typescript
+type Partial<T> = { [P in keyof T]?: T[P] };
+type Readonly<T> = { readonly [P in keyof T]: T[P] };
+```
+
+---
 
 ## Success Criteria
 
-- [x] `get_class_base_type` added to TypeDatabase trait
-- [ ] Common base class detection implemented
-- [ ] Literal widening works: `[1, 2]` → `number[]`
-- [ ] Nominal BCT works: `[dog, cat]` → `Animal[]`
-- [ ] Union fallback preserved: `[1, "a"]` → `(string | number)[]`
-- [ ] Homogeneous fast path preserved (performance)
-- [ ] Conformance tests pass
+1. **Conditional Types**:
+   - [ ] Basic `T extends U ? X : Y` works
+   - [ ] Distributive over unions works
+   - [ ] `infer` keyword works for simple cases
+   - [ ] Standard library types (`Exclude`, `Extract`) work
 
-## Complexity: HIGH
+2. **Mapped Types** (Phase 2):
+   - [ ] Basic `[K in keyof T]: U` works
+   - [ ] Modifiers (`?`, `readonly`) work
+   - [ ] Modifier removal (`-?`, `-readonly`) works
 
-**Risk**: Changes to `is_subtype` or `best_common_type` can cause regressions
-
-**Mandatory**: Follow **Two-Question Rule** in AGENTS.md before touching `src/solver/infer.rs`
+3. **Conformance**:
+   - [ ] Significant improvement in pass rate
+   - [ ] No regressions in existing tests
 
 ---
 
-## Implementation Progress
+## MANDATORY: Two-Question Rule
 
-### Completed Infrastructure:
-- ✅ **Step 1 Complete**: Added `get_base_type` to TypeResolver trait (src/solver/subtype.rs:197)
-- ✅ **Step 2 Complete**: Implemented `get_base_type` in CheckerContext (src/checker/context.rs:1772)
-- ✅ **Step 3 Complete**: Updated InferenceContext to hold resolver reference (src/solver/infer.rs:303-327)
-- ✅ **Step 4 Complete**: Implemented `get_class_hierarchy` using TypeResolver (src/solver/infer.rs:1423-1431)
-- ✅ **Step 5 Complete**: Wired BCT into array literals (src/solver/expression_ops.rs:114-184)
-- ✅ **Fixed merge conflicts** in narrowing.rs
-- ✅ **Step 6 Complete**: Implemented ObjectWithIndex handling for class instances (commit 0ff075ea3)
-- ✅ **Step 7 Complete**: All 16 BCT unit tests pass
-- ✅ **Gemini Review Complete**: Implementation confirmed correct
-
-### Known Issues:
-
-#### 1. Subtype Check Bug (Pre-existing)
-❌ **BUG**: `is_subtype_of` treats ObjectWithIndex types structurally instead of nominally
-- Impact: Causes BCT to return incorrect results when subtype check is wrong
-- Example: `is_subtype_of(Cat, Dog)` returns `true` (WRONG!)
-- Root cause: `src/solver/subtype.rs` performs structural check, ignores nominal identity
-- Status: Pre-existing bug, not introduced by BCT work
-- Fix needed: Separate issue to fix nominal type checking in subtype.rs
-
-#### 2. BCT Behavior vs TypeScript
-⚠️ **Note**: TypeScript infers `(Dog | Cat)[]` for `[new Dog(), new Cat()]`
-- This is a union, not the common base `Animal[]`
-- Current implementation would return `Animal[]` if subtype check worked correctly
-- This may be correct TypeScript behavior (union vs base class preference)
-- Needs investigation of TypeScript's actual BCT rules
-
-### Implementation Details:
-
-**get_base_type now handles three type representations:**
-1. Lazy types (type aliases, some class references)
-2. ObjectWithIndex types (class instances with nominal identity)
-3. Callable types (legacy class constructor handling)
-
-**Key changes in commit 0ff075ea3:**
-```rust
-// Extract symbol from ObjectShape for nominal identity
-if let Some(shape_id) = object_shape_id(interner, type_id)
-    .or_else(|| object_with_index_shape_id(interner, type_id))
-{
-    let shape = interner.object_shape(shape_id);
-    if let Some(sym_id) = shape.symbol {
-        let parents = self.inheritance_graph.get_parents(sym_id);
-        if let Some(&parent_sym_id) = parents.first() {
-            return self.symbol_instance_types.get(&parent_sym_id)
-                .or_else(|| self.symbol_types.get(&parent_sym_id))
-                .copied();
-        }
-    }
-}
+⚠️ **Before implementing**, use `tsz-gemini` (Question 1):
+```bash
+./scripts/ask-gemini.mjs --include=src/solver "I need to implement Conditional Types (T extends U ? X : Y).
+1) Where should evaluation logic live (evaluate.rs)?
+2) How to handle distributive behavior over unions?
+3) How to prevent infinite recursion in nested conditionals?
+4) What about 'infer' keyword - separate task or same implementation?"
 ```
 
-## Next Steps
+⚠️ **After implementing**, use `tsz-gemini --pro` (Question 2):
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver "I implemented conditional type evaluation.
+[PASTE CODE]
+Please review: 1) Is this correct for TypeScript? 2) Did I miss edge cases?
+3) Are there type system bugs? Be specific."
+```
 
-1. ✅ Session redefined with this plan
-2. ✅ Gemini Question 1 COMPLETE - got architectural guidance
-3. ✅ Implement following Question 1 guidance (COMPLETE)
-4. ✅ DEBUG and fix ObjectWithIndex handling (COMPLETE)
-5. ✅ Gemini Question 2 COMPLETE - implementation reviewed and confirmed correct
-6. ⏸️ **OPTIONAL**: Fix subtype check bug in src/solver/subtype.rs (separate issue)
-7. ⏸️ **TODO**: Investigate TypeScript's actual BCT behavior (union vs base class preference)
-
-### Key Architectural Decision (from Gemini Pro):
-
-**Use TypeResolver trait, NOT TypeDatabase!**
-
-The chain: `InferenceContext` → `TypeResolver` → `CheckerContext` → `Binder`
-
-**Implementation Steps**:
-1. Add `get_base_type` to `TypeResolver` trait (src/solver/subtype.rs)
-2. Implement in `CheckerContext` (src/checker/context.rs)
-3. Update `InferenceContext` to hold resolver reference
-4. Implement `find_common_base_class` in src/solver/infer.rs
-5. Implement `get_class_hierarchy` using the new TypeResolver hook
-
-### Critical Edge Cases (from Gemini):
-- Cycle protection in hierarchy traversal
-- Use `TypeResolver` for semantic lookups (extends clause)
-- `TypeDatabase` remains pure storage
-- Interior mutability considerations when calling stateful methods
+---
 
 ## Session History
 
-- 2026-02-04: Started with TDZ focus (completed)
-- 2026-02-04: Worked on class type resolution (completed)
-- 2026-02-04: Redefined to BCT work
-- 2026-02-04: Question 1 complete - got detailed architectural guidance
-- 2026-02-04: Ready for implementation following Gemini guidance
-- 2026-02-04: **Intersection Reduction COMPLETED**
-  - Followed Two-Question Rule (asked Gemini Flash for approach, Gemini Pro for review)
-  - Implemented recursive evaluation for Intersection and Union types
-  - Added 4 unit tests (all passing)
-  - Commit 7bf0f0fc6 pushed to origin/main
-  - Gemini Pro confirmed implementation correct
-- 2026-02-04: **BCT for Intersections + Lazy Support COMPLETED**
-  - Followed Two-Question Rule (asked Gemini Flash for approach, Gemini Pro for review)
-  - Enhanced collect_class_hierarchy to handle Intersection and Lazy types
-  - Added test_best_common_type_with_intersections
-  - All 16 BCT tests pass
-  - Commit 7dfee5155 pushed to origin/main
-  - Gemini Pro confirmed implementation correct for BCT use case
-  - Documented intersection sorting issue in intern.rs as separate concern
-- 2026-02-04: **Literal Widening for BCT COMPLETED**
-  - Followed Two-Question Rule (asked Gemini Flash for approach, Gemini Pro for review)
-  - Implemented widen_literals in compute_best_common_type
-  - Fixed critical bug: widened each literal individually (not just homogeneous sets)
-  - All 18 BCT tests pass
-  - Commit c3d5d36d0 pushed to origin/main
-  - Gemini Pro confirmed correct after bug fix
-  - Impact: [1, 2] now correctly infers as number[] instead of (1 | 2)[]
+- 2026-02-04: Started as "Intersection Reduction and Advanced Type Operations"
+- 2026-02-04: **COMPLETED** BCT, Intersection Reduction, Literal Widening
+- 2026-02-04: **FIXED** Intersection sorting bug (preserve callable order)
+- 2026-02-04: **REDEFINED** to "Advanced Type Evaluation & Inference"
+- 2026-02-04: New focus - Conditional Types and Mapped Types
 
 ---
 
-## Next Steps: Recommendation from Gemini
+## Completed Commits (History)
 
-**Status**: ✅ Session successfully completed
+- `7bf0f0fc6`: Intersection Reduction (evaluate_intersection, evaluate_union)
+- `7dfee5155`: BCT for Intersections + Lazy Support
+- `c3d5d36d0`: Literal Widening for BCT
+- `f84d65411`: Fix intersection sorting - preserve callable order
 
-**Recommended Next Session**: **Narrowing and Control Flow Analysis**
+---
 
-Gemini's audit confirms:
-- No actual failing tests or known bugs in BCT implementation
-- Implementation is correct for TypeScript
-- Tournament logic is O(N) and matches tsc's behavior
-- Ready to move to Narrowing work
+## Complexity: HIGH
 
-**Reasoning**:
-- Narrowing often relies on BCT results (especially when narrowing unions from array literals)
-- BCT infrastructure is now solid and tested
-- Natural progression: Type Inference (BCT) → Type Narrowing
+**Why High**:
+- Conditional types are the most complex feature in TypeScript's type system
+- `infer` keyword requires pattern matching and unification
+- Distributive behavior requires careful union handling
+- Infinite recursion is a real risk
 
-**Session handoff**: The BCT work in this session provides the foundation for narrowing
-operations that analyze control flow to refine union types.
+**Risk**: Changes to evaluation logic can cause regressions across all type operations.
 
+**Mitigation**: Follow Two-Question Rule strictly. All changes must be reviewed by Gemini Pro.
