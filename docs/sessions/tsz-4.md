@@ -2,14 +2,20 @@
 
 ## Date: 2026-02-04
 
-## Status: PHASE 2 - Major Progress (Function Overloads, Visibility, Defaults) ✅
+## Status: PHASE 2 - NEXT: Parameter Properties (Class Constructor)
 
 ### Session Summary - 2026-02-04 (Continued)
 
-**Completed This Session (NEW):**
+**Completed This Session:**
 10. ✅ **Function overload detection** (766485146, a9c593c08)
 11. ✅ **Public keyword omission** (2eed3a1c5)
 12. ✅ **Array/object literal in default parameters** (0254ea7e8)
+
+**Next Task (Gemini-Recommended):**
+13. ⏳ **Parameter properties in class constructors** (IN PROGRESS)
+    - Problem: `constructor(public x: number)` doesn't emit `x: number` as class property
+    - File: `src/declaration_emitter.rs`
+    - Functions: `emit_class_declaration`, `emit_constructor_declaration`
 
 **Previous Session Accomplishments:**
 1. ✅ Test runner migrated to CLI (major milestone)

@@ -49,6 +49,8 @@ pub struct DeclarationEmitter<'a> {
     type_interner: Option<&'a TypeInterner>,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     inside_declare_namespace: bool,
+    /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
+    in_constructor_params: bool,
 }
 
 struct SourceMapState {
@@ -68,6 +70,7 @@ impl<'a> DeclarationEmitter<'a> {
             type_cache: None,
             type_interner: None,
             inside_declare_namespace: false,
+            in_constructor_params: false,
         }
     }
 
@@ -86,6 +89,7 @@ impl<'a> DeclarationEmitter<'a> {
             type_cache: Some(type_cache),
             type_interner: Some(type_interner),
             inside_declare_namespace: false,
+            in_constructor_params: false,
         }
     }
 
@@ -163,9 +167,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.emit_module_declaration(stmt_idx);
             }
-            _ => {
-                eprintln!("DEBUG: Unhandled statement kind: {} (0x{:x})", kind, kind);
-            }
+            _ => {}
         }
 
         if self.writer.len() == before_len {
@@ -266,6 +268,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(" {");
         self.write_line();
         self.increase_indent();
+
+        // Emit parameter properties from constructor first (before other members)
+        self.emit_parameter_properties(&class.members);
 
         // Members
         for &member_idx in &class.members.nodes {
@@ -394,9 +399,107 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write_indent();
         self.write("constructor(");
+        // Set flag to strip accessibility modifiers from constructor parameters
+        self.in_constructor_params = true;
         self.emit_parameters(&ctor.parameters);
+        self.in_constructor_params = false;
         self.write(");");
         self.write_line();
+    }
+
+    /// Emit parameter properties from constructor as class properties
+    /// Parameter properties (e.g., `constructor(public x: number)`) should be emitted
+    /// as property declarations in the class body, then stripped from constructor params
+    fn emit_parameter_properties(&mut self, members: &crate::parser::NodeList) {
+        use crate::scanner::SyntaxKind;
+
+        // Find the constructor
+        let ctor_idx = members.nodes.iter().find(|&&idx| {
+            self.arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
+        });
+
+        let Some(&ctor_idx) = ctor_idx else {
+            return;
+        };
+
+        let Some(ctor_node) = self.arena.get(ctor_idx) else {
+            return;
+        };
+        let Some(ctor) = self.arena.get_constructor(ctor_node) else {
+            return;
+        };
+
+        // Emit parameter properties
+        for &param_idx in &ctor.parameters.nodes {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                // Check if parameter has accessibility modifiers or readonly
+                let has_modifier = param.modifiers.as_ref().is_some_and(|mods| {
+                    mods.nodes.iter().any(|&mod_idx| {
+                        if let Some(mod_node) = self.arena.get(mod_idx) {
+                            let k = mod_node.kind;
+                            k == SyntaxKind::PublicKeyword as u16
+                                || k == SyntaxKind::PrivateKeyword as u16
+                                || k == SyntaxKind::ProtectedKeyword as u16
+                                || k == SyntaxKind::ReadonlyKeyword as u16
+                        } else {
+                            false
+                        }
+                    })
+                });
+
+                if has_modifier {
+                    // Emit as a property declaration
+                    self.write_indent();
+
+                    // Track if we have private modifier (special handling: no type annotation)
+                    let mut is_private = false;
+
+                    // Emit modifiers (keep readonly, strip accessibility in property)
+                    if let Some(ref modifiers) = param.modifiers {
+                        for &mod_idx in &modifiers.nodes {
+                            if let Some(mod_node) = self.arena.get(mod_idx) {
+                                match mod_node.kind {
+                                    k if k == SyntaxKind::PrivateKeyword as u16 => {
+                                        self.write("private ");
+                                        is_private = true;
+                                    }
+                                    k if k == SyntaxKind::ProtectedKeyword as u16 => {
+                                        self.write("protected ");
+                                    }
+                                    k if k == SyntaxKind::ReadonlyKeyword as u16 => {
+                                        self.write("readonly ");
+                                    }
+                                    // Skip public - it's the default and omitted
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+
+                    // Parameter name
+                    self.emit_node(param.name);
+
+                    // Optional
+                    if param.question_token {
+                        self.write("?");
+                    }
+
+                    // Type annotation (omit for private properties, include for others)
+                    if !is_private && !param.type_annotation.is_none() {
+                        self.write(": ");
+                        self.emit_type(param.type_annotation);
+                    }
+
+                    // Note: No initializer for parameter properties in .d.ts
+                    self.write(";");
+                    self.write_line();
+                }
+            }
+        }
     }
 
     fn emit_accessor_declaration(&mut self, accessor_idx: NodeIndex, is_getter: bool) {
@@ -1071,6 +1174,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
+        // Emit parameter properties from constructor first (before other members)
+        self.emit_parameter_properties(&class.members);
+
         for &member_idx in &class.members.nodes {
             self.emit_class_member(member_idx);
         }
@@ -1535,11 +1641,28 @@ impl<'a> DeclarationEmitter<'a> {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
                     match mod_node.kind {
-                        k if k == SyntaxKind::PublicKeyword as u16 => self.write("public "),
-                        k if k == SyntaxKind::PrivateKeyword as u16 => self.write("private "),
-                        k if k == SyntaxKind::ProtectedKeyword as u16 => self.write("protected "),
+                        // In constructor parameters, strip accessibility and readonly modifiers
+                        k if k == SyntaxKind::PublicKeyword as u16 => {
+                            if !self.in_constructor_params {
+                                self.write("public ");
+                            }
+                        }
+                        k if k == SyntaxKind::PrivateKeyword as u16 => {
+                            if !self.in_constructor_params {
+                                self.write("private ");
+                            }
+                        }
+                        k if k == SyntaxKind::ProtectedKeyword as u16 => {
+                            if !self.in_constructor_params {
+                                self.write("protected ");
+                            }
+                        }
+                        k if k == SyntaxKind::ReadonlyKeyword as u16 => {
+                            if !self.in_constructor_params {
+                                self.write("readonly ");
+                            }
+                        }
                         k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
-                        k if k == SyntaxKind::ReadonlyKeyword as u16 => self.write("readonly "),
                         k if k == SyntaxKind::AbstractKeyword as u16 => self.write("abstract "),
                         k if k == SyntaxKind::AsyncKeyword as u16 => self.write("async "),
                         _ => {}
@@ -2030,3 +2153,4 @@ mod tests {
         );
     }
 }
+// FORCE REBUILD
