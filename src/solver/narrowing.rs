@@ -97,6 +97,27 @@ pub enum TypeGuard {
     ///
     /// Narrows to types that have the specified property.
     InProperty(Atom),
+
+    /// `x is T` or `asserts x is T` (User-Defined Type Guard)
+    ///
+    /// Narrows a type based on a user-defined type predicate function.
+    ///
+    /// # Examples
+    /// ```typescript
+    /// function isString(x: any): x is string { ... }
+    /// function assertDefined(x: any): asserts x is Date { ... }
+    ///
+    /// if (isString(x)) { x; // string }
+    /// assertDefined(x); x; // Date
+    /// ```
+    ///
+    /// - `type_id: Some(T)`: The type to narrow to (e.g., `string` or `Date`)
+    /// - `type_id: None`: Truthiness assertion (`asserts x`), behaves like `Truthy`
+    /// - `asserts: true`: This is an assertion (throws if false), affects control flow
+    Predicate {
+        type_id: Option<TypeId>,
+        asserts: bool,
+    },
 }
 
 /// Result of a narrowing operation.
@@ -1611,6 +1632,30 @@ impl<'a> NarrowingContext<'a> {
                 } else {
                     // Negative: !("prop" in x) - narrow to types that don't have the property
                     self.narrow_by_property_presence(source_type, *property_name, false)
+                }
+            }
+
+            TypeGuard::Predicate { type_id, asserts } => {
+                match type_id {
+                    Some(target_type) => {
+                        // Type guard with specific type: is T or asserts T
+                        if sense {
+                            // True branch: narrow to the target type
+                            self.narrow_to_type(source_type, *target_type)
+                        } else {
+                            // False branch: exclude the target type
+                            self.narrow_excluding_type(source_type, *target_type)
+                        }
+                    }
+                    None => {
+                        // Truthiness assertion: asserts x
+                        // Behaves like TypeGuard::Truthy (narrows to truthy in true branch)
+                        if asserts {
+                            self.narrow_by_truthiness(source_type)
+                        } else {
+                            source_type
+                        }
+                    }
                 }
             }
         }
