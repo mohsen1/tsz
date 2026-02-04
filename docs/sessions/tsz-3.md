@@ -62,10 +62,11 @@ Top error mismatches:
 
 ### Punted Items
 
-1. **Constructor Type Bug** - The type environment maps class symbols to instance type instead of constructor type. This causes tests like `test_abstract_constructor_assignability` to fail because passing a class as a value returns the instance type (with Object.prototype properties) instead of the constructor type.
-   - Attempted fix: Changed type environment to map to constructor type (didn't work)
-   - Status: BLOCKED - Requires comprehensive tracing of type resolution path
-   - Related to: SymbolRef resolution, type environment population
+1. **~~Constructor Type Bug~~** ✅ **FIXED in tsz-2 (2026-02-04)**
+   - The type environment now correctly distinguishes constructor types from instance types
+   - `test_abstract_constructor_assignability` now passes
+   - Classes in TYPE position return instance types, classes in VALUE position return constructor types
+   - Status: RESOLVED
 
 2. **Abstract Mixin Intersection** - `test_abstract_mixin_intersection_ts2339` also fails, likely related to the same type resolution issue
 
@@ -175,9 +176,10 @@ The merged_symbols FxHashMap was mapping by NAME only, allowing T1.m3d and T2.m3
 
 ## Punted Items
 
-1. **Constructor Type Bug** - The type environment maps class symbols to instance type instead of constructor type. This causes tests like `test_abstract_constructor_assignability` to fail because passing a class as a value returns the instance type (with Object.prototype properties) instead of the constructor type.
-   - Attempted fix: Changed type environment to map to constructor type (didn't work)
-   - Status: BLOCKED - Requires comprehensive tracing of type resolution path
-   - Related to: SymbolRef resolution, type environment population
+1. **~~Constructor Type Bug~~** ✅ **FIXED in tsz-2 (2026-02-04)**
+   - The type environment now correctly distinguishes constructor types from instance types
+   - `test_abstract_constructor_assignability` now passes
+   - Classes in TYPE position return instance types, classes in VALUE position return constructor types
+   - Status: RESOLVED
 
 2. **Abstract Mixin Intersection** - `test_abstract_mixin_intersection_ts2339` also fails, likely related to the same type resolution issue
