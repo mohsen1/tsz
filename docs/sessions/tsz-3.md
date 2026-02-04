@@ -26,61 +26,59 @@ Correct exhaustiveness checking is critical for:
 
 ## Tasks
 
-### Task 1: Switch Narrowing Verification ✅ IN PROGRESS
-**File**: `src/checker/control_flow.rs`
+### Task 1: Switch Narrowing Verification ✅ COMPLETE (Fixed switch clause mapping)
+**File**: `src/checker/control_flow.rs`, `src/binder/state_binding.rs`, `src/parallel.rs`
 
-**Current Implementation Found**:
-- `handle_switch_clause_iterative` (line 560): Main entry point
-- `narrow_by_switch_clause` (line 1423): Handles regular cases
-- `narrow_by_default_switch_clause` (line 1440): Handles default clause
+**Fixed Issue**: The binder's `switch_clause_to_switch` map was not preserved through the binding/checking pipeline.
 
-**How it works**:
-1. Regular case: Creates `switch_expr === case_expr` and applies narrowing (true branch)
-2. Default case: Loops through all cases and excludes them using `!==` (false branch)
-3. Fallthrough: Adds antecedents to worklist (line 612-621)
+**Root Cause**:
+- `bind_switch_statement` populated `switch_clause_to_switch` during binding
+- This map was NOT included in `BindResult` or `BoundFile`
+- During checking, a new `BinderState` was created with an empty map
+- `get_switch_for_clause` returned `None`, causing early return
 
-**What's working**:
-- ✅ Regular case narrowing applies discriminant correctly
-- ✅ Default clause excludes all previous cases
-- ✅ Fallthrough flow control handled
+**Solution** (Commit: bdac7f8df):
+1. Added `switch_clause_to_switch: FxHashMap<u32, NodeIndex>` to `BindResult` and `BoundFile`
+2. Populate the map when creating `BindResult` from binder using `std::mem::take`
+3. Include the map when creating `BoundFile` from `BindResult`
+4. Pass the map to `from_bound_state_with_scopes_and_augmentations`
+5. Updated all 3 call sites in `src/parallel.rs` and `src/cli/driver.rs`
 
-**Gaps identified**:
-- ❌ No exhaustiveness detection
-- ❌ No narrowing to `never` when union exhausted
-- ❌ No type union for fallthrough accumulation
+**Result**: ✅ `handle_switch_clause_iterative` is now being called correctly!
+The narrowing functions are invoked and the discriminant narrowing logic runs.
 
-**Status**: ⏸️ Analysis complete, implementation pending
+**Status**: ✅ Switch clause mapping fixed - commit pushed to main
 
 ---
 
-### Task 2: Exhaustiveness Detection 🐛 BUG FOUND
-**File**: `src/checker/control_flow.rs`
+### Task 2: Lazy Type Resolution Bug 🐛 PRE-EXISTING BUG DISCOVERED
+**File**: `src/solver/narrowing.rs`, `src/solver/visitor.rs`
 
-**Gemini Guidance (Question 1 Response)**:
-- ✅ Current `narrow_by_default_switch_clause` is **semantically correct**
-- ✅ Uses subtraction: `T \ C1 \ C2...` which naturally returns `never` when exhausted
-- ⚠️ Can be optimized: batch subtraction `T \ {C1, C2...}` instead of iterative
-- ❌ Don't manually "detect" exhaustion - let Solver's subtraction do it
-- ❌ Don't modify FlowNode structure - not needed
+**Bug Found**: `union_list_id` doesn't resolve Lazy types before checking if type is a union.
 
-**Test Result - BUG FOUND**:
-Test case: `type Action = { type: "add" } | { type: "remove" }` with switch covering both cases.
-
-**Expected**: Default clause should narrow to `never`
-**Actual**: Default clause still sees `Action` (not narrowed)
-**Error**: `Type 'Action' is not assignable to type 'never'`
-
-**Debug Output**:
+**Symptom**:
 ```
-DEBUG apply_flow_narrowing: result=123
-// result is still original Action type (123), not never
+Excluding discriminant value 100 from union with 1 members
 ```
 
-**Root Cause Analysis Needed**:
-The `narrow_by_default_switch_clause` function (line 1440-1476) iterates through cases and subtracts them, but the result is not narrowing to `never` as expected.
+The Action type should have 2 members (`{ type: "add" }` and `{ type: "remove" }`), but only 1 member is found.
 
-**Status**: 🐛 Bug found - exhaustiveness not working despite correct-looking code
-**Next**: Debug why subtraction isn't producing `never`
+**Root Cause**:
+- Type 123 is a `Lazy` type reference to the Action type alias
+- `union_list_id` uses `extract_type_data` which calls `visit_lazy`
+- Default `visit_lazy` implementation returns `None` instead of resolving the type
+- The slice normalization treats the Lazy type as a single member
+- Narrowing operates on this single-member "union" and produces no change
+
+**Trace**:
+```
+type 123 (Action) -> Lazy(DefId) -> should resolve to Union[{add}, {remove}]
+But: union_list_id(123) -> None -> slice normalization -> [123] -> 1 member
+```
+
+**Status**: 🐛 Pre-existing bug - needs separate fix
+**Next**: Modify `union_list_id` or add helper to resolve Lazy types before extracting union members
+**Note**: This is NOT specific to switch statements - affects all union narrowing on type aliases
 
 ---
 
