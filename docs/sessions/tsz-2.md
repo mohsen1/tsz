@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 5 Active - CFA Robustness & Completeness (Task 13: Boolean Narrowing - COMPLETE)
+**Status**: 🟢 Phase 5 Active - CFA Robustness & Completeness (Task 10: Array.isArray Narrowing - COMPLETE)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -169,6 +169,8 @@ Please review:
 - 2026-02-04: COMPLETED Phase 2 Task 5: User-Defined Type Guards
 - 2026-02-04: COMPLETED Phase 2 Task 6: Equality & Identity Narrowing
 - 2026-02-04: **PHASE 2 COMPLETE**
+- 2026-02-04: COMPLETED Task 13: Boolean Narrowing Bug Fix
+- 2026-02-04: COMPLETED Task 10: Array.isArray Narrowing
 
 ## Previous Work (Archived)
 
