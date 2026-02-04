@@ -44,9 +44,28 @@ Work is never done until all tests pass. This includes:
 - TS2304: missing=11, extra=9
 
 ### Test Suite Status
-- **367 passed, 2 failed** (same 2 pre-existing failures)
-- No new regressions introduced
-- All changes committed and pushed
+
+**Quick Profile (--profile quick):**
+- 369 passed, 2 failed, 156 skipped
+
+**Full Test Suite (7911 tests):**
+- **7,869 passed, 42 failed**, 156 skipped
+- Pass rate: **99.5%**
+- 40 additional failures in full suite vs quick profile
+- Need to investigate which are pre-existing vs new regressions
+
+**Known Failing Tests** (2 from quick profile):
+1. `test_abstract_constructor_assignability` - Abstract class constructor shows Object prototype type
+2. `test_abstract_mixin_intersection_ts2339` - Same root cause
+
+**Additional Failures in Full Suite** (40 tests):
+- Namespace/class merging issues
+- Property access on wrong types
+- New expression inference problems
+- Readonly access violations
+- Enum assignability issues
+
+**Ignored Tests**: 61 tests marked `#[ignore]` - candidates for investigation
 
 **Failing Tests Details**:
 1. `test_abstract_constructor_assignability`
