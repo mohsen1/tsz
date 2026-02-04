@@ -2967,13 +2967,11 @@ impl<'a> InferenceContext<'a> {
             let upper_root = self.table.find(upper_var);
             let upper_info = self.table.probe_value(upper_root);
 
-            // CRITICAL FIX: When T <: U (U is an upper bound of T), T's upper bounds
-            // should also be upper bounds of U (transitivity: T <: U <: V)
-            //
-            // Previous (WRONG) implementation added U's lower bounds to T
-            // Correct implementation: Add T's upper bounds to U
-            for &upper in upper_info.upper_bounds.iter() {
-                self.add_upper_bound(upper_var, upper);
+            // CRITICAL FIX: Transitivity T <: U <: V implies T <: V
+            // We must propagate U's upper bounds DOWN to T (not up to U)
+            // Previous (WRONG) implementation added U's upper bounds back to U (no-op)
+            for &upper_bound_of_u in upper_info.upper_bounds.iter() {
+                self.add_upper_bound(var, upper_bound_of_u);
             }
 
             // Also: Our lower bounds should flow to U (L <: T => L <: U)
