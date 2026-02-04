@@ -31,6 +31,38 @@ It's very important to use the available skills frequently to maximize productiv
   - assignability check problems
   - Example: `TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -- file.ts`
 
+## CRITICAL: How to Ask Gemini Effectively
+
+**Vague questions get vague answers. Be SPECIFIC and CONCRETE.**
+
+### Good Question Pattern:
+```bash
+./scripts/ask-gemini.mjs --solver "When checking this code:
+\`\`\`typescript
+function identity<T>(x: T): T { return x; }
+const result = identity('hello'); // expected: string, got: unknown
+\`\`\`
+What exact function determines the return type? I need the file path and function name 
+so I can add a debug log."
+```
+
+### Bad Question Pattern:
+```bash
+# TOO VAGUE - will get architectural overview, not actionable answer
+./scripts/ask-gemini.mjs --solver "How does type inference work?"
+
+# NO CONTEXT - Gemini can't help without knowing what you're looking at
+./scripts/ask-gemini.mjs --solver "Why is the wrong type being used?"
+```
+
+### Template for Debugging:
+```bash
+./scripts/ask-gemini.mjs --checker "[PROBLEM]: I'm seeing [ACTUAL] but expected [EXPECTED].
+Code: [PASTE TYPESCRIPT]
+I traced to [FILE/FUNCTION] but need to find where [SPECIFIC DECISION] is made.
+What exact function handles this? I need to add logging."
+```
+
 ## CRITICAL: Always Ask Gemini
 When to use Gemini:
 - If unsure about next steps
