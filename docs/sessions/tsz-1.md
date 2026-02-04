@@ -42,5 +42,39 @@ class Rectangle {
 - Test passes with exactly 2 TS2300 errors
 - Similar duplicate cases (setters, methods) also fixed
 
-## Status: NEXT TASK IDENTIFIED
-Ready to begin investigation and implementation.
+## Progress
+
+### 2026-02-04: Fixed Duplicate Getter Detection ✅
+
+**Root Cause**:
+In `src/checker/state_checking_members.rs:411`, the code used `.skip(1)` when iterating through duplicate accessors, which only emitted TS2300 for subsequent duplicates, missing the first one.
+
+**Fix Applied**:
+Changed from:
+```rust
+for &idx in indices.iter().skip(1) {
+```
+To:
+```rust
+for &idx in indices.iter() {
+```
+
+**Testing**:
+- ✅ Test case: `test_class_duplicate_getter_2300` now passes
+- ✅ Verified with manual test file - emits 2 TS2300 errors (matching tsc)
+- ✅ tsc emits errors for BOTH duplicate declarations
+
+**Example**:
+```typescript
+class Rectangle {
+    get width(): number { return 1; }  // Now emits TS2300 ✓
+    get width(): number { return 2; }  // Already emitted TS2300 ✓
+}
+```
+
+**Commit**: `bdbe02b78` - "fix: emit TS2300 for all duplicate accessors, not just subsequent ones"
+
+## Session Status: COMPLETE ✅
+
+**Deliverable**: Fixed duplicate getter/setter detection to match tsc behavior
+**Result**: TS2300 now emitted for ALL duplicate accessor declarations
