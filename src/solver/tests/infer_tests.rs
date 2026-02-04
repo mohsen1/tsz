@@ -287,7 +287,7 @@ fn test_resolve_upper_bound_only() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     // function f<T extends string>() - upper bound only
     ctx.add_upper_bound(var, TypeId::STRING);
@@ -302,7 +302,7 @@ fn test_resolve_any_lower_prefers_upper_bound() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     ctx.add_lower_bound(var, TypeId::ANY);
     ctx.add_upper_bound(var, TypeId::STRING);
@@ -316,7 +316,7 @@ fn test_resolve_unknown_lower_prefers_upper_bound() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     ctx.add_lower_bound(var, TypeId::UNKNOWN);
     ctx.add_upper_bound(var, TypeId::STRING);
@@ -330,7 +330,7 @@ fn test_resolve_error_lower_prefers_upper_bound() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     ctx.add_lower_bound(var, TypeId::ERROR);
     ctx.add_upper_bound(var, TypeId::STRING);
@@ -344,7 +344,7 @@ fn test_resolve_error_lower_with_literal_prefers_literal() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let hello = interner.literal_string("hello");
 
     ctx.add_lower_bound(var, TypeId::ERROR);
@@ -360,7 +360,7 @@ fn test_resolve_contextual_ignores_any_lower_with_literal() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let hello = interner.literal_string("hello");
 
     ctx.add_lower_bound(var, TypeId::ANY);
@@ -660,7 +660,7 @@ fn test_resolve_bounds_union_upper_allows_literal_lower() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let hello = interner.literal_string("hello");
     let upper = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
@@ -676,7 +676,7 @@ fn test_resolve_bounds_object_subtype() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
     let name_b = interner.intern_string("b");
 
@@ -719,7 +719,7 @@ fn test_resolve_bounds_union_lower_vs_string_upper() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let lower = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     ctx.add_lower_bound(var, lower);
@@ -741,7 +741,7 @@ fn test_resolve_bounds_object_readonly_property_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object(vec![PropertyInfo {
@@ -781,7 +781,7 @@ fn test_resolve_bounds_object_readonly_property_ok() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object(vec![PropertyInfo {
@@ -814,7 +814,7 @@ fn test_resolve_bounds_object_readonly_property_missing_ok() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object(vec![PropertyInfo {
@@ -839,7 +839,7 @@ fn test_resolve_bounds_method_property_bivariant_params() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_m = interner.intern_string("m");
 
     let narrow_param = ParamInfo {
@@ -903,7 +903,7 @@ fn test_resolve_bounds_function_property_contravariant_params() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_f = interner.intern_string("f");
 
     let narrow_param = ParamInfo {
@@ -975,7 +975,7 @@ fn test_resolve_bounds_with_assignability_bivariant_function_property() {
     let mut ctx = InferenceContext::new(&interner);
     let mut checker = CompatChecker::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_f = interner.intern_string("f");
 
     let narrow_param = ParamInfo {
@@ -1043,7 +1043,7 @@ fn test_resolve_bounds_function_param_contravariance_extends() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let narrow_param = ParamInfo {
         name: Some(interner.intern_string("x")),
@@ -1090,7 +1090,7 @@ fn test_resolve_bounds_function_return_covariance_extends() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let param = ParamInfo {
         name: Some(interner.intern_string("x")),
@@ -1130,7 +1130,7 @@ fn test_resolve_bounds_object_keyword_upper_allows_array() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let lower = interner.array(TypeId::STRING);
     let upper = TypeId::OBJECT;
 
@@ -1146,7 +1146,7 @@ fn test_resolve_bounds_object_keyword_rejects_string() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let lower = TypeId::STRING;
     let upper = TypeId::OBJECT;
 
@@ -1169,7 +1169,7 @@ fn test_resolve_bounds_object_with_index_subtype() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object_with_index(ObjectShape {
@@ -1215,7 +1215,7 @@ fn test_resolve_bounds_string_index_property_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object_with_index(ObjectShape {
@@ -1258,7 +1258,7 @@ fn test_resolve_bounds_index_readonly_property_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object_with_index(ObjectShape {
@@ -1301,7 +1301,7 @@ fn test_resolve_bounds_index_readonly_signature_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -1346,7 +1346,7 @@ fn test_resolve_bounds_index_readonly_signature_allows_mutable_source() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -1384,7 +1384,7 @@ fn test_resolve_bounds_number_index_allows_non_numeric_property() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object_with_index(ObjectShape {
@@ -1426,7 +1426,7 @@ fn test_resolve_bounds_number_index_numeric_property_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_zero = interner.intern_string("0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1475,7 +1475,7 @@ fn test_resolve_bounds_number_index_readonly_property_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_zero = interner.intern_string("0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1518,7 +1518,7 @@ fn test_resolve_bounds_number_index_readonly_signature_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper_type = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -1563,7 +1563,7 @@ fn test_resolve_bounds_number_index_readonly_signature_allows_mutable_source() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper_type = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -1601,7 +1601,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_numeric_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("01");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1643,7 +1643,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e-7");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1692,7 +1692,7 @@ fn test_resolve_bounds_number_index_accepts_infinity_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("Infinity");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1741,7 +1741,7 @@ fn test_resolve_bounds_number_index_accepts_nan_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("NaN");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1790,7 +1790,7 @@ fn test_resolve_bounds_number_index_accepts_negative_infinity_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("-Infinity");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1839,7 +1839,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("-0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1881,7 +1881,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_property() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("-0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1917,7 +1917,7 @@ fn test_resolve_bounds_number_index_accepts_decimal_boundary_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("0.000001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -1966,7 +1966,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_boundary_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e+21");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2015,7 +2015,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_exponent_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e+021");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2057,7 +2057,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E+21");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2099,7 +2099,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E21");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2141,7 +2141,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E+0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2183,7 +2183,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_zer
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E+00");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2225,7 +2225,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_wit
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2267,7 +2267,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_negative_leading_
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E-0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2309,7 +2309,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1eE1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2351,7 +2351,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_with_sign() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee+1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2393,7 +2393,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_digits()
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1eE");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2435,7 +2435,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign_with
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E01");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2477,7 +2477,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1eE++1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2519,7 +2519,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_with_lowercase_e(
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1eE+1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2561,7 +2561,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_minus() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee--1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2603,7 +2603,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_plus_minus() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee+-1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2645,7 +2645,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_minus_plus() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee-+1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2687,7 +2687,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_sign() 
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee+");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2729,7 +2729,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_minus()
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee-");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2771,7 +2771,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_double_
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee--");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2813,7 +2813,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros() 
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee+0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2855,7 +2855,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros_wi
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2897,7 +2897,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_sign_wit
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee01");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2939,7 +2939,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_negative_exponent_zero() 
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee-0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -2981,7 +2981,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_positive_zero() 
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee+0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3023,7 +3023,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_zero_without_sig
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3065,7 +3065,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign_trai
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1Ee++");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3107,7 +3107,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_digits() 
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E+");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3149,7 +3149,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_minus_missing_dig
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E-");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3191,7 +3191,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_sign() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E++1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3233,7 +3233,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_minus() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1E--1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3275,7 +3275,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_negative() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e-0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3317,7 +3317,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_positive() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e+0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3359,7 +3359,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_without_sign(
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e0001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3401,7 +3401,7 @@ fn test_resolve_bounds_number_index_ignores_missing_exponent_sign() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e21");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3443,7 +3443,7 @@ fn test_resolve_bounds_number_index_ignores_leading_zero_decimal_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("01.0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3485,7 +3485,7 @@ fn test_resolve_bounds_number_index_ignores_hex_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("0x1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3527,7 +3527,7 @@ fn test_resolve_bounds_number_index_ignores_binary_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("0b1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3569,7 +3569,7 @@ fn test_resolve_bounds_number_index_ignores_octal_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("0o7");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3611,7 +3611,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zero_mantissa() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("01e+1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3653,7 +3653,7 @@ fn test_resolve_bounds_number_index_ignores_leading_dot_decimal_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string(".5");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3695,7 +3695,7 @@ fn test_resolve_bounds_number_index_ignores_multiple_leading_zeros() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("00");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3737,7 +3737,7 @@ fn test_resolve_bounds_number_index_ignores_negative_hex_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("-0x1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3779,7 +3779,7 @@ fn test_resolve_bounds_number_index_ignores_negative_binary_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("-0b1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3821,7 +3821,7 @@ fn test_resolve_bounds_number_index_ignores_negative_octal_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("-0o7");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3863,7 +3863,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_sign() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e++1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3905,7 +3905,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_minus() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e--1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3947,7 +3947,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_missing_digits() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e+");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -3989,7 +3989,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_minus_missing_digits() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e-");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -4031,7 +4031,7 @@ fn test_resolve_bounds_number_index_ignores_negative_exponent_zero() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("-0e+0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -4073,7 +4073,7 @@ fn test_resolve_bounds_number_index_ignores_positive_exponent_zero() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1e+0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -4115,7 +4115,7 @@ fn test_resolve_bounds_number_index_accepts_negative_decimal_boundary_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("-0.000001");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -4164,7 +4164,7 @@ fn test_resolve_bounds_number_index_ignores_trailing_decimal_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1.");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -4206,7 +4206,7 @@ fn test_resolve_bounds_number_index_ignores_leading_plus_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("+1");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -4248,7 +4248,7 @@ fn test_resolve_bounds_number_index_ignores_numeric_separator_name() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name = interner.intern_string("1_0");
 
     let upper_type = interner.object_with_index(ObjectShape {
@@ -4290,7 +4290,7 @@ fn test_resolve_bounds_inconsistent_index_signatures() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper_type = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4339,7 +4339,7 @@ fn test_resolve_bounds_object_with_index_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let upper_type = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4384,7 +4384,7 @@ fn test_resolve_bounds_function_subtype() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let source_param = ParamInfo {
         name: Some(interner.intern_string("x")),
@@ -4430,7 +4430,7 @@ fn test_resolve_bounds_function_this_parameter_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let lower = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -4476,7 +4476,7 @@ fn test_resolve_bounds_function_this_parameter_optional_target() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let lower = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -4509,7 +4509,7 @@ fn test_resolve_bounds_function_this_parameter_any_upper_bound() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let lower = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -4542,7 +4542,7 @@ fn test_resolve_bounds_function_this_parameter_contravariant() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let lower_this = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let lower = interner.function(FunctionShape {
@@ -4576,7 +4576,7 @@ fn test_resolve_bounds_callable_this_parameter_contravariant() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let lower_this = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let lower = interner.callable(CallableShape {
@@ -4620,7 +4620,7 @@ fn test_resolve_bounds_optional_property_compatible() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object(vec![PropertyInfo {
@@ -4652,7 +4652,7 @@ fn test_resolve_bounds_optional_property_mismatch() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object(vec![PropertyInfo {
@@ -4691,7 +4691,7 @@ fn test_resolve_bounds_optional_property_missing_ok() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let name_a = interner.intern_string("a");
 
     let upper = interner.object(vec![PropertyInfo {
@@ -4716,7 +4716,7 @@ fn test_resolve_bounds_callable_subtype() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let source_param = ParamInfo {
         name: Some(interner.intern_string("x")),
@@ -4772,7 +4772,7 @@ fn test_resolve_bounds_function_to_callable() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let source_param = ParamInfo {
         name: Some(interner.intern_string("x")),
@@ -4823,7 +4823,7 @@ fn test_resolve_bounds_callable_to_function() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     let source_param = ParamInfo {
         name: Some(interner.intern_string("x")),
@@ -4874,7 +4874,7 @@ fn test_resolve_bounds_application_subtype() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
     let base = interner.lazy(DefId(1));
     let upper = interner.application(base, vec![TypeId::STRING]);
     let lower = interner.application(base, vec![interner.literal_string("hello")]);
@@ -4928,7 +4928,7 @@ fn test_resolve_no_constraints() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
 
-    let var = ctx.fresh_type_param(interner.intern_string("T"));
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
 
     // No constraints at all
     let result = ctx.resolve_with_constraints(var).unwrap();

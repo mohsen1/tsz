@@ -21,8 +21,8 @@ use crate::solver::types::*;
 use crate::solver::utils;
 use crate::solver::visitor::{
     application_id, array_element_type, callable_shape_id, conditional_type_id, enum_components,
-    function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind,
-    is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind, is_this_type,
+    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
     tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
