@@ -12,3 +12,40 @@ engine on top to match TypeScript behavior while preserving correctness where po
 > This project is not ready for general use yet.
 
 <!-- TS_VERSION_START -->
+
+Currently targeting `TypeScript`@`6.0.0-dev.20260116`
+### Type Checker
+
+To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript conformance
+test suite against it.
+
+<!-- CONFORMANCE_START -->
+```
+Progress: [████░░░░░░░░░░░░] 39.4% (5292/13443 tests)
+```
+<!-- CONFORMANCE_END -->
+
+### Language Service
+
+We run TypeScript's fourslash language service tests against `tsz-server` to measure
+language service feature coverage (completions, quickinfo, go-to-definition, etc.).
+
+<!-- FOURSLASH_START -->
+```
+Progress: [██░░░░░░░░░░░░░░░░░░] 11.4% (747 / 6,563 tests)
+```
+<!-- FOURSLASH_END -->
+
+### Emit
+
+We compare tsz JavaScript/declaration emit output against TypeScript's baseline files
+to ensure correct code generation.
+
+<!-- EMIT_START -->
+
+```
+JavaScript:  [███░░░░░░░░░░░░░░░░░] 19.4% (1,259 / 6,500 tests)
+Declaration: [░░░░░░░░░░░░░░░░░░░░] 0.0% (0 / 12 tests)
+```
+
+<a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".

@@ -257,36 +257,66 @@ if [ "$RUN_EMIT" = true ]; then
     echo "============================================================"
     echo ""
 
-    echo "Running emit tests..."
-    EMIT_OUTPUT=$(./scripts/emit/run.sh $EMIT_MAX --js-only 2>&1) || true
-    echo "$EMIT_OUTPUT"
+    # Run JS emit tests
+    echo "Running JavaScript emit tests..."
+    EMIT_JS_OUTPUT=$(./scripts/emit/run.sh $EMIT_MAX --js-only 2>&1) || true
+    echo "$EMIT_JS_OUTPUT"
 
-    # Parse: "Pass Rate: N% (N/N)"
-    if echo "$EMIT_OUTPUT" | grep -q "Pass Rate:"; then
-        EMIT_JS_PASSED=$(echo "$EMIT_OUTPUT" | grep "Pass Rate:" | head -1 | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\1/')
-        EMIT_JS_TOTAL=$(echo "$EMIT_OUTPUT" | grep "Pass Rate:" | head -1 | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\2/')
-        EMIT_JS_RATE=$(echo "$EMIT_OUTPUT" | grep "Pass Rate:" | head -1 | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
-
-        # DTS not implemented yet, set to 0
-        EMIT_DTS_PASSED=0
-        EMIT_DTS_TOTAL=0
-
+    # Parse JS results: "Pass Rate: N% (N/N)"
+    if echo "$EMIT_JS_OUTPUT" | grep -q "Pass Rate:"; then
+        # Strip ANSI color codes before parsing
+        JS_RESULTS=$(echo "$EMIT_JS_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep "Pass Rate:" | head -1)
+        EMIT_JS_PASSED=$(echo "$JS_RESULTS" | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\1/')
+        EMIT_JS_TOTAL=$(echo "$JS_RESULTS" | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\2/')
+        EMIT_JS_RATE=$(echo "$JS_RESULTS" | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
         echo ""
         echo "Emit JS: $EMIT_JS_PASSED/$EMIT_JS_TOTAL ($EMIT_JS_RATE%)"
+    else
+        echo "Failed to parse JavaScript emit test output"
+        EMIT_JS_PASSED=0
+        EMIT_JS_TOTAL=0
+        EMIT_JS_RATE="0.0"
+    fi
 
-        # Generate progress bars and update README
+    echo ""
+
+    # Run DTS emit tests
+    echo "Running Declaration emit tests..."
+    EMIT_DTS_OUTPUT=$(./scripts/emit/run.sh $EMIT_MAX --dts-only 2>&1) || true
+    echo "$EMIT_DTS_OUTPUT"
+
+    # Parse DTS results: "Pass Rate: N% (N/N)"
+    if echo "$EMIT_DTS_OUTPUT" | grep -q "Pass Rate:"; then
+        # Strip ANSI color codes before parsing
+        DTS_RESULTS=$(echo "$EMIT_DTS_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep "Pass Rate:" | head -1)
+        EMIT_DTS_PASSED=$(echo "$DTS_RESULTS" | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\1/')
+        EMIT_DTS_TOTAL=$(echo "$DTS_RESULTS" | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\2/')
+        EMIT_DTS_RATE=$(echo "$DTS_RESULTS" | sed -E 's/.*Pass Rate:[[:space:]]*([0-9.]+)%.*/\1/')
+        echo ""
+        echo "Emit DTS: $EMIT_DTS_PASSED/$EMIT_DTS_TOTAL ($EMIT_DTS_RATE%)"
+    else
+        echo "Failed to parse Declaration emit test output"
+        EMIT_DTS_PASSED=0
+        EMIT_DTS_TOTAL=0
+        EMIT_DTS_RATE="0.0"
+    fi
+
+    # Generate progress bars and update README
+    if [ -n "$EMIT_JS_RATE" ] && [ -n "$EMIT_DTS_RATE" ]; then
         JS_BAR=$(generate_bar "$EMIT_JS_RATE" 20)
         JS_PASSED_FMT=$(format_num "$EMIT_JS_PASSED")
         JS_TOTAL_FMT=$(format_num "$EMIT_JS_TOTAL")
         
+        DTS_BAR=$(generate_bar "$EMIT_DTS_RATE" 20)
+        DTS_PASSED_FMT=$(format_num "$EMIT_DTS_PASSED")
+        DTS_TOTAL_FMT=$(format_num "$EMIT_DTS_TOTAL")
+        
         EMIT_CONTENT="\`\`\`
 JavaScript:  [$JS_BAR] ${EMIT_JS_RATE}% ($JS_PASSED_FMT / $JS_TOTAL_FMT tests)
-Declaration: [░░░░░░░░░░░░░░░░░░░░] 0.0% (0 / 0 tests)
+Declaration: [$DTS_BAR] ${EMIT_DTS_RATE}% ($DTS_PASSED_FMT / $DTS_TOTAL_FMT tests)
 \`\`\`"
 
         update_section "<!-- EMIT_START -->" "<!-- EMIT_END -->" "$EMIT_CONTENT"
-    else
-        echo "Failed to parse emit test output"
     fi
     echo ""
 fi
@@ -307,8 +337,11 @@ else
         if [ -n "$FS_PASSED" ]; then
             DETAILS="${DETAILS}Fourslash: ${FS_PASS_RATE}% (${FS_PASSED}/${FS_TOTAL})\n"
         fi
-        if [ -n "$EMIT_JS_PASSED" ]; then
+        if [ -n "$EMIT_JS_PASSED" ] && [ "$EMIT_JS_PASSED" != "0" ]; then
             DETAILS="${DETAILS}Emit JS: ${EMIT_JS_RATE}% (${EMIT_JS_PASSED}/${EMIT_JS_TOTAL})\n"
+        fi
+        if [ -n "$EMIT_DTS_PASSED" ] && [ "$EMIT_DTS_PASSED" != "0" ]; then
+            DETAILS="${DETAILS}Emit DTS: ${EMIT_DTS_RATE}% (${EMIT_DTS_PASSED}/${EMIT_DTS_TOTAL})\n"
         fi
         DETAILS="${DETAILS}TypeScript: ${TS_VERSION}"
 
