@@ -387,6 +387,7 @@ impl crate::solver::db::QueryDatabase for SalsaDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solver::Visibility;
     use crate::solver::db::{QueryDatabase, TypeDatabase};
     use crate::solver::types::IntrinsicKind;
 

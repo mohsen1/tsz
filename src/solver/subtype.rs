@@ -1575,6 +1575,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// * `true` if source extends target (directly or through inheritance chain)
     /// * `false` if source does not extend target
     fn check_nominal_inheritance(&self, source: TypeId, target: TypeId) -> bool {
+        
         use crate::solver::visitor::object_with_index_shape_id;
 
         // Check if target has nominal identity (is a class instance)

@@ -2206,6 +2206,7 @@ pub fn solve_generic_instantiation<C: AssignabilityChecker>(
     interner: &dyn TypeDatabase,
     checker: &mut C,
 ) -> GenericInstantiationResult {
+    
     use crate::solver::{TypeSubstitution, instantiate_type};
 
     for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
