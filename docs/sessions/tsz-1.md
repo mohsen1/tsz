@@ -154,19 +154,22 @@ if !func_data.type_annotation.is_none() {
 
 This is a non-trivial architectural fix requiring careful implementation.
 
-### Priority Candidates (from session history)
+### Conformance Progress (2026-02-04)
 
-1. **Parse Errors (42 missing total)**
-   - TS1109 (Expression expected): missing=22
-   - TS1055 ('{0}' expected): missing=11
-   - TS1359 (Type identifier expected): missing=9
+**Latest Run**: 38/100 passed (38%)
 
-2. **Symbol Resolution (20 missing)**
-   - TS2304 (Cannot find name): missing=11
-   - TS2585 (Cannot find name, suggestion): missing=9
+**Top Error Code Mismatches**:
+1. TS1202: missing=0, extra=17 (CommonJS import false positives)
+2. TS2695: missing=10 (Left-hand side of infix expression)
+3. TS1005: missing=12 (down from 13 - throw statement fixed)
+4. TS2300: missing=9 (Duplicate identifier)
+5. TS2304: missing=3, extra=9 (Cannot find name)
 
-3. **Lib Context for ES5 Async (105 missing)**
-   - TS2705: Need to verify lib context handling
+**Recent Fixes**:
+- ✅ ClassDeclaration26: var/let as class member modifiers
+- ✅ TS1109: throw statement missing expression
+
+**Next Priority**: Continue working on TS1005 (12 missing) or TS2300 (9 missing)
 
 ### Verification Complete
 - TS1136 fix verified with cargo run
