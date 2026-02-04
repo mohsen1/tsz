@@ -2,9 +2,9 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟢 ACTIVE - Phase 2 (Project Structure) - ~77% Complete (10/13 tasks)
+## Status: 🟢 ACTIVE - Phase 2 (Project Structure) - ~85% Complete (11/13 tasks)
 
-### Completed Tasks (10)
+### Completed Tasks (11)
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
@@ -15,6 +15,7 @@
 8. **Destructuring Export Flattening** (binding pattern flattening, nested destructuring)
 9. **Advanced Type Emission** (template literal types, labeled tuple members)
 10. **Triple-Slash Directive Emission** (/// <reference>, /// <amd-module>, etc.)
+11. **Import/Export Elision** (usage tracking, foreign symbols, import metadata)
 
 ---
 
@@ -148,44 +149,47 @@ export const x = 1;
 export declare const x: number;
 ```
 
-#### Task 11: Import/Export Elision ⏳ IN PROGRESS (Partial - 2026-02-04)
+#### Task 11: Import/Export Elision ✅ COMPLETE (2026-02-04)
 **Description**: Only emit imports that are actually used in the public API.
 - **Why**: Prevents broken `.d.ts` files that reference unused modules
-- **Complexity**: High (Requires usage analysis and binder changes)
-- **Files**: `src/declaration_emitter/mod.rs`, `src/checker/` or `src/binder/mod.rs`
-- **Status**: Partially implemented
+- **Complexity**: High (Required usage analysis and import metadata tracking)
+- **Files**: `src/declaration_emitter/mod.rs`, `src/declaration_emitter/usage_analyzer.rs`, `src/cli/driver_resolution.rs`
 
-**Completed So Far:**
-- ✅ Added `has_export_modifier()` helper to check for Export keyword
-- ✅ Updated `analyze_statement()` to only analyze exported declarations
-- ✅ Fixed `is_local` check to use `declaration_arenas` instead of `symbol_arenas`
-- ✅ Foreign symbols are correctly identified and added to `foreign_symbols` set
+**Completed:**
+- ✅ `prepare_import_metadata()` - Builds SymbolId->ModuleSpecifier and Name->SymbolId maps
+- ✅ `import_name_map` - Added field to DeclarationEmitter and UsageAnalyzer
+- ✅ `analyze_entity_name()` - Fallback to import_name_map when node_symbols lookup fails
+- ✅ `emit_auto_imports()` - Filter to only emit imports for symbols in import_symbol_map
+- ✅ `emit_import_declaration_if_needed()` - Skip imports handled by elision (prevents duplicates)
+- ✅ Per-file tracking - Reset used_symbols/foreign_symbols at start of each emit()
 
-**Remaining Work:**
-- ❌ Module path resolution for imported symbols doesn't work
-- `resolve_symbol_module_path()` needs to track which module each symbol comes from
-- `declaration_arenas` isn't populated for imported symbols
-- Requires binder changes to track symbol provenance properly
-
-**Test Case:**
+**Test Results:**
 ```typescript
 // Input
-import { InternalType } from './internal';  // Should be elided
-import { PublicType } from './public';      // Should be kept
+import { TypeA } from './mod-a';  // Elided (not used)
+import { TypeB } from './mod-b';  // Kept (used)
 
-export interface Api {
-    value: PublicType;
+export interface Public {
+    value: TypeB;
 }
 
-// Expected output
-import { PublicType } from './public';
-export interface Api {
-    value: PublicType;
+// Output ✅ (matches tsc exactly)
+import { TypeB } from "./mod-b";
+export interface Public {
+    value: TypeB;
 }
 ```
 
+**Implementation Approach:**
+1. Walk import statements to build metadata maps (symbol->module, name->symbol)
+2. UsageAnalyzer tracks which symbols are used in exported declarations
+3. For imported types, fallback to import_name_map when node_symbols is empty
+4. Emit auto-imports only for foreign symbols that are actually imported
+5. Skip emitting original import statements to prevent duplicates
+
 **Commits:**
 - 59ca8c3cd (feat(tsz-4): partial progress on Import/Export Elision)
+- fe78e9dc1 (feat(tsz-4): implement import elision for declaration emit)
 
 ### Phase 3: The Enforcer (Final Polish)
 
