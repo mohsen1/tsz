@@ -35,27 +35,20 @@ The narrowing logic in `src/solver/narrowing.rs` has 8+ critical bugs that cause
 **Function**: `narrow_by_property_presence`, `type_has_property`
 **Bugs**: 4+ (unknown, optional, resolution, intersection)
 
-**Implementation**:
+**Progress**: 2 of 4 fixes complete (commit 68c367e2b)
 
-1. **Enhance `type_has_property`**:
-   - Add `Lazy`/`Ref` resolution before shape lookup
-   - Add `Intersection` support (true if ANY member has property)
-   - Add prototype property checking
-   - Keep index signature logic
+**Completed** ✅:
+1. **unknown handling**: Narrows to `object & { prop: unknown }` in true branch
+2. **Intersection support**: Checks all intersection members, returns true if ANY has property
 
-2. **Fix `narrow_by_property_presence`**:
-   - Transform from filter to **transformer**
-   - For `unknown`: return `object & { prop: unknown }`
-   - Add `promote_optional_property` helper
-
-3. **New Helper: `promote_optional_property`**:
-   - Clone ObjectShape
-   - Set `optional: false` for the property
-   - Re-intern shape
+**Remaining** ⏸️:
+3. **Lazy type resolution**: Requires adding resolver to NarrowingContext (architectural change)
+4. **Optional property promotion**: Requires ObjectShape cloning and re-interning
+5. **Prototype property checking**: Requires apparent.rs integration
 
 **Reference**: Gemini Question 1 response from review phase
 
-**Status**: ⏸️ Plan ready, Question 1 already done
+**Status**: ⏸️ Partially complete, 2 remaining fixes need architectural work
 
 ---
 
@@ -116,16 +109,17 @@ The narrowing logic in `src/solver/narrowing.rs` has 8+ critical bugs that cause
 
 ## Next Step
 
-**Start with Task 2** (`in` operator fix):
-- Question 1 already completed
-- Clear implementation plan
-- Will fix 4+ bugs at once
+**Task 3** (instanceof fix):
+- Simpler than Task 2 remaining work
+- Single line change: use `intersection2` instead of `narrow_to_type`
+- Quick win to maintain momentum
 
-**Then Task 3** (instanceof fix):
-- Simpler, quick win
-- Uses similar patterns
+**Task 2** (in operator fix):
+- 2 of 4 fixes complete
+- Remaining fixes require architectural changes
+- Deferred until after Task 3
 
-**Then Task 1** (discriminant narrowing):
+**Task 1** (discriminant narrowing):
 - Requires new Question 1
 - Most complex
 - Must not repeat revert mistakes
@@ -136,4 +130,5 @@ The narrowing logic in `src/solver/narrowing.rs` has 8+ critical bugs that cause
 
 - 2026-02-04: Completed review phase (8+ bugs found)
 - 2026-02-04: Redefined as implementation session
-- 2026-02-04: Ready to start Task 2 (in operator fix)
+- 2026-02-04: Partially completed Task 2 (2 of 4 fixes)
+- 2026-02-04: Commit 68c367e2b - unknown and intersection fixes
