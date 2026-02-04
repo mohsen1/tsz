@@ -173,6 +173,10 @@ pub struct TypeCache {
     /// Cached types for symbols.
     pub symbol_types: FxHashMap<SymbolId, TypeId>,
 
+    /// Cached instance types for class symbols (for TYPE position).
+    /// Distinguishes from symbol_types which holds constructor types for VALUE position.
+    pub symbol_instance_types: FxHashMap<SymbolId, TypeId>,
+
     /// Cached types for nodes.
     pub node_types: FxHashMap<u32, TypeId>,
 
@@ -190,6 +194,21 @@ pub struct TypeCache {
 
     /// Cached private constructor types (TypeIds) for assignability checks.
     pub private_constructor_types: FxHashSet<TypeId>,
+}
+
+impl Default for TypeCache {
+    fn default() -> Self {
+        Self {
+            symbol_types: FxHashMap::default(),
+            symbol_instance_types: FxHashMap::default(),
+            node_types: FxHashMap::default(),
+            relation_cache: FxHashMap::default(),
+            symbol_dependencies: FxHashMap::default(),
+            abstract_constructor_types: FxHashSet::default(),
+            protected_constructor_types: FxHashSet::default(),
+            private_constructor_types: FxHashSet::default(),
+        }
+    }
 }
 
 impl TypeCache {
@@ -227,6 +246,7 @@ impl TypeCache {
 
         for sym_id in &affected {
             self.symbol_types.remove(sym_id);
+            self.symbol_instance_types.remove(sym_id);
             self.symbol_dependencies.remove(sym_id);
         }
         self.node_types.clear();
@@ -241,6 +261,8 @@ impl TypeCache {
     /// Used to accumulate type information from multiple file checks for declaration emit.
     pub fn merge(&mut self, other: TypeCache) {
         self.symbol_types.extend(other.symbol_types);
+        self.symbol_instance_types
+            .extend(other.symbol_instance_types);
         self.node_types.extend(other.node_types);
         self.relation_cache.extend(other.relation_cache);
 
@@ -286,6 +308,10 @@ pub struct CheckerContext<'a> {
     // --- Caches ---
     /// Cached types for symbols.
     pub symbol_types: FxHashMap<SymbolId, TypeId>,
+
+    /// Cached instance types for class symbols (for TYPE position).
+    /// Distinguishes from symbol_types which holds constructor types for VALUE position.
+    pub symbol_instance_types: FxHashMap<SymbolId, TypeId>,
 
     /// Cached types for variable declarations (used for TS2403 checks).
     pub var_decl_types: FxHashMap<SymbolId, TypeId>,
@@ -549,6 +575,7 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             report_unresolved_imports: false,
             symbol_types: FxHashMap::default(),
+            symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             relation_cache: RefCell::new(FxHashMap::default()),
@@ -635,6 +662,7 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             report_unresolved_imports: false,
             symbol_types: FxHashMap::default(),
+            symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             relation_cache: RefCell::new(FxHashMap::default()),
@@ -723,6 +751,7 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             report_unresolved_imports: false,
             symbol_types: cache.symbol_types,
+            symbol_instance_types: cache.symbol_instance_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             relation_cache: RefCell::new(cache.relation_cache),
@@ -810,6 +839,7 @@ impl<'a> CheckerContext<'a> {
             compiler_options,
             report_unresolved_imports: false,
             symbol_types: cache.symbol_types,
+            symbol_instance_types: cache.symbol_instance_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             relation_cache: RefCell::new(cache.relation_cache),
@@ -971,6 +1001,7 @@ impl<'a> CheckerContext<'a> {
     pub fn extract_cache(self) -> TypeCache {
         TypeCache {
             symbol_types: self.symbol_types,
+            symbol_instance_types: self.symbol_instance_types,
             node_types: self.node_types,
             relation_cache: self.relation_cache.into_inner(),
             symbol_dependencies: self.symbol_dependencies,
