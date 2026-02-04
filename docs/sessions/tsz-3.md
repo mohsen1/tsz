@@ -1,10 +1,53 @@
-# Session tsz-3 - Global Symbol Resolution (Fix TS2304 Poisoning)
+# Session tsz-3 - instanceof Narrowing Implementation
 
 **Started**: 2026-02-04
 **Status**: ACTIVE
-**Focus**: Critical Conformance - Global Symbol Resolution
+**Focus**: Control Flow Analysis - instanceof Type Narrowing
 
-## Goal
+## Previous Work Completed
+
+✅ **Global Symbol Resolution (TS2304 Poisoning Fix)**
+- Fixed lib_contexts fallback in symbol resolver
+- Array globals now correctly report TS2339 for non-existent properties
+- Commit: `031b39fde`
+
+## Current Task: Implement instanceof Narrowing
+
+### Problem Statement
+Currently, `instanceof` checks are parsed but ignored by the solver. Types are not narrowed in `if (x instanceof Class)` blocks, which means:
+
+```typescript
+class A { methodA() {} }
+class B { methodB() {} }
+function f(x: A | B) {
+    if (x instanceof A) {
+        x.methodA(); // Should work but x is still A | B
+    } else {
+        x.methodB(); // Should work but x is still A | B
+    }
+}
+```
+
+### Implementation Plan
+
+**File**: `src/solver/narrowing.rs`
+
+1. **Locate** the `TypeGuard::Instanceof` match arm in `narrow_type` (approx line 1250)
+2. **Implement** helper method `narrow_by_instanceof(&self, source: TypeId, constructor: TypeId, sense: bool) -> TypeId`
+3. **Logic**:
+   - Use `classify_for_instance_type` from `type_queries_extended.rs` to extract `instance_type` from constructor
+   - If `sense` is `true`: Call `narrow_to_type(source, instance_type)`
+   - If `sense` is `false`: Call `narrow_excluding_type(source, instance_type)`
+
+### Key Files
+- `src/solver/narrowing.rs` - Main implementation
+- `src/solver/type_queries_extended.rs` - `classify_for_instance_type` helper
+- `src/solver/tests/narrowing_tests.rs` - Tests
+
+### Context
+**Previous Session**: Completed error formatting and module validation cleanup
+
+**Key Insight**: This is distinct from tsz-2's "Application Type Expansion" task. This work enables proper control flow analysis for class types.
 
 Fix the "poisoning" effect where missing global symbols (TS2304) cause types to default to `any`, which:
 - Suppresses subsequent type errors
