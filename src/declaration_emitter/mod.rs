@@ -2204,6 +2204,34 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::BigIntKeyword as u16 => self.write("bigint"),
             k if k == SyntaxKind::ThisKeyword as u16 => self.write("this"),
 
+            // Type predicate (for type guards and assertion functions)
+            k if k == syntax_kind_ext::TYPE_PREDICATE => {
+                if let Some(type_pred) = self.arena.get_type_predicate(type_node) {
+                    // Emit "asserts" modifier if present
+                    if type_pred.asserts_modifier {
+                        self.write("asserts ");
+                    }
+                    // Emit parameter name
+                    self.emit_node(type_pred.parameter_name);
+
+                    // For type guards (x is Type) or assertion type guards (asserts x is Type),
+                    // emit the "is Type" part. For simple asserts (asserts condition), omit it.
+                    let type_node = self.arena.get(type_pred.type_node);
+                    // Check if type_node is a meaningful type (not an empty/error placeholder)
+                    let has_meaningful_type = type_node.is_some_and(|n| {
+                        // Exclude error type and unknown
+                        n.kind != SyntaxKind::UnknownKeyword as u16
+                            && n.kind != SyntaxKind::NeverKeyword as u16 // Never might be valid
+                            && n.kind != 1 // Error type
+                    });
+
+                    if has_meaningful_type {
+                        self.write(" is ");
+                        self.emit_type(type_pred.type_node);
+                    }
+                }
+            }
+
             // Type reference
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {
