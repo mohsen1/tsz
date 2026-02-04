@@ -2,7 +2,7 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟢 ACTIVE - Phase 1 Complete, Moving to Phase 2 (2026-02-04)
+## Status: 🟢 ACTIVE - Phase 2 (Project Structure) - ~70% Complete (9/13 tasks)
 
 ### Completed Tasks (9)
 1. Class Heritage and Generics (type literal formatting fix)
@@ -83,35 +83,75 @@ export type RestArgs = [first: string, ...rest: number[]];
 **Commits:**
 - 131359852 (feat(tsz-4): implement Advanced Type Emission for declaration emit)
 
-#### Task 10: Triple-Slash Directive Emission (NEXT)
+---
+
+## Session Redefinition (2026-02-04)
+
+### Assessment
+**Status:** 🟢 **ON TRACK** - ~70% Complete (9/13 tasks)
+
+Phase 1 (Syntax Fidelity) is **COMPLETE**. The remaining work shifts from "How to print X" (Syntax) to "What to print" (Project Structure & Correctness).
 
 ### Phase 2: Project Structure & Metadata
 
-#### Task 10: Triple-Slash Directive Emission
+#### Task 10: Triple-Slash Directive Emission (NEXT)
 **Description**: Emit `/// <reference ... />` directives at the top of the file.
-**Complexity**: Low
-**Files**: `src/declaration_emitter/mod.rs` (`emit`)
-**Status**: Not started
+- **Why**: Essential for module resolution and file concatenation
+- **Complexity**: Low
+- **Files**: `src/declaration_emitter/mod.rs`
+- **Status**: Not started
 
-#### Task 11: JSDoc Comment Preservation
-**Description**: Extract JSDoc comments from the AST and emit them before their associated nodes.
-**Complexity**: Medium
-**Files**: `src/declaration_emitter/mod.rs`, `src/scanner/mod.rs`
-**Status**: Not started
+**Success Criteria:**
+```typescript
+// Input
+/// <reference path="other.ts" />
+/// <reference types="node" />
+export const x = 1;
 
-### Phase 3: The Enforcer (Final Boss)
+// Output
+/// <reference path="other.ts" />
+/// <reference types="node" />
+export declare const x: number;
+```
+
+#### Task 11: Import/Export Elision
+**Description**: Only emit imports that are actually used in the public API.
+- **Why**: Prevents broken `.d.ts` files that reference unused modules
+- **Complexity**: High (Requires usage analysis)
+- **Files**: `src/declaration_emitter/mod.rs`, `src/checker/` or `src/binder/mod.rs`
+- **Status**: Not started
+
+### Phase 3: The Enforcer (Final Polish)
 
 #### Task 12: Accessibility Diagnostics (TS4023/TS4058)
-**Description**: Implement the "Lawyer" logic for exports. Error when a public API references a type that is not exported, not reachable, or cannot be inlined.
-**Complexity**: High
-**Files**: `src/declaration_emitter/mod.rs`, `src/checker/diagnostics.rs`
-**Status**: Not started
+**Description**: Error when public API references non-exported types.
+- **Why**: Ensures we don't emit valid syntax that is semantically invalid
+- **Complexity**: High
+- **Files**: `src/declaration_emitter/mod.rs`, `src/checker/diagnostics.rs`
+- **Status**: Not started
+
+#### Task 13: JSDoc Comment Preservation
+**Description**: Extract and emit JSDoc comments.
+- **Why**: Critical for IDE experience, but `.d.ts` is valid without them
+- **Complexity**: Medium
+- **Files**: `src/declaration_emitter/mod.rs`, `src/scanner/mod.rs`
+- **Status**: Not started
 
 ---
 
 ## Immediate Next Step
 
-**Task 8: Destructuring Export Flattening**
+**Task 10: Triple-Slash Directive Emission**
+
+This is a quick win that stabilizes file structure before tackling complex elision logic.
+
+**Implementation Plan:**
+1. Locate where tsz stores parsed triple-slash directives (Parser/Scanner)
+2. Retrieve directives from SourceFile or ParserState
+3. Emit them at the very top of `emit_source_file`
+4. Handle both `path=` and `types=` attributes
+
+MANDATORY Gemini consultation required before implementation.
 
 This is the next task to work on. MANDATORY Gemini consultation is required before implementation per the workflow.
 
