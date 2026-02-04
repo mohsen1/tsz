@@ -7,6 +7,70 @@ description: Ask Gemini AI questions about the tsz TypeScript compiler codebase 
 
 This skill helps you ask Gemini AI questions about the tsz TypeScript compiler codebase with full project context. It automatically gathers relevant files, code skeletons, and documentation to provide accurate answers about architecture and implementation.
 
+## CRITICAL: How to Get Useful Answers
+
+**The key to getting useful answers is asking CONCRETE, SPECIFIC questions with all relevant context.**
+
+### DO: Ask Concrete Questions
+
+```bash
+# GOOD: Specific question with context
+./scripts/ask-gemini.mjs --solver "In src/solver/infer.rs, the function `infer_type_arguments` 
+at line 450 is returning `Type::Unknown` when I expect it to return `Type::String`. 
+The test case is:
+\`\`\`typescript
+function foo<T>(x: T): T { return x; }
+const result = foo('hello'); // result should be string
+\`\`\`
+What code path determines the return type here?"
+
+# GOOD: Ask for the specific code location
+./scripts/ask-gemini.mjs --solver "Where is the code that handles return type inference 
+for generic function calls? I need the exact file and function name."
+
+# GOOD: Ask about a specific code path
+./scripts/ask-gemini.mjs --checker "When checking `x = y` where x is number and y is string,
+what is the exact sequence of function calls from check_assignment to the error being reported?"
+```
+
+### DON'T: Ask Vague Questions
+
+```bash
+# BAD: Too vague - will get architectural overview instead of actionable answer
+./scripts/ask-gemini.mjs --solver "How does type inference work?"
+
+# BAD: No context about what you're trying to do
+./scripts/ask-gemini.mjs --solver "Why is the wrong type being used?"
+
+# BAD: Asking about behavior without providing the actual code
+./scripts/ask-gemini.mjs --checker "Why is this error happening?"
+```
+
+### Question Templates That Work
+
+**For debugging wrong type inference:**
+```bash
+./scripts/ask-gemini.mjs --solver "I'm debugging a case where [TYPE X] is inferred but [TYPE Y] is expected.
+The TypeScript code is: [PASTE CODE]
+I traced to function [FUNCTION NAME] in [FILE]. 
+What specific code decides between X and Y in this scenario?"
+```
+
+**For finding where something happens:**
+```bash
+./scripts/ask-gemini.mjs --solver "What is the exact function and file that handles [SPECIFIC OPERATION]?
+I need to know where to add a debug log to trace [SPECIFIC VALUE]."
+```
+
+**For understanding a code path:**
+```bash
+./scripts/ask-gemini.mjs --checker "Walk me through the exact call sequence when tsz processes:
+\`\`\`typescript
+[PASTE MINIMAL TYPESCRIPT CODE]
+\`\`\`
+Start from [ENTRY POINT] and list each function called until [END CONDITION]."
+```
+
 ## When to Use This Skill
 
 Use this skill when you need to:
@@ -135,10 +199,51 @@ function test_conditional_type_inference() {
 
 ### 3. Be Specific in Your Questions
 
-- Good: "How does the solver handle conditional type inference when the condition depends on a type parameter?"
-- Bad: "How do types work?"
+**This is the most important rule.** Vague questions get vague answers.
 
-### 4. Reference Files by Path
+- **Excellent:** "In `src/solver/infer.rs`, function `infer_from_call_expression` at line 340, what determines if the return type should be the constraint vs the inferred type argument when checking `foo<T>(x: T): T` called with `foo('hello')`?"
+- **Good:** "How does the solver handle conditional type inference when the condition depends on a type parameter? Which function makes this decision?"
+- **Bad:** "How do types work?"
+- **Terrible:** "Why is the wrong type being used?"
+
+### 4. Always Include Code Examples
+
+When debugging, ALWAYS include the minimal TypeScript that reproduces the issue:
+
+```bash
+./scripts/ask-gemini.mjs --solver "This TypeScript should infer 'string' but tsz infers 'unknown':
+
+\`\`\`typescript
+function identity<T>(x: T): T { return x; }
+const result = identity('hello');
+//    ^^^^^^ Expected: string, Got: unknown
+\`\`\`
+
+What is the code path from check_call_expression to where the return type is determined?
+I need to find where to add logging."
+```
+
+### 5. Ask for Specific Outputs
+
+Tell Gemini exactly what you want:
+
+```bash
+# Ask for file + function
+./scripts/ask-gemini.mjs --solver "What file and function handles generic type argument inference?
+Give me the exact path and function name so I can add a debug trace."
+
+# Ask for call sequence
+./scripts/ask-gemini.mjs --checker "List the exact sequence of function calls when type-checking:
+let x: number = 'hello';
+From Checker::check_variable_declaration to the error being emitted."
+
+# Ask for the decision point
+./scripts/ask-gemini.mjs --solver "Where is the code that decides whether a type parameter 
+should be inferred as its constraint vs the actual argument type?
+I need the exact if/match statement."
+```
+
+### 6. Reference Files by Path
 
 When you know specific files are relevant, include them:
 

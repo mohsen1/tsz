@@ -834,6 +834,8 @@ impl<'a> CheckerState<'a> {
         // because those are the same TypeIds used when lowering the type body.
         // Calling get_type_params_for_symbol would create fresh TypeIds that don't match.
         if result != TypeId::ANY && result != TypeId::ERROR {
+            // For class symbols, we need to cache BOTH the constructor type (for value position)
+            // and the instance type (for type position with typeof/TypeQuery resolution).
             let class_env_entry = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
                 if symbol.flags & symbol_flags::CLASS != 0 {
                     self.class_instance_type_with_params_from_symbol(sym_id)
@@ -849,21 +851,29 @@ impl<'a> CheckerState<'a> {
                 // Get the DefId if one exists (Phase 4.3 migration)
                 let def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
 
-                if let Some((instance_type, class_params)) = class_env_entry {
-                    if class_params.is_empty() {
-                        env.insert(SymbolRef(sym_id.0), instance_type);
-                        // Also register with DefId for Lazy type resolution
+                // For CLASS symbols:
+                // - `result` is the constructor type (Callable with construct signatures)
+                // - `instance_type` is the instance type (Object with properties)
+                //
+                // We cache the CONSTRUCTOR type in the type environment so that:
+                // - `typeof Animal` resolves to the constructor type
+                // - `Animal` used as a value resolves to the constructor type
+                //
+                // The instance type is still available via `class_instance_type_from_symbol`
+                // for type position contexts where it's needed.
+                if class_env_entry.is_some() {
+                    // This is a CLASS symbol - cache the constructor type (result)
+                    // NOT the instance type. The instance type is used for class
+                    // type position (e.g., `a: Animal`), not value position.
+                    if type_params.is_empty() {
+                        env.insert(SymbolRef(sym_id.0), result);
                         if let Some(def_id) = def_id {
-                            env.insert_def(def_id, instance_type);
+                            env.insert_def(def_id, result);
                         }
                     } else {
-                        env.insert_with_params(
-                            SymbolRef(sym_id.0),
-                            instance_type,
-                            class_params.clone(),
-                        );
+                        env.insert_with_params(SymbolRef(sym_id.0), result, type_params.clone());
                         if let Some(def_id) = def_id {
-                            env.insert_def_with_params(def_id, instance_type, class_params);
+                            env.insert_def_with_params(def_id, result, type_params);
                         }
                     }
                 } else if type_params.is_empty() {
