@@ -195,6 +195,10 @@ pub struct TypeCache {
 
     /// Cached private constructor types (TypeIds) for assignability checks.
     pub private_constructor_types: FxHashSet<TypeId>,
+
+    /// Maps DefIds to SymbolIds for declaration emit usage analysis.
+    /// Populated by CheckerContext during type checking, consumed by UsageAnalyzer.
+    pub def_to_symbol: FxHashMap<crate::solver::DefId, SymbolId>,
 }
 
 impl TypeCache {
@@ -266,6 +270,9 @@ impl TypeCache {
             .extend(other.protected_constructor_types);
         self.private_constructor_types
             .extend(other.private_constructor_types);
+
+        // Merge def_to_symbol mapping
+        self.def_to_symbol.extend(other.def_to_symbol);
     }
 }
 
@@ -994,6 +1001,7 @@ impl<'a> CheckerContext<'a> {
             abstract_constructor_types: self.abstract_constructor_types,
             protected_constructor_types: self.protected_constructor_types,
             private_constructor_types: self.private_constructor_types,
+            def_to_symbol: self.def_to_symbol.into_inner(),
         }
     }
 
@@ -1064,6 +1072,7 @@ impl<'a> CheckerContext<'a> {
         let def_id = self.definition_store.register(info);
         self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
         self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+
         def_id
     }
 
