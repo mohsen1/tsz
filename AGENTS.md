@@ -192,6 +192,29 @@ What exact function handles this? I need to add logging."
 
 This is not an exaggeration - it's a pattern proven by investigation.
 
+### 🚨 RATE LIMIT HANDLING - MANDATORY WAIT 🚨
+
+**If ask-gemini.mjs returns HTTP 429 (rate limit):**
+
+1. **STOP ALL IMPLEMENTATION WORK**
+2. **WAIT until rate limit resets** (typically 1-2 minutes, sometimes up to 60 minutes)
+3. **DO NOT proceed without Gemini consultation**
+
+**Under NO circumstances should you:**
+- Implement the fix anyway and "ask Gemini later"
+- Skip the review because "it's probably fine"
+- Commit code that hasn't been validated by Gemini
+
+**Why this is critical:**
+- Investigation of 500 commits proved that 100% of unreviewed solver/checker changes had critical bugs
+- The latest commit (f2d4ae5d5) had 3 critical type system bugs that Gemini immediately found
+- Waiting 60 minutes for rate limit reset is faster than spending days debugging broken code
+
+**If you hit rate limits:**
+- Take a break, document findings, or work on non-critical tasks (docs, tests, CLI)
+- Come back and ask Gemini once rate limit resets
+- Only proceed with implementation AFTER getting Gemini's guidance
+
 ---
 
 ## Git Workflow
