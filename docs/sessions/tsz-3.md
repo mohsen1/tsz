@@ -80,14 +80,19 @@ tsc: (no errors)
 
 **Impact**: This is a type formatting/display issue that affects many class-related type errors, not specific to arrays/tuples.
 
-**Conclusion**: Array and tuple inference appears to be working correctly. The main issue found is a broader problem with class instance type representation.
+**Investigation Deeper**: Attempted to fix by removing Object member merging in `src/checker/class_type.rs` (lines 848-869).
 
-## Next Steps
+**Result**: Fix reverted - broke abstract mixin pattern test (`test_abstract_mixin_intersection_ts2339`).
 
-Given that array/tuple inference is working, consider switching focus to:
-1. Fix the class instance type formatting issue (affects many tests)
-2. Move to a different area for this session
-3. Run broader conformance tests to identify higher-impact issues
+**Root Cause**: Object members are needed for internal type operations (intersection types, mixin patterns). Removing them breaks legitimate type system features.
+
+**Correct Fix**: The issue is in type **display/formatting**, not type structure. The TypeFormatter should filter out common Object prototype methods when displaying types in error messages, similar to how tsc suppresses these. The TypeFormatter is in `src/solver/format.rs`.
+
+**Status**: Class instance type formatting issue identified and understood, but fix requires careful implementation to avoid breaking existing functionality.
+
+## Conclusion
+
+Array and tuple inference is working correctly. The class instance type formatting issue is real but complex to fix without breaking other features. This is a display/formatting problem, not a type correctness problem.
 
 ## Session Coordination
 
