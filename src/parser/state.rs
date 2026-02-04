@@ -36,6 +36,10 @@ pub(crate) const CONTEXT_FLAG_PARAMETER_DEFAULT: u32 = 8;
 pub(crate) const CONTEXT_FLAG_DISALLOW_IN: u32 = 16;
 /// Context flag: inside an ambient context (declare namespace/module)
 pub(crate) const CONTEXT_FLAG_AMBIENT: u32 = 32;
+/// Context flag: inside the 'true' branch of a conditional expression (a ? [here] : c)
+/// When set, arrow function lookahead should not treat ':' as a return type annotation
+/// because the ':' belongs to the enclosing conditional expression
+pub(crate) const CONTEXT_FLAG_IN_CONDITIONAL_TRUE: u32 = 64;
 
 // =============================================================================
 // Parse Diagnostic
