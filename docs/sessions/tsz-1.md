@@ -127,7 +127,34 @@ Fixed critical bug in `src/solver/operations.rs` `resolve_generic_call_inner`:
 
 **Commit**: `1d735dacc` - "fix(tsz-1): reverse contextual type constraint direction (Rule #32)"
 
-### Priority 2: Homomorphic Mapped Types & Modifier Preservation (Rule #27)
+### ✅ Priority 2: Homomorphic Mapped Types & Modifier Preservation (COMPLETE 2026-02-04)
+**Goal**: Ensure mapped types like `{ [K in keyof T]: T[K] }` correctly preserve readonly and optional modifiers from source type T.
+
+**Solution Implemented**:
+Fixed src/solver/evaluate_rules/mapped.rs based on Gemini Pro review:
+
+1. **Enhanced is_homomorphic_mapped_type** - Verifies that `T` in `keyof T` matches `T` in `T[K]`
+2. **Enhanced get_property_modifiers_for_key**:
+   - Handles Intersections (checks all constituents)
+   - Handles TypeParameters (looks at constraint)
+   - Handles Lazy types (evaluates to concrete structure)
+3. **Modifier Merging Logic**:
+   - Required if ANY constituent is required
+   - Readonly if ANY constituent is readonly
+
+**Files Modified**:
+- `src/solver/evaluate_rules/mapped.rs`: Lines ~48-490
+
+**Impact**:
+- Fixes `Partial<T>`, `Required<T>`, `Readonly<T>` utility types
+- Critical for modern TypeScript libraries
+- Unblocks tsz-2 (Conditional Types)
+
+**Gemini Pro Review**: ✅ APPROVED - Matches TypeScript Rule #27
+
+**Commit**: `e91b8ce15` - "fix(tsz-1): implement homomorphic mapped types modifier preservation"
+
+**TODO**: Array/Tuple preservation deferred to future work (marked in code)
 **Goal**: Ensure mapped types like `{ [K in keyof T]: T[K] }` correctly preserve `readonly` and `optional` modifiers from source type.
 
 **Files**:
