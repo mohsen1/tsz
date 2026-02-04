@@ -32,7 +32,7 @@ use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::solver::{BinderTypeDatabase, FlowTypeEvaluator, QueryCache, TypeId};
+use crate::solver::{FlowTypeEvaluator, TypeId};
 use rustc_hash::FxHashSet;
 
 // =============================================================================
@@ -1370,23 +1370,15 @@ impl<'a> CheckerState<'a> {
 
         eprintln!("DEBUG apply_flow_narrowing: calling get_flow_type");
 
-        // CRITICAL FIX: Use BinderTypeDatabase to allow Lazy type resolution during narrowing.
-        // This connects the TypeInterner with the TypeEnvironment so type aliases can be resolved.
-        let query_cache = QueryCache::new(self.ctx.types);
-        let type_db = BinderTypeDatabase::new(
-            &query_cache,
-            self.ctx.binder,
-            self.ctx.type_environment.clone(),
-        );
-
-        // Create a flow analyzer using the type_db instead of raw types
+        // Create a flow analyzer and apply narrowing
         let analyzer = FlowAnalyzer::with_node_types(
             self.ctx.arena,
             self.ctx.binder,
-            &type_db,
+            self.ctx.types,
             &self.ctx.node_types,
         )
-        .with_flow_cache(&self.ctx.flow_analysis_cache);
+        .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_type_environment(self.ctx.type_environment.clone());
 
         let result = analyzer.get_flow_type(idx, declared_type, flow_node);
         eprintln!("DEBUG apply_flow_narrowing: result={}", result.0);

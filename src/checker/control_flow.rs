@@ -297,6 +297,7 @@ impl<'a> FlowAnalyzer<'a> {
             // Check if this is a merge point that needs all antecedents processed first
             let is_switch_fallthrough =
                 flow.has_any_flags(flow_flags::SWITCH_CLAUSE) && flow.antecedent.len() > 1;
+            let is_loop_header = flow.has_any_flags(flow_flags::LOOP_LABEL);
             let is_merge_point = flow
                 .has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
                 || is_switch_fallthrough;
@@ -304,9 +305,13 @@ impl<'a> FlowAnalyzer<'a> {
             if is_merge_point && !flow.antecedent.is_empty() {
                 // For merge points, check if all required antecedents are processed
                 // For SWITCH_CLAUSE, we check fallthrough antecedents (index 1+)
-                // For BRANCH/LOOP, we check all antecedents
+                // For BRANCH, we check all antecedents
+                // For LOOP_LABEL, we only require the first antecedent (entry flow) to be ready
                 let antecedents_to_check: Vec<FlowNodeId> = if is_switch_fallthrough {
                     flow.antecedent.iter().skip(1).copied().collect()
+                } else if is_loop_header {
+                    // For loops, only check the first antecedent (entry flow)
+                    flow.antecedent.first().copied().into_iter().collect()
                 } else {
                     flow.antecedent.clone()
                 };
@@ -351,18 +356,40 @@ impl<'a> FlowAnalyzer<'a> {
                     current_type // Will be updated when antecedents are processed
                 }
             } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
-                // Loop label - union types from entry and back-edges
-                if flow.antecedent.is_empty() {
-                    current_type
+                // CRITICAL FIX: Conservative Loop Widening
+                // We cannot safely analyze back-edges in a single-pass backward walk because
+                // the loop body might mutate the variable, invalidating the narrowing.
+                //
+                // Strategy:
+                // 1. Get the type entering the loop (Antecedent 0).
+                // 2. If the variable is mutable (let/var), conservatively widen to the
+                //    initial declared type to account for potential assignments.
+                // 3. If immutable (const), the type cannot change, so preserve narrowing.
+                //
+                // This matches TypeScript's behavior: mutations in loops reset narrowing
+                // to the declared type for mutable variables.
+
+                let entry_type = if let Some(&ant) = flow.antecedent.first() {
+                    // Ensure entry is processed (is_merge_point logic guarantees this)
+                    *results.get(&ant).unwrap_or(&current_type)
                 } else {
-                    // Add all antecedents to worklist
-                    for &ant in &flow.antecedent {
-                        if !in_worklist.contains(&ant) && !visited.contains(&ant) {
-                            worklist.push_back((ant, current_type));
-                            in_worklist.insert(ant);
-                        }
+                    current_type
+                };
+
+                if let Some(sym_id) = symbol_id {
+                    let is_const = self.is_const_symbol(sym_id);
+                    if !is_const {
+                        // Mutable: Widen to initial_type (declared type)
+                        // This accounts for potential mutations inside the loop
+                        self.interner.union2(entry_type, initial_type)
+                    } else {
+                        // Const: Preserve entry narrowing
+                        // Constants cannot be reassigned, so narrowing is safe
+                        entry_type
                     }
-                    current_type // Will be updated when antecedents are processed
+                } else {
+                    // No symbol info: conservatively widen
+                    self.interner.union2(entry_type, initial_type)
                 }
             } else if flow.has_any_flags(flow_flags::CONDITION) {
                 // Condition node - apply narrowing
@@ -1786,6 +1813,47 @@ impl<'a> FlowAnalyzer<'a> {
             }
             flags |= parent_node.flags as u32;
         }
+        (flags & node_flags::CONST) != 0
+    }
+
+    /// Check if a symbol is const (immutable) vs mutable (let/var).
+    ///
+    /// This is used for loop widening: const variables preserve narrowing through loops,
+    /// while mutable variables are widened to the declared type to account for mutations.
+    fn is_const_symbol(&self, sym_id: SymbolId) -> bool {
+        use crate::parser::node_flags;
+        use crate::parser::syntax_kind_ext;
+
+        let symbol = match self.binder.get_symbol(sym_id) {
+            Some(sym) => sym,
+            None => return false, // Assume mutable if we can't determine
+        };
+
+        // Check the value declaration
+        let decl_idx = symbol.value_declaration;
+        if decl_idx.is_none() {
+            return false; // Assume mutable if no declaration
+        }
+
+        let decl_node = match self.arena.get(decl_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+
+        // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(ext) = self.arena.get_extended(decl_idx) {
+                if !ext.parent.is_none() {
+                    if let Some(parent_node) = self.arena.get(ext.parent) {
+                        let flags = parent_node.flags as u32;
+                        return (flags & node_flags::CONST) != 0;
+                    }
+                }
+            }
+        }
+
+        // For other node types, check the node's own flags
+        let flags = decl_node.flags as u32;
         (flags & node_flags::CONST) != 0
     }
 
