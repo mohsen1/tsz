@@ -8,31 +8,33 @@
 
 **Completed Work:**
 
-1. **UsageAnalyzer Implementation (commit `da0fcb9df`)**
-   - ✅ Created `src/declaration_emitter/usage_analyzer.rs` (783 lines)
+1. **UsageAnalyzer Implementation** (commits `da0fcb9df`, `a250935f8`)
+   - ✅ Created `src/declaration_emitter/usage_analyzer.rs`
    - ✅ Hybrid AST/Semantic walk for tracking used symbols
-   - ✅ Fixed all 4 critical bugs from Gemini Question 2 review:
-     1. Removed incorrect private member skip
-     2. Implemented actual symbol resolution via `ctx.binder.get_node_symbol()`
-     3. Added ModuleNamespace(SymbolRef) handling
-     4. Added computed property name handling
+   - ✅ Refactored to use components instead of CheckerContext
    - ✅ Added `def_to_symbol` field to `TypeCache`
+   - ✅ Handles inferred types, qualified names, computed properties
 
-2. **Test Structure Created (commit `fb15e09cd`)**
+2. **Test Structure Created** (commit `fb15e09cd`)
    - ✅ Added 11 comprehensive test cases
    - ✅ Tests structured in `src/declaration_emitter/tests/`
-   - ⏸ Tests are TODO placeholders (require full CheckerContext initialization)
 
-**Next Steps (Gemini-Recommended Priority):**
+3. **TypeEnvironment Unification** (commits via tsz-3, merged 2026-02-04)
+   - ✅ FlowAnalyzer can now resolve Lazy types during narrowing
+   - ✅ type_environment population fix completes TypeResolver infrastructure
 
-1. **Priority 1:** ✅ COMPLETED - Unit test structure created
-2. **Priority 2:** 🔄 IN PROGRESS - Run conformance tests for baseline
+**Current Task:**
+
+**Priority 1:** ⏳ **IN PROGRESS** - Integrate UsageAnalyzer into DeclarationEmitter
+   - Location: `src/emitter/declarations.rs`
+   - **BLOCKED**: Requires Gemini Question 1 (Approach Validation) per AGENTS.md
+   - Must modify DeclarationEmitter to use UsageAnalyzer
+   - Must filter import emission based on usage results
+
+**Priority 2:** ⏸ PENDING - Run conformance tests for baseline
    - Goal: Identify tests failing due to extra/missing imports
    - Command: `./scripts/conformance.sh --filter=decl`
-3. **Priority 3:** ⏳ PENDING - Integrate UsageAnalyzer into DeclarationEmitter
-   - **MUST ASK GEMINI QUESTION 1 FIRST** (Approach Validation)
-   - Modify DeclarationEmitter to use UsageAnalyzer
-   - Filter import emission based on usage results
+   - Should be done AFTER integration is complete
 
 **Key Architecture Decisions:**
 - UsageAnalyzer uses hybrid walk: AST for explicit types, Semantic for inferred
