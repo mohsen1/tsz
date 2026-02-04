@@ -835,8 +835,13 @@ impl<'a> UsageAnalyzer<'a> {
     /// - Local symbols: Added to used_symbols (for elision logic)
     /// - Foreign symbols: Added to both used_symbols AND foreign_symbols (for import generation)
     fn mark_symbol_used(&mut self, sym_id: SymbolId) {
+        eprintln!("[DEBUG] mark_symbol_used: sym_id={:?}", sym_id);
         // Check if this is a lib/global symbol
         if self.binder.lib_symbol_ids.contains(&sym_id) {
+            eprintln!(
+                "[DEBUG] mark_symbol_used: sym_id={:?} is lib symbol - skipping",
+                sym_id
+            );
             // Global symbol - don't track for imports
             return;
         }
@@ -849,11 +854,20 @@ impl<'a> UsageAnalyzer<'a> {
             .map(|arena| Arc::ptr_eq(arena, &self.current_arena))
             .unwrap_or(false);
 
+        eprintln!(
+            "[DEBUG] mark_symbol_used: sym_id={:?} is_local={}",
+            sym_id, is_local
+        );
+
         // Always add to used_symbols (for elision)
         self.used_symbols.insert(sym_id);
 
         // If it's from another file, track as foreign (for import generation)
         if !is_local {
+            eprintln!(
+                "[DEBUG] mark_symbol_used: sym_id={:?} is FOREIGN - adding to foreign_symbols",
+                sym_id
+            );
             self.foreign_symbols.insert(sym_id);
         }
     }
