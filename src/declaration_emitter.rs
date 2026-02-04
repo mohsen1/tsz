@@ -295,6 +295,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write_indent();
 
+        // Check if abstract for special handling
+        let is_abstract = self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16);
+
         // Modifiers
         self.emit_member_modifiers(&prop.modifiers);
 
@@ -310,8 +313,8 @@ impl<'a> DeclarationEmitter<'a> {
         if !prop.type_annotation.is_none() {
             self.write(": ");
             self.emit_type(prop.type_annotation);
-        } else if !prop.initializer.is_none() {
-            // No explicit type but has initializer - use inferred type
+        } else if is_abstract || !prop.initializer.is_none() {
+            // For abstract properties OR properties with initializers, use inferred type
             if let Some(type_id) = self.get_node_type(prop_idx) {
                 self.write(": ");
                 self.write(&self.print_type_id(type_id));
