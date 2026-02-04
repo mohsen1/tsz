@@ -1779,16 +1779,27 @@ impl<'a> FlowAnalyzer<'a> {
 
                 // Handle truthiness narrowing for property/element access: if (y.a)
                 if self.is_matching_reference(condition_idx, target) {
-                    // Use TypeGuard::Truthy for Solver-First architecture
-                    return narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch);
+                    if is_true_branch {
+                        // Remove null/undefined (truthy narrowing)
+                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+                        let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                        return narrowed;
+                    }
+                    // False branch - keep only falsy types (use Solver for NaN handling)
+                    return narrowing.narrow_to_falsy(type_id);
                 }
             }
 
             // Truthiness check: if (x)
             _ => {
                 if self.is_matching_reference(condition_idx, target) {
-                    // Use TypeGuard::Truthy for Solver-First architecture
-                    return narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch);
+                    if is_true_branch {
+                        // Remove null/undefined (truthy narrowing)
+                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+                        return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                    }
+                    // False branch - keep only falsy types (use Solver for NaN handling)
+                    return narrowing.narrow_to_falsy(type_id);
                 }
             }
         }
