@@ -1,5 +1,11 @@
 # Session tsz-3
-
+## WORK IS NEVER DONE UNTIL ALL TESTS PASS
+Work is never done until all tests pass. This includes:
+- Unit tests (`cargo nextest run`)
+- Conformance tests (`./scripts/conformance.sh`)
+- No existing `#[ignore]` tests
+- No cleanup work left undone
+- No large files (>3000 lines) left unaddressed
 ## Current Work
 
 **Status**: Heritage clause symbol resolution fixed, but test fails due to separate bug
