@@ -443,6 +443,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .intern(crate::solver::TypeKey::ReadonlyType(inner_type));
             }
 
+            // Handle keyof operator
+            if operator == SyntaxKind::KeyOfKeyword as u16 {
+                return self
+                    .ctx
+                    .types
+                    .intern(crate::solver::TypeKey::KeyOf(inner_type));
+            }
+
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
                 // unique is handled differently - it's a type modifier for symbols

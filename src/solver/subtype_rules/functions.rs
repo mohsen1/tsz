@@ -862,7 +862,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// When a QueryDatabase is available (via `with_query_db`), routes through Salsa
     /// for memoization. Otherwise falls back to creating a fresh TypeEvaluator.
+    ///
+    /// For Lazy(DefId) types, the resolver is tried first because the checker may
+    /// have populated DefId→TypeId mappings (e.g., for interfaces/type aliases) that
+    /// the query_db's resolver-less evaluator cannot resolve.
     pub(crate) fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+        // For Lazy types, always try the resolver first. The checker populates
+        // the TypeEnvironment with DefId→TypeId mappings that the query_db's
+        // evaluate_type (which uses a no-resolver evaluator) cannot resolve.
+        if let Some(def_id) = crate::solver::visitor::lazy_def_id(self.interner, type_id) {
+            if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
+                return resolved;
+            }
+        }
         if let Some(db) = self.query_db {
             return db.evaluate_type(type_id);
         }
