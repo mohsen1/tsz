@@ -8,27 +8,24 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Fixed TS1440/TS1068 for invalid var/let in class members - investigating remaining errors
+**Status**: ✅ Fixed ClassDeclaration26.ts conformance test
 
-**Fixed Issues**:
-1. ✅ TS1440 at line 3 col 18 for `public const var export foo`
-2. ✅ TS1068 at line 5 col 5 for `var constructor()`
+**Completed** (commit 8e21d5d71):
+Successfully fixed ClassDeclaration26.ts to match TypeScript's error output exactly:
+1. ✅ Line 3 col 18: TS1440 - Variable declaration not allowed
+2. ✅ Line 5 col 5: TS1068 - Unexpected token
+3. ✅ Line 5 col 20: TS1005 - ',' expected
+4. ✅ Line 5 col 23: TS1005 - '=>' expected
+5. ✅ Line 6 col 1: TS1128 - Declaration or statement expected
 
-**Changes Made** (commit 2b8dcd225):
-- Updated `parse_class_member_modifiers` to emit TS1440 when var/let is used as invalid modifier
-- Special case: emit TS1068 when var/let is followed by 'constructor'
-- Fixed const handling to skip const when followed by var/let
-- Fixed error position to be at the var/let token, not following token
+**Key Changes**:
+- When var/let appears before 'constructor', emit TS1068 instead of TS1440
+- Add var/let to modifiers list and return early from `parse_class_member_modifiers`
+- Skip constructor/method parsing when var/let is in modifiers
+- When var/let + () pattern detected, emit TS1005 errors at '(' and '{'
+- Return NONE and parse statement for recovery to cause TS1128 at '}'
 
-**Remaining Issues** for ClassDeclaration26.ts:
-- Line 5 col 20, 23: Missing TS1005 errors - ',' and '=>' expected
-- Line 6 col 1: Missing TS1128 - Declaration or statement expected
-
-These errors occur because after emitting TS1068 for `var constructor`, the parser tries to parse the rest as a valid constructor, when it should stop or emit additional errors about the malformed syntax.
-
-**Next Step**: Need to handle the recovery after emitting TS1068 for `var constructor()` to produce the remaining TS1005 errors.
-
-**Conformance Status**: Testing in progress...
+**Next**: Investigate other failing conformance tests, particularly TS1005 errors (13 missing from earlier run).
 
 ### Punted Items
 
