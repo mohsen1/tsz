@@ -12285,8 +12285,8 @@ let str: string = s;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2322),
-        "Expected error 2322 for string enum to string assignment, got: {:?}",
+        !codes.contains(&2322),
+        "String enum values should be assignable to string (no TS2322), got: {:?}",
         codes
     );
 }

@@ -145,5 +145,18 @@ This requires understanding:
 - When types should be evaluated vs lazily resolved
 - The relationship between TypeDatabase, TypeResolver, and QueryCache
 
-### Status: NEEDS ARCHITECTURE EXPERTISE
-This is a complex lazy type evaluation issue that requires deep knowledge of the solver architecture. Recommend deferring to expert session or filing detailed issue.
+### BLOCKED: TS2540 Readonly Properties (Deferred to Solver Refactoring)
+
+**Issue**: Interface readonly properties not flagged when accessed via element access
+
+**Root Cause**: `property_is_readonly` cannot handle `TypeKey::Lazy` types. Interfaces use Lazy wrapper.
+
+**Architectural Gap**: Per NORTH_STAR Rule 3, Checker should NOT inspect type internals. The Solver needs to expose a query that handles Lazy resolution transparently.
+
+**Attempted Fix**: Adding Lazy case in `property_is_readonly` failed - needs resolver context not available.
+
+**Status**: DEFERRED - Requires Solver refactoring, not a Checker patch. 4 tests affected.
+
+## Current Task: Find New Error Cluster
+
+Moving on from TS2540 to find other fixable issues in the remaining 50 failing tests.
