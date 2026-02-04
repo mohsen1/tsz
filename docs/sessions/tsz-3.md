@@ -53,28 +53,34 @@ Correct exhaustiveness checking is critical for:
 
 ---
 
-### Task 2: Exhaustiveness Detection
-**File**: `src/checker/flow_analysis.rs`
+### Task 2: Exhaustiveness Detection 🐛 BUG FOUND
+**File**: `src/checker/control_flow.rs`
 
-Implement logic to detect when a union is fully covered:
-- Collect all case discriminant values
-- Check if they cover all union members
-- When covered, narrow variable to `never` in default/after switch
+**Gemini Guidance (Question 1 Response)**:
+- ✅ Current `narrow_by_default_switch_clause` is **semantically correct**
+- ✅ Uses subtraction: `T \ C1 \ C2...` which naturally returns `never` when exhausted
+- ⚠️ Can be optimized: batch subtraction `T \ {C1, C2...}` instead of iterative
+- ❌ Don't manually "detect" exhaustion - let Solver's subtraction do it
+- ❌ Don't modify FlowNode structure - not needed
 
-**Example**:
-```typescript
-type Action = { type: "add" } | { type: "remove" };
-function handle(action: Action) {
-  switch (action.type) {
-    case "add": /* action is { type: "add" } */
-    case "remove": /* action is { type: "remove" } */
-    default: /* action should be never here */
-  }
-  // action should be never here
-}
+**Test Result - BUG FOUND**:
+Test case: `type Action = { type: "add" } | { type: "remove" }` with switch covering both cases.
+
+**Expected**: Default clause should narrow to `never`
+**Actual**: Default clause still sees `Action` (not narrowed)
+**Error**: `Type 'Action' is not assignable to type 'never'`
+
+**Debug Output**:
+```
+DEBUG apply_flow_narrowing: result=123
+// result is still original Action type (123), not never
 ```
 
-**Status**: ⏸️ Not started
+**Root Cause Analysis Needed**:
+The `narrow_by_default_switch_clause` function (line 1440-1476) iterates through cases and subtracts them, but the result is not narrowing to `never` as expected.
+
+**Status**: 🐛 Bug found - exhaustiveness not working despite correct-looking code
+**Next**: Debug why subtraction isn't producing `never`
 
 ---
 

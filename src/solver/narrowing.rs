@@ -662,7 +662,6 @@ impl<'a> NarrowingContext<'a> {
         }
 
         if source_type == TypeId::UNKNOWN {
-<<<<<<< HEAD
             // For unknown, narrow to object & { prop: unknown } in the true branch
             // This matches TypeScript's behavior where "prop" in x narrows x to have that property
             if present {
@@ -684,24 +683,6 @@ impl<'a> NarrowingContext<'a> {
                 trace!("UNKNOWN in false branch for in operator, returning NEVER");
                 return TypeId::NEVER;
             }
-=======
-            // For unknown, narrow to object & { [prop]: unknown }
-            // This matches TypeScript's behavior where `in` check on unknown
-            // narrows to object type with the property
-            let prop_type = TypeId::UNKNOWN;
-            let required_prop = PropertyInfo {
-                name: property_name,
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: false, // Property becomes required after `in` check
-                readonly: false,
-                is_method: false,
-            };
-            let filter_obj = self.interner.object(vec![required_prop]);
-            let narrowed = self.interner.intersection2(TypeId::OBJECT, filter_obj);
-            trace!("Narrowing unknown to object & property = {}", narrowed.0);
-            return narrowed;
->>>>>>> b1266687d (fix(narrowing): fix instanceof and in operator narrowing bugs)
         }
 
         // If source is a union, filter members based on property presence
@@ -817,18 +798,6 @@ impl<'a> NarrowingContext<'a> {
     /// Returns true if the type has the property (required or optional),
     /// or has an index signature that would match the property.
     fn type_has_property(&self, type_id: TypeId, property_name: Atom) -> bool {
-<<<<<<< HEAD
-        // TODO: Resolve Lazy types before checking properties
-        // This requires adding resolver access to NarrowingContext
-        // For now, Lazy types will not be properly handled
-
-        // Check intersection types - property exists if ANY member has it
-        if let Some(members_id) = intersection_list_id(self.interner, type_id) {
-            let members = self.interner.type_list(members_id);
-            return members
-                .iter()
-                .any(|&member| self.type_has_property(member, property_name));
-=======
         self.get_property_type(type_id, property_name).is_some()
     }
 
@@ -846,7 +815,6 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
             return None;
->>>>>>> b1266687d (fix(narrowing): fix instanceof and in operator narrowing bugs)
         }
 
         // Check object shape
