@@ -1348,10 +1348,13 @@ impl<'a> CheckerState<'a> {
                 let alias_type = self.get_type_from_type_node(type_alias.type_node);
                 self.pop_type_parameters(updates);
 
+                // CRITICAL FIX: Always create DefId for type aliases, not just when they have type parameters
+                // This enables Lazy type resolution via TypeResolver during narrowing operations
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+
                 // Cache type parameters for Application expansion (Priority 1 fix)
                 // This enables ExtractState<NumberReducer> to expand correctly
                 if !params.is_empty() {
-                    let def_id = self.ctx.get_or_create_def_id(sym_id);
                     self.ctx.insert_def_type_params(def_id, params.clone());
                 }
 
