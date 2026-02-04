@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 3 Active - Task 9: typeof Narrowing (IN PROGRESS)
+**Status**: 🟢 Phase 3 Active - Task 9: typeof Narrowing (COMPLETE)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -593,6 +593,36 @@ However, to achieve the goal of matching `tsc` behavior exactly, additional narr
 - **is_unit_type too restrictive**: Made it recursively check union members - all members must be unit types
 - Before: Returned false for unions, preventing narrowing like `x !== y` where y: "A" | "B"
 - After: Correctly handles unions of unit types
+
+### Task 9 Complete ✅
+
+**Commit**: `36a76bc0d` - "fix(tsz-2): fix typeof narrowing for 'object' case"
+
+**Discovery**: typeof narrowing infrastructure was already partially implemented, but had critical bugs in the "object" case.
+
+**Changes Made**:
+1. Fixed "object" case to include `null`
+   - Before: `"object" => TypeId::OBJECT` (comment claimed it included null, but didn't)
+   - After: `"object" => self.db.union2(TypeId::OBJECT, TypeId::NULL)`
+   - Reason: `typeof null === "object"` in JavaScript
+
+2. Fixed "object" case to exclude functions
+   - Functions are a subtype of Object, so `narrow_to_type` kept them
+   - But `typeof function === "function"`, not "object"
+   - Added explicit `self.narrow_excluding_function(narrowed)` call
+
+3. Removed duplicate function definitions
+   - Removed duplicate `narrow_to_falsy`, `falsy_component`, `literal_is_falsy`
+   - Lines 1901-2015 were duplicates of the correct implementations at lines 1751+
+
+**Gemini Guidance**: Followed Two-Question Rule
+- Question 1: Asked about approach - discovered typeof was already implemented
+- Question 2: Gemini found both bugs (missing null, missing function exclusion)
+
+**Critical Bug Fixed**:
+- The comment on line 642 said "// includes null" but the code was `TypeId::OBJECT`
+- For `UNKNOWN` it was correct, but for regular types it was wrong
+- This would have caused incorrect narrowing in real-world TypeScript code
 
 
 ---
