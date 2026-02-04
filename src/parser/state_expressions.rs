@@ -1717,6 +1717,11 @@ impl ParserState {
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
         let text = self.scanner.get_token_value_ref().to_string();
+
+        // Check if this numeric literal has an invalid separator (for TS1351 check)
+        let has_invalid_separator =
+            (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidSeparator as u32) != 0;
+
         self.report_invalid_numeric_separator();
         let value = if text.as_bytes().contains(&b'_') {
             let mut sanitized = String::with_capacity(text.len());
@@ -1730,6 +1735,19 @@ impl ParserState {
             text.parse::<f64>().ok()
         };
         self.next_token();
+
+        // TS1351: If a numeric literal has an invalid separator and is immediately
+        // followed by an identifier or keyword, report "identifier cannot follow numeric literal"
+        // In this case, skip the identifier to avoid "Cannot find name" error (TS2304)
+        if has_invalid_separator && self.is_identifier_or_keyword() {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "An identifier or keyword cannot immediately follow a numeric literal.",
+                diagnostic_codes::IDENTIFIER_AFTER_NUMERIC_LITERAL,
+            );
+            // Skip the identifier to prevent cascading TS2304 errors
+            self.next_token();
+        }
 
         self.arena.add_literal(
             SyntaxKind::NumericLiteral as u16,

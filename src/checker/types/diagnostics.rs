@@ -543,6 +543,8 @@ pub mod diagnostic_codes {
 
     // Promise/async errors
     pub const AWAIT_OUTSIDE_ASYNC: u32 = 1308;
+    /// TS1351: An identifier or keyword cannot immediately follow a numeric literal.
+    pub const IDENTIFIER_AFTER_NUMERIC_LITERAL: u32 = 1351;
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: u32 = 1359;
     pub const TYPE_IS_NOT_A_PROMISE: u32 = 2345;
     pub const ASYNC_FUNCTION_MUST_RETURN_PROMISE: u32 = 2697; // An async function or method must return a 'Promise'.
