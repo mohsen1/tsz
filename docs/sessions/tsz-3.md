@@ -33,19 +33,42 @@ if ((o = fn()).done) {
 **Expected**: No errors (narrowing works)
 **Actual**: TS2322 error - `o.value` is type `1 | 2` instead of `1`
 
-### Investigation Plan (from Gemini)
+### Investigation Findings
 
-1. **Locate Guard Extraction Logic**: Find where `TypeGuard`s are created in the checker
-   - Likely in `src/checker/control_flow*.rs` or `src/checker/type_checking.rs`
-   - Checker needs to recognize patterns like `if ((x = val).kind === "A")`
+**Step 1: Locate TypeGuard Extraction** ✅ COMPLETE
 
-2. **Verify Solver Support**: Check `src/solver/narrowing.rs`
-   - `narrow_by_discriminant` function (lines 268-297) - handles the "WHAT" part
-   - `find_discriminants` (lines 174-263) - finds discriminant properties
+Found in `src/checker/control_flow_narrowing.rs:1779`:
+- Function `extract_type_guard` extracts type guards from binary expressions
+- Expects condition to be a binary expression like `x.done === true`
+- Line 1784: `let bin = self.arena.get_binary_expr(cond_node)?;`
 
-3. **Debug Path**: Use tracing to check if `narrow_by_discriminant` is called
-   - If not called → issue is upstream in checker's flow analysis
-   - If called but returns wrong type → issue in narrowing logic
+**The Problem**: Our test has `(o = fn()).done` which is NOT a simple binary expression:
+- It's an assignment expression: `o = fn()`
+- Wrapped in property access: `.done`
+- The function expects a direct binary expression, not a property access on an assignment
+
+**Step 2: Flow Analysis** ✅ INVESTIGATED
+
+In `src/checker/flow_analysis.rs:215-240`:
+- Line 218-222: Calls `collect_assignments_in_expression` on if condition
+- This tracks assignments in the condition for definite assignment analysis
+- But doesn't extract type guards for narrowing
+
+**Missing Link**: The type guard extraction happens elsewhere, and it needs to handle:
+1. Unwrapping assignment expressions to get the actual value
+2. Handling property access expressions as discriminant checks
+3. Connecting the flow analysis with the narrowing system
+
+### Root Cause
+
+The type guard extraction code (`extract_type_guard`) doesn't handle complex expressions like:
+- `(x = val).prop` - assignment with property access
+- It expects simple binary expressions like `x.prop === value`
+
+### Next Investigation Step
+
+Find where `extract_type_guard` is called and understand the flow from:
+IF statement → condition expression → type guard extraction → narrowing application
 
 ### Key Files
 - `src/checker/control_flow*.rs` - Type guard extraction
