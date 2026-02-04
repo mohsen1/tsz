@@ -747,12 +747,6 @@ impl<'a> DiagnosticBuilder<'a> {
                 )
             );
 
-        eprintln!(
-            "DEBUG TypeDiagnosticBuilder::cannot_find_name called with name='{}'",
-            name
-        );
-        eprintln!("  is_obviously_invalid={}", is_obviously_invalid);
-
         if is_obviously_invalid {
             // Return a dummy diagnostic with empty message that will be ignored
             return TypeDiagnostic::error("", 0);
