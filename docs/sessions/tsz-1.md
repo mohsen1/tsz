@@ -19,16 +19,23 @@
 
 **Why**: Cannot safely implement Priority 2 or 3 without a working test suite.
 
-**Progress** (2026-02-04):
-- **Started**: 1484 compilation errors
-- **Current**: 19 errors remaining in solver tests (98.7% reduction)
-- **Fixed**: 24 solver test files with Visibility imports
-- **Fixed**: object_literal.rs, class_hierarchy.rs, control_flow.rs
-- **Remaining**: 14 PropertyInfo instances with same-line closing braces + 5 other errors
+**Progress** (2026-02-04 Continued):
+- **Started**: 1484 compilation errors → **Current**: 16 errors remaining (99% reduction!)
+- Fixed 2 more test files manually:
+  - Fixed typescript_quirks_tests.rs PropertyInfo formatting
+  - Fixed control_flow.rs Visibility import
+  - Fixed lawyer_tests.rs, type_law_tests.rs Visibility imports
+  - Fixed declaration_emitter duplicate `tests` module (renamed to `inline_tests`)
+  - Fixed class_hierarchy.rs SymbolId API change
+- **Remaining**: 16 PropertyInfo errors in 3 test files
+  - compat_tests.rs (2 errors)
+  - evaluate_tests.rs (10 errors)
+  - subtype_tests.rs (4 errors)
 
-**Recent Commits**:
-- `bfd3f9bca` - "fix: add Visibility imports and fix SymbolId::from_u32"
-- `30b4ad671` - "fix: add Visibility imports to solver tests"
+**Session Commits** (Claude's work):
+- `4079247e8` - "fix(tsz-1): add Visibility import to control_flow tests"
+- `9e42232b6` / `f585554e2` - "fix(tsz-1): add Visibility imports and fix duplicate tests module"
+- `c452270b9` - "docs(tsz-1): document Priority 1 progress"
 
 **Known Issue**: Automation script failed on pattern where `}]);` is on same line as `is_method`.
 Need manual fix or improved regex.
