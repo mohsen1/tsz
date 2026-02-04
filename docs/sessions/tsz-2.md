@@ -1,385 +1,81 @@
-# Session tsz-2 - Assignability & Solver Fixes
+# Session tsz-2: Class Type Resolution Fix
 
-## WORK IS NEVER DONE UNTIL ALL TESTS PASS
-Work is never done until all tests pass. This includes:
-- Unit tests (`cargo nextest run`)
-- Conformance tests (`./scripts/conformance.sh`)
-- No existing `#[ignore]` tests
-- No cleanup work left undone
-- No large files (>3000 lines) left unaddressed
+**Started**: 2026-02-04
+**Goal**: Fix class type resolution to distinguish constructor types from instance types
 
-## Status: ACTIVE - Argument Inference & Variance (TS2345/TS2322)
+## Problem Statement
 
-**Date**: 2025-02-04
-**Focus**: Fix generic inference and function variance issues causing extra errors
+Class identifiers are resolving to the wrong type in different contexts:
+- **TYPE position** (e.g., `let x: Animal`): Should resolve to **Instance Type** (Object with properties)
+- **VALUE position** (e.g., `const ctor = Animal`): Should resolve to **Constructor Type** (Callable with construct signatures)
 
-## Context
+**Current Bug**: TYPE position resolves to Constructor Type instead of Instance Type
 
-After fixing TS2741 (index signature assignability), achieved 84% reduction in TS2322 errors.
-Now pivoting to TS2345/TS2322 extra errors caused by **generic inference failures** or **callback variance issues**.
+### Impact
 
-**Strategic Decision**: TS2345 and TS2322 share the same `is_assignable_to` logic, but TS2345 adds type inference. Fixing TS2345 will likely resolve remaining TS2322 errors too.
-
-## Current Phase: Diagnosis & Execution
-
-### Completed ✅
-- Fixed index signature assignability (TS2741) - 84% reduction in TS2322
-- Verified excess property checks correctly handle index signatures
-- Conformance: 49.2% pass rate (up from ~40%)
-
-### Current Phase: TS2345 Diagnosis
-
-**Todo**:
-- [ ] Analyze TS2345 extra error patterns
-  - Run: `./scripts/conformance.sh --code=2345 2>&1 | grep "extra" | head -20`
-  - Categorize into: Inference failures, Variance mismatches, Structure issues
-
-- [ ] Path A: If inference failures (most likely)
-  - Focus: `src/solver/operations.rs` (resolve_generic_call_inner)
-  - Focus: `src/solver/infer.rs`
-  - Check: Contextual typing for function arguments
-  - Check: Unconstrained type parameter handling (unknown vs error)
-
-- [ ] Path B: If variance/callback failures
-  - Focus: `src/solver/subtype_rules/functions.rs`
-  - Verify: `check_call_signature_subtype` bivariance logic
-  - Check: `src/solver/compat.rs` Lawyer configuration
-
-- [ ] Verify and commit
-  - Run full conformance to measure impact
-  - Commit with description of inference/variance fix
-
-### Investigation Notes
-
-**Excess Property Checking**: Already correctly handles index signatures
-- File: `src/checker/state_checking.rs`
-- Lines 886-889: Returns early if target has index signature
-- So TS2345/TS2322 extra errors must come from other sources
-
-**Blocked Issues** (deferred):
-- Enum computed properties in object literals (WIP reverted due to test failures)
-- Test: `objectLiteralEnumPropertyNames.ts`
-
-### Current Conformance Stats (1k samples - AFTER INDEX SIG FIX)
-
-**MAJOR IMPROVEMENT** 🎉:
-- **Before**: TS2322: missing=99, extra=227 (326 total mismatches)
-- **After**: TS2322: missing=21, extra=31 (52 total mismatches)
-- **Improvement**: 84% reduction in TS2322 errors! ✅
-
-**Pass Rate**: 49.2% (up from ~40%)
-
-**Top Error Code Mismatches:**
-- TS2322: missing=21, extra=31 ← Fixed index signatures, continue here
-- TS2300: missing=36, extra=12 (Duplicate identifier)
-- TS2304: missing=18, extra=29 (Cannot find name)
-- TS2339: missing=30, extra=12 (Property doesn't exist)
-- TS2345: missing=3, extra=31 (Object literal excess properties)
-- TS2395: missing=19, extra=0 (Class name duplication)
-
-### Strategy: Focus on Extra Errors (False Positives) First
-
-Per Gemini recommendation, prioritize **extra errors** over missing errors:
-
-1. **Extra errors** block valid TypeScript code from compiling
-2. Usually indicate **missing logic** (e.g., "I don't know how to relate Union A to Union B")
-3. Fixing one root cause often fixes **dozens of tests at once** ✅ (Index sig fix proved this!)
-4. Missing errors (false negatives) mean we're too permissive (bad for safety, but doesn't block compilation)
-
-## Architecture: Lawyer vs Judge Model
-
-The solver uses a two-layer assignability system:
-
-### Layer 1: The Lawyer (`src/solver/compat.rs`)
-**Entry point**: `is_assignable_to()`
-**Responsibility**: Handle TypeScript quirks
-- `any` propagation
-- `null`/`undefined` legacy rules
-- Weak type checking
-- Error type handling
-
-**Common bugs**: Returning `false` immediately because it didn't apply a loose TS rule
-
-### Layer 2: The Judge (`src/solver/subtype.rs`)
-**Entry point**: `is_subtype_of()`
-**Responsibility**: Strict structural checking
-- Object property matching
-- Union/intersection distributivity
-- Generic compatibility
-- Function subtype rules
-
-**Common bugs**: Fails to match complex structures or recursion limits
-
-### Layer 3: Diagnostics (`src/solver/diagnostics.rs`)
-**Responsibility**: Explain *why* it failed
-
-**Common bugs**: The check returns `false`, but diagnostic generation crashes or produces wrong message
-
-## Investigation Workflow: The "Golden Loop"
-
-### Step 1: Pick One Failing Test
-Don't try to fix "TS2322" generally. Pick **one** simple failing conformance test.
-
-Example:
+This bug causes `test_abstract_constructor_assignability` to fail:
 ```typescript
-// Find a test case with TS2322 extra error
-// Create debug.ts with the failing code
-```
-
-### Step 2: Trace with Logging
-Run with tracing enabled:
-```bash
-TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -- debug.ts
-```
-
-Look for:
-- `check_subtype` calls
-- `is_assignable_to` calls
-- The exact pair of types (Source, Target) that returned `false`
-
-### Step 3: Determine Failure Layer
-
-**Scenario A: Failed in `compat.rs` (Lawyer)**
-- Did it fail to handle `any`?
-- Did it fail a "Weak Type" check?
-- Action: Modify `src/solver/compat.rs`
-
-**Scenario B: Failed in `subtype.rs` (Judge)**
-- Did it fail on Unions? → Check `src/solver/subtype_rules/unions.rs`
-- Did it fail on Object properties? → Check `src/solver/subtype_rules/objects.rs`
-- Did it fail on Generics? → Check `src/solver/subtype_rules/generics.rs`
-
-## Common Patterns to Check First
-
-### 1. Object Literal Freshness
-**Files**: `src/solver/freshness.rs`, `src/solver/subtype_rules/objects.rs`
-
-**Issue**: TS2322 often triggers on "Excess property checks"
-
-**Check**: Is the source type marked with `ObjectFlags::FRESH_LITERAL`?
-- If yes, solver enforces strict property matching
-- If test expects loose matching, freshness flag might be sticky when it shouldn't be
-
-### 2. Union/Intersection Distributivity
-**File**: `src/solver/subtype_rules/unions.rs`
-
-**Issues**:
-- `(A | B)` assignable to `C`? → Must verify `A <: C` AND `B <: C`
-- `A` assignable to `(B | C)`? → Must verify `A <: B` OR `A <: C`
-
-**Common bug**: One branch fails, so whole assignment fails
-
-### 3. Optional Properties
-**File**: `src/solver/subtype_rules/objects.rs`
-
-**Issue**: `{ a: number }` assignable to `{ a?: number }`?
-
-**Check**: `check_property_compatibility` - ensure `exact_optional_property_types` isn't accidentally enabled
-
-### 4. Index Signatures
-**File**: `src/solver/subtype_rules/objects.rs`
-
-**Issue**: Assigning object with specific keys to type with index signature
-
-**Check**: `check_object_subtype` - verifies all properties match index signature
-
-## Files to Audit (In Priority Order)
-
-### 1. `src/solver/compat.rs`
-- Look at `is_assignable_impl` - high-level logic
-- Check `check_assignable_fast_path` - rejecting valid types too early?
-- Common issues: `any`, `error`, `undefined` handling
-
-### 2. `src/solver/subtype_rules/objects.rs`
-- Look at `check_object_subtype` and `check_property_compatibility`
-- Most TS2322 errors come from here
-- Check: Freshness, optional properties, index signatures
-
-### 3. `src/solver/subtype_rules/unions.rs`
-- Check distributivity logic
-- Verify AND/OR conditions for union subtyping
-
-### 4. `src/solver/diagnostics.rs`
-- Look at `SubtypeFailureReason::to_diagnostic`
-- Sometimes error IS detected, but message is wrong
-- Test runner thinks it's a mismatch because text doesn't match TSC
-
-## Session Coordination
-
-**Other Sessions** (no conflicts):
-- **tsz-1**: Parse errors (TS1005, TS1109, TS1202, TS2695, TS2304, TS2300)
-- **tsz-3**: Parser/binder fixes (ClassDeclaration26), const type parameters
-- **tsz-4**: Declaration emit (.d.ts file generation)
-
-**tsz-2 focus**: Assignability (TS2322) + solver-related issues
-
-## Completed Work
-
-### 4. Index Signature Assignability Fix (TS2741) ✅ **MAJOR IMPACT**
-**Date**: 2025-02-04
-**Impact**: 84% reduction in TS2322 errors (227 → 31 extra errors)
-
-**Bug**: Objects with index signatures incorrectly considered assignable to objects with required named properties
-
-**Example**:
-```typescript
-declare var y: { [index: string]: any };
-var x = { one: 1 };
-x = y;  // Should error: Property 'one' is missing
-```
-
-**Root cause**: In `src/solver/subtype_rules/objects.rs:527`, function `check_missing_property_against_index_signatures`:
-```rust
-// BUGGY: Accepted index sigs for required properties
-if checked || target_prop.optional {
-    SubtypeResult::True
+function createAnimal(Ctor: typeof Animal): Animal {
+    return new Dog(); // ERROR: Dog instance (Object) not assignable to Animal constructor (Callable)
 }
 ```
 
-**TypeScript rule (TS2741)**: Index signatures do **NOT** satisfy required named properties. They only satisfy optional properties.
+The return type annotation `: Animal` should be the Animal **instance** type, but it's currently the Animal **constructor** type.
 
-**Solution**:
-```rust
-// FIX: Reject required properties immediately
-if !target_prop.optional {
-    return SubtypeResult::False;
-}
-// For optional properties, verify type compatibility...
-```
+## Root Cause Analysis
 
-**Files**: `src/solver/subtype_rules/objects.rs`, `src/solver/tests/subtype_tests.rs`
+**Investigation Findings**:
+- `get_type_of_symbol` caches Constructor Type in `ctx.symbol_types` for classes
+- `resolve_lazy` looks up types from `ctx.symbol_types` via `DefId`
+- Type annotations create `Lazy(DefId)` which resolve to the cached type
+- **Result**: Both TYPE and VALUE position get the Constructor Type
 
-**Result**:
-- ✅ assignmentCompat1.ts line 4 now emits error (was missing)
-- ✅ All 882 subtype tests pass
-- ✅ Conformance pass rate: 49.2% (up from ~40%)
-- ✅ TS2322 reduced from 326 mismatches to 52 mismatches
+**Evidence**:
+- Source type: `ObjectWithIndex(ObjectShapeId(2))` - Dog instance (correct!)
+- Target type: `Callable(CallableShapeId(5))` - Animal constructor (WRONG!)
+- Expected: Both should be Object instance types
 
-**Commit**: `2f26c2f33`
+## Fix Strategy
 
-### 1. TS2664 (Invalid module name in augmentation) ✅
-**Date**: 2025-02-04
+### Architecture Change: Dual Type Cache
 
-**Root cause**: `is_external_module` lost when binders recreated for type checking
+Modify `CheckerContext` to maintain separate caches for constructor and instance types:
 
-**Solution**: Store `is_external_module` per-file in `BindResult` → `BoundFile` → `CheckerContext`
+1. **Add instance type cache** to `src/checker/context.rs`:
+   ```rust
+   pub symbol_instance_types: FxHashMap<SymbolId, TypeId>
+   ```
 
-**Files**: `src/parallel.rs`, `src/cli/driver.rs`, `src/checker/context.rs`, `src/checker/declarations.rs`
+2. **Update class type computation** in `src/checker/state_type_analysis.rs`:
+   - When computing a class symbol, cache BOTH types:
+     - `symbol_types[sym_id] = constructor_type` (for VALUE position)
+     - `symbol_instance_types[sym_id] = instance_type` (for TYPE position)
 
-**Result**: TS2664 now emits correctly for non-existent module augmentations
+3. **Update lazy resolution** in `src/checker/context.rs`:
+   - `resolve_lazy`: Check if symbol is a class
+   - If class: Return type from `symbol_instance_types`
+   - Otherwise: Return type from `symbol_types`
 
-### 2. TS2322 Bivariance Fix ✅
-**Date**: 2025-02-04
+## Implementation Tasks
 
-**Root cause**: Object literal methods marked `is_method=false` instead of `true`
+1. [ ] Add `symbol_instance_types` cache to `CheckerContext`
+2. [ ] Update `get_class_constructor_type` to populate both caches
+3. [ ] Update `resolve_lazy` to prefer instance types for classes
+4. [ ] Add tests for type vs value position class resolution
+5. [ ] Verify `test_abstract_constructor_assignability` passes
+6. [ ] Run full test suite to check for regressions
 
-**Solution**: Changed to `is_method: true` for bivariant parameter checking
+## Success Criteria
 
-**File**: `src/checker/type_computation.rs:1535`
+- [ ] `test_abstract_constructor_assignability` passes (0 errors)
+- [ ] Unit tests: 365/365 passing (fixing the 2 abstract class failures)
+- [ ] Conformance: 50% → 55%+ (class-related tests should pass)
+- [ ] No regressions in parser tests (287/287)
+- [ ] All work tested, committed, and synced
 
-**Rationale**: Per TS_UNSOUNDNESS_CATALOG.md item #2, methods are bivariant in TS
+## Notes
 
-### 3. Accessor Type Compatibility Fix ✅
-**Date**: 2025-02-04
-
-**Root causes**:
-1. **Nominal typing for empty classes**: Empty classes A and B both got `Object(ObjectShapeId(0))`
-2. **Type annotation resolution**: Class references in type position resolved to constructor types
-
-**Solution**:
-- Set `symbol` field in `ObjectShape` for ALL class instance types
-- Added `resolve_type_annotation()` helper to extract instance type
-
-**Files**: `src/checker/class_type.rs`, `src/checker/type_checking_queries.rs`
-
-## Known Issues (Pre-existing)
-
-### Abstract Constructor Assignability (BLOCKED)
-**Test**: `test_abstract_constructor_assignability`
-**Issue**: Shows Object prototype type instead of class type
-**Error**: `Type '{ isPrototypeOf, propertyIsEnumerable, ... }' is not assignable to type 'Animal'`
-**Root cause**: `typeof AbstractClass` returns Object prototype instead of constructor type
-**Status**: Requires deeper tracing of type resolution path
-
-## Next Steps
-
-### Focus: Excess Property Checks with Index Signatures
-
-**Immediate Priority**: Fix TS2345 extra errors (31) and remaining TS2322 extra errors (31)
-
-1. [ ] Analyze TS2345 "extra" errors for patterns
-   - Look for object literals passed to functions with index signature targets
-   - Identify where excess property checks incorrectly reject valid properties
-
-2. [ ] Locate excess property check logic
-   - File: `src/checker/state_checking.rs` function: `check_object_literal_excess_properties`
-   - Ensure it correctly checks for target index signatures
-
-3. [ ] Verify the fix respects index signatures
-   - Rule: Target with `[key: string]: T` should accept ANY properties matching type T
-   - Rule: Target with `[key: number]: T` should accept ANY numeric properties matching type T
-
-4. [ ] Run conformance to measure impact
-   - Expected: Significant reduction in both TS2345 and TS2322 extra errors
-
-### Blocked Issues (Deferred)
-
-**Enum Computed Properties** (WIP - moved to blocked)
-- Test: `objectLiteralEnumPropertyNames.ts`
-- Issue: Object literals with computed enum properties inferred as {}
-- Status: Complex lowering/evaluation problem, requires deeper investigation
-- Code: Added Enum handling to 6 functions (commit ae4735947) but issue persists
-- Decision: Defer in favor of higher-impact excess property checks
-
-## Commands
-
-```bash
-# Run conformance tests
-./scripts/conformance.sh
-
-# Run with tracing for debugging
-TSZ_LOG=debug TSZ_LOG_FORMAT=tree cargo run -- file.ts
-
-# Run unit tests
-cargo nextest run
-
-# Check session files
-ls docs/sessions/
-```
-
-## Commits
-
-```
-2f26c2f33 fix: index signatures do not satisfy required named properties (TS2741)
-3ba5bcaef docs: rewrite tsz-2 session to focus on TS2322 assignability
-dcebfa46b docs: verify TS2339 working for basic cases
-262592567 docs: verify TS2300 and TS2664 are working correctly
-909314213 docs: update conformance results (500-test sample)
-8eabb0153 docs: update tsz-2 session with bivariance fix
-b4052c0fc fix: object literal methods should use bivariant parameter checking
-3c8a2adca fix: TS2664 (Invalid module name in augmentation) now emits correctly
-```
-
-## History Summary
-
-### 2025-02-04: Index Signature Assignability Fix (MAJOR WIN)
-Fixed critical TS2322 bug affecting 196 test cases:
-- Index signatures incorrectly satisfied required named properties
-- 84% reduction in TS2322 errors (227 → 31 extra errors)
-- Pass rate improved to 49.2%
-
-### 2025-02-04: TS2664, TS2322 Bivariance, Accessor Compatibility
-Fixed three major issues:
-1. TS2664 module augmentation errors (binder state corruption)
-2. TS2322 false positives from incorrect bivariance handling
-3. Accessor type compatibility with class inheritance
-
-### Earlier Work
-- TS2305 (Module has no exported member) ✅ Working
-- TS2318 (Cannot find global type) ✅ Working
-- TS2307 (Cannot find module) ✅ Working
-- Conformance baseline: 46.8% pass rate (up from 32%)
-
-## Punted Todos
-
-*None currently - all punted items moved to other sessions or documented as pre-existing*
+- This is a focused architectural fix, not a parser session
+- Timebox each task to 30 minutes to avoid scope creep
+- If the fix requires broader changes, document and defer
+- The nominal inheritance check already works (verified during investigation)
