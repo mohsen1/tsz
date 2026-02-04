@@ -403,6 +403,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Mapped over `never` yields an empty object.
                 Some(keys)
             }
+            TypeKey::Enum(_def_id, member_type) => {
+                // Enums have a member type that is a union of their values
+                // Recurse to extract the keys from that union
+                self.extract_mapped_keys(member_type)
+            }
             // Can't extract literals from other types
             _ => None,
         }
