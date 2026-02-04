@@ -1127,6 +1127,51 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
+    /// Check if an initializer expression is a `Symbol()` call (for unique symbol detection)
+    fn is_symbol_call(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+
+        // Check if it's a call expression
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+
+        let Some(call_expr) = self.arena.get_call_expr(init_node) else {
+            return false;
+        };
+
+        // Check if the function being called is named "Symbol"
+        let Some(expr_node) = self.arena.get(call_expr.expression) else {
+            return false;
+        };
+
+        // Handle both simple identifiers and property access like global.Symbol
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(ident) = self.arena.get_identifier(expr_node) {
+                    return ident.escaped_text == "Symbol";
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                // Handle things like global.Symbol or Symbol.constructor
+                if let Some(prop_access) = self.arena.get_access_expr(expr_node) {
+                    // Check if the property name is "Symbol"
+                    let Some(name_node) = self.arena.get(prop_access.name_or_argument) else {
+                        return false;
+                    };
+                    if let Some(ident) = self.arena.get_identifier(name_node) {
+                        return ident.escaped_text == "Symbol";
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        false
+    }
+
     fn emit_variable_declaration_statement(&mut self, stmt_idx: NodeIndex) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
@@ -1197,10 +1242,18 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" = ");
                             self.emit_expression(decl.initializer);
                         } else {
+                            // Check for unique symbol case: const x = Symbol()
+                            let is_unique_symbol = keyword == "const"
+                                && !decl.initializer.is_none()
+                                && self.is_symbol_call(decl.initializer);
+
                             // Emit explicit type annotation if present
                             if !decl.type_annotation.is_none() {
                                 self.write(": ");
                                 self.emit_type(decl.type_annotation);
+                            } else if is_unique_symbol {
+                                // const x = Symbol() gets : unique symbol
+                                self.write(": unique symbol");
                             } else if let Some(type_id) = self.get_node_type(decl_idx) {
                                 // No explicit type, but we have inferred type from cache
                                 self.write(": ");
@@ -1772,9 +1825,17 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" = ");
                             self.emit_expression(decl.initializer);
                         } else {
+                            // Check for unique symbol case: const x = Symbol()
+                            let is_unique_symbol = keyword == "const"
+                                && !decl.initializer.is_none()
+                                && self.is_symbol_call(decl.initializer);
+
                             if !decl.type_annotation.is_none() {
                                 self.write(": ");
                                 self.emit_type(decl.type_annotation);
+                            } else if is_unique_symbol {
+                                // const x = Symbol() gets : unique symbol
+                                self.write(": unique symbol");
                             } else if let Some(type_id) = self.get_node_type(decl_idx) {
                                 // No explicit type, but we have inferred type from cache
                                 self.write(": ");
@@ -2590,6 +2651,13 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
                     self.write(&lit.text);
+                }
+            }
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                if let Some(computed) = self.arena.get_computed_property(node) {
+                    self.write("[");
+                    self.emit_node(computed.expression);
+                    self.write("]");
                 }
             }
             _ => {}
