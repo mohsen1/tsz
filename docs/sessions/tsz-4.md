@@ -2,9 +2,9 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟡 ACTIVE (2026-02-04)
+## Status: ✅ COMPLETE (2026-02-04)
 
-Previous task (Class Heritage and Generics) verified as already implemented. New task identified by Gemini.
+Completed Computed Property Names and `unique symbol` Support task.
 
 ### New Task: Class Heritage and Generics (2026-02-04) ✅ COMPLETE
 
@@ -591,6 +591,34 @@ interface I { [Symbol.iterator](): void; }
 - `unique symbol` only valid on `const` or `readonly static`, not `let`/`var`
 - Custom symbols `[mySym]` require tsz-7 auto-imports to work
 - Must check `NodeFlags` and `ModifierFlags` carefully
+- Exported variables use separate `emit_exported_variable()` function
+
+### Completion Summary (2026-02-04)
+
+**Commit**: `825aef9ed`
+
+**Implemented Features:**
+1. ✅ Computed property name emission - Added `COMPUTED_PROPERTY_NAME` case to `emit_node()`
+2. ✅ Unique symbol detection - Added `is_symbol_call()` helper function
+3. ✅ Unique symbol emission - Both regular and exported variable declarations
+4. ✅ Works for classes, interfaces, methods
+
+**Test Results:**
+```typescript
+// Input
+const sym = Symbol();
+class C { ["prop"]: string; [123]: number; [sym]: boolean; }
+export const MySym = Symbol("desc");
+
+// Output (matches TypeScript ✅)
+declare const sym: unique symbol;
+declare class C {
+    ["prop"]: string;
+    [123]: number;
+    [sym]: boolean;
+}
+export declare const MySym: unique symbol;
+```
 
 ---
 
