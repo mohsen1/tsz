@@ -261,7 +261,7 @@ impl<'a> DeclarationEmitter<'a> {
                 );
                 self.used_symbols = Some(used);
                 self.foreign_symbols = Some(foreign.clone());
-            } 
+            }
         }
 
         // NEW: Prepare aliases before emitting anything
