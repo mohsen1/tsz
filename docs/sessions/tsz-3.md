@@ -59,31 +59,34 @@ if ((o = fn()).done) {
 **Expected**: No errors (narrowing works)
 **Actual**: TS2322 error - `o.value` is type `1 | 2` instead of `1`
 
-### Root Cause Found
+### Root Cause Found (Updated)
 
-**Location**: `src/checker/flow_graph_builder.rs`, function `handle_expression_for_assignments` (line 1321)
+**Initial Hypothesis**: Assignment expressions in conditions weren't being tracked in flow analysis.
 
-**The Bug**: The `handle_expression_for_assignments` function does NOT have a case for `syntax_kind_ext::ASSIGNMENT_EXPRESSION`.
+**Investigation Results**:
+1. ✅ Assignments ARE tracked - line 1396-1403 creates ASSIGNMENT flow nodes
+2. ❌ **DISCRIMINANT NARROWING IS FUNDAMENTALLY BROKEN**
 
-**Impact**: When code contains `(o = fn()).done`:
-1. The assignment `o = fn()` is type-checked correctly
-2. The property access `.done` is evaluated
-3. ❌ The assignment to `o` is NOT tracked in the flow graph
-4. ❌ Flow analysis doesn't know `o` has been assigned a new value
-5. ❌ No narrowing occurs when checking `.done`
-6. ❌ The narrowed type doesn't persist into the if block
+**Test Evidence**:
+```typescript
+// Test 1: Assignment in condition (FAILS)
+if ((o = fn()).done) {
+    const y: 1 = o.value; // ERROR: o.value is 1 | 2
+}
 
-**Evidence**: The function handles:
-- ✅ BINARY_EXPRESSION (with short-circuit operators)
-- ✅ CONDITIONAL_EXPRESSION
-- ✅ CALL_EXPRESSION
-- ✅ PROPERTY_ACCESS_EXPRESSION
-- ✅ ELEMENT_ACCESS_EXPRESSION
-- ❌ **MISSING**: ASSIGNMENT_EXPRESSION
+// Test 2: Simple discriminant check (ALSO FAILS!)
+if (o.done) {
+    const y: 1 = o.value; // ERROR: o.value is 1 | 2
+}
+```
 
-### Solution
+**Conclusion**: The issue is NOT about assignment expressions in conditions. The issue is that discriminant narrowing (narrowing based on property access like `o.done`) is not working at all.
 
-Add handling for `ASSIGNMENT_EXPRESSION` in `handle_expression_for_assignments` to track the assignment in the flow graph, similar to how other expression types are handled.
+**Real Problem**: The discriminant narrowing implementation in `narrow_by_discriminant` or its application in the checker is not correctly narrowing union types based on discriminant properties.
+
+### Solution Required
+
+Fix discriminant narrowing in `src/solver/narrowing.rs` or its application in the checker. The narrowing logic needs to correctly identify that when `o.done` is true, `o` must be of type `{ done: true, value: 1 }`.
 
 ### Key Files
 - `src/checker/flow_graph_builder.rs:1321` - `handle_expression_for_assignments` function
