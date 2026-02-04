@@ -18,26 +18,32 @@
 
 ### Current Task: Implement Enum Declaration Emit
 
-**Infrastructure**:
-- `TypeKey::Enum(DefId, TypeId)` exists in solver
-- `DefinitionStore` has enum members in `DefinitionInfo`
-- TypePrinter needs enum handling
+**BLOCKER**: Pre-existing compilation error in `src/solver/narrowing.rs:1647` (unclosed delimiter).
+This is from another session (tsz-3) and blocks building tsz binary.
 
-**Implementation Plan** (Solver-First):
-1. **Solver**: Check `TypeFormatter` handles `TypeKey::Enum` (src/solver/format.rs)
-2. **Checker**: Ensure `check_enum_declaration` populates cache (src/checker/declarations.rs)
-3. **Emitter**: Implement enum emit in TypePrinter (src/emitter/type_printer.rs)
-4. **Test**: Use CLI test runner to verify
+**Code Changes Ready** (not tested due to build blocker):
+- Modified `src/declaration_emitter.rs` to add explicit initializers to enum members
+- Changes both `emit_enum_declaration` and `emit_exported_enum` functions
+- Always emits `= <index>` for auto-incremented enum members to match TypeScript
 
-**TDD Approach**:
-```bash
-# Create test case
-enum Direction { Up, Down, Left, Right }
-const enum Color { Red, Green, Blue }
+**Before Fix**:
+```typescript
+declare enum Direction {
+    Up,
+    Down,
+    Left,
+    Right
+}
+```
 
-# Test it
-tsz --declaration test.ts
-cat test.d.ts
+**After Fix**:
+```typescript
+declare enum Direction {
+    Up = 0,
+    Down = 1,
+    Left = 2,
+    Right = 3
+}
 ```
 
 ### Completed Task: Migrate Test Runner to Native CLI ✅
