@@ -185,6 +185,7 @@ impl<'a> ObjectLiteralBuilder<'a> {
 mod tests {
     use super::*;
     use crate::solver::TypeInterner;
+    use crate::solver::types::Visibility;
 
     #[test]
     fn test_build_object_type() {
