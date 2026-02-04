@@ -380,3 +380,70 @@ lib_types.push(ty);
 conformance from 32.1% (18/56 tests).
 
 **Next**: Run conformance tests to validate fix.
+
+## LATEST FINDINGS: Cache Isolation Bug (2026-02-04)
+
+### Second Fix Attempt: Return Lazy(DefId)
+**Implementation**: Modified `resolve_lib_type_by_name` to return `Lazy(def_id)` instead of structural body `ty`.
+
+**Rationale**: Application types only expand when base is Lazy, allowing `evaluate_application` to trigger and substitute type parameters.
+
+**Code Changes**:
+```rust
+// Register the type body in TypeEnvironment
+if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+    env.insert_def_with_params(def_id, ty, params);
+}
+
+// Return Lazy(DefId) instead of structural body
+use crate::solver::types::TypeKey;
+let lazy_type = self.ctx.types.intern(TypeKey::Lazy(def_id));
+lib_types.push(lazy_type);
+```
+
+**Result**: Still 31.1% pass rate (no improvement).
+
+### Third Root Cause: Cache Isolation Bug (DEEPER ARCHITECTURAL ISSUE)
+
+**Gemini Flash Analysis**:
+When resolving lib.d.ts types, `get_type_of_symbol` in `state_type_resolution.rs` creates a **temporary CheckerState** with its own cache:
+
+```rust
+let mut checker = CheckerState::new(
+    symbol_arena.as_ref(),
+    self.ctx.binder,
+    self.ctx.types,
+    self.ctx.file_name.clone(),
+    self.ctx.compiler_options.clone(),
+);
+// checker has its own private ctx and symbol_types cache!
+```
+
+**The Problem**: 
+- Temporary checker resolves `Partial<T>` and stores result in its private cache
+- When temporary checker is destroyed, cache is discarded
+- Main CheckerContext never sees the resolved type
+- Result: `Partial<T>` resolves to `unknown` every time
+
+**This is a fundamental architectural issue** in how lib types are resolved and cached.
+
+### Summary of Attempts
+
+| Attempt | Fix | Result | Root Cause |
+|---------|-----|--------|------------|
+| 1 | Add `insert_def_with_params` | 31.1% (no change) | Returns body instead of Lazy |
+| 2 | Return `Lazy(def_id)` | 31.1% (no change) | Cache isolation discards result |
+| 3 | ??? | ??? | Requires architectural redesign |
+
+### Status
+**DEEP ARCHITECTURAL ISSUE IDENTIFIED**. Fixing this requires changes to how lib types 
+are cached across CheckerState instances, which is beyond the scope of simple bug fixes.
+
+Consider session redefinition to either:
+1. Continue with architectural fix (high complexity, high risk)
+2. Pivot to other work
+3. Hand off to session with more architectural context
+
+**Commits**: 
+- `e28ca24f6`: Return Lazy(DefId) for lib type aliases
+- `3fbf499da`: Attempt TypeEnvironment registration
