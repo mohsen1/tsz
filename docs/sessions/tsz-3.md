@@ -10,7 +10,7 @@
 ## Current Phase: Contextual Typing & Bidirectional Inference (ACTIVE)
 
 **Started**: 2026-02-04
-**Status**: Foundation Complete (Task 1.1 ✅, working on Task 1.2)
+**Status**: Infrastructure Complete ✅ (Tasks 1.1, 1.2, 1.3 done), awaiting CheckerState integration
 
 ### Problem Statement
 
@@ -26,13 +26,26 @@ const nums = [1, 2, 3];
 const doubled = nums.map(x => x * 2); // 'x' should be 'number' from array type
 ```
 
-### Foundation ✅ COMPLETE
+### Infrastructure ✅ COMPLETE
 
 **Implemented:**
-- `get_contextual_signature()` in `src/solver/operations.rs` - Uses TypeVisitor pattern
-- Handles `FunctionShape`, `CallableShape`, and `Application` types
-- `visit_ref` - Critical fix for named types
-- `Contextual` priority added to `InferencePriority` enum
+- Task 1.1: `get_contextual_signature()` in `src/solver/operations.rs`
+  - Uses TypeVisitor pattern
+  - Handles `FunctionShape`, `CallableShape`, and `Application` types
+  - `visit_ref` - Critical fix for named types
+  - `Contextual` priority added to `InferencePriority` enum
+
+- Task 1.2: Priority-based contextual inference constraints in `src/solver/operations.rs`
+  - Added `InferencePriority` parameter to `constrain_types` and all helper functions
+  - Moved contextual seeding to BEFORE argument processing (step 2.5)
+  - Use `InferencePriority::Contextual` for contextual hints (lower priority)
+  - Use `InferencePriority::Argument` for argument constraints (higher priority)
+
+- Task 1.3: `check_with_context` API in `src/checker/expr.rs`
+  - Added `check_with_context(idx, context_type)` method
+  - Updated `compute_type_impl()` to accept context_type parameter
+  - Bypass cache when contextual type is provided (prevents incorrect results)
+  - Pass context through to parenthesized expressions
 
 **Commits:**
 - `35cb275b0` - Redefined focus to Generic Contextual Inference
@@ -62,7 +75,48 @@ const doubled = nums.map(x => x * 2); // 'x' should be 'number' from array type
   - Bypass cache when contextual type is provided (prevents incorrect results)
   - Pass context through to parenthesized expressions
 
-### Next Tasks:
+### Next Steps: CheckerState Integration (HIGH PRIORITY)
+
+The contextual typing infrastructure is now in place in both Solver and ExpressionChecker,
+but needs integration in **CheckerState** to be functional.
+
+#### Current Limitations
+
+✅ **WORKS**: Simple contextual inference for return types
+```typescript
+const x: string = identity(null); // T inferred as string
+```
+
+❌ **DOESN'T WORK YET**: Parameter context from function signatures
+```typescript
+map([1, 2, 3], x => x.toString()); // 'x' needs context from 'map' signature
+```
+
+#### Required Integration Points
+
+1. **Update CheckerState Entry Point** (HIGH)
+   - Modify `CheckerState::compute_type_of_node` to accept `context_type: Option<TypeId>`
+   - Pass context through to `ExpressionChecker::check_with_context`
+
+2. **Implement Context Consumers** (HIGH)
+   - **Arrow Functions**: Use context to infer parameter types
+     - When checking `(x) => x` with context `(x: string) => string`, infer `x: string`
+   - **Object Literals**: Use context for excess property checking
+   - **Array Literals**: Use context to infer tuple vs array types
+
+3. **Implement Context Generators** (MEDIUM)
+   - **Variable Declarations**: Pass type annotation as context to initializer
+   - **Return Statements**: Pass function return type as context
+   - **Call Arguments**: Resolve function signature, pass parameter types as context
+
+**Files to modify**:
+- `src/checker/state.rs` - Main integration point
+- `src/checker/function_checker.rs` - Arrow function handling
+- `src/checker/assignment_checker.rs` - Variable declaration context
+
+---
+
+## Session History
 - **File**: `src/checker/expr.rs`
 - **Goal**: Propagate contextual types down to function expressions
 - **Implementation**:
