@@ -1207,12 +1207,13 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
-            let mut checker = CheckerState::new(
+            let mut checker = CheckerState::with_parent_cache(
                 symbol_arena.as_ref(),
                 self.ctx.binder,
                 self.ctx.types,
                 self.ctx.file_name.clone(),
-                self.ctx.compiler_options.clone(), // use current compiler options
+                self.ctx.compiler_options.clone(),
+                self, // Share parent's cache to fix Cache Isolation Bug
             );
             let result = checker.get_type_params_for_symbol(sym_id);
             self.ctx.leave_recursion();
