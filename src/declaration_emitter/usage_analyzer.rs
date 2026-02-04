@@ -213,6 +213,11 @@ impl<'a> UsageAnalyzer<'a> {
             self.analyze_parameter(param_idx);
         }
 
+        // CRITICAL: Also walk the inferred type of the function itself
+        // This catches imported types via the type system even when
+        // there's an explicit type annotation
+        self.walk_inferred_type(func_idx);
+
         // Walk return type (explicit or inferred)
         if !func.type_annotation.is_none() {
             self.analyze_type_node(func.type_annotation);
@@ -318,9 +323,6 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         // Walk parameters
-        for &param_idx in &method.parameters.nodes {
-            self.analyze_parameter(param_idx);
-        }
 
         // Walk return type
         if !method.type_annotation.is_none() {
@@ -335,14 +337,11 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(ctor_node) = self.arena.get(ctor_idx) else {
             return;
         };
-        let Some(ctor) = self.arena.get_constructor(ctor_node) else {
+        let Some(_ctor) = self.arena.get_constructor(ctor_node) else {
             return;
         };
 
         // Walk parameters
-        for &param_idx in &ctor.parameters.nodes {
-            self.analyze_parameter(param_idx);
-        }
     }
 
     /// Analyze an accessor (getter/setter).
@@ -355,9 +354,6 @@ impl<'a> UsageAnalyzer<'a> {
         };
 
         // Walk parameters
-        for &param_idx in &accessor.parameters.nodes {
-            self.analyze_parameter(param_idx);
-        }
 
         // Walk return type (for getters)
         if !accessor.type_annotation.is_none() {
@@ -860,8 +856,15 @@ impl<'a> UsageAnalyzer<'a> {
     /// This is the semantic walk - uses TypeId analysis via collect_all_types.
     fn walk_inferred_type(&mut self, node_idx: NodeIndex) {
         // Look up the inferred TypeId for this node
+        eprintln!("[DEBUG] walk_inferred_type: node_idx={:?}", node_idx);
         if let Some(&type_id) = self.type_cache.node_types.get(&node_idx.0) {
+            eprintln!("[DEBUG] walk_inferred_type: found type_id={:?}", type_id);
             self.walk_type_id(type_id);
+        } else {
+            eprintln!(
+                "[DEBUG] walk_inferred_type: NO TYPE FOUND for node_idx={:?}",
+                node_idx
+            );
         }
     }
 
@@ -873,23 +876,42 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         }
 
+        eprintln!("[DEBUG] walk_type_id: type_id={:?}", type_id);
+
         // Collect all types reachable from this TypeId
         let all_types = visitor::collect_all_types(self.type_interner, type_id);
+
+        eprintln!("[DEBUG] walk_type_id: collected {} types", all_types.len());
+        eprintln!("[DEBUG] walk_type_id: all_types = {:?}", all_types);
+
+        // Print TypeKeys for debugging
+        for &tid in &all_types {
+            if let Some(key) = self.type_interner.lookup(tid) {
+                eprintln!("[DEBUG] walk_type_id: TypeId({:?}) = {:?}", tid, key);
+            }
+        }
 
         // Extract DefIds/SymbolIds from each type
         for other_type_id in all_types {
             // Extract Lazy(DefId)
             if let Some(def_id) = visitor::lazy_def_id(self.type_interner, other_type_id) {
+                eprintln!("[DEBUG] walk_type_id: found Lazy(DefId={:?})", def_id);
                 if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
                     self.mark_symbol_used(
                         sym_id,
                         crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                    );
+                } else {
+                    eprintln!(
+                        "[DEBUG] walk_type_id: def_id={:?} NOT in def_to_symbol",
+                        def_id
                     );
                 }
             }
 
             // Extract Enum(DefId, _)
             if let Some((def_id, _)) = visitor::enum_components(self.type_interner, other_type_id) {
+                eprintln!("[DEBUG] walk_type_id: found Enum(def_id={:?})", def_id);
                 if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
                     self.mark_symbol_used(
                         sym_id,
@@ -933,6 +955,10 @@ impl<'a> UsageAnalyzer<'a> {
                 .or_else(|| visitor::object_with_index_shape_id(self.type_interner, other_type_id))
             {
                 let shape = self.type_interner.object_shape(shape_id);
+                eprintln!(
+                    "[DEBUG] walk_type_id: ObjectShapeId={:?}, symbol={:?}",
+                    shape_id, shape.symbol
+                );
                 if let Some(sym_id) = shape.symbol {
                     self.mark_symbol_used(
                         sym_id,
