@@ -1815,14 +1815,75 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a variable is used before its declaration in a static block.
     ///
-    /// Static blocks have special TDZ rules where class members cannot be
-    /// accessed before their declaration within the same static block.
+    /// This detects Temporal Dead Zone (TDZ) violations where a block-scoped variable
+    /// is accessed inside a class static block before it has been declared in the source.
+    ///
+    /// # Example
+    /// ```typescript
+    /// class C {
+    ///   static {
+    ///     console.log(x); // Error: x used before declaration
+    ///   }
+    /// }
+    /// let x = 1;
+    /// ```
     pub(crate) fn is_variable_used_before_declaration_in_static_block(
         &self,
-        _sym_id: SymbolId,
-        _usage_idx: NodeIndex,
+        sym_id: SymbolId,
+        usage_idx: NodeIndex,
     ) -> bool {
-        // TODO: Implement TDZ checking for static blocks
+        use crate::binder::symbol_flags;
+
+        // 1. Get the symbol
+        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        // 2. Check if it is a block-scoped variable (let, const, class, enum)
+        // var and function are hoisted, so they don't have TDZ issues in this context.
+        // Imports (ALIAS) are also hoisted or handled differently.
+        let is_block_scoped = (symbol.flags
+            & (symbol_flags::BLOCK_SCOPED_VARIABLE
+                | symbol_flags::CLASS
+                | symbol_flags::REGULAR_ENUM))
+            != 0;
+
+        if !is_block_scoped {
+            return false;
+        }
+
+        // 3. Get the declaration node
+        // Prefer value_declaration, fall back to first declaration
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+
+        // 4. Check textual order: Usage must be textually before declaration
+        // We ensure both nodes exist in the current arena
+        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        // If usage is after declaration, it's valid
+        if usage_node.pos >= decl_node.pos {
+            return false;
+        }
+
+        // 5. Check if usage is inside a static block
+        // Use find_enclosing_static_block which walks up the AST and stops at function boundaries.
+        // This ensures we only catch immediate usage, not usage inside a closure/function
+        // defined within the static block (which would execute later).
+        if self.find_enclosing_static_block(usage_idx).is_some() {
+            return true;
+        }
+
         false
     }
 
