@@ -29,6 +29,7 @@ pub mod usage_analyzer;
 #[cfg(test)]
 mod tests;
 
+use crate::binder::{BinderState, SymbolId};
 use crate::checker::TypeCache;
 use crate::emitter::type_printer::TypePrinter;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
@@ -39,6 +40,7 @@ use crate::scanner::SyntaxKind;
 use crate::solver::TypeInterner;
 use crate::solver::type_queries;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+use rustc_hash::FxHashSet;
 
 /// Declaration emitter for .d.ts files
 pub struct DeclarationEmitter<'a> {
@@ -52,6 +54,10 @@ pub struct DeclarationEmitter<'a> {
     type_cache: Option<TypeCache>,
     /// Type interner for printing types
     type_interner: Option<&'a TypeInterner>,
+    /// Binder state for symbol resolution (used by UsageAnalyzer)
+    binder: Option<&'a BinderState>,
+    /// Set of symbols used in exported declarations (for import elision)
+    used_symbols: Option<FxHashSet<SymbolId>>,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     inside_declare_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
@@ -74,6 +80,7 @@ impl<'a> DeclarationEmitter<'a> {
             pending_source_pos: None,
             type_cache: None,
             type_interner: None,
+            binder: None,
             inside_declare_namespace: false,
             in_constructor_params: false,
         }
@@ -83,6 +90,7 @@ impl<'a> DeclarationEmitter<'a> {
         arena: &'a NodeArena,
         type_cache: TypeCache,
         type_interner: &'a TypeInterner,
+        binder: &'a BinderState,
     ) -> Self {
         DeclarationEmitter {
             arena,
@@ -93,6 +101,7 @@ impl<'a> DeclarationEmitter<'a> {
             pending_source_pos: None,
             type_cache: Some(type_cache),
             type_interner: Some(type_interner),
+            binder: Some(binder),
             inside_declare_namespace: false,
             in_constructor_params: false,
         }

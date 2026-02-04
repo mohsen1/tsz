@@ -13,21 +13,26 @@
 //! The semantic walk leverages `collect_all_types()` from the solver to extract
 //! all referenced types, then maps `DefId` -> `SymbolId` via `TypeResolver`.
 
-use crate::binder::SymbolId;
-use crate::checker::context::CheckerContext;
+use crate::binder::{BinderState, SymbolId};
+use crate::checker::TypeCache;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
+use crate::solver::TypeInterner;
 use crate::solver::visitor;
 use rustc_hash::FxHashSet;
 
 /// Usage analyzer for determining which symbols are referenced in exported declarations.
-pub struct UsageAnalyzer<'a, 'ctx> {
+pub struct UsageAnalyzer<'a> {
     /// AST arena for walking explicit type annotations
     arena: &'a NodeArena,
-    /// Checker context for accessing TypeResolver and node_types
-    ctx: &'ctx CheckerContext<'ctx>,
+    /// Binder state for symbol resolution (node_symbols)
+    binder: &'a BinderState,
+    /// Type cache for inferred types and def_to_symbol mapping
+    type_cache: &'a TypeCache,
+    /// Type interner for type operations
+    type_interner: &'a TypeInterner,
     /// Set of symbols used in the exported API surface
     used_symbols: FxHashSet<SymbolId>,
     /// Visited AST nodes (for cycle detection)
@@ -36,12 +41,19 @@ pub struct UsageAnalyzer<'a, 'ctx> {
     visited_types: FxHashSet<crate::solver::TypeId>,
 }
 
-impl<'a, 'ctx> UsageAnalyzer<'a, 'ctx> {
+impl<'a> UsageAnalyzer<'a> {
     /// Create a new usage analyzer.
-    pub fn new(arena: &'a NodeArena, ctx: &'ctx CheckerContext<'ctx>) -> Self {
+    pub fn new(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        type_cache: &'a TypeCache,
+        type_interner: &'a TypeInterner,
+    ) -> Self {
         Self {
             arena,
-            ctx,
+            binder,
+            type_cache,
+            type_interner,
             used_symbols: FxHashSet::default(),
             visited_nodes: FxHashSet::default(),
             visited_types: FxHashSet::default(),
@@ -684,7 +696,7 @@ impl<'a, 'ctx> UsageAnalyzer<'a, 'ctx> {
         match name_node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 // Found the leftmost identifier - mark as used
-                if let Some(sym_id) = self.ctx.binder.get_node_symbol(name_idx) {
+                if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
                     self.mark_symbol_used(sym_id);
                 }
             }
@@ -711,7 +723,7 @@ impl<'a, 'ctx> UsageAnalyzer<'a, 'ctx> {
     /// This is the semantic walk - uses TypeId analysis via collect_all_types.
     fn walk_inferred_type(&mut self, node_idx: NodeIndex) {
         // Look up the inferred TypeId for this node
-        if let Some(&type_id) = self.ctx.node_types.get(&node_idx.0) {
+        if let Some(&type_id) = self.type_cache.node_types.get(&node_idx.0) {
             self.walk_type_id(type_id);
         }
     }
@@ -725,38 +737,38 @@ impl<'a, 'ctx> UsageAnalyzer<'a, 'ctx> {
         }
 
         // Collect all types reachable from this TypeId
-        let all_types = visitor::collect_all_types(self.ctx.types, type_id);
+        let all_types = visitor::collect_all_types(self.type_interner, type_id);
 
         // Extract DefIds/SymbolIds from each type
         for other_type_id in all_types {
             // Extract Lazy(DefId)
-            if let Some(def_id) = visitor::lazy_def_id(self.ctx.types, other_type_id) {
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+            if let Some(def_id) = visitor::lazy_def_id(self.type_interner, other_type_id) {
+                if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
                     self.mark_symbol_used(sym_id);
                 }
             }
 
             // Extract Enum(DefId, _)
-            if let Some((def_id, _)) = visitor::enum_components(self.ctx.types, other_type_id) {
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+            if let Some((def_id, _)) = visitor::enum_components(self.type_interner, other_type_id) {
+                if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
                     self.mark_symbol_used(sym_id);
                 }
             }
 
             // Extract TypeQuery(SymbolRef) - marks as value usage
-            if let Some(sym_ref) = visitor::type_query_symbol(self.ctx.types, other_type_id) {
+            if let Some(sym_ref) = visitor::type_query_symbol(self.type_interner, other_type_id) {
                 let sym_id = crate::binder::SymbolId(sym_ref.0);
                 self.mark_symbol_used(sym_id);
             }
 
             // Extract UniqueSymbol(SymbolRef)
-            if let Some(sym_ref) = visitor::unique_symbol_ref(self.ctx.types, other_type_id) {
+            if let Some(sym_ref) = visitor::unique_symbol_ref(self.type_interner, other_type_id) {
                 let sym_id = crate::binder::SymbolId(sym_ref.0);
                 self.mark_symbol_used(sym_id);
             }
 
             // Extract ModuleNamespace(SymbolRef) - marks namespace import as used
-            if let Some(type_key) = self.ctx.types.lookup(other_type_id) {
+            if let Some(type_key) = self.type_interner.lookup(other_type_id) {
                 if let crate::solver::TypeKey::ModuleNamespace(sym_ref) = type_key {
                     let sym_id = crate::binder::SymbolId(sym_ref.0);
                     self.mark_symbol_used(sym_id);
