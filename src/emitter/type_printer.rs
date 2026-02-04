@@ -146,34 +146,151 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    fn print_object_type(&self, _shape_id: crate::solver::types::ObjectShapeId) -> String {
-        // TODO: Implement object type printing
-        // For now, emit `object` as a fallback
-        "object".to_string()
+    fn print_object_type(&self, shape_id: crate::solver::types::ObjectShapeId) -> String {
+        let shape = self.interner.object_shape(shape_id);
+
+        if shape.properties.is_empty() {
+            return "{}".to_string();
+        }
+
+        let mut members = Vec::new();
+        for property in shape.properties.iter() {
+            let mut member = String::new();
+
+            // Property name
+            member.push_str(&format!("<atom:{}>", property.name.0));
+
+            // Optional marker
+            if property.optional {
+                member.push('?');
+            }
+
+            // Property type
+            member.push_str(": ");
+            member.push_str(&self.print_type(property.type_id));
+
+            members.push(member);
+        }
+
+        format!("{{ {} }}", members.join("; "))
     }
 
-    fn print_union(&self, _type_list_id: crate::solver::types::TypeListId) -> String {
-        // TODO: Implement union type printing
-        "any".to_string()
+    fn print_union(&self, type_list_id: crate::solver::types::TypeListId) -> String {
+        let types = self.interner.type_list(type_list_id);
+        if types.is_empty() {
+            return "never".to_string();
+        }
+
+        let mut parts = Vec::with_capacity(types.len());
+        for &type_id in types.iter() {
+            parts.push(self.print_type(type_id));
+        }
+
+        // Join with " | "
+        parts.join(" | ")
     }
 
-    fn print_intersection(&self, _type_list_id: crate::solver::types::TypeListId) -> String {
-        // TODO: Implement intersection type printing
-        "any".to_string()
+    fn print_intersection(&self, type_list_id: crate::solver::types::TypeListId) -> String {
+        let types = self.interner.type_list(type_list_id);
+        if types.is_empty() {
+            return "unknown".to_string(); // Intersection of 0 types is unknown
+        }
+
+        let mut parts = Vec::with_capacity(types.len());
+        for &type_id in types.iter() {
+            parts.push(self.print_type(type_id));
+        }
+
+        // Join with " & "
+        parts.join(" & ")
     }
 
-    fn print_tuple(&self, _tuple_id: crate::solver::types::TupleListId) -> String {
-        // TODO: Implement tuple type printing
-        "any[]".to_string()
+    fn print_tuple(&self, tuple_id: crate::solver::types::TupleListId) -> String {
+        let elements = self.interner.tuple_list(tuple_id);
+
+        if elements.is_empty() {
+            return "[]".to_string();
+        }
+
+        let mut parts = Vec::with_capacity(elements.len());
+        for elem in elements.iter() {
+            let type_str = self.print_type(elem.type_id);
+
+            // Handle optional properties
+            if elem.optional {
+                parts.push(format!("{}?", type_str));
+            } else {
+                parts.push(type_str);
+            }
+
+            // Handle rest elements
+            if elem.rest {
+                // Remove last element and add ... prefix
+                if let Some(last) = parts.pop() {
+                    parts.push(format!("...{}", last));
+                }
+            }
+        }
+
+        format!("[{}]", parts.join(", "))
     }
 
-    fn print_function_type(&self, _func_id: crate::solver::types::FunctionShapeId) -> String {
-        // TODO: Implement function type printing
-        "Function".to_string()
+    fn print_function_type(&self, func_id: crate::solver::types::FunctionShapeId) -> String {
+        let func_shape = self.interner.function_shape(func_id);
+
+        // Type parameters
+        let type_params_str = if !func_shape.type_params.is_empty() {
+            let params: Vec<String> = func_shape
+                .type_params
+                .iter()
+                .map(|tp| self.print_type_parameter(tp))
+                .collect();
+            format!("<{}>", params.join(", "))
+        } else {
+            String::new()
+        };
+
+        // Parameters
+        let mut params = Vec::new();
+        for param in &func_shape.params {
+            let mut param_str = String::new();
+
+            // Rest parameter
+            if param.rest {
+                param_str.push_str("...");
+            }
+
+            // Parameter name (optional in function types)
+            if let Some(name) = param.name {
+                param_str.push_str(&format!("<atom:{}>", name.0));
+                param_str.push_str(": ");
+            }
+
+            // Parameter type
+            param_str.push_str(&self.print_type(param.type_id));
+
+            // Optional parameter
+            if param.optional {
+                param_str.push('?');
+            }
+
+            params.push(param_str);
+        }
+
+        // Return type
+        let return_type = self.print_type(func_shape.return_type);
+
+        format!(
+            "{}({}) => {}",
+            type_params_str,
+            params.join(", "),
+            return_type
+        )
     }
 
     fn print_callable(&self, _callable_id: crate::solver::types::CallableShapeId) -> String {
-        // TODO: Implement callable type printing
+        // TODO: Implement callable type printing (for overloaded call signatures)
+        // For now, treat as a simple function type
         "Function".to_string()
     }
 
@@ -192,9 +309,15 @@ impl<'a> TypePrinter<'a> {
         "any".to_string()
     }
 
-    fn print_type_application(&self, _app_id: crate::solver::types::TypeApplicationId) -> String {
-        // TODO: Implement generic type application printing
-        "any".to_string()
+    fn print_type_application(&self, app_id: crate::solver::types::TypeApplicationId) -> String {
+        let app = self.interner.type_application(app_id);
+
+        if app.args.is_empty() {
+            self.print_type(app.base)
+        } else {
+            let args: Vec<String> = app.args.iter().map(|&id| self.print_type(id)).collect();
+            format!("{}<{}>", self.print_type(app.base), args.join(", "))
+        }
     }
 
     fn print_conditional(&self, _cond_id: crate::solver::types::ConditionalTypeId) -> String {
