@@ -26,15 +26,30 @@ Correct exhaustiveness checking is critical for:
 
 ## Tasks
 
-### Task 1: Switch Narrowing Verification
-**File**: `src/checker/flow_analysis.rs`
+### Task 1: Switch Narrowing Verification ✅ IN PROGRESS
+**File**: `src/checker/control_flow.rs`
 
-Verify that `switch(expr)` correctly narrows `expr` in each `case` block:
-- Each case should narrow to the specific discriminant value
-- Narrowing should reset between branches (unless fall-through)
-- Default case should handle remaining union members
+**Current Implementation Found**:
+- `handle_switch_clause_iterative` (line 560): Main entry point
+- `narrow_by_switch_clause` (line 1423): Handles regular cases
+- `narrow_by_default_switch_clause` (line 1440): Handles default clause
 
-**Status**: ⏸️ Not started
+**How it works**:
+1. Regular case: Creates `switch_expr === case_expr` and applies narrowing (true branch)
+2. Default case: Loops through all cases and excludes them using `!==` (false branch)
+3. Fallthrough: Adds antecedents to worklist (line 612-621)
+
+**What's working**:
+- ✅ Regular case narrowing applies discriminant correctly
+- ✅ Default clause excludes all previous cases
+- ✅ Fallthrough flow control handled
+
+**Gaps identified**:
+- ❌ No exhaustiveness detection
+- ❌ No narrowing to `never` when union exhausted
+- ❌ No type union for fallthrough accumulation
+
+**Status**: ⏸️ Analysis complete, implementation pending
 
 ---
 
