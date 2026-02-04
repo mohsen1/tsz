@@ -1893,10 +1893,53 @@ impl<'a> CheckerState<'a> {
     /// creating a TDZ for the class being declared.
     pub(crate) fn is_variable_used_before_declaration_in_computed_property(
         &self,
-        _sym_id: SymbolId,
-        _usage_idx: NodeIndex,
+        sym_id: SymbolId,
+        usage_idx: NodeIndex,
     ) -> bool {
-        // TODO: Implement TDZ checking for computed properties
+        use crate::binder::symbol_flags;
+
+        // 1. Get the symbol
+        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        // 2. Check if it is a block-scoped variable (let, const, class, enum)
+        let is_block_scoped = (symbol.flags
+            & (symbol_flags::BLOCK_SCOPED_VARIABLE
+                | symbol_flags::CLASS
+                | symbol_flags::REGULAR_ENUM))
+            != 0;
+
+        if !is_block_scoped {
+            return false;
+        }
+
+        // 3. Get the declaration node
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+
+        // 4. Check textual order: Usage must be textually before declaration
+        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        if usage_node.pos >= decl_node.pos {
+            return false;
+        }
+
+        // 5. Check if usage is inside a computed property name
+        if self.find_enclosing_computed_property(usage_idx).is_some() {
+            return true;
+        }
+
         false
     }
 
@@ -1906,10 +1949,53 @@ impl<'a> CheckerState<'a> {
     /// creating a TDZ for the class being declared.
     pub(crate) fn is_variable_used_before_declaration_in_heritage_clause(
         &self,
-        _sym_id: SymbolId,
-        _usage_idx: NodeIndex,
+        sym_id: SymbolId,
+        usage_idx: NodeIndex,
     ) -> bool {
-        // TODO: Implement TDZ checking for heritage clauses
+        use crate::binder::symbol_flags;
+
+        // 1. Get the symbol
+        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        // 2. Check if it is a block-scoped variable (let, const, class, enum)
+        let is_block_scoped = (symbol.flags
+            & (symbol_flags::BLOCK_SCOPED_VARIABLE
+                | symbol_flags::CLASS
+                | symbol_flags::REGULAR_ENUM))
+            != 0;
+
+        if !is_block_scoped {
+            return false;
+        }
+
+        // 3. Get the declaration node
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+
+        // 4. Check textual order: Usage must be textually before declaration
+        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
+            return false;
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        if usage_node.pos >= decl_node.pos {
+            return false;
+        }
+
+        // 5. Check if usage is inside a heritage clause (extends/implements)
+        if self.find_enclosing_heritage_clause(usage_idx).is_some() {
+            return true;
+        }
+
         false
     }
 
