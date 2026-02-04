@@ -199,6 +199,8 @@ pub struct BindResult {
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
+    /// Whether this file is an external module (has imports/exports)
+    pub is_external_module: bool,
 }
 
 /// Parse and bind multiple files in parallel
@@ -263,6 +265,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 lib_binders: Vec::new(), // No libs in this path
                 flow_nodes: binder.flow_nodes,
                 node_flow: binder.node_flow,
+                is_external_module: binder.is_external_module,
             }
         })
         .collect()
@@ -297,6 +300,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         lib_binders: Vec::new(), // No libs in this path
         flow_nodes: binder.flow_nodes,
         node_flow: binder.node_flow,
+        is_external_module: binder.is_external_module,
     }
 }
 
@@ -466,6 +470,7 @@ pub fn parse_and_bind_parallel_with_libs(
                 lib_binders,
                 flow_nodes: binder.flow_nodes,
                 node_flow: binder.node_flow,
+                is_external_module: binder.is_external_module,
             }
         })
         .collect()
@@ -499,6 +504,8 @@ pub struct BoundFile {
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
+    /// Whether this file is an external module (has imports/exports)
+    pub is_external_module: bool,
 }
 
 use crate::solver::TypeInterner;
@@ -1038,6 +1045,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             module_augmentations,
             flow_nodes: result.flow_nodes.clone(),
             node_flow: result.node_flow.clone(),
+            is_external_module: result.is_external_module,
         });
     }
 

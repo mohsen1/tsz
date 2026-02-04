@@ -1069,6 +1069,7 @@ fn build_program_with_cache(
                     lib_binders: Vec::new(),
                     flow_nodes: Default::default(),
                     node_flow: Default::default(),
+                    is_external_module: false, // Default to false for missing files
                 }
             }
         };
@@ -1751,6 +1752,14 @@ fn collect_diagnostics(
         .map(|(file_idx, file)| Arc::new(create_binder_from_bound_file(file, program, file_idx)))
         .collect();
 
+    // Extract is_external_module from BoundFile to preserve state across file bindings
+    // This fixes TS2664 which requires accurate per-file is_external_module values
+    let is_external_module_by_file: rustc_hash::FxHashMap<String, bool> = program
+        .files
+        .iter()
+        .map(|file| (file.file_name.clone(), file.is_external_module))
+        .collect();
+
     // Collect all arenas for cross-file resolution
     let all_arenas: Vec<Arc<NodeArena>> = program
         .files
@@ -1965,6 +1974,8 @@ fn collect_diagnostics(
             .ctx
             .set_resolved_module_errors(resolved_module_errors.clone());
         checker.ctx.set_current_file_idx(file_idx);
+        // Set per-file is_external_module cache to preserve state across file bindings
+        checker.ctx.is_external_module_by_file = Some(is_external_module_by_file.clone());
 
         // Build resolved_modules set for backward compatibility
         // Only include modules that were successfully resolved (not in error map)
@@ -2611,6 +2622,8 @@ fn create_binder_from_bound_file(
     );
 
     binder.declared_modules = program.declared_modules.clone();
+    // Restore is_external_module from BoundFile to preserve per-file state
+    binder.is_external_module = file.is_external_module;
     binder
 }
 
