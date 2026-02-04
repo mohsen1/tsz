@@ -4,7 +4,7 @@ use super::*;
 use crate::solver::CompatChecker;
 use crate::solver::def::DefId;
 use crate::solver::intern::TypeInterner;
-use crate::solver::types::TypeKey;
+use crate::solver::types::{TypeKey, Visibility};
 
 #[test]
 fn test_call_simple_function() {
@@ -956,7 +956,7 @@ fn make_array_test_env(
     crate::solver::types::TypeParamInfo,
 ) {
     use crate::solver::subtype::TypeEnvironment;
-    use crate::solver::types::TypeParamInfo;
+    use crate::solver::types::{TypeParamInfo, Visibility};
 
     let t_param = TypeParamInfo {
         name: interner.intern_string("T"),
@@ -1079,7 +1079,7 @@ fn make_array_test_env(
     });
 
     // reduce(callbackfn: (prev: T, curr: T, idx: number, arr: T[]) => T): T
-    use crate::solver::types::CallSignature;
+    use crate::solver::types::{CallSignature, Visibility};
     let reduce_cb_1 = interner.function(FunctionShape {
         params: vec![
             ParamInfo {
@@ -7917,7 +7917,7 @@ fn test_is_arithmetic_operand_mixed_union_invalid() {
 #[test]
 fn test_property_access_array_push_with_env_resolver() {
     use crate::solver::TypeEnvironment;
-    use crate::solver::types::TypeParamInfo;
+    use crate::solver::types::{TypeParamInfo, Visibility};
 
     let interner = TypeInterner::new();
 

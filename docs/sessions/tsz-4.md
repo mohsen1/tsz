@@ -2,11 +2,90 @@
 
 ## Date: 2026-02-04
 
-## Status: SESSION COMPLETE ✅
+## Status: 🟡 ACTIVE (Session Redefined - 2026-02-04)
 
-### Final Completion Date: 2026-02-04
+### New Task: Class Heritage and Generics (2026-02-04)
 
-### Session Summary - 2026-02-04 (Continued)
+**Gemini Consultation Summary:**
+
+Since tsz-5 (Import Elision) and tsz-7 (Import Generation) are handling the module system, the next high-impact area for tsz-4 is **Class Heritage and Declaration-level Generics**.
+
+### Problem Description
+
+Currently, while tsz can emit basic class and interface members, it often misses:
+- **Class Heritage**: `class A extends B implements I1, I2`
+- **Generic Constraints & Defaults**: `interface Container<T extends string = "default">`
+- **Interface Heritage**: `interface I extends Base1, Base2`
+- **Accessor Synthesis**: Converting `get`/`set` pairs into appropriate property declarations
+
+### Implementation Plan
+
+**Estimated Complexity: Medium (2-3 days)**
+
+#### Phase 1: HeritageClause Emission (Day 1)
+- Implement `HeritageClause` emission for Classes and Interfaces
+- Handle `extends` and `implements` keywords
+- Parse heritage clauses from AST
+
+#### Phase 2: Type Parameter Constraints & Defaults (Day 2)
+- Implement Type Parameter constraints (`extends T`)
+- Implement defaults (`= D`)
+- Apply across all declaration types (classes, interfaces, type aliases)
+
+#### Phase 3: Accessor Emission (Day 3)
+- Handle `get`/`set` emission
+- Getter-only becomes `readonly`
+- Edge cases (abstract accessors)
+
+### Files to Modify
+- **`src/declaration_emitter.rs`**: Primary file for .d.ts orchestration
+- **`src/emitter/type_printer.rs`**: May need `print_type_parameter` helper
+- **`src/parser/node.rs`**: To access `HeritageClause` data from NodeArena
+
+### Success Criteria
+
+**Class Heritage:**
+```typescript
+// Input
+class Base<T> {}
+interface I { x: number }
+export class Derived extends Base<string> implements I { x: number = 1; }
+
+// Expected .d.ts
+export declare class Derived extends Base<string> implements I {
+    x: number;
+}
+```
+
+**Generic Constraints & Defaults:**
+```typescript
+// Input
+export type Callback<T extends object = { id: string }> = (arg: T) => void;
+
+// Expected .d.ts
+export declare type Callback<T extends object = { id: string }> = (arg: T) => void;
+```
+
+**Accessor Synthesis:**
+```typescript
+// Input
+export class Box {
+    private _val: number;
+    get value(): number { return this._val; }
+    set value(v: number) { this._val = v; }
+}
+
+// Expected .d.ts
+export declare class Box {
+    private _val;
+    get value(): number;
+    set value(v: number);
+}
+```
+
+---
+
+### Previous Session Summary (2026-02-04)
 
 **Completed This Session:**
 10. ✅ **Function overload detection** (766485146, a9c593c08)
@@ -349,44 +428,29 @@ export declare function obj(x: Object = {}): void;
 
 **Impact:** The vast majority of real-world default parameters now work correctly.
 
-### Session Status: READY FOR NEXT TASK
+### Session Status: ACTIVE - Class Heritage and Generics
 
-This session has completed substantial declaration emit improvements:
+This session continues with declaration emit improvements:
 1. Function overload support ✅
 2. Default parameter support ✅
-3. Basic syntax working well
+3. Parameter properties ✅
+4. Class member visibility ✅
+5. Abstract classes/methods ✅
+6. Namespace/module declarations ✅
 
-**Recommended next priority:** Run full conformance suite to measure overall impact and identify remaining gaps.
+**Current Priority:** Class Heritage and Generics
+- HeritageClause emission (extends, implements)
+- Type parameter constraints and defaults
+- Accessor synthesis (get/set)
 
+---
 
-## Session Completion Note
+## Alternative Task (if Heritage is blocked): Computed Property Names
 
-**Date**: 2026-02-04
+**Problem**: `export const sym = Symbol(); export class A { [sym]: number; }`
 
-**Status**: tsz-4 session complete. Core declaration emit features implemented:
+**TSC Behavior**: Emits the literal or unique symbol reference. If simple string literal `["prop"]`, converts to standard property `prop`.
 
-### Completed Features ✅
-1. Function overload detection and emission
-2. Default parameter values (literals, arrays, objects)
-3. Parameter properties in class constructors
-4. Class member visibility (private/protected/public)
-5. Abstract classes and methods
-6. Namespace/module declarations (fixed earlier)
+**Files**: `src/declaration_emitter.rs`, `src/emitter/helpers.rs`
 
-### Next Session: Import/Export Elision
-
-**Gemini's detailed guidance saved for next session:**
-- Create `src/declaration_emitter/usage_analyzer.rs`
-- Implement UsageAnalyzer with:
-  - used_symbols: FxHashSet<SymbolId>
-  - visited_defs: FxHashSet<DefId>
-  - Methods to walk exported declarations
-  - Type visitor to find Lazy(DefId), TypeQuery, Enum types
-- Map DefId to SymbolId via DefinitionStore
-- Filter import emission based on used symbols
-- Handle edge cases: re-exports, circular references, private members
-
-**Implementation complexity:** High (2-3 days estimated)
-**Impact:** Critical - fixes "Module not found" errors in .d.ts files
-
-**Recommended approach:** Start fresh session with clean context.
+**Complexity**: Low-Medium (1 day)

@@ -1,8 +1,22 @@
-# Session tsz-3: CFA - Loop Narrowing & Cache Validation
+# Session tsz-3: Solver-First Narrowing & Discriminant Hardening
 
 **Started**: 2026-02-04
-**Status**: COMPLETE ✅ (Phase 1 COMPLETE, Phase 2 Tasks 6-7 COMPLETE, Phase 3 COMPLETE)
-**Focus**: TypeEnvironment unification complete - Lazy type resolution now works correctly
+**Status**: 🟢 ACTIVE (Phase 1 COMPLETE - CFA Infrastructure)
+**Focus**: Fix discriminant narrowing bugs and harden narrowing logic for complex types
+
+---
+
+## Session History
+
+### Previous Session: CFA - Loop Narrowing & Cache Validation ✅ COMPLETE
+
+**Completed**: 2026-02-04
+- TypeEnvironment unification: ✅ COMPLETE
+- Loop narrowing with conservative widening: ✅ COMPLETE
+- Flow cache validation: ✅ COMPLETE
+- TypeEnvironment population fix: ✅ COMPLETE
+
+**Result**: All 74 control_flow_tests pass. CFA infrastructure is solid.
 
 ## Context
 
@@ -40,12 +54,194 @@ Instead of creating BinderTypeDatabase (which had type compatibility issues), th
 - 457774e05: feat: use shareable type_environment for type resolution (Task 2)
 - ddd272d47: feat: add TypeEnvironment support to FlowAnalyzer and NarrowingContext (Task 3 complete)
 
-**Result**: Phase 1 COMPLETE - Type Environment Unification achieved!
+---
 
-**Problem Solved**: Type aliases couldn't be resolved during narrowing because:
-1. Type aliases were registered in one TypeEnvironment instance
-2. Narrowing operations used a TypeInterner without access to that TypeEnvironment
-3. Lazy types remained unresolved during discriminant narrowing
+## Current Session: Solver-First Narrowing & Discriminant Hardening
+
+**Started**: 2026-02-04
+**Phase**: ACTIVE
+
+### Focus
+
+Move narrowing logic closer to the "North Star" by ensuring it handles complex structural types (Intersections, Lazy aliases) and matches `tsc` edge cases for optionality and truthiness.
+
+### Problem Statement
+
+According to `AGENTS.md`, the latest implementation of discriminant narrowing (commit f2d4ae5d5) contains **3 CRITICAL BUGS**:
+1. **Reversed subtype check** - asked `is_subtype_of(property_type, literal)` instead of `is_subtype_of(literal, property_type)`
+2. **Missing type resolution** - didn't handle `Lazy`/`Ref`/`Intersection` types
+3. **Broken for optional properties** - failed on `{ prop?: "a" }` cases
+
+These bugs prevent discriminant narrowing from working correctly with type aliases and optional properties.
+
+---
+
+## Prioritized Tasks
+
+### Task 1: Fix Discriminant Subtype Direction
+**File**: `src/solver/narrowing.rs`
+**Function**: `narrow_by_discriminant`
+
+**Problem**: The subtype check is reversed. When checking if `x.kind === "add"` narrows the type:
+- ✅ CORRECT: `is_subtype_of(literal_value, prop_type)` - checks if `"add" extends "add" | "remove"`
+- ❌ WRONG: `is_subtype_of(prop_type, literal_value)` - checks if `"add" | "remove"` extends `"add"`
+
+**Implementation**:
+1. Find the subtype check in `narrow_by_discriminant`
+2. Reverse the argument order to `is_subtype_of(literal, property_type)`
+3. Add test case: `{ kind: "a" | "b" }` narrowed by `x.kind === "a"`
+
+### Task 2: Handle Optional Properties in Narrowing
+**File**: `src/solver/narrowing.rs`
+**Functions**: `narrow_by_discriminant`, `narrow_by_excluding_discriminant`
+
+**Problem**: Optional properties like `{ prop?: "a" }` are not handled correctly:
+- `x.prop === "a"` should narrow to include the variant (excluding `undefined`)
+- `x.prop !== "a"` should KEEP the variant (it could be `undefined`)
+
+**TypeScript Behavior**:
+```typescript
+type Action = { type?: "add" } | { type: "remove" };
+
+function foo(x: Action) {
+  if (x.type === "add") {
+    // x: { type: "add" }  (undefined excluded)
+  }
+  if (x.type !== "add") {
+    // x: { type?: "add" } | { type: "remove" }  (both variants kept!)
+  }
+}
+```
+
+**Implementation**:
+1. Check if property is optional via `PropertyInfo.optional`
+2. For `===` check: exclude `undefined` from the narrowed type
+3. For `!==` check: keep the variant (it could be `undefined`)
+
+### Task 3: Recursive Type Resolution in Narrowing
+**File**: `src/solver/narrowing.rs`
+**Function**: `get_property_type` (in `NarrowingContext`)
+
+**Problem**: Narrowing often happens on type aliases (e.g., `type Action = { type: string }`), which are `Lazy(DefId)` types. The current code doesn't resolve these before looking for discriminants.
+
+**Implementation**:
+1. Update `get_property_type` to handle `TypeKey::Lazy` by resolving via `TypeEvaluator`
+2. Handle `TypeKey::Intersection` by searching all members
+3. Use the `TypeResolver` from `tsz-2`'s bridge implementation
+4. Add test: discriminant narrowing on type aliases
+
+### Task 4: Harden `in` Operator Narrowing
+**File**: `src/solver/narrowing.rs`
+**Function**: `narrow_by_property_presence`
+
+**Problem**: The `in` operator narrowing needs to filter union types based on property presence:
+- `"prop" in x` keeps only union members that *could* have that property
+- Must handle index signatures (properties that exist via index signature)
+
+**TypeScript Behavior**:
+```typescript
+type A = { x: number };
+type B = { y: string };
+type C = { [key: string]: boolean };
+
+function foo(obj: A | B | C) {
+  if ("x" in obj) {
+    // obj: A | C  (B excluded, C kept via index signature)
+  }
+}
+```
+
+### Task 5: Truthiness Narrowing for Literals
+**File**: `src/solver/narrowing.rs`
+**Function**: `narrow_by_truthiness`
+
+**Problem**: While `tsc` primarily narrows `null | undefined` in truthiness checks, sound mode may require stricter literal filtering:
+- `""`, `0`, `false`, `0n` are falsy
+- All other values are truthy
+
+**Implementation**:
+1. Identify literal types in unions
+2. Filter based on JavaScript truthiness rules
+3. Consider sound mode implications (if applicable)
+
+---
+
+## Expected Impact
+
+- **Correctness**: Fixes the 3 critical bugs identified in `AGENTS.md`
+- **Robustness**: Allows narrowing to work through type aliases and complex intersections
+- **Alignment**: Brings `tsz` closer to `tsc` behavior for Discriminated Unions
+- **Conformance**: Expected +2-5% improvement in conformance pass rate
+
+---
+
+## Coordination Notes
+
+### Avoid (tsz-1 domain):
+- **Intersection Reduction** in `src/solver/intern.rs` (tsz-1 is working on this)
+- Focus on **filtering logic** in `narrowing.rs`, not **reduction logic**
+
+### Leverage:
+- **tsz-2** (Checker-Solver Bridge): Use the `TypeResolver` to resolve `Lazy` types
+- **tsz-3 previous work**: TypeEnvironment infrastructure is already in place
+
+### North Star Rule:
+- **NO AST dependencies** in `src/solver/narrowing.rs`
+- Use `TypeGuard` enum to pass information from Checker to Solver
+- Keep narrowing logic in the Solver (pure type algebra)
+
+---
+
+## Gemini Consultation Plan
+
+Following the mandatory Two-Question Rule from `AGENTS.md`:
+
+### Question 1: Approach Validation (BEFORE implementation)
+```bash
+./scripts/ask-gemini.mjs --include=src/solver "I need to fix discriminant narrowing bugs in src/solver/narrowing.rs.
+
+Bugs identified:
+1. Reversed subtype check: is_subtype_of(property_type, literal) should be is_subtype_of(literal, property_type)
+2. Missing type resolution: Lazy(DefId) and Intersection types not resolved
+3. Optional properties: { prop?: "a" } not handled correctly
+
+Planned approach:
+1. Fix subtype check direction in narrow_by_discriminant
+2. Add Lazy/Intersection resolution in get_property_type
+3. Add optional property handling with PropertyInfo.optional check
+
+Before I implement: 1) Is this the right approach? 2) What exact functions need changes? 3) Are there edge cases I'm missing?"
+```
+
+### Question 2: Implementation Review (AFTER implementation)
+```bash
+./scripts/ask-gemini.mjs --pro --include=src/solver "I fixed discriminant narrowing bugs in src/solver/narrowing.rs.
+
+Changes: [PASTE CODE OR DIFF]
+
+Please review: 1) Is this correct for TypeScript? 2) Did I miss any edge cases? 3) Are there type system bugs? Be specific if wrong."
+```
+
+---
+
+## Session History
+
+- 2026-02-04: Session started - CFA infrastructure work (TypeEnvironment, Loop Narrowing)
+- 2026-02-04: CFA Phase COMPLETE - all 74 control_flow_tests pass
+- 2026-02-04: **REDEFINED** to "Solver-First Narrowing & Discriminant Hardening"
+
+---
+
+## Complexity: MEDIUM
+
+**Why Medium**: The bugs are well-defined and localized:
+- Fixes are isolated to `src/solver/narrowing.rs`
+- TypeEnvironment infrastructure already exists (from previous phase)
+- Clear TypeScript behavior to match
+
+**Risk**: Discriminant narrowing is core to TypeScript's type system. Bugs here affect many real-world code patterns.
+
+**Mitigation**: Follow Two-Question Rule strictly. All changes must be reviewed by Gemini Pro before commit.
 
 **Solution Implemented**:
 1. **Task 1**: Made `ctx.type_environment` shareable as `Rc<RefCell<TypeEnvironment>>`

@@ -18,7 +18,7 @@ use crate::solver::judge::{
 };
 use crate::solver::sound::{SoundDiagnostic, SoundDiagnosticCode, SoundLawyer, SoundModeConfig};
 use crate::solver::subtype::{SubtypeChecker, SubtypeResult, TypeEnvironment};
-use crate::solver::types::*;
+use crate::solver::types::{Visibility, *};
 
 // =============================================================================
 // Phase 1 Tests: Bug Fixes
