@@ -292,3 +292,27 @@ When working on Task #5 (modifying `src/solver/`), MUST follow mandatory workflo
 - Eliminates "Type cannot be named" errors in .d.ts files
 - +5-10% conformance pass rate increase
 
+
+### Gemini Final Priority Decision - 2026-02-04
+
+**DECISION: CONTINUE TSZ-5 - Complete Task #3 Integration**
+
+**Key Reasons:**
+1. **Emit Correctness** - Import/export elision is REQUIRED for valid JavaScript
+2. **Momentum** - UsageAnalyzer implemented & validated by Gemini Pro
+3. **Avoid WIP Bloat** - Don't leave critical work half-done
+4. **Dependency Chain** - Task #5 depends on stable Task #3
+
+**Action Plan:**
+1. Finish Task #3: Integrate UsageAnalyzer into DeclarationEmitter
+2. Execute Task #5: Add missing handlers (with mandatory Gemini workflow)
+3. Verify with conformance tests + TSZ_LOG=debug tracing
+
+**When to Switch?**
+Only if hitting Solver blocker or critical type system regression.
+
+**Expected Impact:**
+- Validated .d.ts file generation
+- Eliminates runtime crashes from missing imports
+- +5-10% conformance pass rate
+
