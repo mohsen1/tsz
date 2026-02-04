@@ -120,7 +120,7 @@ mod generic_strictness_tests {
             constraint: None,
             is_const: false,
             default: None,
-            is_const: false,
+            
         }));
 
         // When checking against unconstrained generic, use Unknown (not Any)
@@ -960,7 +960,6 @@ mod function_variance_tests {
             is_const: false,
             name: interner.intern_string("T"),
             constraint: None,
-            is_const: false,
             default: None,
             is_const: false,
         }));
