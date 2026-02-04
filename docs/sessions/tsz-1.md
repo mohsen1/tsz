@@ -305,3 +305,22 @@ Completed **5 parser fixes** in this session:
 - src/parser/state_statements.rs (class member modifiers)
 - src/parser/state_declarations.rs (throw statement)
 - src/parser/state_expressions.rs (arrow functions, arguments, arrays, objects)
+
+### Investigation: TS1202 False Positives (2026-02-04)
+
+**Issue**: 29 extra TS1202 errors in conformance tests
+
+**Analysis**:
+- TS1202 is emitted in `src/checker/import_checker.rs:303` when `module.is_es_module()` is true  
+- Test directives like `// @module: commonjs` are parsed and written to tsconfig.json
+- Manual testing confirms tsz correctly respects tsconfig module settings ✅
+
+**Root Cause**: The conformance-rust/ directory doesn't exist in the repo.
+The conformance.sh script expects this directory which contains:
+- `tsz-conformance` binary
+- Test directive parser
+- Conformance test runner
+
+**Status**: Blocked on missing conformance test infrastructure
+
+**Recommendation**: Switch focus back to parser fixes (TS1005) or other error codes.
