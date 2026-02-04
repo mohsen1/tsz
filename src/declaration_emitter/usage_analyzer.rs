@@ -72,6 +72,8 @@ pub struct UsageAnalyzer<'a> {
     type_cache: &'a TypeCache,
     /// Type interner for type operations
     type_interner: &'a TypeInterner,
+    /// Map of import name -> SymbolId for resolving type references
+    import_name_map: &'a FxHashMap<String, SymbolId>,
     /// Map of symbols to their usage kind (Type, Value, or Both)
     used_symbols: FxHashMap<SymbolId, UsageKind>,
     /// Visited AST nodes (for cycle detection)
@@ -108,12 +110,14 @@ impl<'a> UsageAnalyzer<'a> {
         type_cache: &'a TypeCache,
         type_interner: &'a TypeInterner,
         current_arena: Arc<NodeArena>,
+        import_name_map: &'a FxHashMap<String, SymbolId>,
     ) -> Self {
         Self {
             arena,
             binder,
             type_cache,
             type_interner,
+            import_name_map,
             used_symbols: FxHashMap::default(),
             visited_nodes: FxHashSet::default(),
             visited_types: FxHashSet::default(),
@@ -646,7 +650,28 @@ impl<'a> UsageAnalyzer<'a> {
             // Type references - extract the symbol
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {
+                    // First try AST walk via analyze_entity_name
                     self.analyze_entity_name(type_ref.type_name);
+
+                    // Fallback: If AST walk didn't find the symbol, try semantic walk via TypeId
+                    // This handles imported types where node_symbols doesn't have entries
+                    eprintln!(
+                        "[DEBUG] TYPE_REFERENCE: looking up type_cache.node_types for type_idx={:?}",
+                        type_idx
+                    );
+                    if let Some(&type_id) = self.type_cache.node_types.get(&type_idx.0) {
+                        eprintln!(
+                            "[DEBUG] TYPE_REFERENCE: found type_id={:?}, walking it",
+                            type_id
+                        );
+                        self.walk_type_id(type_id);
+                    } else {
+                        eprintln!(
+                            "[DEBUG] TYPE_REFERENCE: no type_id found for type_idx={:?}",
+                            type_idx
+                        );
+                    }
+
                     // CRITICAL: Walk type arguments to catch generic types like Promise<User>
                     if let Some(ref type_args) = type_ref.type_arguments {
                         for &arg_idx in &type_args.nodes {
@@ -867,6 +892,31 @@ impl<'a> UsageAnalyzer<'a> {
                         "[DEBUG] analyze_entity_name: no symbol found for name_idx={:?}",
                         name_idx
                     );
+                    // Fallback: Try to find the symbol in import_name_map
+                    // Get the identifier text and look it up
+                    if let Some(ident) = self.arena.get_identifier(name_node) {
+                        eprintln!(
+                            "[DEBUG] analyze_entity_name: looking up '{}' in import_name_map",
+                            ident.escaped_text
+                        );
+                        if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
+                            eprintln!(
+                                "[DEBUG] analyze_entity_name: found sym_id={:?} from import_name_map",
+                                sym_id
+                            );
+                            let kind = if self.in_value_pos {
+                                UsageKind::VALUE
+                            } else {
+                                UsageKind::TYPE
+                            };
+                            self.mark_symbol_used(sym_id, kind);
+                        } else {
+                            eprintln!(
+                                "[DEBUG] analyze_entity_name: '{}' not found in import_name_map",
+                                ident.escaped_text
+                            );
+                        }
+                    }
                 }
             }
             k if k == syntax_kind_ext::QUALIFIED_NAME => {
@@ -927,12 +977,22 @@ impl<'a> UsageAnalyzer<'a> {
             }
         }
 
+        // Debug: Print def_to_symbol map
+        eprintln!(
+            "[DEBUG] walk_type_id: def_to_symbol map = {:?}",
+            self.type_cache.def_to_symbol
+        );
+
         // Extract DefIds/SymbolIds from each type
         for other_type_id in all_types {
             // Extract Lazy(DefId)
             if let Some(def_id) = visitor::lazy_def_id(self.type_interner, other_type_id) {
                 eprintln!("[DEBUG] walk_type_id: found Lazy(DefId={:?})", def_id);
                 if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
+                    eprintln!(
+                        "[DEBUG] walk_type_id: DefId({:?}) -> SymbolId({:?})",
+                        def_id, sym_id
+                    );
                     self.mark_symbol_used(
                         sym_id,
                         crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,

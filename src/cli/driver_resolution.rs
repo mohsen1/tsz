@@ -1800,6 +1800,10 @@ pub(crate) fn emit_outputs(
                 // Run usage analysis and calculate required imports if we have type cache
                 if let Some(ref cache) = type_cache {
                     use crate::declaration_emitter::usage_analyzer::UsageAnalyzer;
+                    use rustc_hash::FxHashMap;
+
+                    // Empty import_name_map for this usage (not needed for auto-import calculation)
+                    let import_name_map = FxHashMap::default();
 
                     let mut analyzer = UsageAnalyzer::new(
                         &file.arena,
@@ -1807,6 +1811,7 @@ pub(crate) fn emit_outputs(
                         cache,
                         &program.type_interner,
                         file.arena.clone(),
+                        &import_name_map,
                     );
 
                     // Clone used_symbols before calling another method on analyzer
