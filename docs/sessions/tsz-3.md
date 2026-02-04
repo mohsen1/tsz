@@ -38,16 +38,18 @@ const doubled = nums.map(x => x * 2); // 'x' should be 'number' from array type
 - `35cb275b0` - Redefined focus to Generic Contextual Inference
 - `f390ccbf2` - Implemented visit_application for generic types
 - `2d2050763` - Fixed visit_ref (CRITICAL BUG)
+- `f669259f5` - Implemented priority-based contextual inference constraints
 
 ### Current Tasks: In Progress
 
-**Task 1.2: Seed InferenceContext with Contextual Constraints (HIGH)**
-- **File**: `src/solver/infer.rs`
+**Task 1.2: Seed InferenceContext with Contextual Constraints (HIGH)** ✅ **COMPLETE**
+- **File**: `src/solver/operations.rs`
 - **Goal**: Allow `InferenceContext` to accept external contextual hints
 - **Implementation**:
-  - Modify `resolve_generic_call` to use contextual return type
-  - Seed type parameters with contextual constraints before argument checking
-  - Ensure `Contextual` priority is lower than `Argument`
+  - Added `InferencePriority` parameter to `constrain_types` and all helper functions
+  - Moved contextual seeding to BEFORE argument processing (step 2.5)
+  - Use `InferencePriority::Contextual` for contextual hints (lower priority)
+  - Use `InferencePriority::Argument` for argument constraints (higher priority)
 
 **Task 1.3: Wire up `check_with_context` in ExpressionChecker (MEDIUM)**
 - **File**: `src/checker/expr.rs`
