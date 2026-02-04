@@ -84,13 +84,18 @@ pub enum TypeGuard {
     /// Removes falsy types from a union: `null`, `undefined`, `false`, `0`, `""`, `NaN`.
     Truthy,
 
-    /// `x.prop === literal` (Discriminated Union narrowing)
+    /// `x.prop === literal` or `x.payload.type === "value"` (Discriminated Union narrowing)
     ///
     /// Narrows a union of object types based on a discriminant property.
-    /// For example, narrowing `{ kind: "A" } | { kind: "B" }` with
-    /// `Discriminant { property: "kind", value: "A" }` yields `{ kind: "A" }`.
+    ///
+    /// # Examples
+    /// - Top-level: `{ kind: "A" } | { kind: "B" }` with `path: ["kind"]` yields `{ kind: "A" }`
+    /// - Nested: `{ payload: { type: "user" } } | { payload: { type: "product" } }`
+    ///   with `path: ["payload", "type"]` yields `{ payload: { type: "user" } }`
     Discriminant {
-        property_name: Atom,
+        /// Property path from base to discriminant (e.g., ["payload", "type"])
+        property_path: Vec<Atom>,
+        /// The literal value to match against
         value_type: TypeId,
     },
 
@@ -281,6 +286,54 @@ impl<'a> NarrowingContext<'a> {
         discriminants
     }
 
+    /// Get the type of a property at a nested path within a type.
+    ///
+    /// # Examples
+    /// - `get_type_at_path(type, ["payload"])` -> type of `payload` property
+    /// - `get_type_at_path(type, ["payload", "type"])` -> type of `payload.type`
+    ///
+    /// Returns `None` if:
+    /// - The type doesn't have the property at any level in the path
+    /// - An intermediate type in the path is not an object type
+    fn get_type_at_path(&self, mut type_id: TypeId, path: &[Atom]) -> Option<TypeId> {
+        for (i, &prop_name) in path.iter().enumerate() {
+            // Handle ANY - any property access on any returns any
+            if type_id == TypeId::ANY {
+                return Some(TypeId::ANY);
+            }
+
+            // Resolve Lazy types
+            type_id = self.resolve_type(type_id);
+
+            // Handle Union - return union of property types from all members
+            if let Some(members_id) = union_list_id(self.db, type_id) {
+                let members = self.db.type_list(members_id);
+                let remaining_path = &path[i..];
+                let prop_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&member| self.get_type_at_path(member, remaining_path))
+                    .collect();
+
+                if prop_types.is_empty() {
+                    return None;
+                } else if prop_types.len() == 1 {
+                    return Some(prop_types[0]);
+                } else {
+                    return Some(self.db.union(prop_types));
+                }
+            }
+
+            // Get the property type from object shape
+            let shape_id = object_shape_id(self.db, type_id)?;
+            let shape = self.db.object_shape(shape_id);
+
+            let prop = shape.properties.iter().find(|p| p.name == prop_name)?;
+            type_id = prop.type_id;
+        }
+
+        Some(type_id)
+    }
+
     /// Narrow a union type based on a discriminant property check.
     ///
     /// Example: `action.type === "add"` narrows `Action` to `{ type: "add", value: number }`
@@ -289,17 +342,22 @@ impl<'a> NarrowingContext<'a> {
     /// the property could match the literal value. This is more flexible than the
     /// old `find_discriminants` approach which required ALL members to have the
     /// property with unique literal values.
+    ///
+    /// # Arguments
+    /// - `union_type`: The union type to narrow
+    /// - `property_path`: Path to the discriminant property (e.g., ["payload", "type"])
+    /// - `literal_value`: The literal value to match
     pub fn narrow_by_discriminant(
         &self,
         union_type: TypeId,
-        property_name: Atom,
+        property_path: &[Atom],
         literal_value: TypeId,
     ) -> TypeId {
         let _span = span!(
             Level::TRACE,
             "narrow_by_discriminant",
             union_type = union_type.0,
-            ?property_name,
+            property_path_len = property_path.len(),
             literal_value = literal_value.0
         )
         .entered();
@@ -326,9 +384,9 @@ impl<'a> NarrowingContext<'a> {
         );
 
         eprintln!(
-            "DEBUG narrow_by_discriminant: union_type={}, property={:?}, literal={}, members={}",
+            "DEBUG narrow_by_discriminant: union_type={}, property_path_len={}, literal={}, members={}",
             union_type.0,
-            self.db.resolve_atom_ref(property_name),
+            property_path.len(),
             literal_value.0,
             members.len()
         );
@@ -362,71 +420,35 @@ impl<'a> NarrowingContext<'a> {
                     None
                 };
 
-            // Helper function to check if a type has a matching property
+            // Helper function to check if a type has a matching property at the path
             let check_member_for_property = |check_type_id: TypeId| -> bool {
-                if let Some(shape_id) = object_shape_id(self.db, check_type_id) {
-                    let shape = self.db.object_shape(shape_id);
-
-                    // Find the property
-                    if let Some(prop_info) =
-                        shape.properties.iter().find(|p| p.name == property_name)
-                    {
-                        // CRITICAL: Use is_subtype_of(literal_value, property_type)
-                        // NOT the reverse! This was the bug in the reverted commit.
-                        //
-                        // Check if the literal value is a subtype of the property type.
-                        // This handles cases like:
-                        // - prop is "a" | "b", checking for "a" -> match
-                        // - prop is string, checking for "a" -> match
-                        // - prop is "a", checking for "a" | "b" -> no match (correct)
-                        //
-                        // For optional properties, the effective type includes undefined.
-                        let effective_property_type = if prop_info.optional {
-                            self.db.union(vec![prop_info.type_id, TypeId::UNDEFINED])
-                        } else {
-                            prop_info.type_id
-                        };
-
-                        let matches =
-                            is_subtype_of(self.db, literal_value, effective_property_type);
-
-                        if matches {
-                            trace!(
-                                "Member {} has property {:?} with type {}, literal {} matches",
-                                check_type_id.0,
-                                self.db.resolve_atom_ref(property_name),
-                                prop_info.type_id.0,
-                                literal_value.0
-                            );
-                        } else {
-                            trace!(
-                                "Member {} has property {:?} with type {}, literal {} does not match",
-                                check_type_id.0,
-                                self.db.resolve_atom_ref(property_name),
-                                prop_info.type_id.0,
-                                literal_value.0
-                            );
-                        }
-
-                        matches
-                    } else {
+                // Get the type at the property path
+                let prop_type = match self.get_type_at_path(check_type_id, property_path) {
+                    Some(t) => t,
+                    None => {
                         // Property doesn't exist on this member
-                        // (x.prop === value implies prop must exist, so we exclude this member)
-                        trace!(
-                            "Member {} does not have property {:?}",
-                            check_type_id.0,
-                            self.db.resolve_atom_ref(property_name)
-                        );
-                        false
+                        trace!("Member {} does not have property path", check_type_id.0);
+                        return false;
                     }
-                } else {
-                    // Non-object member (function, class, etc.)
+                };
+
+                // CRITICAL: Use is_subtype_of(literal_value, property_type)
+                // NOT the reverse! This was the bug in the reverted commit.
+                let matches = is_subtype_of(self.db, literal_value, prop_type);
+
+                if matches {
                     trace!(
-                        "Member {} is not an object type, excluding",
-                        check_type_id.0
+                        "Member {} has property path with type {}, literal {} matches",
+                        check_type_id.0, prop_type.0, literal_value.0
                     );
-                    false
+                } else {
+                    trace!(
+                        "Member {} has property path with type {}, literal {} does not match",
+                        check_type_id.0, prop_type.0, literal_value.0
+                    );
                 }
+
+                matches
             };
 
             // Check for property match
@@ -477,17 +499,22 @@ impl<'a> NarrowingContext<'a> {
     /// - prop is "a", exclude "a" -> exclude (property is always "a")
     /// - prop is "a" | "b", exclude "a" -> keep (could be "b")
     /// - prop doesn't exist -> keep (property doesn't match excluded value)
+    ///
+    /// # Arguments
+    /// - `union_type`: The union type to narrow
+    /// - `property_path`: Path to the discriminant property (e.g., ["payload", "type"])
+    /// - `excluded_value`: The literal value to exclude
     pub fn narrow_by_excluding_discriminant(
         &self,
         union_type: TypeId,
-        property_name: Atom,
+        property_path: &[Atom],
         excluded_value: TypeId,
     ) -> TypeId {
         let _span = span!(
             Level::TRACE,
             "narrow_by_excluding_discriminant",
             union_type = union_type.0,
-            ?property_name,
+            property_path_len = property_path.len(),
             excluded_value = excluded_value.0
         )
         .entered();
@@ -543,49 +570,36 @@ impl<'a> NarrowingContext<'a> {
             // Helper function to check if a member should be excluded
             // Returns true if member should be KEPT (not excluded)
             let should_keep_member = |check_type_id: TypeId| -> bool {
-                if let Some(shape_id) = object_shape_id(self.db, check_type_id) {
-                    let shape = self.db.object_shape(shape_id);
-
-                    // Find the property
-                    if let Some(prop_info) =
-                        shape.properties.iter().find(|p| p.name == property_name)
-                    {
-                        // Exclude member ONLY if property type is subtype of excluded value
-                        // This means the property is ALWAYS the excluded value
-                        // REVERSE of narrow_by_discriminant logic
-                        //
-                        // For optional properties, the effective type includes undefined.
-                        let effective_property_type = if prop_info.optional {
-                            self.db.union(vec![prop_info.type_id, TypeId::UNDEFINED])
-                        } else {
-                            prop_info.type_id
-                        };
-
-                        let should_exclude =
-                            is_subtype_of(self.db, effective_property_type, excluded_value);
-
-                        if should_exclude {
-                            trace!(
-                                "Member {} has property type {} which is subtype of excluded {}, excluding",
-                                check_type_id.0, prop_info.type_id.0, excluded_value.0
-                            );
-                            false // Member should be excluded
-                        } else {
-                            trace!(
-                                "Member {} has property type {} which is not subtype of excluded {}, keeping",
-                                check_type_id.0, prop_info.type_id.0, excluded_value.0
-                            );
-                            true // Member should be kept
-                        }
-                    } else {
+                // Get the type at the property path
+                let prop_type = match self.get_type_at_path(check_type_id, property_path) {
+                    Some(t) => t,
+                    None => {
                         // Property doesn't exist - keep the member
-                        // (property absence doesn't match excluded value)
-                        trace!("Member {} does not have property, keeping", check_type_id.0);
-                        true
+                        trace!(
+                            "Member {} does not have property path, keeping",
+                            check_type_id.0
+                        );
+                        return true;
                     }
+                };
+
+                // Exclude member ONLY if property type is subtype of excluded value
+                // This means the property is ALWAYS the excluded value
+                // REVERSE of narrow_by_discriminant logic
+                let should_exclude = is_subtype_of(self.db, prop_type, excluded_value);
+
+                if should_exclude {
+                    trace!(
+                        "Member {} has property path type {} which is subtype of excluded {}, excluding",
+                        check_type_id.0, prop_type.0, excluded_value.0
+                    );
+                    false // Member should be excluded
                 } else {
-                    // Non-object member - keep it
-                    true
+                    trace!(
+                        "Member {} has property path type {} which is not subtype of excluded {}, keeping",
+                        check_type_id.0, prop_type.0, excluded_value.0
+                    );
+                    true // Member should be kept
                 }
             };
 
@@ -1707,15 +1721,15 @@ impl<'a> NarrowingContext<'a> {
             }
 
             TypeGuard::Discriminant {
-                property_name,
+                property_path,
                 value_type,
             } => {
                 if sense {
                     // Discriminant matches: narrow to matching union members
-                    self.narrow_by_discriminant(source_type, *property_name, *value_type)
+                    self.narrow_by_discriminant(source_type, property_path, *value_type)
                 } else {
                     // Discriminant doesn't match: exclude matching union members
-                    self.narrow_by_excluding_discriminant(source_type, *property_name, *value_type)
+                    self.narrow_by_excluding_discriminant(source_type, property_path, *value_type)
                 }
             }
 
@@ -2375,11 +2389,11 @@ pub fn find_discriminants(
 pub fn narrow_by_discriminant(
     interner: &dyn QueryDatabase,
     union_type: TypeId,
-    property_name: Atom,
+    property_path: &[Atom],
     literal_value: TypeId,
 ) -> TypeId {
     let ctx = NarrowingContext::new(interner);
-    ctx.narrow_by_discriminant(union_type, property_name, literal_value)
+    ctx.narrow_by_discriminant(union_type, property_path, literal_value)
 }
 
 /// Convenience function for typeof narrowing.

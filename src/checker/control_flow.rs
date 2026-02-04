@@ -1910,11 +1910,15 @@ impl<'a> FlowAnalyzer<'a> {
                 if let Some(prop_name) = self.discriminant_property(condition_idx, target) {
                     let literal_true = self.interner.literal_boolean(true);
                     if is_true_branch {
-                        return narrowing.narrow_by_discriminant(type_id, prop_name, literal_true);
+                        return narrowing.narrow_by_discriminant(
+                            type_id,
+                            &[prop_name],
+                            literal_true,
+                        );
                     }
                     return narrowing.narrow_by_excluding_discriminant(
                         type_id,
-                        prop_name,
+                        &[prop_name],
                         literal_true,
                     );
                 }

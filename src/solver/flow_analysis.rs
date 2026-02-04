@@ -174,11 +174,11 @@ impl<'a> FlowTypeEvaluator<'a> {
     pub fn narrow_by_discriminant(
         &self,
         union_type: TypeId,
-        property_name: Atom,
+        property_path: &[Atom],
         literal_value: TypeId,
     ) -> TypeId {
         self.narrowing_context
-            .narrow_by_discriminant(union_type, property_name, literal_value)
+            .narrow_by_discriminant(union_type, property_path, literal_value)
     }
 
     /// Narrow a type by excluding a specific type.
