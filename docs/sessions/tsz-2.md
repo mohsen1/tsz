@@ -58,12 +58,29 @@ Modify `CheckerContext` to maintain separate caches for constructor and instance
 
 ## Implementation Tasks
 
-1. [ ] Add `symbol_instance_types` cache to `CheckerContext`
-2. [ ] Update `get_class_constructor_type` to populate both caches
-3. [ ] Update `resolve_lazy` to prefer instance types for classes
-4. [ ] Add tests for type vs value position class resolution
-5. [ ] Verify `test_abstract_constructor_assignability` passes
-6. [ ] Run full test suite to check for regressions
+1. [x] Add `symbol_instance_types` cache to `CheckerContext`
+2. [x] Update `get_class_constructor_type` to populate both caches
+3. [x] Update `resolve_lazy` to prefer instance types for classes
+4. [ ] Investigate why test still fails after fixes
+5. [ ] Add tests for type vs value position class resolution
+6. [ ] Verify `test_abstract_constructor_assignability` passes
+7. [ ] Run full test suite to check for regressions
+
+## Progress Update (2026-02-04)
+
+**Completed Tasks 1-3**: Implemented dual type cache architecture
+- Added `symbol_instance_types` field to TypeCache and CheckerContext
+- Updated state_type_analysis.rs to cache both constructor and instance types
+- Updated resolve_lazy to return instance types for class symbols
+
+**Current Issue**: Test still fails with error message changed from "Object not assignable to Callable" to "Dog instance not assignable to Animal"
+
+This indicates progress - the return type annotation `: Animal` is now correctly resolving to an Object type instead of a Callable. However, the nominal inheritance check (which should pass because Dog extends Animal) is not working.
+
+**Investigation Needed**:
+- Verify that Dog and Animal instance types both have symbol fields set
+- Check if inheritance_graph is being passed to the compat checker
+- Verify that is_derived_from(Dog, Animal) returns true
 
 ## Success Criteria
 
