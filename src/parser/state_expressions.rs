@@ -778,9 +778,20 @@ impl ParserState {
                         diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
                     );
                     // Fall through to parse as await expression
+                } else if self.in_parameter_default_context() && has_following_expression {
+                    // TS2524: 'await' expressions cannot be used in a parameter initializer
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'await' expressions cannot be used in a parameter initializer.",
+                        diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
+                    );
+                    // Fall through to parse as await expression for error recovery
                 } else if !self.in_async_context() || self.in_parameter_default_context() {
-                    // In parameter default context of non-async functions, 'await' should always be treated as identifier
-                    if self.in_parameter_default_context() && !self.in_async_context() {
+                    // In parameter default context of non-async functions, 'await' should be treated as identifier
+                    if self.in_parameter_default_context()
+                        && !self.in_async_context()
+                        && !has_following_expression
+                    {
                         // Parse 'await' as regular identifier in parameter defaults of non-async functions
                         let start_pos = self.token_pos();
                         let end_pos = self.token_end(); // capture end before consuming
