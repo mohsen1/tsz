@@ -1355,6 +1355,12 @@ impl<'a> FlowGraphBuilder<'a> {
                             }
                         }
                     }
+
+                    // Check for array mutation and create appropriate flow node
+                    if self.is_array_mutation_call(expr_idx) {
+                        let flow = self.create_flow_array_mutation(expr_idx);
+                        self.current_flow = flow;
+                    }
                 }
             }
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -1390,6 +1396,68 @@ impl<'a> FlowGraphBuilder<'a> {
                 || x == SyntaxKind::AmpersandAmpersandEqualsToken as u16
                 || x == SyntaxKind::QuestionQuestionEqualsToken as u16
         )
+    }
+
+    /// Check if a call expression is a known array mutation method.
+    fn is_array_mutation_call(&self, call_idx: NodeIndex) -> bool {
+        let Some(call_node) = self.arena.get(call_idx) else {
+            return false;
+        };
+        let Some(call) = self.arena.get_call_expr(call_node) else {
+            return false;
+        };
+        let Some(callee_node) = self.arena.get(call.expression) else {
+            return false;
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+
+        // Optional chains (?.) do not definitely mutate
+        if access.question_dot_token {
+            return false;
+        }
+
+        let Some(name_node) = self.arena.get(access.name_or_argument) else {
+            return false;
+        };
+
+        let name = if let Some(ident) = self.arena.get_identifier(name_node) {
+            ident.escaped_text.as_str()
+        } else if let Some(literal) = self.arena.get_literal(name_node) {
+            if name_node.kind == crate::scanner::SyntaxKind::StringLiteral as u16 {
+                literal.text.as_str()
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        };
+
+        matches!(
+            name,
+            "copyWithin"
+                | "fill"
+                | "pop"
+                | "push"
+                | "reverse"
+                | "shift"
+                | "sort"
+                | "splice"
+                | "unshift"
+        )
+    }
+
+    /// Create a flow node for array mutation.
+    fn create_flow_array_mutation(&mut self, call_idx: NodeIndex) -> FlowNodeId {
+        let id = self.graph.nodes.alloc(flow_flags::ARRAY_MUTATION);
+        if let Some(node) = self.graph.nodes.get_mut(id) {
+            node.node = call_idx;
+            if !self.current_flow.is_none() && self.current_flow != self.graph.unreachable_flow {
+                node.antecedent.push(self.current_flow);
+            }
+        }
+        id
     }
 
     /// Handle an await expression by creating an AWAIT_POINT flow node.

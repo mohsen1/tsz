@@ -8,7 +8,29 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Labeled statement support completed. Testing conformance impact.
+**Status**: Implementing Array Mutation Detection in Flow Graph Builder
+
+**Task**: Port array mutation detection logic from state_binding.rs into FlowGraphBuilder
+
+**Problem**: Array mutation methods (push, pop, splice, etc.) are currently not tracked in the flow graph. This causes incorrect type narrowing because CFA treats these methods as read-only operations.
+
+**Example**:
+```typescript
+let x: number[] | string[] = [];
+if (typeof x[0] === "number") {
+    x.push(5); // Should invalidate narrowing
+    console.log(x[0].toFixed()); // Currently errors, but should work after push
+}
+```
+
+**Implementation Plan** (from Gemini):
+1. Add `is_array_mutation_call` helper method to detect mutation methods
+2. Add `create_flow_array_mutation` method to create flow nodes
+3. Update `handle_expression_for_assignments` to detect and create mutation flow nodes
+
+**Expected Impact**: Fix TS2339 (Property does not exist) and TS2322 (Type not assignable) errors related to array narrowing.
+
+**File**: `src/checker/flow_graph_builder.rs`
 
 **Completed** (commit 32772dbb3):
 - Implemented labeled statement support in FlowGraphBuilder
