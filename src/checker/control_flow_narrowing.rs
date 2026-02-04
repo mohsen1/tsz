@@ -1079,9 +1079,17 @@ impl<'a> FlowAnalyzer<'a> {
         {
             if constraint != type_id {
                 let narrowed_constraint = if is_true_branch {
-                    narrowing.narrow_by_discriminant(constraint, prop_name, literal_type)
+                    narrowing.narrow_by_discriminant(
+                        constraint,
+                        std::slice::from_ref(&prop_name),
+                        literal_type,
+                    )
                 } else {
-                    narrowing.narrow_by_excluding_discriminant(constraint, prop_name, literal_type)
+                    narrowing.narrow_by_excluding_discriminant(
+                        constraint,
+                        std::slice::from_ref(&prop_name),
+                        literal_type,
+                    )
                 };
                 if narrowed_constraint != constraint {
                     return self.interner.intersection2(type_id, narrowed_constraint);
@@ -1090,9 +1098,17 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if is_true_branch {
-            narrowing.narrow_by_discriminant(type_id, prop_name, literal_type)
+            narrowing.narrow_by_discriminant(
+                type_id,
+                std::slice::from_ref(&prop_name),
+                literal_type,
+            )
         } else {
-            narrowing.narrow_by_excluding_discriminant(type_id, prop_name, literal_type)
+            narrowing.narrow_by_excluding_discriminant(
+                type_id,
+                std::slice::from_ref(&prop_name),
+                literal_type,
+            )
         }
     }
 
@@ -1928,7 +1944,7 @@ impl<'a> FlowAnalyzer<'a> {
         {
             return Some((
                 TypeGuard::Discriminant {
-                    property_name: prop_name,
+                    property_path: vec![prop_name],
                     value_type: literal_type,
                 },
                 target,
