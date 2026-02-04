@@ -2340,21 +2340,44 @@ impl ParserState {
             );
         }
 
-        // Handle invalid modifiers before index signatures in object literals.
+        // NOTE: public/private/protected are contextual keywords in object literals.
+        // When followed by get/set/async, they're parsed as modifiers and TS1042 is reported.
+        // Otherwise, they're parsed as property names (contextual keywords).
         if matches!(
             self.token(),
             SyntaxKind::PrivateKeyword | SyntaxKind::ProtectedKeyword | SyntaxKind::PublicKeyword
         ) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "Modifiers cannot appear here.",
-                diagnostic_codes::MODIFIERS_NOT_ALLOWED_HERE,
+            // Look ahead to check if this is followed by an accessor or method
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            self.next_token(); // skip public/private/protected
+
+            // Check if followed by get/set/async (accessor or method modifier)
+            let is_accessor_or_method = matches!(
+                self.token(),
+                SyntaxKind::GetKeyword | SyntaxKind::SetKeyword | SyntaxKind::AsyncKeyword
             );
-            self.next_token();
-            if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_index_signature() {
-                let _ = self.parse_index_signature_with_modifiers(None, start_pos);
-                return NodeIndex::NONE;
+
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+
+            if is_accessor_or_method {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                // Report TS1042 for the specific modifier
+                let modifier_name = match self.token() {
+                    SyntaxKind::PublicKeyword => "'public'",
+                    SyntaxKind::PrivateKeyword => "'private'",
+                    SyntaxKind::ProtectedKeyword => "'protected'",
+                    _ => "modifier",
+                };
+                self.parse_error_at_current_token(
+                    &format!("{} modifier cannot be used here.", modifier_name),
+                    diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE, // TS1042
+                );
+                self.next_token(); // consume the modifier
+                // Continue parsing - the next token should be get/set/async
             }
+            // If not followed by accessor/method, treat as property name (fall through)
         }
 
         // Handle get accessor: get foo() { }

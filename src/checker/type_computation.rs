@@ -1585,6 +1585,22 @@ impl<'a> CheckerState<'a> {
                     } else {
                         TypeId::VOID
                     };
+
+                    // TS2378: A 'get' accessor must return a value.
+                    // Check if the getter has a body but no return statement with a value.
+                    if elem_node.kind == syntax_kind_ext::GET_ACCESSOR && !accessor.body.is_none() {
+                        let has_return = self.body_has_return_with_value(accessor.body);
+                        let falls_through = self.function_body_falls_through(accessor.body);
+
+                        if !has_return && falls_through {
+                            use crate::checker::types::diagnostics::diagnostic_codes;
+                            self.error_at_node(
+                                accessor.name,
+                                "A 'get' accessor must return a value.",
+                                diagnostic_codes::GET_ACCESSOR_MUST_RETURN_VALUE,
+                            );
+                        }
+                    }
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property - but allow getter+setter pairs
