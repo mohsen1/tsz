@@ -4,7 +4,7 @@ use super::*;
 use crate::solver::AnyPropagationMode;
 use crate::solver::compat::CompatChecker;
 use crate::solver::intern::TypeInterner;
-use crate::solver::{LiteralValue, PropertyInfo, TypeId};
+use crate::solver::{LiteralValue, PropertyInfo, TypeId, Visibility};
 
 // =============================================================================
 // AnyPropagationRules Tests

@@ -209,7 +209,7 @@ mod tests {
             },
         ];
 
-        let dummy_symbol = SymbolId::from_u32(999);
+        let dummy_symbol = SymbolId(999);
         let merged = builder.merge_properties(base_props, own_props, dummy_symbol);
 
         assert_eq!(merged.len(), 2);
