@@ -2329,14 +2329,37 @@ impl ParserState {
                     self.arena
                         .create_modifier(SyntaxKind::ExportKeyword, start_pos)
                 }
-                // Handle 'let' and 'var' - not valid as class member modifiers
+                // Handle 'let' and 'var' - could be property names or invalid modifiers
                 SyntaxKind::LetKeyword | SyntaxKind::VarKeyword => {
+                    // Look ahead to distinguish between property name and modifier
+                    // var() { } or var followed by line break -> property name (valid)
+                    // public var foo -> modifier (invalid)
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+
+                    // If followed by open paren, it's a method name (valid)
+                    if self.current_token == SyntaxKind::OpenParenToken {
+                        // Restore and break - var/let is a property name
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        break;
+                    }
+
+                    // If followed by line break, ASI makes it a property name (valid)
+                    if self.scanner.has_preceding_line_break() {
+                        // Restore and break - var/let is a property name
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        break;
+                    }
+
+                    // Otherwise it's being used as a modifier (invalid)
                     use crate::checker::types::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Unexpected modifier.",
                         diagnostic_codes::UNEXPECTED_TOKEN,
                     );
-                    self.next_token();
                     // Don't add to modifiers list - not a valid modifier
                     continue;
                 }
