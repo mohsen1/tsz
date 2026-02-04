@@ -47,6 +47,25 @@ This suggests TS1005 is working correctly for most cases. The missing TS1005 ins
 
 **Note**: This requires understanding how test directives are processed and applied to the CompilerOptions. More investigation needed.
 
+---
+
+## Investigation: ClassDeclaration26 Parse Errors Missing
+
+**Test Case**: `class C { public const var export foo = 10; }`
+
+**TSC errors**:
+- TS1440: Variable declaration not allowed at this location
+- TS1068: Unexpected token
+- TS1005: ',' expected
+- TS1005: '=>' expected
+- TS1128: Declaration or statement expected
+
+**tsz errors**: NONE (should be emitting parse errors)
+
+**Issue**: Parser not detecting invalid class member syntax. The parser accepts `public const var export` as a valid class member when it should reject it.
+
+**Status**: Parser needs to validate class member modifiers more strictly. This is a separate issue from TS1136.
+
 ### Test Case
 ```typescript
 function A(): (public B) => C {}
