@@ -5,7 +5,7 @@ use crate::checker::flow_graph_builder::FlowGraphBuilder;
 use crate::parser::NodeIndex;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
-use crate::solver::{PropertyInfo, TypeId, TypeInterner};
+use crate::solver::{PropertyInfo, TypeId, TypeInterner, Visibility};
 
 fn get_switch_statement(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
     let root_node = arena.get(root).expect("root node");
