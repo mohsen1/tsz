@@ -45,21 +45,56 @@ These features are core to modern TypeScript's type system. Without them:
 
 ### Phase 1: Conditional Types (HIGH PRIORITY)
 
-#### Task 1: Verify Nominal Subtyping First
+#### Task 1: Nominal Subtyping ⚠️ BLOCKED
 **File**: `src/solver/subtype.rs`
 
-**Known Issue from Previous Session**:
-> "is_subtype_of treats ObjectWithIndex types structurally instead of nominally"
-> Example: `is_subtype_of(Cat, Dog)` returns `true` (WRONG!)
+**Status**: BLOCKED by missing PropertyInfo visibility flags
 
-**Action**: Verify `is_subtype_of` correctly uses `check_nominal_inheritance` for class-based types.
+**Investigation (2026-02-04)**:
+- Attempted to fix nominal subtyping for private/protected members
+- **Discovery**: `PropertyInfo` in `src/solver/types.rs` does NOT track visibility flags
+- TypeScript only enforces nominal typing when target has private/protected members
+- Classes without private members are structurally compatible (correct!)
 
-**Test**:
-```typescript
-class A { private x: string; }
-class B { private x: string; }
-const a: A = new B(); // Should error: Type 'B' is not assignable to type 'A'
+**Root Cause**:
+```rust
+// Current PropertyInfo (missing visibility flags)
+pub struct PropertyInfo {
+    pub name: Atom,
+    pub type_id: TypeId,
+    pub write_type: TypeId,
+    pub optional: bool,
+    pub readonly: bool,
+    pub is_method: bool,
+    // MISSING: private, protected, public flags
+}
 ```
+
+**Correct Fix Required**:
+1. Add visibility flags to `PropertyInfo`
+2. Check if target has private/protected members
+3. Only enforce nominal inheritance if target has private/protected members
+4. Classes without private members remain structurally compatible
+
+**Why Previous Attempt Failed**:
+- Applied nominal check to ALL classes with symbols
+- Made classes nominal like Java/C# (WRONG for TypeScript)
+- Incorrectly rejected valid structural compatibility
+
+**Example**:
+```typescript
+class A { x: number = 1; }        // No private members - STRUCTURAL
+class B { x: number = 2; }        // No private members - STRUCTURAL
+const a: A = new B();             // VALID (structural)
+
+class C { private x: number = 1; } // Has private - NOMINAL
+class D { private x: number = 2; } // Has private - NOMINAL
+const c: C = new D();             // ERROR (different declarations)
+```
+
+**Decision**: Defer this task. It requires PropertyInfo enhancement which is
+outside the scope of conditional type work. The current structural behavior
+is CORRECT for classes without private members.
 
 #### Task 2: Implement Conditional Type Evaluation
 **File**: `src/solver/evaluate.rs`
