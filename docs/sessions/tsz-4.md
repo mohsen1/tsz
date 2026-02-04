@@ -2,7 +2,7 @@
 
 ## Date: 2026-02-04
 
-## Status: PHASE 1 COMPLETE ✅ - Ready for Phase 2
+## Status: PHASE 2 IN PROGRESS - Non-exported functions fixed ✅
 
 ### Session Summary
 
@@ -135,9 +135,46 @@ export interface Point { x: number; y: number; }
 enum Color { Red, Green, Blue }  // → declare enum Color { Red = 0, Green = 1, Blue = 2 }
 ```
 
-### Remaining Work
+### PHASE 2 Progress
 
-**PHASE 2: Structural API Fidelity** (Next Session Priorities)
+**✅ Completed: Non-exported functions correctly omitted**
+- Functions without export modifier no longer appear in .d.ts files
+- Commit: 390bc142f
+
+**⏳ IN PROGRESS: Function Overload Support**
+
+**Current Issue:** Emitting all 3 signatures instead of just overloads
+```typescript
+// Input
+export function bar(x: string): void;
+export function bar(x: number): void;
+export function bar(x: string | number): void { console.log(x); }
+
+// TypeScript (expected)
+export declare function bar(x: string): void;
+export declare function bar(x: number): void;
+// Implementation signature OMITTED
+
+// TSZ current (wrong)
+export declare function bar(x: string): void;
+export declare function bar(x: number): void;
+export declare function bar(x: string | number): void;  // ← Should be omitted
+```
+
+**Implementation Challenge:**
+- Need to track function declarations across statements
+- Requires SymbolArena/Binder access to detect overload groups
+- Must identify which declaration has body (implementation) vs bodyless (overload)
+- Only emit overload signatures, omit implementation if overloads exist
+
+**Next Steps:**
+1. Add SymbolArena access to DeclarationEmitter
+2. Track emitted function names to avoid duplicates
+3. Filter signatures: emit only those without bodies when multiple exist
+
+### Remaining Work after Overloads
+
+**PHASE 2: Structural API Fidelity** (Continued)
 
 **Priority 1: Function Overloads** (Highest Impact)
 - Emit all overload signatures, not just implementation
