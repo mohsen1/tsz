@@ -1,8 +1,8 @@
-# Session tsz-3 - Type System Bug Fixes
+# Session tsz-3 - Control Flow Analysis Fixes
 
 **Started**: 2026-02-04
 **Status**: ACTIVE
-**Focus**: Individual diagnostic and type checking fixes
+**Focus**: Assignment Expression Discriminant Narrowing
 
 ## Context
 
@@ -11,55 +11,43 @@ Previous session (tsz-3-control-flow-analysis) completed:
 - in operator narrowing
 - Truthiness narrowing verification
 - Tail-recursive conditional type evaluation fix
-- Investigation revealed discriminant narrowing is fundamentally broken (archived for future work)
 
-## Current Task: Abstract Mixin Intersection TS2339
+Gemini recommended working on `test_assignment_expression_condition_narrows_discriminant` next.
+
+## Current Task: Assignment Expression Condition Narrows Discriminant
 
 ### Problem Statement
 
-Test `test_abstract_mixin_intersection_ts2339` fails with unexpected TS2339 errors.
+Test `test_assignment_expression_condition_narrows_discriminant` fails with TS2322 error.
 
 **Test Case**:
 ```typescript
-function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass: TBaseClass): TBaseClass & (abstract new (...args: any) => IMixin) {
-    abstract class MixinClass extends baseClass implements IMixin {
-        mixinMethod() {}
-    }
-    return MixinClass;
+type D = { done: true, value: 1 } | { done: false, value: 2 };
+declare function fn(): D;
+let o: D;
+if ((o = fn()).done) {
+    const y: 1 = o.value; // Should work - o should be narrowed to { done: true, value: 1 }
 }
-
-class DerivedFromConcrete extends Mixin(ConcreteBase) {
-}
-wasConcrete.baseMethod(); // TS2339: Property 'baseMethod' does not exist
-wasConcrete.mixinMethod(); // TS2339: Property 'mixinMethod' does not exist
 ```
 
-### Investigation Findings
+**Expected**: No errors (narrowing works)
+**Actual**: TS2322 error - `o.value` is type `1 | 2` instead of `1`
 
-1. **TypeId(152)** is the type of `DerivedFromConcrete`
-2. It has `ObjectShapeId(4)` which doesn't include `baseMethod` or `mixinMethod`
-3. **First error**: `'{ new (args: any): MixinClass }'` is not assignable to `'TBaseClass & { new (args: any): error }'`
-   - This suggests the heritage clause resolution isn't correctly handling function calls that return constructor types
+### Investigation Plan (from Gemini)
 
-### Root Cause (Hypothesis)
+1. **Locate Guard Extraction Logic**: Find where `TypeGuard`s are created in the checker
+   - Likely in `src/checker/control_flow*.rs` or `src/checker/type_checking.rs`
+   - Checker needs to recognize patterns like `if ((x = val).kind === "A")`
 
-When extending a function call (`extends Mixin(ConcreteBase)`), the heritage clause resolution:
-1. Evaluates `Mixin(ConcreteBase)` to get a constructor type
-2. Should merge properties from both `TBaseClass` and the mixin interface
-3. Currently not correctly merging the base class properties into the derived class type
+2. **Verify Solver Support**: Check `src/solver/narrowing.rs`
+   - `narrow_by_discriminant` function (lines 268-297) - handles the "WHAT" part
+   - `find_discriminants` (lines 174-263) - finds discriminant properties
 
-### Files to Investigate
+3. **Debug Path**: Use tracing to check if `narrow_by_discriminant` is called
+   - If not called → issue is upstream in checker's flow analysis
+   - If called but returns wrong type → issue in narrowing logic
 
-- `src/checker/class_inheritance.rs` - Class hierarchy analysis
-- `src/checker/herititage*.rs` - Heritage clause resolution
-- Property resolution for intersection types
-
-### Complexity
-
-This is a **complex issue** requiring deep knowledge of:
-- Generic function instantiation
-- Constructor type resolution from function calls
-- Intersection type property merging
-- Class heritage clause processing
-
-This may be too complex for a quick fix and might require architectural changes.
+### Key Files
+- `src/checker/control_flow*.rs` - Type guard extraction
+- `src/solver/narrowing.rs` - Discriminant narrowing implementation
+- `src/tests/checker_state_tests.rs:22821` - Test location
