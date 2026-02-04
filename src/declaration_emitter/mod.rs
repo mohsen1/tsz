@@ -78,6 +78,12 @@ pub struct DeclarationEmitter<'a> {
     import_string_aliases: FxHashMap<(String, String), String>,
     /// Maps SymbolId -> AliasName for SymbolId-based imports
     symbol_aliases: FxHashMap<SymbolId, String>,
+    /// Map of imported SymbolId -> ModuleSpecifier for elision
+    /// Tracks which module each imported symbol claims to come from
+    import_symbol_map: FxHashMap<SymbolId, String>,
+    /// Map of imported name -> SymbolId for resolving type references
+    /// Helps bridge the gap between type references and import symbols
+    import_name_map: FxHashMap<String, SymbolId>,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     inside_declare_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
@@ -116,6 +122,8 @@ impl<'a> DeclarationEmitter<'a> {
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
             symbol_aliases: FxHashMap::default(),
+            import_symbol_map: FxHashMap::default(),
+            import_name_map: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
@@ -149,6 +157,8 @@ impl<'a> DeclarationEmitter<'a> {
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
             symbol_aliases: FxHashMap::default(),
+            import_symbol_map: FxHashMap::default(),
+            import_name_map: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
@@ -220,10 +230,165 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena_to_path = arena_to_path;
     }
 
+    /// Build a map of imported SymbolId -> ModuleSpecifier for elision.
+    ///
+    /// Walks all import statements and tracks which module each imported
+    /// symbol claims to come from. This enables elision of unused imports.
+    fn prepare_import_metadata(&mut self, root_idx: NodeIndex) {
+        let binder = match &self.binder {
+            Some(b) => b,
+            None => return,
+        };
+
+        let Some(root_node) = self.arena.get(root_idx) else {
+            return;
+        };
+        let Some(source_file) = self.arena.get_source_file(root_node) else {
+            return;
+        };
+
+        // Walk all statements to find import declarations
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            // Handle regular import declarations
+            if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                    continue;
+                };
+
+                // Extract module specifier
+                let module_specifier = if let Some(spec) = self.arena.get(import.module_specifier) {
+                    match self.arena.get_literal(spec) {
+                        Some(lit) => lit.text.clone(),
+                        None => continue,
+                    }
+                } else {
+                    continue;
+                };
+
+                // Walk import clause to extract imported symbols
+                if !import.import_clause.is_none() {
+                    // Collect symbols to insert after binder is dropped
+                    let symbols = self.collect_imported_symbols_from_clause(
+                        &self.arena,
+                        binder,
+                        import.import_clause,
+                    );
+                    for (name, sym_id) in symbols {
+                        eprintln!(
+                            "[DEBUG] prepare_import_metadata: inserting {} -> SymbolId({:?}) -> '{}'",
+                            name, sym_id, module_specifier
+                        );
+                        self.import_name_map.insert(name.clone(), sym_id);
+                        self.import_symbol_map
+                            .insert(sym_id, module_specifier.clone());
+                    }
+                }
+            }
+            // Handle import equals declarations (import x = require('y'))
+            else if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                let Some(import_eq) = self.arena.get_import_decl(stmt_node) else {
+                    continue;
+                };
+
+                // Extract module specifier
+                let module_specifier =
+                    if let Some(spec) = self.arena.get(import_eq.module_specifier) {
+                        match self.arena.get_literal(spec) {
+                            Some(lit) => lit.text.clone(),
+                            None => continue,
+                        }
+                    } else {
+                        continue;
+                    };
+
+                // Get the imported symbol from the import clause name
+                // For ImportEqualsDeclaration, import_clause points directly to Identifier node
+                if !import_eq.import_clause.is_none() {
+                    // For ImportEquals, the 'import_clause' field points directly to the Identifier node.
+                    // We just need its SymbolId from the binder using the NodeIndex's raw u32 (.0).
+                    if let Some(&sym_id) = binder.node_symbols.get(&import_eq.import_clause.0) {
+                        self.import_symbol_map.insert(sym_id, module_specifier);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Collect all imported symbols from an ImportClause.
+    ///
+    /// Returns a Vec of (name, SymbolId) pairs that were found in the import clause.
+    fn collect_imported_symbols_from_clause(
+        &self,
+        arena: &NodeArena,
+        binder: &BinderState,
+        clause_idx: NodeIndex,
+    ) -> Vec<(String, SymbolId)> {
+        let mut symbols = Vec::new();
+
+        let Some(clause_node) = arena.get(clause_idx) else {
+            return symbols;
+        };
+        let Some(clause) = arena.get_import_clause(clause_node) else {
+            return symbols;
+        };
+
+        // Default import: import Def from './mod'
+        if !clause.name.is_none() {
+            if let Some(&sym_id) = binder.node_symbols.get(&clause.name.0) {
+                // Get the name from the symbol
+                if let Some(symbol) = binder.symbols.get(sym_id) {
+                    symbols.push((symbol.escaped_name.clone(), sym_id));
+                }
+            }
+        }
+
+        // Named imports: import { A, B, C as D } from './mod'
+        if !clause.named_bindings.is_none() {
+            if let Some(bindings_node) = arena.get(clause.named_bindings) {
+                if let Some(bindings) = arena.get_named_imports(bindings_node) {
+                    // Process each specifier
+                    for &spec_idx in &bindings.elements.nodes {
+                        if let Some(spec_node) = arena.get(spec_idx) {
+                            if let Some(spec) = arena.get_specifier(spec_node) {
+                                // Use the property_name if present (for 'as' imports), otherwise use name
+                                let name_idx = if !spec.property_name.is_none() {
+                                    spec.property_name
+                                } else {
+                                    spec.name
+                                };
+
+                                if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
+                                    // Get the name from the symbol
+                                    if let Some(symbol) = binder.symbols.get(sym_id) {
+                                        symbols.push((symbol.escaped_name.clone(), sym_id));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        symbols
+    }
+
     /// Emit declaration for a source file
     pub fn emit(&mut self, root_idx: NodeIndex) -> String {
+        // Reset usage tracking for each file
+        self.used_symbols = None;
+        self.foreign_symbols = None;
+
         self.reset_writer();
         self.indent_level = 0;
+
+        // Prepare import metadata for elision BEFORE running UsageAnalyzer
+        // This builds the SymbolId -> ModuleSpecifier map from existing imports
+        self.prepare_import_metadata(root_idx);
 
         // Run usage analyzer if we have all required components AND haven't run yet
         if self.used_symbols.is_none() {
@@ -246,12 +411,18 @@ impl<'a> DeclarationEmitter<'a> {
                 self.binder,
                 &self.current_arena,
             ) {
+                eprintln!(
+                    "[DEBUG] emit: import_name_map has {} entries: {:?}",
+                    self.import_name_map.len(),
+                    self.import_name_map
+                );
                 let mut analyzer = usage_analyzer::UsageAnalyzer::new(
                     self.arena,
                     binder,
                     cache,
                     interner,
                     current_arena.clone(),
+                    &self.import_name_map,
                 );
                 let used = analyzer.analyze(root_idx).clone();
                 let foreign = analyzer.get_foreign_symbols();
@@ -366,7 +537,11 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_export_assignment(stmt_idx);
             }
             k if k == syntax_kind_ext::IMPORT_DECLARATION => {
-                self.emit_import_declaration(stmt_idx);
+                // Skip emitting import declarations here - they're handled by import elision
+                // via emit_auto_imports() which only emits imports for symbols that are actually used
+                // The import_symbol_map tracks which imports are part of the elision system
+                // We still need to emit declarations that are NOT in import_symbol_map (but those should be rare)
+                self.emit_import_declaration_if_needed(stmt_idx);
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.emit_module_declaration(stmt_idx);
@@ -2172,6 +2347,55 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn emit_import_declaration_if_needed(&mut self, import_idx: NodeIndex) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+
+        // Check if this import is being handled by the elision system
+        // by checking if any of its imported symbols are in import_symbol_map
+        let mut has_elided_symbols = false;
+        if !import.import_clause.is_none() {
+            let binder = match &self.binder {
+                Some(b) => b,
+                None => {
+                    // No binder - fall back to emitting the import
+                    self.emit_import_declaration(import_idx);
+                    return;
+                }
+            };
+
+            // Collect symbols from this import clause
+            let symbols = self.collect_imported_symbols_from_clause(
+                &self.arena,
+                binder,
+                import.import_clause,
+            );
+
+            // Check if any symbol is in import_symbol_map (meaning it's being elided)
+            for (_name, sym_id) in symbols {
+                if self.import_symbol_map.contains_key(&sym_id) {
+                    has_elided_symbols = true;
+                    break;
+                }
+            }
+        }
+
+        if has_elided_symbols {
+            // This import is being handled by the elision system via emit_auto_imports
+            // Skip emitting it here to avoid duplicates
+            eprintln!(
+                "[DEBUG] emit_import_declaration_if_needed: skipping import (handled by elision)"
+            );
+        } else {
+            // Not handled by elision - emit normally
+            self.emit_import_declaration(import_idx);
+        }
+    }
+
     fn emit_import_declaration(&mut self, import_idx: NodeIndex) {
         let Some(import_node) = self.arena.get(import_idx) else {
             return;
@@ -3539,17 +3763,23 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(ambient_path);
         }
 
-        // 2. Get the source arena for this symbol
+        // 2. Check import_symbol_map for imported symbols
+        // This handles symbols that were imported from other modules
+        if let Some(module_specifier) = self.import_symbol_map.get(&sym_id) {
+            return Some(module_specifier.clone());
+        }
+
+        // 3. Get the source arena for this symbol
         let source_arena = binder.symbol_arenas.get(&sym_id)?;
 
-        // 3. Look up the file path from arena address
+        // 4. Look up the file path from arena address
         let arena_addr = Arc::as_ptr(source_arena) as usize;
         let source_path = self.arena_to_path.get(&arena_addr)?;
 
-        // 4. Calculate relative path
+        // 5. Calculate relative path
         let rel_path = self.calculate_relative_path(current_path, source_path);
 
-        // 5. Strip TypeScript extensions
+        // 6. Strip TypeScript extensions
         Some(self.strip_ts_extensions(&rel_path))
     }
 
@@ -3700,8 +3930,21 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             // Get symbol names and sort them
+            // Only emit imports for symbols that are actually imported (in import_symbol_map)
             let mut symbol_names: Vec<String> = symbol_ids
                 .iter()
+                .filter(|&&sym_id| {
+                    // Skip if not in import_symbol_map (it's a local or lib symbol, not imported)
+                    if !self.import_symbol_map.contains_key(&sym_id) {
+                        eprintln!(
+                            "[DEBUG] emit_auto_imports: skipping symbol {:?} - not in import_symbol_map (local or lib symbol)",
+                            sym_id
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                })
                 .filter_map(|&sym_id| {
                     let symbol = binder.symbols.get(sym_id)?;
                     eprintln!(
@@ -3756,8 +3999,15 @@ impl<'a> DeclarationEmitter<'a> {
     /// This should be called before emitting other declarations.
     fn emit_required_imports(&mut self) {
         if self.required_imports.is_empty() {
+            eprintln!("[DEBUG] emit_required_imports: no required imports");
             return;
         }
+
+        eprintln!(
+            "[DEBUG] emit_required_imports: has {} modules: {:?}",
+            self.required_imports.len(),
+            self.required_imports
+        );
 
         // Collect modules as owned strings to avoid borrow checker issues
         let mut modules: Vec<String> = self.required_imports.keys().cloned().collect();
