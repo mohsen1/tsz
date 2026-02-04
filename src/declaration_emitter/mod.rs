@@ -24,8 +24,6 @@
 //! }
 //! ```
 
-pub mod usage_analyzer;
-
 use crate::checker::TypeCache;
 use crate::emitter::type_printer::TypePrinter;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
@@ -1863,9 +1861,24 @@ impl<'a> DeclarationEmitter<'a> {
             // Type query (typeof)
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 self.write("typeof ");
-                // TypeQuery has expr_name field containing the entity being queried
                 if let Some(type_query) = self.arena.get_type_query(type_node) {
                     self.emit_entity_name(type_query.expr_name);
+
+                    // Handle type arguments (TS 4.7+)
+                    if let Some(ref type_args) = type_query.type_arguments
+                        && !type_args.nodes.is_empty()
+                    {
+                        self.write("<");
+                        let mut first = true;
+                        for &arg_idx in &type_args.nodes {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
+                            self.emit_type(arg_idx);
+                        }
+                        self.write(">");
+                    }
                 }
             }
 
@@ -1884,6 +1897,124 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::TrueKeyword as u16 => self.write("true"),
             k if k == SyntaxKind::FalseKeyword as u16 => self.write("false"),
+
+            // Indexed access type (T[K])
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                if let Some(indexed_access) = self.arena.get_indexed_access_type(type_node) {
+                    // Check if object type needs parentheses for precedence
+                    let obj_node = self.arena.get(indexed_access.object_type);
+                    let needs_parens = obj_node.is_some_and(|n| {
+                        n.kind == syntax_kind_ext::UNION_TYPE
+                            || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                            || n.kind == syntax_kind_ext::FUNCTION_TYPE
+                    });
+
+                    if needs_parens {
+                        self.write("(");
+                    }
+                    self.emit_type(indexed_access.object_type);
+                    if needs_parens {
+                        self.write(")");
+                    }
+
+                    self.write("[");
+                    self.emit_type(indexed_access.index_type);
+                    self.write("]");
+                }
+            }
+
+            // Mapped type
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                if let Some(mapped_type) = self.arena.get_mapped_type(type_node) {
+                    self.write("{ ");
+
+                    // Emit readonly modifier if present (inside the braces)
+                    if !mapped_type.readonly_token.is_none() {
+                        self.write("readonly ");
+                    }
+
+                    // Emit type parameter with brackets: [P
+                    self.write("[");
+                    self.emit_node(mapped_type.type_parameter);
+
+                    // Emit " in keyof" with name type
+                    self.write(" in keyof ");
+                    self.emit_entity_name(mapped_type.name_type);
+                    self.write("]");
+
+                    // Optionally emit question token (after the bracket)
+                    if !mapped_type.question_token.is_none() {
+                        self.write("?");
+                    }
+
+                    self.write(": ");
+
+                    // Emit type annotation
+                    self.emit_type(mapped_type.type_node);
+
+                    self.write("; }");
+                }
+            }
+
+            // Conditional type (T extends U ? X : Y)
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                if let Some(conditional) = self.arena.get_conditional_type(type_node) {
+                    // Helper function to check if a type needs parentheses
+                    let needs_parens = |type_idx: NodeIndex| -> bool {
+                        if let Some(node) = self.arena.get(type_idx) {
+                            // Types with lower or equal precedence need parentheses
+                            node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                                || node.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || node.kind == syntax_kind_ext::UNION_TYPE
+                                || node.kind == syntax_kind_ext::INTERSECTION_TYPE
+                        } else {
+                            false
+                        }
+                    };
+
+                    // Emit check_type (with parens if needed)
+                    if needs_parens(conditional.check_type) {
+                        self.write("(");
+                    }
+                    self.emit_type(conditional.check_type);
+                    if needs_parens(conditional.check_type) {
+                        self.write(")");
+                    }
+
+                    self.write(" extends ");
+
+                    // Emit extends_type (with parens if needed)
+                    if needs_parens(conditional.extends_type) {
+                        self.write("(");
+                    }
+                    self.emit_type(conditional.extends_type);
+                    if needs_parens(conditional.extends_type) {
+                        self.write(")");
+                    }
+
+                    self.write(" ? ");
+
+                    // Emit true_type (with parens if needed)
+                    if needs_parens(conditional.true_type) {
+                        self.write("(");
+                    }
+                    self.emit_type(conditional.true_type);
+                    if needs_parens(conditional.true_type) {
+                        self.write(")");
+                    }
+
+                    self.write(" : ");
+
+                    // Emit false_type (with parens if needed)
+                    if needs_parens(conditional.false_type) {
+                        self.write("(");
+                    }
+                    self.emit_type(conditional.false_type);
+                    if needs_parens(conditional.false_type) {
+                        self.write(")");
+                    }
+                }
+            }
 
             _ => {
                 // Fallback: emit as node
