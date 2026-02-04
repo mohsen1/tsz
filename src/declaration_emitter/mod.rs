@@ -24,6 +24,8 @@
 //! }
 //! ```
 
+pub mod usage_analyzer;
+
 use crate::checker::TypeCache;
 use crate::emitter::type_printer::TypePrinter;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
