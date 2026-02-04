@@ -702,6 +702,54 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
             }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                if let Some(mapped_type) = self.arena.get_mapped_type(member_node) {
+                    // Emit readonly modifier if present
+                    if !mapped_type.readonly_token.is_none() {
+                        self.write("readonly ");
+                    }
+
+                    self.write("[");
+
+                    // Get the TypeParameter data
+                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter) {
+                        if let Some(type_param) = self.arena.get_type_parameter(type_param_node) {
+                            // Emit the parameter name (e.g., "P")
+                            self.emit_node(type_param.name);
+
+                            // Emit " in "
+                            self.write(" in ");
+
+                            // Emit the constraint (e.g., "keyof T")
+                            if !type_param.constraint.is_none() {
+                                self.emit_type(type_param.constraint);
+                            }
+                        }
+                    }
+
+                    // Handle the optional 'as' clause (key remapping)
+                    if !mapped_type.name_type.is_none() {
+                        self.write(" as ");
+                        self.emit_type(mapped_type.name_type);
+                    }
+
+                    self.write("]");
+
+                    // Optionally emit question token (after the bracket)
+                    if !mapped_type.question_token.is_none() {
+                        self.write("?");
+                    }
+
+                    self.write(": ");
+
+                    // Emit type annotation
+                    self.emit_type(mapped_type.type_node);
+
+                    // Mapped types don't end with semicolon - return early
+                    self.write_line();
+                    return;
+                }
+            }
             _ => {}
         }
 
@@ -1882,6 +1930,17 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
+            // Type operator (keyof, readonly, etc.)
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                if let Some(type_op) = self.arena.get_type_operator(type_node) {
+                    // Check the operator kind
+                    if type_op.operator == SyntaxKind::KeyOfKeyword as u16 {
+                        self.write("keyof ");
+                    }
+                    self.emit_type(type_op.type_node);
+                }
+            }
+
             // Literal types
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(type_node) {
@@ -1933,13 +1992,30 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write("readonly ");
                     }
 
-                    // Emit type parameter with brackets: [P
                     self.write("[");
-                    self.emit_node(mapped_type.type_parameter);
 
-                    // Emit " in keyof" with name type
-                    self.write(" in keyof ");
-                    self.emit_entity_name(mapped_type.name_type);
+                    // Get the TypeParameter data
+                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter) {
+                        if let Some(type_param) = self.arena.get_type_parameter(type_param_node) {
+                            // Emit the parameter name (e.g., "P")
+                            self.emit_node(type_param.name);
+
+                            // Emit " in "
+                            self.write(" in ");
+
+                            // Emit the constraint (e.g., "keyof T")
+                            if !type_param.constraint.is_none() {
+                                self.emit_type(type_param.constraint);
+                            }
+                        }
+                    }
+
+                    // Handle the optional 'as' clause (key remapping)
+                    if !mapped_type.name_type.is_none() {
+                        self.write(" as ");
+                        self.emit_type(mapped_type.name_type);
+                    }
+
                     self.write("]");
 
                     // Optionally emit question token (after the bracket)
@@ -2036,6 +2112,18 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::ThisKeyword as u16 => self.write("this"),
             k if k == SyntaxKind::SuperKeyword as u16 => self.write("super"),
+            k if k == syntax_kind_ext::TYPE_PARAMETER => {
+                // Type parameter reference (e.g., T in mapped types)
+                if let Some(param) = self.arena.get_type_parameter(node) {
+                    self.emit_node(param.name);
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                // Type reference in mapped type name position
+                if let Some(type_ref) = self.arena.get_type_ref(node) {
+                    self.emit_node(type_ref.type_name);
+                }
+            }
             k if k == syntax_kind_ext::QUALIFIED_NAME => {
                 if let Some(name) = self.arena.get_qualified_name(node) {
                     self.emit_entity_name(name.left);
@@ -2110,6 +2198,12 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.arena.get_identifier(node) {
                     self.write(&ident.escaped_text);
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_PARAMETER => {
+                // Type parameter node - emit its name
+                if let Some(param) = self.arena.get_type_parameter(node) {
+                    self.emit_node(param.name);
                 }
             }
             k if k == syntax_kind_ext::QUALIFIED_NAME
