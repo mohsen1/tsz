@@ -55,5 +55,35 @@
 
 **Complexity**: Medium - Requires implementing export checking for qualified name imports
 
-## Status: NEEDING SIMPLER TEST
-Readonly and import alias issues are medium complexity. Need to find simpler diagnostic emission issue.
+## Current Task: Implement TS2540 for Readonly Element Access
+
+### Test: test_readonly_element_access_assignment_2540
+
+**Problem**: TS2540 not emitted when assigning to readonly property via element access
+
+**Test Case**:
+```typescript
+interface Config {
+    readonly name: string;
+}
+let config: Config = { name: "ok" };
+config["name"] = "error";  // Should emit TS2540
+```
+
+**Expected**: TS2540 "Cannot assign to 'name' because it is a read-only property"
+**Actual**: No error emitted
+
+**Investigation Status**:
+- Code exists: `check_readonly_assignment()` at `src/checker/state_checking.rs:928`
+- Function `is_property_readonly()` checks property readonly flag
+- Hypothesis: Interface readonly properties not being flagged in type system
+- OR: Element access not reaching the readonly check
+
+**Implementation Plan**:
+1. Use tracing to see what type is returned for `config["name"]`
+2. Check if `is_property_readonly()` is being called
+3. Determine if the issue is in type construction or checking logic
+4. Fix the root cause
+
+## Status: IMPLEMENTING
+Working on TS2540 readonly element access assignment fix.
