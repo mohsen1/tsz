@@ -107,6 +107,62 @@ The issue is NOT with discriminant narrowing logic itself, but with integration:
 2. Ensure narrowed types propagate correctly to statement bodies
 3. Test with `test_assignment_expression_condition_narrows_discriminant`
 
+### 2025-02-04: Fixed False Positive TS2564 in Switch Statements ✅
+
+**Problem**: `analyze_switch_statement` incorrectly returned `normal: None` when there was no default clause, marking all subsequent code as unreachable. This caused false positive TS2564 errors for properties initialized after switch statements without default clauses.
+
+**Example Bug**:
+```typescript
+class C {
+    prop: number; // FALSE POSITIVE TS2564 before fix
+    constructor(value: number) {
+        switch (value) {
+            case 1:
+                this.prop = 10;
+                break;
+            // No default clause
+        }
+        // Bug: Code after switch was marked unreachable
+        this.prop = 30; // Property IS definitely assigned here
+    }
+}
+```
+
+**Root Cause**:
+In `src/checker/flow_analysis.rs:518-525`, when `!has_default_clause`:
+- **Before**: Returned `normal: None` → marks subsequent code unreachable
+- **After**: Returns `normal: Some(assigned)` → preserves flow continuation
+
+**Fix**:
+```rust
+if !has_default_clause {
+    // Without a default, we can't guarantee any case will execute
+    // However, execution CAN continue after the switch (fall-through)
+    // Return the incoming assignments to preserve the normal flow
+    return FlowResult {
+        normal: Some(assigned),  // Changed from: None
+        exits,                    // Changed from: Some(assigned.clone())
+    };
+}
+```
+
+**Testing**:
+- Created test cases to verify fix with `--strict` mode
+- Verified against tsc output
+- Confirmed properties initialized after switch without default are now correctly recognized
+- Confirmed properties NOT initialized in all paths still correctly emit TS2564
+
+**Commit**: `efb5d0807` - "fix: correct flow analysis for switch statements without default clauses"
+
+**Impact**:
+- Eliminates false positive TS2564 errors for properties initialized after switch statements
+- Improves flow analysis accuracy for switch statements without default clauses
+- No test regressions introduced
+
+**Remaining Work**:
+- TS2454 (variable TDZ) still not being reported for variables after switch - separate issue
+- Discriminant narrowing integration still needs work for assignment expressions in conditions
+
 ## Notes
 
 - Builds on TDZ work from tsz-2
