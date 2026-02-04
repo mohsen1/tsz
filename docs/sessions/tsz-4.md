@@ -35,7 +35,23 @@ export declare class Point {
 - Emits properties before other class members
 - Added `in_constructor_params` flag to track context
 
-**Next Priority:** Import/Export Elision (remove unused imports)
+**Next Priority Decision Point:** ✅ Parameter Properties Complete - Awaiting Direction
+
+Gemini consultation recommended **Import/Export Elision** as next priority:
+- Remove unused imports to prevent "Module not found" errors
+- Requires implementing UsageAnalyzer with DefId → SymbolId mapping
+- Complex implementation: needs type visitor integration
+- See consultation notes in session file for detailed guidance
+
+**Alternative Options:**
+- Continue with other declaration emit features (simpler wins)
+- Switch to JavaScript emit or type checking components
+- Run full conformance to measure actual impact of completed work
+
+**Status:** Awaiting decision on whether to:
+1. Implement complex import elision (high impact, high complexity)
+2. Continue with simpler declaration features (medium impact, low complexity)
+3. Switch components (unclear impact/benefit)
 
 **Previous Session Accomplishments:**
 1. ✅ Test runner migrated to CLI (major milestone)
