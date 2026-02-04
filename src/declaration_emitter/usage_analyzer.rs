@@ -87,6 +87,20 @@ pub struct UsageAnalyzer<'a> {
 }
 
 impl<'a> UsageAnalyzer<'a> {
+    /// Check if a node has the Export modifier.
+    fn has_export_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Create a new usage analyzer.
     pub fn new(
         arena: &'a NodeArena,
@@ -136,24 +150,46 @@ impl<'a> UsageAnalyzer<'a> {
         };
 
         match stmt_node.kind {
-            // Exported declarations
+            // Exported declarations - only analyze if they have the Export modifier
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.analyze_function_declaration(stmt_idx);
+                if let Some(func) = self.arena.get_function(stmt_node) {
+                    if self.has_export_modifier(&func.modifiers) {
+                        self.analyze_function_declaration(stmt_idx);
+                    }
+                }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                self.analyze_class_declaration(stmt_idx);
+                if let Some(class) = self.arena.get_class(stmt_node) {
+                    if self.has_export_modifier(&class.modifiers) {
+                        self.analyze_class_declaration(stmt_idx);
+                    }
+                }
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                // Interfaces are implicitly exported unless in a namespace
+                // For now, analyze all interfaces at module level
                 self.analyze_interface_declaration(stmt_idx);
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                self.analyze_type_alias_declaration(stmt_idx);
+                if let Some(alias) = self.arena.get_type_alias(stmt_node) {
+                    if self.has_export_modifier(&alias.modifiers) {
+                        self.analyze_type_alias_declaration(stmt_idx);
+                    }
+                }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                self.analyze_enum_declaration(stmt_idx);
+                if let Some(enum_data) = self.arena.get_enum(stmt_node) {
+                    if self.has_export_modifier(&enum_data.modifiers) {
+                        self.analyze_enum_declaration(stmt_idx);
+                    }
+                }
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                self.analyze_variable_statement(stmt_idx);
+                if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+                    if self.has_export_modifier(&var_stmt.modifiers) {
+                        self.analyze_variable_statement(stmt_idx);
+                    }
+                }
             }
             // Export declarations - check if clause contains a declaration to analyze
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
@@ -1002,12 +1038,22 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         }
 
-        // Check if this symbol is from the current file
+        // Check if this symbol is from the current file by checking if any of its
+        // declarations are in the current arena using the declaration_arenas map
         let is_local = self
             .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(|arena| Arc::ptr_eq(arena, &self.current_arena))
+            .symbols
+            .get(sym_id)
+            .map(|symbol| {
+                // Check if any declaration is in the current file's arena
+                symbol.declarations.iter().any(|&decl_idx| {
+                    self.binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .map(|arena| Arc::ptr_eq(arena, &self.current_arena))
+                        .unwrap_or(false)
+                })
+            })
             .unwrap_or(false);
 
         eprintln!(
