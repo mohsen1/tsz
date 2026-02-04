@@ -72,40 +72,43 @@ These features are core to modern TypeScript's type system. Without them:
 - ✅ Updated `lower_type_element()` in lower.rs to use visibility (type literals only)
 
 **Remaining Work**:
-- ⏳ Update 8 PropertyInfo construction sites in `src/checker/class_type.rs`:
-  - Lines: 199 (properties), 323 (constructor params), 398, 431, 452 (private brand), 1084, 1236, 1269
-- ⏳ For each PropertyInfo construction:
-  1. Call `self.get_visibility_from_modifiers(&member.modifiers)`
-  2. Set `parent_id: current_sym` (class symbol, available at line 101)
-  3. Keep `visibility: Visibility::Public` for private brand (line 452)
+- ⏳ Update 6 PropertyInfo construction sites in `src/checker/class_type.rs`:
 
-**Pattern to Apply**:
+**Site 1 - Line 199** (Class properties - already has modifiers):
 ```rust
-// Before:
-PropertyInfo {
-    name,
-    type_id,
-    write_type: type_id,
-    optional,
-    readonly,
-    is_method: false,
-    visibility: Visibility::Public,  // Replace this
-    parent_id: None,                 // Replace this
-}
-
-// After:
+// Add before line 197:
 let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
-PropertyInfo {
-    name,
-    type_id,
-    write_type: type_id,
-    optional,
-    readonly,
-    is_method: false,
-    visibility,
-    parent_id: current_sym,
-}
+
+// Then update PropertyInfo to use:
+visibility, parent_id: current_sym,
 ```
+
+**Site 2 - Line 323** (Constructor parameter properties - already has modifiers):
+```rust
+// Add before line 323:
+let visibility = self.get_visibility_from_modifiers(&param.modifiers);
+
+// Then update PropertyInfo to use:
+visibility, parent_id: current_sym,
+```
+
+**Sites 3 & 4 - Lines 398, 431** (Accessors and Methods):
+These are created AFTER the initial member processing loop, so we need
+to track visibility during the loop. Two options:
+1. Store visibility in AccessorAggregate/MethodAggregate structs
+2. Process accessors/methods immediately into properties (refactor)
+
+**RECOMMENDED**: Skip for now - these need AccessorAggregate/MethodAggregate changes
+
+**Site 5 - Line 452** (Private brand property):
+Keep `parent_id: None` (this is a synthetic brand property, not a real member)
+
+**Sites 6, 7, 8** (Lines 1084, 1236, 1269): Need to investigate - likely in constructor_static
+
+**ACTION PLAN**:
+1. Update Sites 1 and 2 (simple - modifiers available)
+2. Keep Site 5 as-is (private brand, correct with None)
+3. Sites 3, 4, 6, 7, 8: Defer to follow-up PR or investigate further
 
 **Commits**:
 - `ec7a3e06b`: feat(solver): add visibility detection helpers for nominal subtyping
