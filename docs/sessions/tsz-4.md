@@ -353,3 +353,35 @@ This session has completed substantial declaration emit improvements:
 
 **Recommended next priority:** Run full conformance suite to measure overall impact and identify remaining gaps.
 
+
+## Session Completion Note
+
+**Date**: 2026-02-04
+
+**Status**: tsz-4 session complete. Core declaration emit features implemented:
+
+### Completed Features ✅
+1. Function overload detection and emission
+2. Default parameter values (literals, arrays, objects)
+3. Parameter properties in class constructors
+4. Class member visibility (private/protected/public)
+5. Abstract classes and methods
+6. Namespace/module declarations (fixed earlier)
+
+### Next Session: Import/Export Elision
+
+**Gemini's detailed guidance saved for next session:**
+- Create `src/declaration_emitter/usage_analyzer.rs`
+- Implement UsageAnalyzer with:
+  - used_symbols: FxHashSet<SymbolId>
+  - visited_defs: FxHashSet<DefId>
+  - Methods to walk exported declarations
+  - Type visitor to find Lazy(DefId), TypeQuery, Enum types
+- Map DefId to SymbolId via DefinitionStore
+- Filter import emission based on used symbols
+- Handle edge cases: re-exports, circular references, private members
+
+**Implementation complexity:** High (2-3 days estimated)
+**Impact:** Critical - fixes "Module not found" errors in .d.ts files
+
+**Recommended approach:** Start fresh session with clean context.
