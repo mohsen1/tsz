@@ -51,7 +51,15 @@ This creates an inconsistency:
 
 When the assignability check looks up the type of `Animal` (the value), it might be using the type environment which returns the instance type instead of the constructor type.
 
-**Next Step**: Investigate where the type environment is being used in the assignability check for `createAnimal(Animal)`. The issue is that we're getting the instance type from the type environment instead of the constructor type.
+**Next Step**:
+The type environment (src/solver/type_queries_extended.rs:1350) explicitly states that SymbolRef "needs resolution to class instance type". This suggests the current behavior is intentional but wrong.
+
+Need to either:
+1. Change type environment to map class symbols to constructor type (might be risky, wide impact)
+2. Use `get_type_of_symbol` directly for class symbols instead of type environment lookup
+3. Add a separate mapping for constructor types vs instance types in the type environment
+
+First, let me verify that the issue is actually the type environment lookup by checking where in the assignability check the wrong type is being used.
 
 **Failing Tests**:
 1. `test_abstract_constructor_assignability` - TS2322 error: Type for `Animal` includes Object.prototype properties
