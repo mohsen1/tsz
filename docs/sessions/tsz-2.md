@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 4 COMPLETE - All CFA Diagnostics & Safety tasks done
+**Status**: 🟢 Phase 5 Active - CFA Robustness & Completeness (Task 13: Boolean Narrowing - COMPLETE)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -773,6 +773,51 @@ Phase 4 completes the Control Flow Analysis implementation, making tsz a "real" 
 - Definite assignment analysis
 - Exhaustiveness checking
 - Support for complex control flow (try/catch/finally, loops, etc.)
+
+## Phase 5: CFA Robustness & Completeness (2026-02-04)
+
+### Overview
+
+Phase 5 focuses on **robustness and completeness** of the CFA implementation, fixing bugs and adding missing features to achieve full TypeScript conformance.
+
+**Strategic Shift**: From **Infrastructure** → **Robustness**
+- Set-theoretic completeness (boolean = true | false)
+- Diagnostic parity (exact TS error codes)
+- Performance of fixed-point iteration
+
+### Task 13: Fix Boolean Narrowing Logic (CRITICAL) ✅ COMPLETE
+
+**Goal**: Fix the bug where `boolean` type was not narrowed to `never` when both `true` and `false` were excluded.
+
+**Problem**:
+- Switches on `boolean` with `case true` and `case false` were incorrectly flagged as non-exhaustive
+- `boolean` was not being treated as `true | false` during narrowing operations
+- This was a correctness bug affecting the exhaustiveness checking feature
+
+**Implementation**:
+- Modified `narrow_excluding_type` in `src/solver/narrowing.rs` (line 1247)
+- Added special case handling for `BOOLEAN`, `BOOLEAN_TRUE`, `BOOLEAN_FALSE`
+- Detect if `excluded_type` is a boolean literal using `literal_value`
+- Handle exclusion from boolean → return the other literal
+- Handle exclusion from literals → return `NEVER` if matching
+- Fixed fallthrough bug: don't return early, let `is_assignable_to` check handle edge cases
+- Added positive narrowing in `narrow_to_type`: `boolean → true` / `boolean → false`
+
+**Files modified**:
+- `src/solver/narrowing.rs`: Added boolean special case handling
+
+**Test Results**:
+✅ Switch on `boolean` with both cases → correctly detected as exhaustive
+✅ Boolean excluding `true` → `BOOLEAN_FALSE`
+✅ Boolean excluding `false` → `BOOLEAN_TRUE`
+✅ Boolean excluding both `true` and `false` → `NEVER`
+✅ Edge case: `true` excluding `boolean` → `NEVER` (via `is_assignable_to`)
+✅ Boolean → `true` / `boolean` → `false` narrowing works correctly
+
+**Commits**:
+- `3174073b1` - fix(tsz-2): implement boolean narrowing logic (Task 13)
+
+**Known Issues**: None - boolean narrowing is now complete and correct.
 
 ### Task 10: Array.isArray Narrowing (MEDIUM)
 
