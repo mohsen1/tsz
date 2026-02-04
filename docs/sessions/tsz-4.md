@@ -323,15 +323,50 @@ impl<'a> DeclarationEmitter<'a> {
 ## Commits
 
 - `7142615c0` - docs: restructure tsz-4 session for declaration emit work
+- `d18a96de5` - feat: add TypePrinter module for declaration emit
+
+## Progress
+
+### ✅ Completed (2026-02-04)
+
+**Phase 1.1: TypePrinter Module Created**
+- Created `src/emitter/type_printer.rs` module
+- Implemented intrinsic type printing (all primitives)
+- Added skeleton methods for all TypeKey variants
+- Module compiles and all tests pass
+- Fast path for TypeId < 100 (built-in types)
+- Uses `TypeInterner::lookup()` for user-defined types
+
+**Committed:**
+- 246 lines added
+- Test suite: 23 passed
+- All pre-commit checks passed
+
+### 🚧 In Progress
+
+**Phase 1.2: Composite Type Printing**
+- Need to implement: union, intersection, array printing
+- Need to implement: object literal printing
+- Need to implement: function type printing
+
+### 📋 TODO
+
+**Phase 1.3: Integration**
+- Integrate TypePrinter with DeclarationEmitter
+- Add Solver/Checker context access
+- Test with real TypeScript files
+- Run `./scripts/emit/run.sh --dts-only` to verify
 
 ## Next Steps
 
 1. ✅ Reviewed existing DeclarationEmitter implementation
 2. ✅ Identified test infrastructure in `scripts/emit/`
 3. ✅ Got implementation plan from Gemini
-4. **NEXT**: Create `src/emitter/type_printer.rs` module
-5. **NEXT**: Implement primitive type printing
-6. **NEXT**: Run tests and fix failures
+4. ✅ Created `src/emitter/type_printer.rs` module
+5. ✅ Implemented primitive type printing
+6. **NEXT**: Implement composite types (union, intersection, array)
+7. **NEXT**: Integrate with DeclarationEmitter
+8. **NEXT**: Run tests and fix failures
 
 ## Resources
 
