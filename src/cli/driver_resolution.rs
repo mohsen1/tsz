@@ -1587,7 +1587,7 @@ pub(crate) fn emit_outputs(
     let mut outputs = Vec::new();
     let new_line = new_line_str(options.printer.new_line);
 
-    for file in &program.files {
+    for (file_idx, file) in program.files.iter().enumerate() {
         let input_path = PathBuf::from(&file.file_name);
         if let Some(dirty_paths) = dirty_paths
             && !dirty_paths.contains(&input_path)
@@ -1651,15 +1651,23 @@ pub(crate) fn emit_outputs(
                 let file_path = PathBuf::from(&file.file_name);
                 let type_cache = type_caches.get(&file_path).cloned();
 
-                // Create emitter with type information if available
-                // Note: binder=None disables usage analysis for now
-                // TODO: Add BinderState to enable import/export elision
-                let mut emitter = if let (Some(cache), _) = (type_cache, &program.type_interner) {
-                    // We need a BinderState but it's not available in BoundFile yet
-                    // For now, pass None to disable usage analysis
-                    DeclarationEmitter::new(&file.arena)
+                // Reconstruct BinderState for this file to enable usage analysis
+                let binder =
+                    crate::parallel::create_binder_from_bound_file(file, program, file_idx);
+
+                // Create emitter with type information and binder
+                let mut emitter = if let Some(cache) = type_cache {
+                    DeclarationEmitter::with_type_info(
+                        &file.arena,
+                        cache,
+                        &program.type_interner,
+                        &binder,
+                    )
                 } else {
-                    DeclarationEmitter::new(&file.arena)
+                    let mut emitter = DeclarationEmitter::new(&file.arena);
+                    // Still set binder even without cache for consistency
+                    emitter.set_binder(Some(&binder));
+                    emitter
                 };
                 let map_info = if options.declaration_map {
                     map_output_info(&dts_path)
