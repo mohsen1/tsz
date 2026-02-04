@@ -7,6 +7,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::binder::SymbolId;
@@ -308,7 +309,7 @@ pub struct CheckerContext<'a> {
     pub relation_cache: RefCell<FxHashMap<(TypeId, TypeId, u8), bool>>,
 
     /// Cached type environment for resolving Ref types during assignability checks.
-    pub type_environment: RefCell<Option<TypeEnvironment>>,
+    pub type_environment: Rc<RefCell<TypeEnvironment>>,
 
     /// Cache for evaluated application types to avoid repeated expansion.
     pub application_eval_cache: FxHashMap<TypeId, TypeId>,
@@ -564,7 +565,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             relation_cache: RefCell::new(FxHashMap::default()),
-            type_environment: RefCell::new(None),
+            type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
             mapped_eval_cache: FxHashMap::default(),
@@ -651,7 +652,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             relation_cache: RefCell::new(FxHashMap::default()),
-            type_environment: RefCell::new(None),
+            type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
             mapped_eval_cache: FxHashMap::default(),
@@ -740,7 +741,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             relation_cache: RefCell::new(cache.relation_cache),
-            type_environment: RefCell::new(None),
+            type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
             mapped_eval_cache: FxHashMap::default(),
@@ -828,7 +829,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             relation_cache: RefCell::new(cache.relation_cache),
-            type_environment: RefCell::new(None),
+            type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
             mapped_eval_cache: FxHashMap::default(),
