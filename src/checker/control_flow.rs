@@ -260,6 +260,12 @@ impl<'a> FlowAnalyzer<'a> {
         // Result cache: flow_id -> narrowed_type
         let mut results: FxHashMap<FlowNodeId, TypeId> = FxHashMap::default();
 
+        // CRITICAL: Check if initial type contains type parameters ONCE, outside the loop.
+        // This prevents caching generic types across different instantiations.
+        // See: https://github.com/microsoft/TypeScript/issues/9998
+        let initial_has_type_params =
+            crate::solver::type_queries::contains_type_parameters_db(self.interner, initial_type);
+
         // Initialize worklist with the entry point
         worklist.push_back((flow_id, initial_type));
         in_worklist.insert(flow_id);
@@ -277,7 +283,8 @@ impl<'a> FlowAnalyzer<'a> {
                 false
             };
 
-            if !is_switch_clause {
+            // Only use cache if: 1) not a switch clause, 2) initial type is concrete
+            if !is_switch_clause && !initial_has_type_params {
                 if let Some(sym_id) = symbol_id {
                     if let Some(cache) = self.flow_cache {
                         let key = (current_flow, sym_id, initial_type);
@@ -632,10 +639,21 @@ impl<'a> FlowAnalyzer<'a> {
             visited.insert(current_flow);
 
             // Store result in global cache for future calls
+            // CRITICAL: Only cache if BOTH initial and final types are concrete (no type parameters).
+            // This prevents the "Generic Result" bug where narrowing introduces type parameters.
             if let Some(sym_id) = symbol_id {
                 if let Some(cache) = self.flow_cache {
-                    let key = (current_flow, sym_id, initial_type);
-                    cache.borrow_mut().insert(key, final_type);
+                    let final_has_type_params =
+                        crate::solver::type_queries::contains_type_parameters_db(
+                            self.interner,
+                            final_type,
+                        );
+
+                    // Only cache if neither initial nor final types contain type parameters
+                    if !initial_has_type_params && !final_has_type_params {
+                        let key = (current_flow, sym_id, initial_type);
+                        cache.borrow_mut().insert(key, final_type);
+                    }
                 }
             }
         }
