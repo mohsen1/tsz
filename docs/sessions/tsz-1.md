@@ -1087,3 +1087,43 @@ All implementations follow North Star architecture:
 - Trailing commas
 
 **Session Updated**: 2026-02-04 20:42
+
+## Parser Hardening (2026-02-04 Continued)
+
+### Contextual Keywords Fix (COMPLETE 2026-02-04)
+
+**Problem**: Object literal accessors with `public`/`private`/`protected` modifiers were reporting wrong error codes.
+
+**Before**:
+```typescript
+var v = { public get foo() { } };
+// TS1184: Modifiers cannot appear here
+```
+
+**After** (matches TypeScript):
+```typescript
+var v = { public get foo() { } };
+// TS1042: 'public' modifier cannot be used here.
+// TS2378: A 'get' accessor must return a value.
+```
+
+**Changes Made**:
+1. `src/parser/state_expressions.rs`:
+   - When `public`/`private`/`protected` is followed by `get`/`set`/`async` in object literals, parse as modifier
+   - Report TS1042 with specific error message (e.g., "'public' modifier cannot be used here.")
+   - Allow these keywords as property names when not followed by accessors (contextual keywords)
+
+2. `src/checker/type_computation.rs`:
+   - Added TS2378 checking for object literal get accessors
+   - Checks if getter body lacks return statement with value
+   - Reports "A 'get' accessor must return a value." at accessor name
+
+**Conformance**: 52% on parser tests (200 tests)
+
+**Commit**: `752292b56` - "fix(parser): handle public/private/protected modifiers in object literals"
+
+**Related Tasks**:
+- ✅ Task #8: Fix contextual keywords (COMPLETE)
+- Task #10: Fix trailing commas (PENDING)
+- Task #2: Fix semicolon recovery cascade (PRIORITY 2 - DEFERRED)
+- Task #9: Fix arrow function disambiguation (PENDING)
