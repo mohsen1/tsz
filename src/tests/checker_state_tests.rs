@@ -2073,7 +2073,7 @@ const f = new Foo();
     let f_type = checker.get_type_of_symbol(f_sym);
     let f_key = types.lookup(f_type).expect("f type should exist");
     match f_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let props = shape.properties.as_slice();
             let name_atom = types.intern_string("name");
@@ -2106,7 +2106,10 @@ const f = new Foo();
                 props
             );
         }
-        _ => panic!("Expected f to be Object type, got {:?}", f_key),
+        _ => panic!(
+            "Expected f to be Object or ObjectWithIndex type, got {:?}",
+            f_key
+        ),
     }
 }
 
@@ -2149,7 +2152,7 @@ const f = new Foo(1, "x", 2);
     let f_type = checker.get_type_of_symbol(f_sym);
     let f_key = types.lookup(f_type).expect("f type should exist");
     match f_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let props = shape.properties.as_slice();
             let id_atom = types.intern_string("id");
@@ -2175,7 +2178,10 @@ const f = new Foo(1, "x", 2);
                 props
             );
         }
-        _ => panic!("Expected f to be Object type, got {:?}", f_key),
+        _ => panic!(
+            "Expected f to be Object or ObjectWithIndex type, got {:?}",
+            f_key
+        ),
     }
 }
 
@@ -2227,7 +2233,7 @@ const d = new Derived();
     let d_type = checker.get_type_of_symbol(d_sym);
     let d_key = types.lookup(d_type).expect("d type should exist");
     match d_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let props = shape.properties.as_slice();
             let value_atom = types.intern_string("value");
@@ -2245,7 +2251,10 @@ const d = new Derived();
                 props
             );
         }
-        _ => panic!("Expected d to be Object type, got {:?}", d_key),
+        _ => panic!(
+            "Expected d to be Object or ObjectWithIndex type, got {:?}",
+            d_key
+        ),
     }
 }
 
@@ -2291,7 +2300,7 @@ const b = new Box("hi");
     let b_type = checker.get_type_of_symbol(b_sym);
     let b_key = types.lookup(b_type).expect("b type should exist");
     match b_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let props = shape.properties.as_slice();
             let value_atom = types.intern_string("value");
@@ -2301,7 +2310,10 @@ const b = new Box("hi");
                 .expect("value property should exist");
             assert_eq!(value_prop.type_id, TypeId::STRING);
         }
-        _ => panic!("Expected b to be Object type, got {:?}", b_key),
+        _ => panic!(
+            "Expected b to be Object or ObjectWithIndex type, got {:?}",
+            b_key
+        ),
     }
 }
 
@@ -6588,7 +6600,7 @@ type Qux = { [key: string]: Foo };
     let foo_type = checker.get_type_of_symbol(foo_sym);
     let foo_key = types.lookup(foo_type).expect("Foo type should exist");
     match foo_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -7201,7 +7213,7 @@ type Alias = Outer.Inner;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -7488,7 +7500,7 @@ type AliasB = Outer.B;
         .lookup(alias_a_type)
         .expect("AliasA type should exist");
     match alias_a_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -7511,7 +7523,7 @@ type AliasB = Outer.B;
         .lookup(alias_b_type)
         .expect("AliasB type should exist");
     match alias_b_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -7571,7 +7583,7 @@ type Alias = Box<string>;
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     // Generic type aliases are now eagerly resolved to Object types with instantiated properties
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10238,7 +10250,7 @@ type Alias = Foo.Bar;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10301,7 +10313,7 @@ type Alias = Foo.Bar;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10509,7 +10521,7 @@ const value: Merge.B = { y: 1 };
         .lookup(resolved_type)
         .expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10669,7 +10681,7 @@ type Alias = Merge.Extra;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10732,7 +10744,7 @@ type Alias = Merge.Extra;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10897,7 +10909,7 @@ type Alias = Merge.Extra;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10962,7 +10974,7 @@ type Alias = Merge.Extra;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -11081,7 +11093,7 @@ interface Bar {
     let bar_type = checker.get_type_of_symbol(bar_sym);
     let bar_key = types.lookup(bar_type).expect("Bar type should exist");
     match bar_key {
-        TypeKey::Object(shape_id) => {
+        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop_names: Vec<String> = shape
                 .properties
