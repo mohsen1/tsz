@@ -315,3 +315,40 @@ Please review: 1) Is this logic correct for TypeScript? 2) Did I miss any edge c
 **Risk**: Changes to Checker-Solver bridge can cause regressions across the entire type system.
 
 **Mitigation**: Follow Two-Question Rule strictly. All changes must be reviewed by Gemini Pro.
+
+## Gemini Flash Analysis (2026-02-04)
+
+**Question Asked**: "I need to fix the TypeEnvironment registration issue for type aliases..."
+
+**Key Insights**:
+
+1. **`try_borrow_mut()` Silent Failure** (CRITICAL)
+   - Location: `src/checker/state.rs` - `get_type_of_symbol` around line 3080
+   - Problem: If environment is already borrowed during recursive resolution, the registration silently fails
+   - Impact: DefId is never registered in TypeEnvironment, causing `resolve_lazy` to return None
+
+2. **Lib Resolution Bypass**
+   - Location: `src/checker/state_type_resolution.rs` - `resolve_lib_type_by_name`
+   - Problem: This function bypasses normal registration path when lowering lib.d.ts types
+   - Impact: Creates DefIds without calling `insert_def_with_params`
+
+3. **Registration Gap in Delegation Block**
+   - Location: `src/checker/state.rs` - `get_type_of_symbol` lines 3045-3065
+   - Problem: When symbol is resolved in different arena (like lib.d.ts), returns early without updating main checker's type_env
+   - Impact: Type aliases from lib.d.ts aren't visible to solver
+
+**Recommended Fix Sequence**:
+1. Add debug warnings/panics to `try_borrow_mut` to identify dropped registrations
+2. Audit `resolve_lib_type_by_name` to ensure it routes through registration logic
+3. Verify `compute_type_of_symbol` TYPE_ALIAS branch returns correct TypeParamInfo
+4. Check param identity - ensure TypeParamInfo TypeIds match lowered body
+
+**Key Files to Examine**:
+- `src/checker/state.rs` - `get_type_of_symbol` orchestration bottleneck
+- `src/checker/state_type_resolution.rs` - `resolve_lib_type_by_name`, `type_reference_symbol_type`
+- `src/checker/state_type_analysis.rs` - `compute_type_of_symbol` TYPE_ALIAS branch (lines 3230-3255)
+- `src/solver/application.rs` - `evaluate_inner` where `resolve_lazy` is called
+
+**TypeScript Behaviors to Match**:
+- **Transparency**: Type aliases are transparent - `Partial<T>` is just a name for a Mapped type
+- **Recursive Aliases**: Must support `type Tree<T> = T | Tree<T>[]` by registering DefId before body is fully computed
