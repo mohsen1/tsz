@@ -485,15 +485,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &ObjectShape,
         target_prop: &PropertyInfo,
     ) -> SubtypeResult {
-        // FIX: Index signatures do NOT satisfy required named properties (TS2741).
-        // They only satisfy optional properties.
-        // For example: { [x: string]: any } is NOT assignable to { one: number }
-        // because 'one' is a required property that doesn't exist in the source.
-        if !target_prop.optional {
-            return SubtypeResult::False;
-        }
-
-        // For optional properties, still verify type compatibility
+        // Check if property name matches index signatures
+        // Numeric property names can match number index signatures
+        // All property names can match string index signatures (numbers convert to strings)
         let target_type = self.optional_property_type(target_prop);
 
         if utils::is_numeric_property_name(self.interner, target_prop.name)
@@ -532,8 +526,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // No matching index signature for optional property - this is OK
-        SubtypeResult::True
+        // No matching index signature
+        // For optional properties, this is OK
+        // For required properties, this is an error
+        if !target_prop.optional {
+            SubtypeResult::False
+        } else {
+            SubtypeResult::True
+        }
     }
 
     /// Check that source properties are compatible with target index signatures.
