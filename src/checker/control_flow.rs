@@ -114,6 +114,9 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) flow_cache: Option<&'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>>,
     /// Optional TypeEnvironment for resolving Lazy types during narrowing
     pub(crate) type_environment: Option<Rc<RefCell<crate::solver::TypeEnvironment>>>,
+    /// Cache for loop mutation analysis: (LoopNodeId, SymbolId) -> is_mutated
+    /// This prevents O(N^2) complexity when checking mutations in nested loops
+    loop_mutation_cache: RefCell<FxHashMap<(FlowNodeId, SymbolId), bool>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +155,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_graph,
             flow_cache: None,
             type_environment: None,
+            loop_mutation_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -170,6 +174,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_graph,
             flow_cache: None,
             type_environment: None,
+            loop_mutation_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -371,18 +376,16 @@ impl<'a> FlowAnalyzer<'a> {
                     current_type // Will be updated when antecedents are processed
                 }
             } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
-                // CRITICAL FIX: Conservative Loop Widening
-                // We cannot safely analyze back-edges in a single-pass backward walk because
-                // the loop body might mutate the variable, invalidating the narrowing.
+                // Loop label - selective widening based on mutation analysis
                 //
                 // Strategy:
                 // 1. Get the type entering the loop (Antecedent 0).
-                // 2. If the variable is mutable (let/var), conservatively widen to the
-                //    initial declared type to account for potential assignments.
-                // 3. If immutable (const), the type cannot change, so preserve narrowing.
+                // 2. Check if the variable is mutated in the loop body.
+                // 3. If const OR not mutated: preserve narrowing.
+                // 4. If mutable AND mutated: widen to initial_type.
                 //
-                // This matches TypeScript's behavior: mutations in loops reset narrowing
-                // to the declared type for mutable variables.
+                // This matches TypeScript's behavior: only reset narrowing when
+                // the variable is actually reassigned within the loop.
 
                 let entry_type = if let Some(&ant) = flow.antecedent.first() {
                     // Ensure entry is processed (is_merge_point logic guarantees this)
@@ -394,9 +397,14 @@ impl<'a> FlowAnalyzer<'a> {
                 if let Some(sym_id) = symbol_id {
                     let is_const = self.is_const_symbol(sym_id);
                     if !is_const {
-                        // Mutable: Widen to initial_type (declared type)
-                        // This accounts for potential mutations inside the loop
-                        self.interner.union2(entry_type, initial_type)
+                        // Mutable: Check if it's mutated in the loop
+                        if self.is_symbol_mutated_in_loop(current_flow, sym_id) {
+                            // Variable is mutated in loop - conservative widening
+                            self.interner.union2(entry_type, initial_type)
+                        } else {
+                            // Variable is NOT mutated in loop - preserve narrowing!
+                            entry_type
+                        }
                     } else {
                         // Const: Preserve entry narrowing
                         // Constants cannot be reassigned, so narrowing is safe
@@ -1870,6 +1878,168 @@ impl<'a> FlowAnalyzer<'a> {
         // For other node types, check the node's own flags
         let flags = decl_node.flags as u32;
         (flags & node_flags::CONST) != 0
+    }
+
+    /// Check if a symbol is mutated within a loop body.
+    ///
+    /// This performs a backward traversal from the loop's back-edges to determine
+    /// if any assignment targets the given symbol within the loop.
+    ///
+    /// Used to implement selective widening: only reset narrowing at loop headers
+    /// if the variable is actually mutated in the loop body.
+    ///
+    /// Results are cached to prevent O(N^2) complexity.
+    fn is_symbol_mutated_in_loop(&self, loop_id: FlowNodeId, sym_id: SymbolId) -> bool {
+        // Check cache first
+        if let Some(&is_mutated) = self.loop_mutation_cache.borrow().get(&(loop_id, sym_id)) {
+            return is_mutated;
+        }
+
+        use std::collections::VecDeque;
+
+        let Some(loop_flow) = self.binder.flow_nodes.get(loop_id) else {
+            return false;
+        };
+
+        // Start traversal from all back-edges (antecedent[1..])
+        // antecedent[0] is the entry flow, antecedent[1..] are back-edges from loop body
+        let back_edges: Vec<_> = loop_flow.antecedent.iter().skip(1).copied().collect();
+
+        if back_edges.is_empty() {
+            return false; // No back-edges means loop body never executes
+        }
+
+        let mut worklist: VecDeque<FlowNodeId> = back_edges.into_iter().collect();
+        let mut visited: FxHashSet<FlowNodeId> = FxHashSet::default();
+        let mut found_mutation = false;
+
+        while let Some(current_flow) = worklist.pop_front() {
+            if current_flow == loop_id {
+                // Reached the loop header - stop traversal
+                continue;
+            }
+
+            if !visited.insert(current_flow) {
+                continue; // Already processed
+            }
+
+            let Some(flow) = self.binder.flow_nodes.get(current_flow) else {
+                continue;
+            };
+
+            // Check if this node mutates the symbol
+            if flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                if self.node_mutates_symbol(flow.node, sym_id) {
+                    found_mutation = true;
+                    break;
+                }
+            }
+
+            // Add antecedents to worklist for further traversal
+            for &ant in &flow.antecedent {
+                if ant != loop_id && !visited.contains(&ant) {
+                    worklist.push_back(ant);
+                }
+            }
+        }
+
+        // Cache the result
+        self.loop_mutation_cache
+            .borrow_mut()
+            .insert((loop_id, sym_id), found_mutation);
+
+        found_mutation
+    }
+
+    /// Check if a node mutates a specific symbol.
+    ///
+    /// This checks for direct assignments (reassignments) to the symbol.
+    /// Note: Array method calls like push() do NOT mutate the variable binding,
+    /// only the array contents. CFA tracks variable reassignments, not object mutations.
+    fn node_mutates_symbol(&self, node_idx: NodeIndex, sym_id: SymbolId) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+
+        // Check for direct assignment (binary expression with assignment operator)
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if self.assignment_targets_symbol(node_idx, sym_id) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if an assignment node targets a specific symbol.
+    ///
+    /// This is a SymbolId-aware version of assignment_targets_reference that
+    /// checks if the left side of an assignment refers to the given symbol.
+    fn assignment_targets_symbol(&self, node_idx: NodeIndex, sym_id: SymbolId) -> bool {
+        let node_idx = self.skip_parenthesized(node_idx);
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+
+        // Check if this node directly references the symbol
+        if let Some(node_sym) = self.binder.resolve_identifier(self.arena, node_idx) {
+            if node_sym == sym_id {
+                return true;
+            }
+        }
+
+        // Handle binary expressions (assignment)
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin) = self.arena.get_binary_expr(node) {
+                if self.is_assignment_operator(bin.operator_token) {
+                    return self.assignment_targets_symbol(bin.left, sym_id);
+                }
+            }
+        }
+
+        // Handle property/element access (e.g., obj.prop = value, obj[index] = value)
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            if let Some(access) = self.arena.get_access_expr(node) {
+                // Check if the base object is our symbol
+                if let Some(base_sym) = self
+                    .binder
+                    .resolve_identifier(self.arena, access.expression)
+                {
+                    if base_sym == sym_id {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Handle destructuring patterns
+        if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            // Recursively check pattern elements
+            if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                for &elem in &pattern.elements.nodes {
+                    if elem.is_none() {
+                        continue;
+                    }
+                    if self.assignment_targets_symbol(elem, sym_id) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if node.kind == syntax_kind_ext::BINDING_ELEMENT {
+            if let Some(binding) = self.arena.get_binding_element(node) {
+                if self.assignment_targets_symbol(binding.name, sym_id) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)
