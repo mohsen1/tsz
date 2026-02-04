@@ -182,9 +182,21 @@ Building on TSZ-5's UsageAnalyzer infrastructure:
 - Format: `import { TypeName } from './module';`
 - Group by module path to emit `import { A, B } from './path'`
 
-**Phase 4: Testing & Refinement** ⏭ PENDING
-- Conformance tests for multi-file scenarios
-- Edge case handling (name collisions, type-only imports)
+**Phase 4: Testing & Refinement** 🔄 IN PROGRESS
+
+**Gemini Consultation (2026-02-04):**
+
+Gemini identified critical issues preventing Phase 4 completion:
+1. **Broken Relative Paths** - Full paths used instead of proper `../` segments
+2. **Name Collisions** - No aliasing when same symbol from multiple modules
+3. **Logic Duplication** - Two separate import emission mechanisms
+4. **Type-Only Imports** - Need `import type { ... }` for type-only usage
+
+**Task List:**
+1. Fix broken relative path calculation
+2. Implement name collision handling
+3. Consolidate import emission logic
+4. Track type-only vs value symbol usage
 
 **Phase 3: Import Synthesis** ✅ COMPLETE
 - ✅ Add `required_imports: FxHashMap<String, Vec<String>>` field
@@ -195,9 +207,21 @@ Building on TSZ-5's UsageAnalyzer infrastructure:
 - ✅ Fix borrow checker issues
 - ✅ Remove pathdiff dependency (use simpler path calc)
 
-**Phase 4: Testing & Refinement** ⏭ PENDING
-- Conformance tests for multi-file scenarios
-- Edge case handling (name collisions, type-only imports)
+**Phase 4: Testing & Refinement** 🔄 IN PROGRESS
+
+**Gemini Consultation (2026-02-04):**
+
+Gemini identified critical issues preventing Phase 4 completion:
+1. **Broken Relative Paths** - Full paths used instead of proper `../` segments
+2. **Name Collisions** - No aliasing when same symbol from multiple modules
+3. **Logic Duplication** - Two separate import emission mechanisms
+4. **Type-Only Imports** - Need `import type { ... }` for type-only usage
+
+**Task List:**
+1. Fix broken relative path calculation
+2. Implement name collision handling
+3. Consolidate import emission logic
+4. Track type-only vs value symbol usage
 
 ### Dependencies
 
