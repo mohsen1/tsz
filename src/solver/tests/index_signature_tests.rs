@@ -116,6 +116,8 @@ fn test_object_with_props_to_index_signature() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("bar"),
@@ -124,6 +126,8 @@ fn test_object_with_props_to_index_signature() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -155,6 +159,8 @@ fn test_object_with_incompatible_props_not_subtype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("bar"),
@@ -163,6 +169,8 @@ fn test_object_with_incompatible_props_not_subtype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -196,6 +204,8 @@ fn test_index_with_props_to_simple_object() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -212,6 +222,8 @@ fn test_index_with_props_to_simple_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(is_subtype_of(&interner, source, target));
@@ -301,6 +313,8 @@ fn test_index_signature_with_named_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -320,6 +334,8 @@ fn test_index_signature_with_named_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -347,6 +363,8 @@ fn test_index_signature_source_property_mismatch() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -386,6 +404,8 @@ fn test_number_index_signature_source_property_mismatch() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: Some(IndexSignature {

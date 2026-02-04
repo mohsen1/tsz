@@ -159,6 +159,8 @@ fn test_callable_with_construct() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let sig = CallSignature {
@@ -343,6 +345,8 @@ fn test_callable_with_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         ..Default::default()
     });
@@ -365,6 +369,8 @@ fn test_callable_with_properties() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         ..Default::default()
     });
@@ -410,6 +416,8 @@ fn test_callable_missing_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         ..Default::default()
     });

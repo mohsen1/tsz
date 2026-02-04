@@ -81,6 +81,8 @@ fn test_law_reflexivity_objects() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj2 = interner.object(vec![
@@ -91,6 +93,8 @@ fn test_law_reflexivity_objects() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -99,6 +103,8 @@ fn test_law_reflexivity_objects() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -181,6 +187,8 @@ fn test_law_reflexivity_intersections() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -190,6 +198,8 @@ fn test_law_reflexivity_intersections() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let intersection = interner.intersection(vec![obj1, obj2]);
@@ -282,6 +292,8 @@ fn test_law_transitivity_objects() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -290,6 +302,8 @@ fn test_law_transitivity_objects() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -300,6 +314,8 @@ fn test_law_transitivity_objects() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let c = interner.object(vec![]);
@@ -386,6 +402,8 @@ fn test_law_antisymmetry_structural_objects() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -395,6 +413,8 @@ fn test_law_antisymmetry_structural_objects() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let mut checker = SubtypeChecker::new(&interner);
@@ -468,6 +488,8 @@ fn test_law_top_type_any() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(checker.is_subtype_of(obj, TypeId::ANY));
 
@@ -521,6 +543,8 @@ fn test_law_bottom_type_never() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(checker.is_subtype_of(TypeId::NEVER, obj));
 
@@ -571,6 +595,8 @@ fn test_law_never_not_supertype() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(!checker.is_subtype_of(obj, TypeId::NEVER));
 }
@@ -599,6 +625,8 @@ fn test_law_unknown_top_safe() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(checker.is_subtype_of(obj, TypeId::UNKNOWN));
 
@@ -645,6 +673,8 @@ fn test_coinductive_recursive_type_reflexivity() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Register the type in the environment
@@ -679,6 +709,8 @@ fn test_coinductive_mutually_recursive_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // B = { a: A }
@@ -689,6 +721,8 @@ fn test_coinductive_mutually_recursive_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     env.insert(sym_a, type_a);
@@ -718,6 +752,8 @@ fn test_canonicalization_structural_objects() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -726,6 +762,8 @@ fn test_canonicalization_structural_objects() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -737,6 +775,8 @@ fn test_canonicalization_structural_objects() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -745,6 +785,8 @@ fn test_canonicalization_structural_objects() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -844,6 +886,8 @@ fn test_canonicalization_property_order_irrelevant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("a"),
@@ -852,6 +896,8 @@ fn test_canonicalization_property_order_irrelevant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("m"),
@@ -860,6 +906,8 @@ fn test_canonicalization_property_order_irrelevant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -871,6 +919,8 @@ fn test_canonicalization_property_order_irrelevant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("m"),
@@ -879,6 +929,8 @@ fn test_canonicalization_property_order_irrelevant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("z"),
@@ -887,6 +939,8 @@ fn test_canonicalization_property_order_irrelevant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 

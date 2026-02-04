@@ -141,6 +141,8 @@ fn test_instantiate_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Substitute T = number -> { value: number }
@@ -156,6 +158,8 @@ fn test_instantiate_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert_eq!(result, expected);
 }
@@ -847,6 +851,8 @@ fn test_instantiate_template_literal_in_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Substitute T = "name"

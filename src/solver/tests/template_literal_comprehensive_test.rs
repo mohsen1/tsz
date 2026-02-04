@@ -146,7 +146,10 @@ fn test_template_literal_with_union() {
     ]);
 
     // Should create a template literal type
-    assert!(matches!(interner.lookup(template), Some(TypeKey::TemplateLiteral(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeKey::TemplateLiteral(_))
+    ));
 
     // The template should expand to a union: "prefix-a" | "prefix-b" | "prefix-c"
     // (This expansion happens during evaluation, not creation)
@@ -175,7 +178,10 @@ fn test_template_literal_cartesian_product() {
         TemplateSpan::Type(right_union),
     ]);
 
-    assert!(matches!(interner.lookup(template), Some(TypeKey::TemplateLiteral(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeKey::TemplateLiteral(_))
+    ));
 }
 
 #[test]
@@ -194,7 +200,10 @@ fn test_template_literal_pattern_matching() {
 
     // These should be compatible for assignability checking
     // (The actual check happens in the subtype checker)
-    assert!(matches!(interner.lookup(pattern), Some(TypeKey::TemplateLiteral(_))));
+    assert!(matches!(
+        interner.lookup(pattern),
+        Some(TypeKey::TemplateLiteral(_))
+    ));
     assert!(matches!(
         interner.lookup(literal),
         Some(TypeKey::Literal(LiteralValue::String(_)))
@@ -221,7 +230,10 @@ fn test_template_literal_with_string_intrinsic() {
     ]);
 
     // Should create a template literal type
-    assert!(matches!(interner.lookup(template), Some(TypeKey::TemplateLiteral(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeKey::TemplateLiteral(_))
+    ));
 
     // The template contains the string intrinsic
     let TypeKey::TemplateLiteral(spans) = interner.lookup(template).unwrap() else {
@@ -278,7 +290,10 @@ fn test_template_literal_with_number() {
         TemplateSpan::Type(TypeId::NUMBER),
     ]);
 
-    assert!(matches!(interner.lookup(template), Some(TypeKey::TemplateLiteral(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeKey::TemplateLiteral(_))
+    ));
 }
 
 #[test]
@@ -291,7 +306,10 @@ fn test_template_literal_with_boolean() {
         TemplateSpan::Type(TypeId::BOOLEAN),
     ]);
 
-    assert!(matches!(interner.lookup(template), Some(TypeKey::TemplateLiteral(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeKey::TemplateLiteral(_))
+    ));
 }
 
 #[test]
@@ -304,7 +322,10 @@ fn test_template_literal_with_bigint() {
         TemplateSpan::Type(TypeId::BIGINT),
     ]);
 
-    assert!(matches!(interner.lookup(template), Some(TypeKey::TemplateLiteral(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeKey::TemplateLiteral(_))
+    ));
 }
 
 #[test]
@@ -318,5 +339,8 @@ fn test_template_literal_all_text() {
         TemplateSpan::Text(interner.intern_string("world")),
     ]);
 
-    assert!(matches!(interner.lookup(template), Some(TypeKey::TemplateLiteral(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeKey::TemplateLiteral(_))
+    ));
 }

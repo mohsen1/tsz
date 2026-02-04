@@ -34,6 +34,8 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 
+// Re-export for test access
+
 const SHARD_BITS: u32 = 6;
 const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
 const SHARD_MASK: u32 = (SHARD_COUNT as u32) - 1;

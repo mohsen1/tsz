@@ -348,6 +348,8 @@ fn test_contextual_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -356,6 +358,8 @@ fn test_contextual_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -382,6 +386,8 @@ fn test_contextual_nested_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let outer = interner.object(vec![PropertyInfo {
         name: interner.intern_string("nested"),
@@ -390,6 +396,8 @@ fn test_contextual_nested_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let ctx = ContextualTypeContext::with_expected(&interner, outer);

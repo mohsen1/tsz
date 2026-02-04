@@ -139,6 +139,8 @@ fn test_intersection_object_merge_properties() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -148,6 +150,8 @@ fn test_intersection_object_merge_properties() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // A & B should merge properties
@@ -189,6 +193,8 @@ fn test_intersection_object_same_property_intersect_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -198,6 +204,8 @@ fn test_intersection_object_same_property_intersect_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // A & B should have property x: string & number = never
@@ -233,6 +241,8 @@ fn test_intersection_required_wins_over_optional() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_required = interner.object(vec![PropertyInfo {
@@ -242,6 +252,8 @@ fn test_intersection_required_wins_over_optional() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // optional & required = required (required wins)
@@ -271,6 +283,8 @@ fn test_intersection_readonly_is_cumulative() {
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_mutable = interner.object(vec![PropertyInfo {
@@ -280,6 +294,8 @@ fn test_intersection_readonly_is_cumulative() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // readonly & mutable = readonly (readonly is cumulative)
@@ -309,6 +325,8 @@ fn test_intersection_both_optional_stays_optional() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -318,6 +336,8 @@ fn test_intersection_both_optional_stays_optional() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // optional & optional = optional
@@ -630,6 +650,8 @@ fn test_intersection_flattens_nested() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -639,6 +661,8 @@ fn test_intersection_flattens_nested() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let inner = interner.intersection2(obj_a, obj_b);

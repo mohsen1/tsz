@@ -137,6 +137,7 @@ mod ts2322_tests;
 mod value_usage_tests;
 
 // Re-export key types
+pub use crate::solver::types::Visibility;
 pub use arena::TypeArena;
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};
 pub use control_flow::{FlowAnalyzer, FlowGraph as ControlFlowGraph};

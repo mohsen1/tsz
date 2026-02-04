@@ -46,6 +46,8 @@ fn test_infer_candidates_common_supertype() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let dog = interner.object(vec![
         PropertyInfo {
@@ -55,6 +57,8 @@ fn test_infer_candidates_common_supertype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: breed,
@@ -63,6 +67,8 @@ fn test_infer_candidates_common_supertype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 

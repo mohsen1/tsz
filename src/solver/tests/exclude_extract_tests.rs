@@ -16,7 +16,7 @@ fn test_distributive_conditional_distributes_over_union() {
         name: t_name,
         constraint: None,
         default: None,
-            is_const: false,
+        is_const: false,
     }));
 
     // type Check<T> = T extends any ? true : false;
@@ -24,9 +24,9 @@ fn test_distributive_conditional_distributes_over_union() {
     let conditional = interner.conditional(ConditionalType {
         check_type: t_param,
         extends_type: TypeId::ANY,
-        true_type: TypeId::TRUE, // Assume we have a TRUE type
+        true_type: TypeId::TRUE,   // Assume we have a TRUE type
         false_type: TypeId::FALSE, // Assume we have a FALSE type
-        is_distributive: true, // <-- DISTRIBUTIVE
+        is_distributive: true,     // <-- DISTRIBUTIVE
     });
 
     // When T = string | number
@@ -34,7 +34,11 @@ fn test_distributive_conditional_distributes_over_union() {
     //                 = true | true = boolean
 
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let result = instantiate_type(&interner, conditional, &crate::solver::instantiate::TypeSubstitution::new());
+    let result = instantiate_type(
+        &interner,
+        conditional,
+        &crate::solver::instantiate::TypeSubstitution::new(),
+    );
 
     // The result should be a union (distributed)
     // Note: In actual TypeScript, both would resolve to true, so result is true
@@ -51,7 +55,7 @@ fn test_tuple_wrapper_prevents_distribution() {
         name: t_name,
         constraint: None,
         default: None,
-            is_const: false,
+        is_const: false,
     }));
 
     // type Check<T> = [T] extends [any] ? true : false;
@@ -102,13 +106,13 @@ fn test_exclude_utility_type_distributes() {
         name: t_name,
         constraint: None,
         default: None,
-            is_const: false,
+        is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
-            is_const: false,
+        is_const: false,
     }));
 
     // type Exclude<T, U> = T extends U ? never : T;
@@ -168,13 +172,13 @@ fn test_extract_utility_type_distributes() {
         name: t_name,
         constraint: None,
         default: None,
-            is_const: false,
+        is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
-            is_const: false,
+        is_const: false,
     }));
 
     // type Extract<T, U> = T extends U ? T : never;

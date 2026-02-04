@@ -140,6 +140,8 @@ fn test_compat_checker_weak_type_detection() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: age_atom,
@@ -148,6 +150,8 @@ fn test_compat_checker_weak_type_detection() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -165,6 +169,8 @@ fn test_compat_checker_weak_type_detection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(!checker.is_assignable(unrelated_obj, weak_type));
 
@@ -176,6 +182,8 @@ fn test_compat_checker_weak_type_detection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(checker.is_assignable(matching_obj, weak_type));
 }

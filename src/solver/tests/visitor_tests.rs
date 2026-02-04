@@ -182,6 +182,8 @@ fn test_is_empty_object_type() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     assert!(is_empty_object_type(&interner, empty_obj));
@@ -306,6 +308,8 @@ fn test_collect_all_types_nested() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("y"),
@@ -314,6 +318,8 @@ fn test_collect_all_types_nested() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -501,6 +507,8 @@ fn test_object_shape_extractors() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     assert!(object_shape_id(&interner, obj).is_some());
     assert!(object_with_index_shape_id(&interner, obj).is_none());
@@ -515,6 +523,8 @@ fn test_object_shape_extractors() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,

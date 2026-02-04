@@ -392,6 +392,8 @@ fn test_resolve_circular_upper_bound_defaults_unknown() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_upper_bound(var, upper);
@@ -519,6 +521,8 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let upper_u = interner.object(vec![PropertyInfo {
         name: name_next,
@@ -527,6 +531,8 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_upper_bound(var_t, upper_t);
@@ -570,6 +576,8 @@ fn test_resolve_mutual_recursive_object_bounds_unknown() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let upper_u = interner.object(vec![PropertyInfo {
         name: name_next,
@@ -578,6 +586,8 @@ fn test_resolve_mutual_recursive_object_bounds_unknown() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_upper_bound(var_t, upper_t);
@@ -687,6 +697,8 @@ fn test_resolve_bounds_object_subtype() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let lower = interner.object(vec![
         PropertyInfo {
@@ -696,6 +708,8 @@ fn test_resolve_bounds_object_subtype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: name_b,
@@ -704,6 +718,8 @@ fn test_resolve_bounds_object_subtype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -751,6 +767,8 @@ fn test_resolve_bounds_object_readonly_property_mismatch() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let lower = interner.object(vec![PropertyInfo {
@@ -760,6 +778,8 @@ fn test_resolve_bounds_object_readonly_property_mismatch() {
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -791,6 +811,8 @@ fn test_resolve_bounds_object_readonly_property_ok() {
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let lower = interner.object(vec![PropertyInfo {
@@ -800,6 +822,8 @@ fn test_resolve_bounds_object_readonly_property_ok() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -824,6 +848,8 @@ fn test_resolve_bounds_object_readonly_property_missing_ok() {
         optional: true,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let lower = interner.object(Vec::new());
 
@@ -881,6 +907,8 @@ fn test_resolve_bounds_method_property_bivariant_params() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let upper = interner.object(vec![PropertyInfo {
         name: name_m,
@@ -889,6 +917,8 @@ fn test_resolve_bounds_method_property_bivariant_params() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -945,6 +975,8 @@ fn test_resolve_bounds_function_property_contravariant_params() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let upper = interner.object(vec![PropertyInfo {
         name: name_f,
@@ -953,6 +985,8 @@ fn test_resolve_bounds_function_property_contravariant_params() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -1017,6 +1051,8 @@ fn test_resolve_bounds_with_assignability_bivariant_function_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let upper = interner.object(vec![PropertyInfo {
         name: name_f,
@@ -1025,6 +1061,8 @@ fn test_resolve_bounds_with_assignability_bivariant_function_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -1194,6 +1232,8 @@ fn test_resolve_bounds_object_with_index_subtype() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
@@ -1237,6 +1277,8 @@ fn test_resolve_bounds_string_index_property_mismatch() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -1280,6 +1322,8 @@ fn test_resolve_bounds_index_readonly_property_mismatch() {
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -1409,6 +1453,8 @@ fn test_resolve_bounds_number_index_allows_non_numeric_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1451,6 +1497,8 @@ fn test_resolve_bounds_number_index_numeric_property_mismatch() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1497,6 +1545,8 @@ fn test_resolve_bounds_number_index_readonly_property_mismatch() {
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower_type);
@@ -1626,6 +1676,8 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_numeric_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1668,6 +1720,8 @@ fn test_resolve_bounds_number_index_accepts_exponent_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1717,6 +1771,8 @@ fn test_resolve_bounds_number_index_accepts_infinity_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1766,6 +1822,8 @@ fn test_resolve_bounds_number_index_accepts_nan_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1815,6 +1873,8 @@ fn test_resolve_bounds_number_index_accepts_negative_infinity_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1864,6 +1924,8 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1903,6 +1965,8 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower_type);
@@ -1942,6 +2006,8 @@ fn test_resolve_bounds_number_index_accepts_decimal_boundary_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -1991,6 +2057,8 @@ fn test_resolve_bounds_number_index_accepts_exponent_boundary_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2040,6 +2108,8 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_exponent_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2082,6 +2152,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2124,6 +2196,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2166,6 +2240,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2208,6 +2284,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_zer
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2250,6 +2328,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_wit
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2292,6 +2372,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_negative_leading_
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2334,6 +2416,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2376,6 +2460,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_with_sign() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2418,6 +2504,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_digits()
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2460,6 +2548,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign_with
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2502,6 +2592,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2544,6 +2636,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_with_lowercase_e(
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2586,6 +2680,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_minus() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2628,6 +2724,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_plus_minus() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2670,6 +2768,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_minus_plus() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2712,6 +2812,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_sign() 
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2754,6 +2856,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_minus()
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2796,6 +2900,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_double_
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2838,6 +2944,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros() 
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2880,6 +2988,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros_wi
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2922,6 +3032,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_sign_wit
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -2964,6 +3076,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_negative_exponent_zero() 
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3006,6 +3120,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_positive_zero() 
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3048,6 +3164,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_zero_without_sig
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3090,6 +3208,8 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign_trai
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3132,6 +3252,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_digits() 
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3174,6 +3296,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_minus_missing_dig
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3216,6 +3340,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_sign() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3258,6 +3384,8 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_minus() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3300,6 +3428,8 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_negative() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3342,6 +3472,8 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_positive() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3384,6 +3516,8 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_without_sign(
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3426,6 +3560,8 @@ fn test_resolve_bounds_number_index_ignores_missing_exponent_sign() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3468,6 +3604,8 @@ fn test_resolve_bounds_number_index_ignores_leading_zero_decimal_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3510,6 +3648,8 @@ fn test_resolve_bounds_number_index_ignores_hex_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3552,6 +3692,8 @@ fn test_resolve_bounds_number_index_ignores_binary_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3594,6 +3736,8 @@ fn test_resolve_bounds_number_index_ignores_octal_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3636,6 +3780,8 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zero_mantissa() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3678,6 +3824,8 @@ fn test_resolve_bounds_number_index_ignores_leading_dot_decimal_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3720,6 +3868,8 @@ fn test_resolve_bounds_number_index_ignores_multiple_leading_zeros() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3762,6 +3912,8 @@ fn test_resolve_bounds_number_index_ignores_negative_hex_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3804,6 +3956,8 @@ fn test_resolve_bounds_number_index_ignores_negative_binary_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3846,6 +4000,8 @@ fn test_resolve_bounds_number_index_ignores_negative_octal_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3888,6 +4044,8 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_sign() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3930,6 +4088,8 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_minus() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -3972,6 +4132,8 @@ fn test_resolve_bounds_number_index_ignores_exponent_missing_digits() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -4014,6 +4176,8 @@ fn test_resolve_bounds_number_index_ignores_exponent_minus_missing_digits() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -4056,6 +4220,8 @@ fn test_resolve_bounds_number_index_ignores_negative_exponent_zero() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -4098,6 +4264,8 @@ fn test_resolve_bounds_number_index_ignores_positive_exponent_zero() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -4140,6 +4308,8 @@ fn test_resolve_bounds_number_index_accepts_negative_decimal_boundary_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -4189,6 +4359,8 @@ fn test_resolve_bounds_number_index_ignores_trailing_decimal_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -4231,6 +4403,8 @@ fn test_resolve_bounds_number_index_ignores_leading_plus_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -4273,6 +4447,8 @@ fn test_resolve_bounds_number_index_ignores_numeric_separator_name() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         }],
         string_index: None,
         number_index: None,
@@ -4630,6 +4806,8 @@ fn test_resolve_bounds_optional_property_compatible() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let lower = interner.object(vec![PropertyInfo {
         name: name_a,
@@ -4638,6 +4816,8 @@ fn test_resolve_bounds_optional_property_compatible() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -4662,6 +4842,8 @@ fn test_resolve_bounds_optional_property_mismatch() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let lower = interner.object(vec![PropertyInfo {
         name: name_a,
@@ -4670,6 +4852,8 @@ fn test_resolve_bounds_optional_property_mismatch() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var, lower);
@@ -4701,6 +4885,8 @@ fn test_resolve_bounds_optional_property_missing_ok() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let lower = interner.object(Vec::new());
 
@@ -6346,6 +6532,8 @@ fn test_constraint_propagation_object_properties() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, obj_type);
@@ -6418,6 +6606,8 @@ fn test_constructor_with_constraint() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, obj_type);
 
@@ -6591,6 +6781,8 @@ fn test_method_this_type_inference() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Called on object, so This should be inferred as that object type
@@ -6745,6 +6937,8 @@ fn test_circular_type_alias_nested_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, obj_type);
 
@@ -6832,6 +7026,8 @@ fn test_self_ref_constraint_builder_pattern() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, builder_type);
@@ -6931,6 +7127,8 @@ fn test_mutual_recursion_two_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let prop_b = interner.intern_string("count");
@@ -6941,6 +7139,8 @@ fn test_mutual_recursion_two_types() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_a, obj_a);
@@ -7389,6 +7589,8 @@ fn test_default_type_param_with_constraint() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, obj);
 
@@ -8261,6 +8463,8 @@ fn test_discriminated_union_basic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // After checking kind === "a", narrow to type_a
@@ -8292,6 +8496,8 @@ fn test_discriminated_union_switch() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: radius_prop,
@@ -8300,6 +8506,8 @@ fn test_discriminated_union_switch() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -8330,6 +8538,8 @@ fn test_discriminated_union_type_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: body_prop,
@@ -8338,6 +8548,8 @@ fn test_discriminated_union_type_property() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -8368,6 +8580,8 @@ fn test_discriminated_union_boolean_discriminant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: data_prop,
@@ -8376,6 +8590,8 @@ fn test_discriminated_union_boolean_discriminant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -8406,6 +8622,8 @@ fn test_discriminated_union_numeric_discriminant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: body_prop,
@@ -8414,6 +8632,8 @@ fn test_discriminated_union_numeric_discriminant() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -8446,6 +8666,8 @@ fn test_in_operator_basic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, with_name);
@@ -8482,6 +8704,8 @@ fn test_in_operator_union_narrowing() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, bird_type);
@@ -8508,6 +8732,8 @@ fn test_in_operator_optional_property() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, with_optional);
@@ -8544,6 +8770,8 @@ fn test_in_operator_method_check() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, array_like);
@@ -8570,6 +8798,8 @@ fn test_in_operator_negation() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, without_special);
@@ -9424,6 +9654,8 @@ fn test_method_return_generic_call() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, return_type);
 
@@ -9539,6 +9771,8 @@ fn test_static_member_property() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, config_type);
 
@@ -9587,6 +9821,8 @@ fn test_static_member_with_constraint() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, obj_type);
 
@@ -9872,6 +10108,8 @@ fn test_chain_builder_pattern() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: age_prop,
@@ -9880,6 +10118,8 @@ fn test_chain_builder_pattern() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     ctx.add_lower_bound(var_t, obj);
@@ -10522,6 +10762,8 @@ fn test_constraint_upper_bound_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_upper_bound(var_t, constraint);
 
@@ -10535,6 +10777,8 @@ fn test_constraint_upper_bound_object() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: age_prop,
@@ -10543,6 +10787,8 @@ fn test_constraint_upper_bound_object() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     ctx.add_lower_bound(var_t, inferred);
@@ -10714,6 +10960,8 @@ fn test_constraint_multiple_bounds_intersection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let b = interner.object(vec![PropertyInfo {
         name: age_prop,
@@ -10722,6 +10970,8 @@ fn test_constraint_multiple_bounds_intersection() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let intersection = interner.intersection(vec![a, b]);
     ctx.add_upper_bound(var_t, intersection);
@@ -10735,6 +10985,8 @@ fn test_constraint_multiple_bounds_intersection() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: age_prop,
@@ -10743,6 +10995,8 @@ fn test_constraint_multiple_bounds_intersection() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     ctx.add_lower_bound(var_t, both);
@@ -10865,6 +11119,8 @@ fn test_constraint_intersection_primitives() {
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     let branded = interner.intersection(vec![TypeId::STRING, brand]);
     ctx.add_upper_bound(var_t, branded);
@@ -10942,6 +11198,8 @@ fn test_constraint_satisfaction_object_structural() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_upper_bound(var_t, constraint);
 
@@ -10955,6 +11213,8 @@ fn test_constraint_satisfaction_object_structural() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: y_prop,
@@ -10963,6 +11223,8 @@ fn test_constraint_satisfaction_object_structural() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     ctx.add_lower_bound(var_t, inferred);
@@ -11017,6 +11279,8 @@ fn test_constraint_satisfaction_array_element() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_upper_bound(var_t, comparable);
 
@@ -11300,6 +11564,8 @@ fn test_default_recursive_type() {
         optional: true,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_upper_bound(var_t, node);
     ctx.add_lower_bound(var_t, node);
@@ -11362,6 +11628,8 @@ fn test_self_ref_type_param_promise_of_self() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, promise_type);
 
@@ -11387,6 +11655,8 @@ fn test_self_ref_type_param_node_with_children() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, node_type);
 
@@ -11413,6 +11683,8 @@ fn test_self_ref_type_param_linked_list() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("next"),
@@ -11421,6 +11693,8 @@ fn test_self_ref_type_param_linked_list() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
     ctx.add_lower_bound(var_t, list_node);
@@ -11478,6 +11752,8 @@ fn test_mutual_dependency_key_value() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_v, obj_type);
 
@@ -11506,6 +11782,8 @@ fn test_mutual_dependency_parent_child() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     // Create child type with parent reference
@@ -11516,6 +11794,8 @@ fn test_mutual_dependency_parent_child() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_p, parent_type);
@@ -11594,6 +11874,8 @@ fn test_mutual_dependency_request_response() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("respond"),
@@ -11602,6 +11884,8 @@ fn test_mutual_dependency_request_response() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -11614,6 +11898,8 @@ fn test_mutual_dependency_request_response() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("request"),
@@ -11622,6 +11908,8 @@ fn test_mutual_dependency_request_response() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -11654,6 +11942,8 @@ fn test_mutual_dependency_three_way() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo {
@@ -11663,6 +11953,8 @@ fn test_mutual_dependency_three_way() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_c = interner.object(vec![PropertyInfo {
@@ -11672,6 +11964,8 @@ fn test_mutual_dependency_three_way() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_a, type_a);
@@ -11717,6 +12011,8 @@ fn test_recursive_constraint_comparable() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, comparable_type);
@@ -11765,6 +12061,8 @@ fn test_recursive_constraint_builder_pattern() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("build"),
@@ -11773,6 +12071,8 @@ fn test_recursive_constraint_builder_pattern() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -11811,6 +12111,8 @@ fn test_recursive_constraint_expression_tree() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("children"),
@@ -11819,6 +12121,8 @@ fn test_recursive_constraint_expression_tree() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -11856,6 +12160,8 @@ fn test_recursive_constraint_cloneable() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, cloneable_type);
@@ -11892,6 +12198,8 @@ fn test_recursive_constraint_iterable() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, iterable_type);
@@ -11950,6 +12258,8 @@ fn test_constraint_cycle_interface_extends() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo {
@@ -11959,6 +12269,8 @@ fn test_constraint_cycle_interface_extends() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_c = interner.object(vec![PropertyInfo {
@@ -11968,6 +12280,8 @@ fn test_constraint_cycle_interface_extends() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_a, type_a);
@@ -12010,6 +12324,8 @@ fn test_constraint_cycle_generic_extends() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("getContainer"),
@@ -12018,6 +12334,8 @@ fn test_constraint_cycle_generic_extends() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -12258,6 +12576,8 @@ fn test_param_inference_from_property_access() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_t, obj);
 
@@ -12294,6 +12614,8 @@ fn test_param_inference_nested_callback() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let parent_type = interner.object(vec![PropertyInfo {
@@ -12303,6 +12625,8 @@ fn test_param_inference_nested_callback() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, parent_type);
@@ -12467,6 +12791,8 @@ fn test_f_bounded_comparable() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, comparable_type);
@@ -12519,6 +12845,8 @@ fn test_f_bounded_builder_pattern() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("set"),
@@ -12527,6 +12855,8 @@ fn test_f_bounded_builder_pattern() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -12558,6 +12888,8 @@ fn test_f_bounded_tree_node() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("children"),
@@ -12566,6 +12898,8 @@ fn test_f_bounded_tree_node() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("parent"),
@@ -12574,6 +12908,8 @@ fn test_f_bounded_tree_node() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -12610,6 +12946,8 @@ fn test_f_bounded_cloneable() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, cloneable_type);
@@ -12663,6 +13001,8 @@ fn test_f_bounded_with_additional_constraint() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("serialize"),
@@ -12671,6 +13011,8 @@ fn test_f_bounded_with_additional_constraint() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -12699,6 +13041,8 @@ fn test_mutually_recursive_constraints() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let type_b = interner.object(vec![PropertyInfo {
@@ -12708,6 +13052,8 @@ fn test_mutually_recursive_constraints() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, type_a);
@@ -12879,6 +13225,8 @@ fn test_partial_type_inference() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: age_prop,
@@ -12887,6 +13235,8 @@ fn test_partial_type_inference() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13084,6 +13434,8 @@ fn test_pick_utility_inference() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: age_prop,
@@ -13092,6 +13444,8 @@ fn test_pick_utility_inference() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: email_prop,
@@ -13100,6 +13454,8 @@ fn test_pick_utility_inference() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13251,6 +13607,8 @@ fn test_instance_type_inference() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, instance);
@@ -13291,6 +13649,8 @@ fn test_circular_constraint_polymorphic_this() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("value"),
@@ -13299,6 +13659,8 @@ fn test_circular_constraint_polymorphic_this() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13340,6 +13702,8 @@ fn test_circular_constraint_recursive_promise() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, promise_type);
@@ -13404,6 +13768,8 @@ fn test_circular_constraint_event_emitter() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("emit"),
@@ -13412,6 +13778,8 @@ fn test_circular_constraint_event_emitter() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13462,6 +13830,8 @@ fn test_circular_constraint_fluent_interface() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("withValue"),
@@ -13470,6 +13840,8 @@ fn test_circular_constraint_fluent_interface() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("withConfig"),
@@ -13478,6 +13850,8 @@ fn test_circular_constraint_fluent_interface() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13531,6 +13905,8 @@ fn test_circular_constraint_linked_list_generic() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("next"),
@@ -13539,6 +13915,8 @@ fn test_circular_constraint_linked_list_generic() {
             optional: true,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13584,6 +13962,8 @@ fn test_circular_constraint_state_machine() {
             optional: false,
             readonly: true,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("transition"),
@@ -13592,6 +13972,8 @@ fn test_circular_constraint_state_machine() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13602,6 +13984,8 @@ fn test_circular_constraint_state_machine() {
         optional: false,
         readonly: true,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_s, state_type);
@@ -13644,6 +14028,8 @@ fn test_circular_constraint_visitor_pattern() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, visitable_type);
@@ -13695,6 +14081,8 @@ fn test_circular_constraint_expression_tree() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("combine"),
@@ -13703,6 +14091,8 @@ fn test_circular_constraint_expression_tree() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13761,6 +14151,8 @@ fn test_circular_constraint_repository_pattern() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let repo_type = interner.object(vec![
@@ -13771,6 +14163,8 @@ fn test_circular_constraint_repository_pattern() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("save"),
@@ -13779,6 +14173,8 @@ fn test_circular_constraint_repository_pattern() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -13813,6 +14209,8 @@ fn test_inference_from_method_chain() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, obj_with_name);
@@ -13857,6 +14255,8 @@ fn test_inference_from_spread_in_object() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, obj1);
@@ -13949,6 +14349,8 @@ fn test_inference_from_object_destructure() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -13957,6 +14359,8 @@ fn test_inference_from_object_destructure() {
             optional: false,
             readonly: false,
             is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
@@ -14009,6 +14413,8 @@ fn test_inference_bidirectional_callback() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
     ctx.add_lower_bound(var_u, wrapper);
 
@@ -14444,6 +14850,8 @@ fn test_inference_object_spread() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, obj_type);
@@ -14535,6 +14943,8 @@ fn test_overload_intersection_argument() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let obj_b = interner.object(vec![PropertyInfo {
@@ -14544,6 +14954,8 @@ fn test_overload_intersection_argument() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
@@ -14748,6 +15160,8 @@ fn test_overload_nested_generics() {
         optional: false,
         readonly: false,
         is_method: true,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     ctx.add_lower_bound(var_t, promise_like);
@@ -14820,6 +15234,8 @@ fn test_conditional_type_inference_basic() {
         optional: false,
         readonly: false,
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let _cond = interner.conditional(ConditionalType {
@@ -14862,6 +15278,8 @@ fn test_variance_computation_covariant() {
         optional: false,
         readonly: true, // Readonly makes it purely covariant
         is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
     }]);
 
     let (covariant, contravariant, invariant, bivariant) = ctx.compute_variance(box_type, t_name);
@@ -14958,6 +15376,8 @@ fn test_variance_computation_invariant() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
         PropertyInfo {
             name: interner.intern_string("set"),
@@ -14966,6 +15386,8 @@ fn test_variance_computation_invariant() {
             optional: false,
             readonly: false,
             is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
         },
     ]);
 
