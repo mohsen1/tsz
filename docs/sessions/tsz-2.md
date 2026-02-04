@@ -37,19 +37,36 @@
 
 **Gemini Pro Review**: Implementation confirmed correct ✅
 
-### Priority 2: BCT for Intersections
-**File**: `src/solver/expression_ops.rs`
+### ✅ Priority 2 & 3: BCT for Intersections + Lazy Support (COMPLETED 2026-02-04)
+**Status**: Implemented and committed (commit 7dfee5155)
 
-**Dependency**: Requires stable Intersection Reduction first
+**What was implemented**:
+Enhanced `collect_class_hierarchy` in `src/solver/infer.rs` to handle:
+1. **Intersection types** - Recurse into all members to extract commonality
+2. **Lazy types** - Follow extends chain via resolver
 
-**Problem**: BCT doesn't extract common members from intersections
-- `(A & B)` and `(A & C)` should result in `A`
-- Currently returns flat union
+**Key changes in src/solver/infer.rs**:
+- Added `TypeKey::Intersection(members_id)` case to `collect_class_hierarchy`
+- Added `TypeKey::Lazy(_)` case to `collect_class_hierarchy`
+- Added test `test_best_common_type_with_intersections` to verify functionality
 
-### Priority 3: Refine get_base_type for Lazy
-**File**: `src/checker/context.rs`
+**How it works**:
+- For intersections: Recursively collects hierarchy from each member
+  - Example: `[A & B, A & C]` will collect A, B, and C as candidates
+  - `find_common_base_class` then filters by subtype relationship
+- For Lazy: Calls `get_extends_clause` to traverse the inheritance chain
+- Uses existing cycle detection (`hierarchy.contains(&ty)`)
 
-**Critical for**: Recursive types and class-like structures
+**Gemini Review**:
+- ✅ Lazy type handling is correct
+- ⚠️ Noted: `normalize_intersection` in `intern.rs` sorts by TypeId
+  - This destroys source order for call signatures (overload resolution)
+  - **Not a blocker for BCT** since BCT uses `is_subtype` checks
+  - Documented as separate issue for future work
+
+**Tests**:
+- All 16 existing BCT tests pass ✅
+- New test `test_best_common_type_with_intersections` passes ✅
 
 ---
 
@@ -262,10 +279,18 @@ The chain: `InferenceContext` → `TypeResolver` → `CheckerContext` → `Binde
 - 2026-02-04: Worked on class type resolution (completed)
 - 2026-02-04: Redefined to BCT work
 - 2026-02-04: Question 1 complete - got detailed architectural guidance
-- 2026-04-04: Ready for implementation following Gemini guidance
+- 2026-02-04: Ready for implementation following Gemini guidance
 - 2026-02-04: **Intersection Reduction COMPLETED**
   - Followed Two-Question Rule (asked Gemini Flash for approach, Gemini Pro for review)
   - Implemented recursive evaluation for Intersection and Union types
   - Added 4 unit tests (all passing)
   - Commit 7bf0f0fc6 pushed to origin/main
   - Gemini Pro confirmed implementation correct
+- 2026-02-04: **BCT for Intersections + Lazy Support COMPLETED**
+  - Followed Two-Question Rule (asked Gemini Flash for approach, Gemini Pro for review)
+  - Enhanced collect_class_hierarchy to handle Intersection and Lazy types
+  - Added test_best_common_type_with_intersections
+  - All 16 BCT tests pass
+  - Commit 7dfee5155 pushed to origin/main
+  - Gemini Pro confirmed implementation correct for BCT use case
+  - Documented intersection sorting issue in intern.rs as separate concern
