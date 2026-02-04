@@ -1,8 +1,8 @@
 # Session tsz-3: Advanced CFA & Type Predicates
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Previous phase: Narrowing Hardening COMPLETE)
-**Latest Update**: 2026-02-04 - Narrowing hardening complete, moving to advanced CFA
+**Status**: 🟢 ACTIVE (Priority 1 COMPLETE: instanceof narrowing)
+**Latest Update**: 2026-02-04 - Completed instanceof narrowing with Lazy type resolution
 **Focus**: User-defined type guards, instanceof narrowing, loop refinement
 
 ---
@@ -651,4 +651,32 @@ Look specifically for:
 - `compiler/discriminatedUnion*.ts`
 - `compiler/typeGuards*.ts`
 - Class-based conformance tests
+
+
+---
+
+## Priority 1: instanceof Narrowing ✅ COMPLETE (2026-02-04)
+
+**Commit**: `0aec78d51`
+
+**Implementation**:
+- Added `resolve_type()` for constructor_type and source_type
+- Ensures type aliases are resolved before extracting instance type
+- Matches pattern from `narrow_by_discriminant`
+
+**Existing Implementation** (already complete):
+- All `InstanceTypeKind` cases handled
+- Intersection fallback for interface vs class
+- Negative narrowing with `narrow_excluding_type`
+- Recursive handling for unions/intersections
+
+**Gemini Pro Review**:
+- Question 1 (Approach): ✅ Validated
+- Question 2 (Implementation): ✅ Verified correct with minor optimization applied
+
+**Result**: instanceof narrowing now works for:
+- Type aliases (Lazy types)
+- Union constructors
+- Interface vs class intersection fallback
+- All recursive type structures
 
