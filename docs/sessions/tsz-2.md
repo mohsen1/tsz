@@ -1,7 +1,7 @@
-# Session tsz-2: Best Common Type (BCT) - Common Base Class & Literal Widening
+# Session tsz-2: Best Common Type (BCT) - Full Implementation
 
 **Started**: 2026-02-04
-**Focus**: Implement Rule #32 - Best Common Type algorithm with proper common base class detection
+**Focus**: Implement Rule #32 - Best Common Type algorithm with proper common base class detection and literal widening
 
 ## Problem Statement
 
@@ -10,7 +10,7 @@ The Best Common Type (BCT) algorithm is the foundation for type inference in:
 - Conditional expressions: `cond ? a : b` → common type
 - Function return types: inferred from return statements
 
-**Current Gap**: While `UnsoundnessAudit` marks BCT as "Fully Implemented," the actual code in `src/solver/infer.rs` reveals that the **Common Base Class** logic is a placeholder (lines 1270-1300).
+**Current Gap**: While `UnsoundnessAudit` marks BCT as "Fully Implemented," the actual code in `src/solver/infer.rs` reveals that the **Common Base Class** logic is a placeholder.
 
 **Impact**: Without proper common base class detection:
 ```typescript
@@ -25,61 +25,83 @@ const animals = [new Dog(), new Cat()];
 
 This leads to "type not assignable" errors when the result is passed to functions expecting the base class.
 
-## Scope
+## Tasks
 
-Implement proper BCT with:
-1. **Common Base Class Detection**: Find the most specific common ancestor of class types
-2. **Literal Widening**: Widen literals to primitives in non-const contexts
-3. **Tournament Reduction**: Proper supertype selection with `any`/`unknown` handling
+### Task 1: Nominal Hierarchy Infrastructure
+**Files**: `src/solver/db.rs`, `src/checker/state_type_analysis.rs`, `src/solver/infer.rs`
 
-## Implementation Plan
+**Steps**:
+1. Add `get_class_base_type(symbol_id: SymbolId) -> Option<TypeId>` to `TypeDatabase` trait
+2. Implement in `CheckerState` to bridge Solver → Binder (query `extends` clause)
+3. Refine `get_class_hierarchy` in `infer.rs` with robust traversal
 
-### Phase 1: TypeDatabase Bridge
-**File**: `src/solver/db.rs`, `src/checker/context.rs`
-- Add `get_class_base_type(type_id: TypeId) -> Option<TypeId>` to `TypeDatabase` trait
-- Implement in `CheckerContext` to bridge Solver → Binder
-- Query symbol's `extends` clause via binder
-
-### Phase 2: Hierarchy Traversal
+### Task 2: Literal Widening Logic
 **File**: `src/solver/infer.rs`
-- Replace placeholder `get_class_hierarchy` with robust implementation
-- Use `InheritanceGraph` or symbol resolution to find all ancestors
-- Implement `find_common_base_class` to find most specific common ancestor
 
-### Phase 3: Literal Widening
-**File**: `src/solver/infer.rs`
-- Ensure `[1, 2]` widens to `number[]` (not `1 | 2[]`)
-- Respect `const` contexts (preserve literals)
+**Steps**:
+1. Implement `widen_literal_type` - widen `1 | 2` to `number`
+2. Respect `const` contexts (preserve literals)
+3. Update `resolve_from_candidates` to integrate widening
 
-### Phase 4: Tournament Reduction
+### Task 3: Tournament Reduction Refinement
 **File**: `src/solver/infer.rs`
-- Refine supertype selection logic
-- Handle `any`, `unknown`, `null`/`undefined` per tsc rules
+
+**Steps**:
+1. Optimize `best_common_type` with tournament algorithm
+2. Handle interface merging
+3. Handle `any`/`unknown` per tsc rules
+
+### Task 4: Array Literal Integration
+**File**: `src/solver/array_literal.rs`
+
+**Steps**:
+1. Update `ArrayLiteralBuilder` to use refined BCT logic
+2. Ensure `build_array_type` uses `best_common_type`
 
 ## Success Criteria
 
 - [ ] `get_class_base_type` added to TypeDatabase trait
 - [ ] Common base class detection implemented
-- [ ] Literal widening in array literals works
-- [ ] Test: `[new Dog(), new Cat()]` infers `Animal[]`
-- [ ] Test: `[1, 2]` infers `number[]`
-- [ ] No regressions in existing BCT tests
+- [ ] Literal widening works: `[1, 2]` → `number[]`
+- [ ] Nominal BCT works: `[dog, cat]` → `Animal[]`
+- [ ] Union fallback preserved: `[1, "a"]` → `(string | number)[]`
+- [ ] Homogeneous fast path preserved (performance)
 - [ ] Conformance tests pass
 
-## Complexity
+## Complexity: HIGH
 
-**Medium**
-- Logic is well-defined by TypeScript
-- Primary challenge: bridging Solver (TypeId) to Binder (symbols)
-- Requires care with concurrent interner architecture
+**Risk**: Changes to `is_subtype` or `best_common_type` can cause regressions
 
-## Why tsz-2?
+**Mandatory**: Follow **Two-Question Rule** in AGENTS.md before touching `src/solver/infer.rs`
 
-- **No Conflict**: Different space from tsz-1 (property access) and tsz-3 (narrowing)
-- **Focused**: Targets specific Rule #32 gap
-- **High-Impact**: Fixes fundamental type inference behavior
+---
 
-## Previous Work: TDZ (2026-02-04) ✅
+## Next Steps
+
+1. ✅ Session redefined with this plan
+2. ⏸️ Ask Gemini Question 1 (Approach Validation)
+3. ⏸️ Implement following Question 1 guidance
+4. ⏸️ Ask Gemini Question 2 (Implementation Review)
+5. ⏸️ Fix any issues found in review
+6. ⏸️ Test and commit
+
+---
+
+## Previous Work
+
+### TDZ (2026-02-04) ✅ COMPLETE
 
 TDZ checking for static blocks, computed properties, and heritage clauses is complete.
 See: `docs/sessions/history/tsz-2-tdz-20260204.md`
+
+### Class Type Resolution (2026-02-04) ✅ COMPLETE
+
+Fixed TYPE position vs VALUE position bug for class type references.
+See: `docs/sessions/tsz-2-COMPLETE.md`
+
+## Session History
+
+- 2026-02-04: Started with TDZ focus (completed)
+- 2026-02-04: Worked on class type resolution (completed)
+- 2026-02-04: Redefined to BCT work
+- 2026-02-04: Ready for Question 1 (approach validation)
