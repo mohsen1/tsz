@@ -25,18 +25,25 @@ Completed BCT implementation for class instances and verified Application expans
 - Type parameters stored in def_type_params map
 - TODO in evaluate.rs was outdated
 
-### Priority 3: Nominal Subtyping Fix (IN PROGRESS)
-**Files**: `src/solver/subtype_rules/objects.rs`, `src/solver/subtype.rs`
+### ✅ Priority 3: Nominal Subtyping Fix (COMPLETE)
+**Status**: Implemented and committed
+**Commit**: `27f1d1a67`
 
-**Current Status**: Asked Gemini Question 1, approach validated
+**What was fixed**:
+- Classes are now checked for nominal identity before structural comparison
+- Added `check_nominal_inheritance` helper function (line 1560)
+- Uses `get_base_type` to walk inheritance chain
+- Returns False if classes have different symbols and no inheritance relationship
 
-**Plan**:
-1. Modify `check_object_with_index_to_object` in `src/solver/subtype_rules/objects.rs` (line 425)
-2. Extract `symbol` field from source and target ObjectShapes
-3. If both symbols present and differ, use inheritance_graph for nominal check
-4. Only fall through to structural check if nominal check passes or if no symbols
+**Test verification**:
+```typescript
+class A { private x: string; }
+class B { private x: string; }
+const a: A = new B(); // Error: Type 'B' is not assignable to type 'A'
+```
 
-**Function to modify**: `check_object_with_index_to_object` at line 425
+**Known issue**: Pre-existing test failure unrelated to this change
+- `test_generic_parameter_without_constraint_fallback_to_unknown` was already failing
 
 ### Priority 4: BCT for Intersections
 **File**: `src/solver/expression_ops.rs`
