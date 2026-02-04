@@ -1,0 +1,214 @@
+   Compiling wasm v0.1.0 (/Users/mohsenazimi/code/tsz-1)
+warning: usage of an `unsafe` block
+   --> src/solver/compat.rs:179:56
+    |
+179 |           self.subtype.inheritance_graph = graph.map(|g| unsafe {
+    |  ________________________________________________________^
+180 | |             std::mem::transmute::<
+181 | |                 &crate::solver::inheritance::InheritanceGraph,
+182 | |                 &'a crate::solver::inheritance::InheritanceGraph,
+183 | |             >(g)
+184 | |         });
+    | |_________^
+    |
+    = note: requested on the command line with `-W unsafe-code`
+
+warning: use of deprecated function `solver::type_queries::get_ref_symbol`: Use get_lazy_def_id() and work with DefId directly
+   --> src/checker/assignment_checker.rs:135:46
+    |
+135 |         if let Some(sym_ref) = type_queries::get_ref_symbol(self.ctx.types, type_id) {
+    |                                              ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `solver::type_queries::get_ref_symbol`: Use get_lazy_def_id() and work with DefId directly
+  --> src/checker/enum_checker.rs:44:61
+   |
+44 |         if let Some(sym_ref) = crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id)
+   |                                                             ^^^^^^^^^^^^^^
+
+warning: use of deprecated function `solver::type_queries::get_ref_symbol`: Use get_lazy_def_id() and work with DefId directly
+  --> src/checker/enum_checker.rs:77:61
+   |
+77 |         if let Some(sym_ref) = crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id)
+   |                                                             ^^^^^^^^^^^^^^
+
+warning: use of deprecated function `solver::type_queries::get_ref_symbol`: Use get_lazy_def_id() and work with DefId directly
+   --> src/checker/enum_checker.rs:153:41
+    |
+153 |         if crate::solver::type_queries::get_ref_symbol(self.ctx.types, type_id).is_some() {
+    |                                         ^^^^^^^^^^^^^^
+
+warning: use of deprecated function `solver::type_queries::get_symbol_ref`: Use get_lazy_def_id() and work with DefId directly
+   --> src/checker/state_type_analysis.rs:184:42
+    |
+184 |             crate::solver::type_queries::get_symbol_ref(self.ctx.types, left_type)
+    |                                          ^^^^^^^^^^^^^^
+
+warning: use of deprecated tuple variant `solver::type_queries_extended::ContextualLiteralAllowKind::Ref`: Lazy types don't use SymbolRef
+    --> src/checker/state_type_analysis.rs:1674:41
+     |
+1674 |             ContextualLiteralAllowKind::Ref(symbol) => {
+     |                                         ^^^
+
+warning: use of deprecated function `solver::type_queries::get_symbol_ref`: Use get_lazy_def_id() and work with DefId directly
+   --> src/checker/state_type_environment.rs:266:65
+    |
+266 |         use crate::solver::type_queries::{get_application_info, get_symbol_ref};
+    |                                                                 ^^^^^^^^^^^^^^
+
+warning: use of deprecated function `solver::type_queries::get_symbol_ref`: Use get_lazy_def_id() and work with DefId directly
+   --> src/checker/state_type_environment.rs:865:86
+    |
+865 |             SymbolResolutionTraversalKind, classify_for_symbol_resolution_traversal, get_symbol_ref,
+    |                                                                                      ^^^^^^^^^^^^^^
+
+warning: use of deprecated function `solver::type_queries::get_symbol_ref`: Use get_lazy_def_id() and work with DefId directly
+   --> src/checker/state_type_environment.rs:274:45
+    |
+274 |         let sym_id = if let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) {
+    |                                             ^^^^^^^^^^^^^^
+
+warning: use of deprecated tuple variant `solver::type_queries_extended::PropertyAccessResolutionKind::Ref`: Lazy types don't use SymbolRef
+   --> src/checker/state_type_environment.rs:578:43
+    |
+578 |             PropertyAccessResolutionKind::Ref(sym_ref) => {
+    |                                           ^^^
+
+warning: use of deprecated function `solver::type_queries::get_symbol_ref`: Use get_lazy_def_id() and work with DefId directly
+   --> src/checker/state_type_environment.rs:875:58
+    |
+875 |                 let base_sym_id = if let Some(sym_ref) = get_symbol_ref(self.ctx.types, base) {
+    |                                                          ^^^^^^^^^^^^^^
+
+warning: use of deprecated tuple variant `solver::type_queries_extended::SymbolResolutionTraversalKind::Ref`: Use Lazy instead
+   --> src/checker/state_type_environment.rs:895:44
+    |
+895 |             SymbolResolutionTraversalKind::Ref(sym_ref) => {
+    |                                            ^^^
+
+warning: use of deprecated function `solver::type_queries::get_ref_symbol`: Use get_lazy_def_id() and work with DefId directly
+    --> src/checker/type_checking.rs:1819:67
+     |
+1819 |             ConstructorCheckKind, classify_for_constructor_check, get_ref_symbol,
+     |                                                                   ^^^^^^^^^^^^^^
+
+warning: use of deprecated function `solver::type_queries::get_ref_symbol`: Use get_lazy_def_id() and work with DefId directly
+    --> src/checker/type_checking.rs:1848:43
+     |
+1848 |                 if let Some(symbol_ref) = get_ref_symbol(self.ctx.types, base) {
+     |                                           ^^^^^^^^^^^^^^
+
+warning: use of deprecated tuple variant `solver::type_queries_extended::ConstructorCheckKind::SymbolRef`: Lazy types don't use SymbolRef
+    --> src/checker/type_checking.rs:1881:35
+     |
+1881 |             ConstructorCheckKind::SymbolRef(symbol_ref) => {
+     |                                   ^^^^^^^^^
+
+warning: use of deprecated tuple variant `solver::type_queries_extended::NamespaceMemberKind::SymbolRef`: Lazy types don't use SymbolRef
+    --> src/checker/type_checking_queries.rs:2426:34
+     |
+2426 |             NamespaceMemberKind::SymbolRef(sym_ref) => {
+     |                                  ^^^^^^^^^
+
+warning: use of deprecated tuple variant `solver::type_queries_extended::NamespaceMemberKind::SymbolRef`: Lazy types don't use SymbolRef
+    --> src/checker/type_checking_queries.rs:2593:34
+     |
+2593 |             NamespaceMemberKind::SymbolRef(sym_ref) => {
+     |                                  ^^^^^^^^^
+
+warning: use of deprecated tuple variant `solver::type_queries_extended::NewExpressionTypeKind::SymbolRef`: Lazy types don't use SymbolRef
+   --> src/checker/type_computation_complex.rs:178:65
+    |
+178 |             crate::solver::type_queries::NewExpressionTypeKind::SymbolRef(sym_ref)
+    |                                                                 ^^^^^^^^^
+
+warning: use of deprecated function `solver::type_queries::get_ref_if_symbol`: Use get_lazy_if_def() instead
+   --> src/checker/type_computation_complex.rs:669:50
+    |
+669 |                     crate::solver::type_queries::get_ref_if_symbol(self.ctx.types, app.base)
+    |                                                  ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated function `solver::type_queries::get_ref_symbol`: Use get_lazy_def_id() and work with DefId directly
+   --> src/solver/type_queries.rs:756:5
+    |
+756 |     get_ref_symbol(db, type_id)
+    |     ^^^^^^^^^^^^^^
+
+warning: use of deprecated type alias `solver::type_queries_extended::RefTypeKind`: Use LazyTypeKind instead
+   --> src/solver/type_queries_extended.rs:880:79
+    |
+880 | pub fn classify_for_ref_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> RefTypeKind {
+    |                                                                               ^^^^^^^^^^^
+
+warning: use of deprecated field `solver::type_queries_extended::ContextualLiteralAllowKind::Ref::0`: Lazy types don't use SymbolRef
+    --> src/checker/state_type_analysis.rs:1674:45
+     |
+1674 |             ContextualLiteralAllowKind::Ref(symbol) => {
+     |                                             ^^^^^^
+
+warning: use of deprecated field `solver::type_queries_extended::PropertyAccessResolutionKind::Ref::0`: Lazy types don't use SymbolRef
+   --> src/checker/state_type_environment.rs:578:47
+    |
+578 |             PropertyAccessResolutionKind::Ref(sym_ref) => {
+    |                                               ^^^^^^^
+
+warning: use of deprecated field `solver::type_queries_extended::SymbolResolutionTraversalKind::Ref::0`: Use Lazy instead
+   --> src/checker/state_type_environment.rs:895:48
+    |
+895 |             SymbolResolutionTraversalKind::Ref(sym_ref) => {
+    |                                                ^^^^^^^
+
+warning: use of deprecated field `solver::type_queries_extended::ConstructorCheckKind::SymbolRef::0`: Lazy types don't use SymbolRef
+    --> src/checker/type_checking.rs:1881:45
+     |
+1881 |             ConstructorCheckKind::SymbolRef(symbol_ref) => {
+     |                                             ^^^^^^^^^^
+
+warning: use of deprecated field `solver::type_queries_extended::NamespaceMemberKind::SymbolRef::0`: Lazy types don't use SymbolRef
+    --> src/checker/type_checking_queries.rs:2426:44
+     |
+2426 |             NamespaceMemberKind::SymbolRef(sym_ref) => {
+     |                                            ^^^^^^^
+
+warning: use of deprecated field `solver::type_queries_extended::NamespaceMemberKind::SymbolRef::0`: Lazy types don't use SymbolRef
+    --> src/checker/type_checking_queries.rs:2593:44
+     |
+2593 |             NamespaceMemberKind::SymbolRef(sym_ref) => {
+     |                                            ^^^^^^^
+
+warning: use of deprecated field `solver::type_queries_extended::NewExpressionTypeKind::SymbolRef::0`: Lazy types don't use SymbolRef
+   --> src/checker/type_computation_complex.rs:178:75
+    |
+178 |             crate::solver::type_queries::NewExpressionTypeKind::SymbolRef(sym_ref)
+    |                                                                           ^^^^^^^
+
+warning: type `SourceEntry` is more private than the item `sources_have_no_types_and_symbols`
+    --> src/cli/driver.rs:1360:1
+     |
+1360 | pub(crate) fn sources_have_no_types_and_symbols(sources: &[SourceEntry]) -> bool {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function `sources_have_no_types_and_symbols` is reachable at visibility `pub(crate)`
+     |
+note: but type `SourceEntry` is only usable at visibility `pub(self)`
+    --> src/cli/driver.rs:1298:1
+     |
+1298 | struct SourceEntry {
+     | ^^^^^^^^^^^^^^^^^^
+     = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `SourceEntry` is more private than the item `source_has_no_types_and_symbols`
+    --> src/cli/driver.rs:1364:1
+     |
+1364 | pub(crate) fn source_has_no_types_and_symbols(source: &SourceEntry) -> bool {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function `source_has_no_types_and_symbols` is reachable at visibility `pub(crate)`
+     |
+note: but type `SourceEntry` is only usable at visibility `pub(self)`
+    --> src/cli/driver.rs:1298:1
+     |
+1298 | struct SourceEntry {
+     | ^^^^^^^^^^^^^^^^^^
+
+warning: `wasm` (lib) generated 31 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.78s
+     Running `.target/debug/tsz test_abstract_debug.ts`
+test_abstract_debug.ts(10,12): error TS2322: Type '{ isPrototypeOf: { (v: Object): boolean }; propertyIsEnumerable: { (v: Symbol): boolean }; constructor: Function; speak: { (): void }; toString: { (): string }; valueOf: { (): Object }; hasOwnProperty: { (v: Symbol): boolean }; toLocaleString: { (): string } }' is not assignable to type 'Animal'.
