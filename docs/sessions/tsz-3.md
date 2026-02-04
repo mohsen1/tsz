@@ -19,28 +19,47 @@ Previous session (tsz-3-control-flow-analysis) completed:
 
 Test `test_abstract_mixin_intersection_ts2339` fails with unexpected TS2339 errors.
 
-**Error**:
+**Test Case**:
+```typescript
+function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass: TBaseClass): TBaseClass & (abstract new (...args: any) => IMixin) {
+    abstract class MixinClass extends baseClass implements IMixin {
+        mixinMethod() {}
+    }
+    return MixinClass;
+}
+
+class DerivedFromConcrete extends Mixin(ConcreteBase) {
+}
+wasConcrete.baseMethod(); // TS2339: Property 'baseMethod' does not exist
+wasConcrete.mixinMethod(); // TS2339: Property 'mixinMethod' does not exist
 ```
-Property 'baseMethod' does not exist on type 'DerivedFromConcrete'
-Property 'mixinMethod' does not exist on type 'DerivedFromConcrete'
-```
 
-**Expected**: These properties SHOULD exist (no TS2339) when using abstract mixin pattern.
+### Investigation Findings
 
-**Test Location**: `src/tests/checker_state_tests.rs:23772`
+1. **TypeId(152)** is the type of `DerivedFromConcrete`
+2. It has `ObjectShapeId(4)` which doesn't include `baseMethod` or `mixinMethod`
+3. **First error**: `'{ new (args: any): MixinClass }'` is not assignable to `'TBaseClass & { new (args: any): error }'`
+   - This suggests the heritage clause resolution isn't correctly handling function calls that return constructor types
 
-**Debug Output**:
-```
-[PROP-NOT-EXIST] prop_name=baseMethod, type_id=TypeId(152)
-[PROP-NOT-EXIST] prop_name=mixinMethod, type_id=TypeId(152)
-```
+### Root Cause (Hypothesis)
 
-### Investigation Needed
+When extending a function call (`extends Mixin(ConcreteBase)`), the heritage clause resolution:
+1. Evaluates `Mixin(ConcreteBase)` to get a constructor type
+2. Should merge properties from both `TBaseClass` and the mixin interface
+3. Currently not correctly merging the base class properties into the derived class type
 
-1. Understand how abstract mixin intersection types should work
-2. Check how properties from mixin classes are resolved
-3. Fix property existence checking for intersection types with abstract classes
+### Files to Investigate
 
-## Next Steps
+- `src/checker/class_inheritance.rs` - Class hierarchy analysis
+- `src/checker/herititage*.rs` - Heritage clause resolution
+- Property resolution for intersection types
 
-Investigate and fix the abstract mixin intersection property resolution issue.
+### Complexity
+
+This is a **complex issue** requiring deep knowledge of:
+- Generic function instantiation
+- Constructor type resolution from function calls
+- Intersection type property merging
+- Class heritage clause processing
+
+This may be too complex for a quick fix and might require architectural changes.
