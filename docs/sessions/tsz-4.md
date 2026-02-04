@@ -251,9 +251,39 @@ This task is too complex for a single session. Requires:
 3. Testing across multiple narrowing patterns
 
 **Next Steps**:
-- Choose a different, more achievable CFA task for this session
-- Or defer discriminant narrowing to a dedicated multi-session effort
-- Focus on simpler flow analysis fixes with clear scope
+Pivoting to a different task. See new task below.
+
+---
+
+### 2025-02-04: New Task - Fix TS2318 Missing Errors
+
+**Issue**: tsz missing ~700 TS2318 "Cannot find global type" errors.
+
+**Root Cause**:
+When `--lib es6` is explicitly specified:
+- **TSC**: Checks for core types ONLY in explicitly specified libs (ignores `/// <reference>` chain)
+- **tsz**: Follows `/// <reference lib="es5" />` in es2015.d.ts and loads es5.d.ts too
+
+So tsz finds Array/Boolean/etc in es5.d.ts (loaded via reference) and doesn't emit TS2318.
+
+**Fix Required**:
+1. Track which libs were EXPLICITLY specified via `--lib` vs loaded via `/// <reference>`
+2. For TS2318 core type checking, only consider explicitly specified libs
+3. Update `check_missing_global_types` to respect this distinction
+
+**Files to Modify**:
+- `CheckOptions` - carry explicit lib list
+- `CheckerContext` - track explicit vs referenced libs
+- `check_missing_global_types` - use only explicit libs for core type check
+
+**Impact**: ~700 missing TS2318 errors → improve conformance by ~5%
+
+**Implementation Plan**:
+1. Add `explicit_libs: Vec<String>` field to CheckOptions
+2. Pass explicit libs from CLI parsing to CheckOptions
+3. Store in CheckerContext during initialization
+4. Modify `check_missing_global_types` to filter by explicit libs
+5. Test with `--lib es6` flag
 
 ## Notes
 
