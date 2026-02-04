@@ -9,7 +9,7 @@
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
 use crate::solver::contextual::ContextualTypeContext;
-use crate::solver::types::{ObjectFlags, PropertyInfo, TypeId, TypeKey, Visibility};
+use crate::solver::types::{ObjectFlags, PropertyInfo, TypeId, TypeKey};
 use rustc_hash::FxHashMap;
 
 /// Builder for constructing object literal types.

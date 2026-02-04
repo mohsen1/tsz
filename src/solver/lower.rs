@@ -358,7 +358,7 @@ impl<'a> TypeLowering<'a> {
             lowerer.collect_interface_members(&interface.members, &mut parts);
         }
 
-        let result = self.finish_interface_parts(parts);
+        let result = self.finish_interface_parts(parts, None);
 
         if type_params_collected {
             self.pop_type_param_scope();
@@ -1033,6 +1033,18 @@ impl<'a> TypeLowering<'a> {
             .0
     }
 
+    /// Lower interface declarations and stamp the resulting type with a SymbolId.
+    /// This is used by the type checker to preserve symbol information for import generation.
+    /// The SymbolId allows UsageAnalyzer to trace which imported interfaces are used in exported APIs.
+    pub fn lower_interface_declarations_with_symbol(
+        &self,
+        declarations: &[NodeIndex],
+        sym_id: crate::binder::SymbolId,
+    ) -> TypeId {
+        self.lower_interface_declarations_with_params_impl(declarations, Some(sym_id))
+            .0
+    }
+
     /// Lower interface declarations and also return the collected type parameters.
     /// This is needed when registering generic lib types (e.g. Array<T>) so that
     /// the actual type parameters from the interface definition are used rather
@@ -1040,6 +1052,15 @@ impl<'a> TypeLowering<'a> {
     pub fn lower_interface_declarations_with_params(
         &self,
         declarations: &[NodeIndex],
+    ) -> (TypeId, Vec<TypeParamInfo>) {
+        self.lower_interface_declarations_with_params_impl(declarations, None)
+    }
+
+    /// Internal implementation that optionally stamps the interface type with a SymbolId.
+    fn lower_interface_declarations_with_params_impl(
+        &self,
+        declarations: &[NodeIndex],
+        symbol_id: Option<crate::binder::SymbolId>,
     ) -> (TypeId, Vec<TypeParamInfo>) {
         if declarations.is_empty() {
             return (TypeId::ERROR, Vec::new());
@@ -1087,7 +1108,10 @@ impl<'a> TypeLowering<'a> {
             self.pop_type_param_scope();
         }
 
-        (self.finish_interface_parts(parts), collected_params)
+        (
+            self.finish_interface_parts(parts, symbol_id),
+            collected_params,
+        )
     }
 
     pub fn lower_type_alias_declaration(
@@ -1148,7 +1172,11 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    fn finish_interface_parts(&self, parts: InterfaceParts) -> TypeId {
+    fn finish_interface_parts(
+        &self,
+        parts: InterfaceParts,
+        symbol_id: Option<crate::binder::SymbolId>,
+    ) -> TypeId {
         let mut properties = Vec::with_capacity(parts.properties.len());
         for (name, entry) in parts.properties {
             match entry {
@@ -1182,7 +1210,7 @@ impl<'a> TypeLowering<'a> {
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,
-                symbol: None,
+                symbol: symbol_id,
             });
         }
 
@@ -1199,11 +1227,17 @@ impl<'a> TypeLowering<'a> {
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,
-                symbol: None,
+                symbol: symbol_id,
             });
         }
 
-        self.interner.object(properties)
+        self.interner.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol: symbol_id,
+        })
     }
 
     fn lower_call_signature(&self, sig: &SignatureData) -> CallSignature {
