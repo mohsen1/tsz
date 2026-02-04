@@ -1876,8 +1876,12 @@ impl<'a> CheckerState<'a> {
                             if let Some(node) = decl_arena.get(*decl_idx) {
                                 if let Some(alias) = decl_arena.get_type_alias(node) {
                                     let alias_lowering = lowering.with_arena(decl_arena);
-                                    let ty = alias_lowering.lower_type_alias_declaration(alias);
+                                    let (ty, params) =
+                                        alias_lowering.lower_type_alias_declaration(alias);
                                     if ty != TypeId::ERROR {
+                                        // Cache type parameters for Application expansion
+                                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                                        self.ctx.insert_def_type_params(def_id, params);
                                         lib_types.push(ty);
                                         // Type aliases don't merge across files, take the first one
                                         break;
@@ -2121,8 +2125,12 @@ impl<'a> CheckerState<'a> {
                             if let Some(node) = decl_arena.get(*decl_idx) {
                                 if let Some(alias) = decl_arena.get_type_alias(node) {
                                     let alias_lowering = lowering.with_arena(decl_arena);
-                                    let ty = alias_lowering.lower_type_alias_declaration(alias);
+                                    let (ty, params) =
+                                        alias_lowering.lower_type_alias_declaration(alias);
                                     if ty != TypeId::ERROR {
+                                        // Cache type parameters for Application expansion
+                                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                                        self.ctx.insert_def_type_params(def_id, params);
                                         lib_types.push(ty);
                                         break;
                                     }

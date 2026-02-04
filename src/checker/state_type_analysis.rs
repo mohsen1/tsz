@@ -1346,6 +1346,14 @@ impl<'a> CheckerState<'a> {
                 let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
                 let alias_type = self.get_type_from_type_node(type_alias.type_node);
                 self.pop_type_parameters(updates);
+
+                // Cache type parameters for Application expansion (Priority 1 fix)
+                // This enables ExtractState<NumberReducer> to expand correctly
+                if !params.is_empty() {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx.insert_def_type_params(def_id, params.clone());
+                }
+
                 // Return the params that were used during lowering - this ensures
                 // type_env gets the same TypeIds as the type body
                 return (alias_type, params);
