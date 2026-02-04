@@ -266,3 +266,51 @@ Fixed Cache Isolation Bug where lib.d.ts type aliases weren't resolving correctl
 **Next**: Task 3 - Checker Integration with CFA
 
 ---
+
+### Task 3 Complete ✅
+
+**Commits**:
+- `9bf03b6b8` - "feat(tsz-2): integrate Solver::narrow with Checker using TypeGuard pattern"
+- `b2691032a` - "fix(tsz-2): correct Instanceof TypeGuard handling per Gemini review"
+
+**Changes Made**:
+
+1. **src/checker/control_flow_narrowing.rs** - Expanded `extract_type_guard()`:
+   - Added handling for `InstanceOfKeyword` operator
+   - Extracts instance type from right side using `instance_type_from_constructor()`
+   - Returns `TypeGuard::Instanceof(instance_type)`
+   - Added handling for `InKeyword` operator
+   - Extracts property name from left side using `in_property_name()`
+   - Returns `TypeGuard::InProperty(prop_name)`
+   - Fixed operator token comparison (is `u16`, not `NodeIndex`)
+
+2. **src/checker/control_flow.rs** - Refactored `narrow_type_by_condition_inner()`:
+   - Implemented "Extract then Delegate" pattern for binary expressions
+   - Logical operators (`&&`, `||`) still use `narrow_by_logical_expr` (special recursion needed)
+   - For other binary expressions:
+     a. Call `extract_type_guard(condition_idx)` to get `(TypeGuard, guard_target)`
+     b. Check if `is_matching_reference(guard_target, target)`
+     c. If match: return `narrowing.narrow_type(type_id, &guard, is_true_branch)`
+     d. If no match: return `type_id` unchanged
+
+3. **src/solver/narrowing.rs** - Fixed `TypeGuard::Instanceof` handler:
+   - **Critical Bug Fix**: Treat payload as Instance Type, not Constructor Type
+   - Use `narrow_to_type()` directly instead of `narrow_by_instanceof()`
+   - Added intersection fallback for interface vs class cases
+
+**Solver-First Architecture Achieved**:
+- **Checker**: Identifies WHERE narrowing happens (AST node) and WHAT the condition is (TypeGuard)
+- **Solver**: Calculates the RESULT (narrowed type) via `NarrowingContext::narrow_type()`
+
+**Critical Bug Fixed** (via Gemini Code Review):
+- **Instanceof Type Mismatch**: Checker was passing Instance Type, but Solver expected Constructor Type
+- Fixed by changing Solver to treat `TypeGuard::Instanceof` payload as Instance Type
+- Use `narrow_to_type()` directly instead of trying to extract instance type again
+
+**Gemini Guidance**:
+- Question 1 (PRE): Approach validation - extract TypeGuard, then delegate to Solver
+- Question 2 (POST): Implementation review - found Instanceof type mismatch bug, fixed
+
+**Next**: Task 4 - Truthiness Narrowing
+
+---
