@@ -32,6 +32,7 @@ use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeInterner;
+use crate::solver::type_queries;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 
 /// Declaration emitter for .d.ts files
@@ -1096,6 +1097,16 @@ impl<'a> DeclarationEmitter<'a> {
         if !func.type_annotation.is_none() {
             self.write(": ");
             self.emit_type(func.type_annotation);
+        } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+            // No explicit return type, try to infer it
+            if let Some(func_type_id) = cache.node_types.get(&func_idx.0) {
+                if let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, *func_type_id)
+                {
+                    self.write(": ");
+                    self.write(&self.print_type_id(return_type_id));
+                }
+            }
         }
 
         self.write(";");

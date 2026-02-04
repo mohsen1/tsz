@@ -2264,3 +2264,49 @@ pub fn classify_for_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Lit
         _ => LiteralValueKind::None,
     }
 }
+
+/// Extracts the return type from a callable type for declaration emit.
+///
+/// For overloaded functions (Callable), returns the return type of the first signature.
+/// For intersections, finds the first callable member and extracts its return type.
+///
+/// # Examples
+///
+/// ```ignore
+/// let return_type = type_queries::get_return_type(&db, function_type_id);
+/// ```
+///
+/// # Arguments
+///
+/// * `db` - The type database/interner
+/// * `type_id` - The TypeId of a function or callable type
+///
+/// # Returns
+///
+/// * `Some(TypeId)` - The return type if this is a callable type
+/// * `None` - If this is not a callable type or type_id is unknown
+pub fn get_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeKey::Function(shape_id)) => Some(db.function_shape(shape_id).return_type),
+        Some(TypeKey::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            // For overloads, use the first signature's return type
+            shape.call_signatures.first().map(|sig| sig.return_type)
+        }
+        Some(TypeKey::Intersection(list_id)) => {
+            // In an intersection, find the first callable member
+            let members = db.type_list(list_id);
+            members.iter().find_map(|&m| get_return_type(db, m))
+        }
+        _ => {
+            // Handle special intrinsic types
+            if type_id == TypeId::ANY {
+                Some(TypeId::ANY)
+            } else if type_id == TypeId::NEVER {
+                Some(TypeId::NEVER)
+            } else {
+                None
+            }
+        }
+    }
+}
