@@ -249,6 +249,12 @@ impl Runner {
                     continue;
                 }
                 
+                // Skip APISample tests - they require /.ts/typescript.d.ts which is a
+                // virtual mount in TSC's test harness pointing to built/local/typescript.d.ts
+                if path_str.contains("APISample") || path_str.contains("APILibCheck") {
+                    continue;
+                }
+                
                 // Apply filter pattern if specified
                 if let Some(ref filter) = self.args.filter {
                     if !path_str.contains(filter) {
