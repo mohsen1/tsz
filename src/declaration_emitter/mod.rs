@@ -320,6 +320,12 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.emit_module_declaration(stmt_idx);
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.emit_import_equals_declaration(stmt_idx);
+            }
+            k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
+                self.emit_namespace_export_declaration(stmt_idx);
+            }
             _ => {}
         }
 
@@ -1332,6 +1338,13 @@ impl<'a> DeclarationEmitter<'a> {
                     self.emit_module_declaration(export.export_clause);
                     return;
                 }
+                k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                    // Emit: export import x = require(...)
+                    self.write_indent();
+                    self.write("export ");
+                    self.emit_import_equals_declaration(export.export_clause);
+                    return;
+                }
                 _ => {}
             }
         }
@@ -2014,8 +2027,18 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("declare ");
         }
 
-        // namespace or module
-        self.write("namespace ");
+        // Determine keyword: "module" for string literals, "namespace" for identifiers
+        let use_module_keyword = self
+            .arena
+            .get(module.name)
+            .map(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16)
+            .unwrap_or(false);
+
+        self.write(if use_module_keyword {
+            "module "
+        } else {
+            "namespace "
+        });
         self.emit_node(module.name);
 
         if !module.body.is_none() {
@@ -2048,6 +2071,63 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("}");
         }
 
+        self.write_line();
+    }
+
+    fn emit_import_equals_declaration(&mut self, import_idx: NodeIndex) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import_eq) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+
+        // For import equals declarations:
+        // - import_clause is the variable name (identifier)
+        // - module_specifier is the require() expression
+
+        let is_exported = self.has_export_modifier(&import_eq.modifiers);
+
+        self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
+        self.write("import ");
+
+        // Emit variable name from import_clause
+        if !import_eq.import_clause.is_none() {
+            self.emit_node(import_eq.import_clause);
+        }
+
+        // Emit " = require(...)"
+        self.write(" = require(");
+        self.emit_node(import_eq.module_specifier);
+        self.write(")");
+
+        self.write(";");
+        self.write_line();
+    }
+
+    fn emit_namespace_export_declaration(&mut self, export_idx: NodeIndex) {
+        let Some(export_node) = self.arena.get(export_idx) else {
+            return;
+        };
+        let Some(export) = self.arena.get_export_decl(export_node) else {
+            return;
+        };
+
+        // For "export as namespace" declarations:
+        // - export_clause is the namespace name (identifier)
+
+        self.write_indent();
+        self.write("export as namespace ");
+
+        // Emit namespace name from export_clause
+        if !export.export_clause.is_none() {
+            self.emit_node(export.export_clause);
+        }
+
+        self.write(";");
         self.write_line();
     }
 
