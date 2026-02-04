@@ -1,11 +1,11 @@
-# Session tsz-2: Type Correctness & Conformance
+# Session tsz-2: Advanced BCT and Intersection Reduction
 
 **Started**: 2026-02-04
-**Current Focus**: Conformance validation and nominal subtyping fix
+**Current Focus**: Complete Best Common Type implementation and strengthen intersection reduction
 
 ## Background
 
-Completed BCT implementation for class instances and verified Application expansion is working. Now focused on core correctness issues and conformance validation.
+Successfully implemented nominal subtyping check for class instances. Conformance baseline at 41.7% (5357/12847). Now focusing on advanced BCT features to improve inference accuracy.
 
 ## Current Session Plan (Redefined 2026-02-04)
 
@@ -45,11 +45,42 @@ const a: A = new B(); // Error: Type 'B' is not assignable to type 'A'
 **Known issue**: Pre-existing test failure unrelated to this change
 - `test_generic_parameter_without_constraint_fallback_to_unknown` was already failing
 
-### Priority 4: BCT for Intersections
+### Priority 4: BCT for Intersections (NEXT)
 **File**: `src/solver/expression_ops.rs`
 
-Extend `compute_best_common_type` to handle intersection types.
+**Problem**: BCT doesn't find commonality between intersection types
+- `(A & B)` and `(A & C)` should result in `A` (or `A & (B | C)`)
+- Currently likely returns flat union `(A & B) | (A & C)`
+
+**Task**:
+- Implement common member extraction for intersections
+- Modify `compute_best_common_type` to handle intersection types
 - Example: `(Dog & Serializable) | (Cat & Serializable)` → `Animal & Serializable`
+
+**⚠️ MANDATORY**: Follow Two-Question Rule before implementing:
+```bash
+./scripts/ask-gemini.mjs --include=src/solver "I need to implement BCT for Intersections.
+What is the best way to extract common members from intersections without infinite loops?"
+```
+
+### Priority 5: Intersection Reduction
+**File**: `src/solver/intern.rs`
+
+**Problem**: Intersections with disjoint types should reduce to `never`
+- `string & number` should consistently reduce to `never`
+- Need to resolve `Lazy(DefId)` types before checking disjointness
+
+**Task**:
+- Enhance `intersection_has_disjoint_primitives`
+- Ensure `Lazy` types are resolved before disjointness check
+
+### Priority 6: Refine get_base_type for Lazy
+**File**: `src/checker/context.rs`
+
+**Task**:
+- Review `TypeResolver::get_base_type` implementation
+- Ensure correct handling of `Lazy` -> `DefId` -> `SymbolId` -> `InheritanceGraph` path
+- Test with class-like structures
 
 ---
 
