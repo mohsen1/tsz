@@ -95,7 +95,7 @@ fn obj_with_method(interner: &TypeInterner, method_name: &str, method: TypeId) -
         write_type: method,
         optional: false,
         readonly: false,
-        is_method: true,
+        is_method: true, // This is a method
         visibility: Visibility::Public,
         parent_id: None,
     }])
@@ -110,7 +110,7 @@ fn obj_with_prop(interner: &TypeInterner, prop_name: &str, prop: TypeId) -> Type
         write_type: prop,
         optional: false,
         readonly: false,
-        is_method: false,
+        is_method: false, // Not a method, just a function property
         visibility: Visibility::Public,
         parent_id: None,
     }])
