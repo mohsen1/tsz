@@ -63,6 +63,10 @@ pub struct DeclarationEmitter<'a> {
     foreign_symbols: Option<FxHashSet<SymbolId>>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
     current_arena: Option<Arc<NodeArena>>,
+    /// The current file's path (for calculating relative import paths)
+    current_file_path: Option<String>,
+    /// Map of arena address -> file path (for resolving foreign symbol locations)
+    arena_to_path: FxHashMap<usize, String>,
     /// Map of module → symbol names to auto-generate imports for
     /// Pre-calculated in driver where MergedProgram is available
     required_imports: FxHashMap<String, Vec<String>>,
@@ -92,6 +96,8 @@ impl<'a> DeclarationEmitter<'a> {
             used_symbols: None,
             foreign_symbols: None,
             current_arena: None,
+            current_file_path: None,
+            arena_to_path: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
@@ -117,6 +123,8 @@ impl<'a> DeclarationEmitter<'a> {
             used_symbols: None,
             foreign_symbols: None,
             current_arena: None,
+            current_file_path: None,
+            arena_to_path: FxHashMap::default(),
             required_imports: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
@@ -161,11 +169,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.required_imports = imports;
     }
 
-    /// Set the current file's arena for distinguishing local vs foreign symbols.
+    /// Set the current file's arena and path for distinguishing local vs foreign symbols.
     ///
     /// This enables UsageAnalyzer to track which symbols need imports.
-    pub fn set_current_arena(&mut self, arena: Arc<NodeArena>) {
+    pub fn set_current_arena(&mut self, arena: Arc<NodeArena>, file_path: String) {
         self.current_arena = Some(arena);
+        self.current_file_path = Some(file_path);
+    }
+
+    /// Set the mapping from arena address to file path.
+    ///
+    /// This enables resolving foreign symbols to their source files.
+    pub fn set_arena_to_path(&mut self, arena_to_path: FxHashMap<usize, String>) {
+        self.arena_to_path = arena_to_path;
     }
 
     /// Emit declaration for a source file
@@ -173,23 +189,25 @@ impl<'a> DeclarationEmitter<'a> {
         self.reset_writer();
         self.indent_level = 0;
 
-        // Run usage analyzer if we have all required components
-        if let (Some(cache), Some(interner), Some(binder), Some(current_arena)) = (
-            &self.type_cache,
-            self.type_interner,
-            self.binder,
-            &self.current_arena,
-        ) {
-            let mut analyzer = usage_analyzer::UsageAnalyzer::new(
-                self.arena,
-                binder,
-                cache,
-                interner,
-                current_arena.clone(),
-            );
-            let used = analyzer.analyze(root_idx);
-            self.used_symbols = Some(used.clone());
-            self.foreign_symbols = Some(analyzer.get_foreign_symbols().clone());
+        // Run usage analyzer if we have all required components AND haven't run yet
+        if self.used_symbols.is_none() {
+            if let (Some(cache), Some(interner), Some(binder), Some(current_arena)) = (
+                &self.type_cache,
+                self.type_interner,
+                self.binder,
+                &self.current_arena,
+            ) {
+                let mut analyzer = usage_analyzer::UsageAnalyzer::new(
+                    self.arena,
+                    binder,
+                    cache,
+                    interner,
+                    current_arena.clone(),
+                );
+                let used = analyzer.analyze(root_idx);
+                self.used_symbols = Some(used.clone());
+                self.foreign_symbols = Some(analyzer.get_foreign_symbols().clone());
+            }
         }
 
         let Some(root_node) = self.arena.get(root_idx) else {
@@ -2633,28 +2651,126 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    /// Calculate the module path for a symbol.
+    /// Resolve a foreign symbol to its module path.
     ///
-    /// Returns the module specifier (e.g., "./utils") or None if:
-    /// - Symbol is from lib.d.ts (global/ambient)
-    /// - Cannot determine module path
-    fn get_symbol_module_path(&self, sym_id: SymbolId) -> Option<String> {
-        let Some(binder) = &self.binder else {
+    /// Returns the module specifier (e.g., "./utils") for importing the symbol.
+    fn resolve_symbol_module_path(&self, sym_id: SymbolId) -> Option<String> {
+        let (Some(binder), Some(current_path)) = (&self.binder, &self.current_file_path) else {
             return None;
         };
 
-        let Some(symbol) = binder.symbols.get(sym_id) else {
-            return None;
-        };
-
-        // If symbol has import_module, use that
-        if let Some(ref module) = symbol.import_module {
-            return Some(module.clone());
+        // 1. Check for ambient modules (declare module "name")
+        if let Some(ambient_path) = self.check_ambient_module(sym_id, binder) {
+            return Some(ambient_path);
         }
 
-        // TODO: Look up symbol's declaration file and calculate relative path
-        // This requires access to MergedProgram or file path mapping
+        // 2. Get the source arena for this symbol
+        let source_arena = binder.symbol_arenas.get(&sym_id)?;
+
+        // 3. Look up the file path from arena address
+        let arena_addr = Arc::as_ptr(source_arena) as usize;
+        let source_path = self.arena_to_path.get(&arena_addr)?;
+
+        // 4. Calculate relative path
+        let rel_path = self.calculate_relative_path(current_path, source_path);
+
+        // 5. Strip TypeScript extensions
+        Some(self.strip_ts_extensions(&rel_path))
+    }
+
+    /// Check if a symbol is from an ambient module declaration.
+    ///
+    /// Returns the module name if the symbol is declared inside `declare module "name"`.
+    fn check_ambient_module(&self, sym_id: SymbolId, binder: &BinderState) -> Option<String> {
+        let symbol = binder.symbols.get(sym_id)?;
+
+        // Walk up the parent chain
+        let mut current_sym = symbol;
+        let mut parent_id = current_sym.parent;
+        while !parent_id.is_none() {
+            let parent_sym = binder.symbols.get(parent_id)?;
+
+            // Check if parent is a module declaration
+            if parent_sym.flags & crate::binder::symbol_flags::MODULE != 0 {
+                // Check if this module is in declared_modules
+                let module_name = &parent_sym.escaped_name;
+                if binder.declared_modules.contains(module_name) {
+                    return Some(module_name.clone());
+                }
+            }
+
+            current_sym = parent_sym;
+            parent_id = current_sym.parent;
+        }
+
         None
+    }
+
+    /// Calculate relative path from current file to source file.
+    ///
+    /// Returns a path like "../utils" or "./helper"
+    fn calculate_relative_path(&self, current: &str, source: &str) -> String {
+        use std::path::Path;
+
+        let current_path = Path::new(current);
+        let source_path = Path::new(source);
+
+        // Get parent directories
+        let current_dir = current_path.parent().unwrap_or(current_path);
+        let source_dir = source_path.parent().unwrap_or(source_path);
+
+        // Simple case: same directory
+        if current_dir == source_dir {
+            let file_name = source_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            return format!("./{}", file_name);
+        }
+
+        // Different directory - use full path for now
+        // TODO: Implement proper relative path calculation
+        let path_str = source_path.to_string_lossy().replace('\\', "/");
+
+        // Ensure path starts with ./
+        if !path_str.starts_with("./") && !path_str.starts_with("../") {
+            format!("./{}", path_str)
+        } else {
+            path_str
+        }
+    }
+
+    /// Strip TypeScript file extensions from a path.
+    ///
+    /// Converts "../utils.ts" -> "../utils"
+    fn strip_ts_extensions(&self, path: &str) -> String {
+        // Remove .ts, .tsx, .d.ts, .d.tsx extensions
+        for ext in [".d.ts", ".d.tsx", ".tsx", ".ts"] {
+            if path.ends_with(ext) {
+                return path[..path.len() - ext.len()].to_string();
+            }
+        }
+        path.to_string()
+    }
+
+    /// Group foreign symbols by their module paths.
+    ///
+    /// Returns a map of module path -> Vec<SymbolId> for all foreign symbols.
+    fn group_foreign_symbols_by_module(&self) -> FxHashMap<String, Vec<SymbolId>> {
+        let mut module_map: FxHashMap<String, Vec<SymbolId>> = FxHashMap::default();
+
+        if let Some(foreign_symbols) = &self.foreign_symbols {
+            for &sym_id in foreign_symbols {
+                if let Some(module_path) = self.resolve_symbol_module_path(sym_id) {
+                    module_map
+                        .entry(module_path)
+                        .or_default()
+                        .push(sym_id);
+                }
+            }
+        }
+
+        module_map
     }
 
     /// Emit required imports at the beginning of the .d.ts file.
@@ -2665,37 +2781,41 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        // Sort modules alphabetically for deterministic output
-        let mut modules: Vec<_> = self.required_imports.keys().collect();
+        // Collect modules as owned strings to avoid borrow checker issues
+        let mut modules: Vec<String> = self.required_imports.keys().cloned().collect();
         modules.sort();
 
         for module in modules {
-            if let Some(symbol_names) = self.required_imports.get(module) {
-                if symbol_names.is_empty() {
+            // Collect symbol names as owned strings
+            let symbol_names = if let Some(names) = self.required_imports.get(&module) {
+                if names.is_empty() {
                     continue;
                 }
+                names.clone()
+            } else {
+                continue;
+            };
 
-                self.write_indent();
-                self.write("import { ");
+            self.write_indent();
+            self.write("import { ");
 
-                // Sort symbol names alphabetically
-                let mut names: Vec<_> = symbol_names.iter().collect();
-                names.sort();
+            // Sort symbol names alphabetically
+            let mut names: Vec<_> = symbol_names.iter().collect();
+            names.sort();
 
-                let mut first = true;
-                for name in names {
-                    if !first {
-                        self.write(", ");
-                    }
-                    first = false;
-                    self.write(name);
+            let mut first = true;
+            for name in names {
+                if !first {
+                    self.write(", ");
                 }
-
-                self.write(" } from \"");
-                self.write(module);
-                self.write("\";");
-                self.write_line();
+                first = false;
+                self.write(name);
             }
+
+            self.write(" } from \"");
+            self.write(&module);
+            self.write("\";");
+            self.write_line();
         }
     }
 }
