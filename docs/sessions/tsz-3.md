@@ -8,7 +8,27 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: TS2300 scope-aware symbol merging completed. Moving to next priority.
+**Status**: Implementing Labeled Statement Support in Flow Graph Builder
+
+**Task**: Add support for labeled statements and directed breaks/continues in the FlowGraphBuilder to fix control flow analysis.
+
+**Problem**: The current FlowGraphBuilder ignores `LABELED_STATEMENT` nodes and labels in `BREAK_STATEMENT`/`CONTINUE_STATEMENT`. This causes incorrect flow analysis for code like:
+```typescript
+outer: for (let i = 0; i < 10; i++) {
+    for (let j = 0; j < 10; j++) {
+        if (condition) break outer; // Currently breaks inner loop in CFA
+    }
+}
+```
+
+**Implementation Plan** (from Gemini):
+1. Add `label: Option<String>` field to `FlowContext` struct
+2. Implement `build_labeled_statement` handling in `build_statement`
+3. Update `handle_break` and `handle_continue` to check for labels and search flow_stack
+
+**Expected Impact**: Fix TS2322 (Type assignability) and TS2339 (Property does not exist) conformance errors caused by incorrect type narrowing along wrong control flow paths.
+
+**File**: `src/checker/flow_graph_builder.rs`
 
 **Completed This Session**:
 1. **ClassDeclaration26.ts** (commit 8e21d5d71) - Fixed var constructor() pattern in class bodies

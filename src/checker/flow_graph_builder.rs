@@ -117,6 +117,8 @@ struct FlowContext {
     /// Flow state after exiting finally (for routing exits through finally)
     #[allow(dead_code)] // Infrastructure for try-finally flow analysis
     post_finally_flow: FlowNodeId,
+    /// Label identifier for this context (for labeled statements)
+    label: NodeIndex,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -282,6 +284,13 @@ impl<'a> FlowGraphBuilder<'a> {
                 }
             }
 
+            // Labeled statement
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled_data) = self.arena.get_labeled_statement(node) {
+                    self.build_labeled_statement(labeled_data);
+                }
+            }
+
             // Variable declaration
             syntax_kind_ext::VARIABLE_DECLARATION => {
                 if let Some(var_decl) = self.arena.get_variable_declaration(node) {
@@ -395,12 +404,12 @@ impl<'a> FlowGraphBuilder<'a> {
 
             syntax_kind_ext::BREAK_STATEMENT => {
                 self.record_node_flow(stmt_idx);
-                self.handle_break();
+                self.handle_break(stmt_idx);
             }
 
             syntax_kind_ext::CONTINUE_STATEMENT => {
                 self.record_node_flow(stmt_idx);
-                self.handle_continue();
+                self.handle_continue(stmt_idx);
             }
 
             _ => {
@@ -512,6 +521,7 @@ impl<'a> FlowGraphBuilder<'a> {
             finally_block: NodeIndex::NONE,
             pre_finally_flow: FlowNodeId::NONE,
             post_finally_flow: FlowNodeId::NONE,
+            label: NodeIndex::NONE,
         });
 
         self.current_flow = loop_label;
@@ -562,6 +572,7 @@ impl<'a> FlowGraphBuilder<'a> {
             finally_block: NodeIndex::NONE,
             pre_finally_flow: FlowNodeId::NONE,
             post_finally_flow: FlowNodeId::NONE,
+            label: NodeIndex::NONE,
         });
 
         self.current_flow = loop_label;
@@ -619,6 +630,7 @@ impl<'a> FlowGraphBuilder<'a> {
             finally_block: NodeIndex::NONE,
             pre_finally_flow: FlowNodeId::NONE,
             post_finally_flow: FlowNodeId::NONE,
+            label: NodeIndex::NONE,
         });
 
         // Track initializer (variable declaration or expression)
@@ -690,6 +702,7 @@ impl<'a> FlowGraphBuilder<'a> {
             finally_block: NodeIndex::NONE,
             pre_finally_flow: FlowNodeId::NONE,
             post_finally_flow: FlowNodeId::NONE,
+            label: NodeIndex::NONE,
         });
 
         // Track initializer (variable declaration)
@@ -731,6 +744,7 @@ impl<'a> FlowGraphBuilder<'a> {
             finally_block: NodeIndex::NONE,
             pre_finally_flow: FlowNodeId::NONE,
             post_finally_flow: FlowNodeId::NONE,
+            label: NodeIndex::NONE,
         });
 
         // Track initializer (variable declaration)
@@ -769,6 +783,7 @@ impl<'a> FlowGraphBuilder<'a> {
             finally_block: NodeIndex::NONE,
             pre_finally_flow: FlowNodeId::NONE,
             post_finally_flow: FlowNodeId::NONE,
+            label: NodeIndex::NONE,
         });
 
         // Bind case block
@@ -861,6 +876,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 finally_block: try_data.finally_block,
                 pre_finally_flow: pre_finally_label,
                 post_finally_flow: FlowNodeId::NONE, // Will be set after building finally
+                label: NodeIndex::NONE,
             })
         } else {
             None
@@ -924,6 +940,35 @@ impl<'a> FlowGraphBuilder<'a> {
         }
     }
 
+    /// Build flow graph for a labeled statement.
+    ///
+    /// Labeled statements create a break target that can be referenced by
+    /// break/continue statements with a matching label.
+    fn build_labeled_statement(&mut self, labeled_data: &crate::parser::node::LabeledData) {
+        // Create a break label for the labeled statement
+        let break_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Push flow context with the label
+        self.flow_stack.push(FlowContext {
+            break_label,
+            continue_label: None, // Labeled statements don't have continue targets unless they're loops
+            context_type: FlowContextType::Loop, // Use Loop type to enable breaks
+            finally_block: NodeIndex::NONE,
+            pre_finally_flow: FlowNodeId::NONE,
+            post_finally_flow: FlowNodeId::NONE,
+            label: labeled_data.label,
+        });
+
+        // Build the inner statement
+        self.build_statement(labeled_data.statement);
+
+        // Pop the labeled statement context
+        self.flow_stack.pop();
+
+        // Set current flow to the break label (for code after the labeled statement)
+        self.current_flow = break_label;
+    }
+
     /// Build flow graph for a variable declaration.
     fn build_variable_declaration(
         &mut self,
@@ -940,19 +985,52 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Handle a break statement.
-    fn handle_break(&mut self) {
+    fn handle_break(&mut self, stmt_idx: NodeIndex) {
+        // Check if this break has a label
+        let break_label =
+            if let Some(jump_data) = self.arena.get_jump_data(self.arena.get(stmt_idx).unwrap()) {
+                jump_data.label
+            } else {
+                NodeIndex::NONE
+            };
+
         // First pass: collect finally blocks and find target
         let mut finally_blocks: Vec<NodeIndex> = Vec::new();
         let mut target_label = FlowNodeId::NONE;
+
+        // Get the label text if this is a labeled break
+        let label_text = if !break_label.is_none() {
+            self.arena
+                .get(break_label)
+                .and_then(|node| self.arena.get_identifier(node))
+                .map(|id| id.escaped_text.as_str())
+        } else {
+            None
+        };
 
         for ctx in self.flow_stack.iter().rev() {
             if !ctx.finally_block.is_none() && ctx.context_type == FlowContextType::Try {
                 finally_blocks.push(ctx.finally_block);
             }
 
-            if ctx.break_label != FlowNodeId::NONE {
-                target_label = ctx.break_label;
-                break;
+            // If this break has a label, find the matching labeled statement
+            if let Some(label) = label_text {
+                if !ctx.label.is_none() {
+                    if let Some(ctx_label_node) = self.arena.get(ctx.label) {
+                        if let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node) {
+                            if ctx_label_data.escaped_text == label {
+                                target_label = ctx.break_label;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No label, use the nearest loop/switch
+                if ctx.break_label != FlowNodeId::NONE {
+                    target_label = ctx.break_label;
+                    break;
+                }
             }
         }
 
@@ -969,19 +1047,54 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Handle a continue statement.
-    fn handle_continue(&mut self) {
+    fn handle_continue(&mut self, stmt_idx: NodeIndex) {
+        // Check if this continue has a label
+        let continue_label_idx =
+            if let Some(jump_data) = self.arena.get_jump_data(self.arena.get(stmt_idx).unwrap()) {
+                jump_data.label
+            } else {
+                NodeIndex::NONE
+            };
+
         // First pass: collect finally blocks and find target
         let mut finally_blocks: Vec<NodeIndex> = Vec::new();
         let mut target_label = FlowNodeId::NONE;
+
+        // Get the label text if this is a labeled continue
+        let label_text = if !continue_label_idx.is_none() {
+            self.arena
+                .get(continue_label_idx)
+                .and_then(|node| self.arena.get_identifier(node))
+                .map(|id| id.escaped_text.as_str())
+        } else {
+            None
+        };
 
         for ctx in self.flow_stack.iter().rev() {
             if !ctx.finally_block.is_none() && ctx.context_type == FlowContextType::Try {
                 finally_blocks.push(ctx.finally_block);
             }
 
-            if let Some(continue_label) = ctx.continue_label {
-                target_label = continue_label;
-                break;
+            // If this continue has a label, find the matching labeled statement
+            if let Some(label) = label_text {
+                if !ctx.label.is_none() {
+                    if let Some(ctx_label_node) = self.arena.get(ctx.label) {
+                        if let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node) {
+                            if ctx_label_data.escaped_text == label {
+                                if let Some(continue_label) = ctx.continue_label {
+                                    target_label = continue_label;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No label, use the nearest loop
+                if let Some(continue_label) = ctx.continue_label {
+                    target_label = continue_label;
+                    break;
+                }
             }
         }
 
