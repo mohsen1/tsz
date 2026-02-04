@@ -1411,15 +1411,19 @@ impl<'a> CheckerState<'a> {
     ///   - Unresolved names (with "cannot find name" error)
     /// - Returns ANY for unresolved imports (TS2307 already emitted)
     pub(crate) fn get_type_of_identifier(&mut self, idx: NodeIndex) -> TypeId {
+        eprintln!("DEBUG get_type_of_identifier: idx={}", idx.0);
         let Some(node) = self.ctx.arena.get(idx) else {
+            eprintln!("DEBUG get_type_of_identifier: no node");
             return TypeId::ERROR; // Missing node - propagate error
         };
 
         let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            eprintln!("DEBUG get_type_of_identifier: no identifier");
             return TypeId::ERROR; // Missing identifier data - propagate error
         };
 
         let name = &ident.escaped_text;
+        eprintln!("DEBUG get_type_of_identifier: name={:?}", name);
 
         // === CRITICAL FIX: Check type parameter scope FIRST ===
         // Type parameters in generic functions/classes/type aliases should be resolved
