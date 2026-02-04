@@ -507,7 +507,7 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_application_symbols_resolved(type_id);
 
-        let env = self.ctx.type_env.borrow();
+        let env = self.ctx.type_environment.borrow();
         let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
         evaluator.evaluate(type_id)
     }
