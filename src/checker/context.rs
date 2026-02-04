@@ -1199,7 +1199,7 @@ impl<'a> CheckerContext<'a> {
         use crate::solver::SymbolRef;
 
         // Try to borrow mutably - skip if already borrowed (during recursive resolution)
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
             // Insert with SymbolRef key (existing path)
             if type_params.is_empty() {
                 env.insert(SymbolRef(sym_id.0), type_id);
