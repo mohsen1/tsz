@@ -29,6 +29,7 @@
 
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
+use crate::solver::subtype::is_subtype_of;
 use crate::solver::types::*;
 use crate::solver::visitor::{
     intersection_list_id, is_function_type_db, is_literal_type_db, is_object_like_type_db,
@@ -229,6 +230,11 @@ impl<'a> NarrowingContext<'a> {
     /// Narrow a union type based on a discriminant property check.
     ///
     /// Example: `action.type === "add"` narrows `Action` to `{ type: "add", value: number }`
+    ///
+    /// Uses a filtering approach: checks each union member individually to see if
+    /// the property could match the literal value. This is more flexible than the
+    /// old `find_discriminants` approach which required ALL members to have the
+    /// property with unique literal values.
     pub fn narrow_by_discriminant(
         &self,
         union_type: TypeId,
@@ -244,26 +250,112 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let discriminants = self.find_discriminants(union_type);
+        // Get union members
+        let members = match union_list_id(self.interner, union_type) {
+            Some(members_id) => self.interner.type_list(members_id),
+            None => {
+                trace!("Not a union type, returning unchanged");
+                return union_type;
+            }
+        };
 
-        for disc in &discriminants {
-            if disc.property_name == property_name {
-                // Find the variant matching this literal
-                for (lit, member) in &disc.variants {
-                    if *lit == literal_value {
-                        return *member;
+        trace!(
+            "Narrowing union with {} members by discriminant property",
+            members.len()
+        );
+
+        // TODO: Resolve Lazy/Intersection types before checking properties
+        // This requires QueryDatabase access for resolve_property_access
+        // For now, we only handle direct object types without resolution
+
+        let mut matching: Vec<TypeId> = Vec::new();
+
+        for &member in members.iter() {
+            // Special case: any and unknown always match
+            if member == TypeId::ANY || member == TypeId::UNKNOWN {
+                trace!("Member {} is any/unknown, keeping in true branch", member.0);
+                matching.push(member);
+                continue;
+            }
+
+            // Check if this member has the property
+            if let Some(shape_id) = object_shape_id(self.interner, member) {
+                let shape = self.interner.object_shape(shape_id);
+
+                // Find the property
+                let prop_type = shape
+                    .properties
+                    .iter()
+                    .find(|p| p.name == property_name)
+                    .map(|p| p.type_id);
+
+                match prop_type {
+                    Some(ty) => {
+                        // CRITICAL: Use is_subtype_of(literal_value, property_type)
+                        // NOT the reverse! This was the bug in the reverted commit.
+                        //
+                        // Check if the literal value is a subtype of the property type.
+                        // This handles cases like:
+                        // - prop is "a" | "b", checking for "a" -> match
+                        // - prop is string, checking for "a" -> match
+                        // - prop is "a", checking for "a" | "b" -> no match (correct)
+                        if is_subtype_of(self.interner, literal_value, ty) {
+                            trace!(
+                                "Member {} has property with type {}, literal {} matches",
+                                member.0, ty.0, literal_value.0
+                            );
+                            matching.push(member);
+                        } else {
+                            trace!(
+                                "Member {} has property with type {}, literal {} does not match",
+                                member.0, ty.0, literal_value.0
+                            );
+                        }
+                    }
+                    None => {
+                        // Property doesn't exist on this member
+                        // (x.prop === value implies prop must exist, so we exclude this member)
+                        trace!("Member {} does not have property", member.0);
                     }
                 }
+            } else {
+                // Non-object member (function, class, etc.)
+                // TODO: Could handle Lazy types here if we had QueryDatabase access
+                trace!("Member {} is not an object type, excluding", member.0);
             }
         }
 
-        // No narrowing possible - return original
-        union_type
+        // Return result based on matches
+        if matching.is_empty() {
+            trace!("No members matched discriminant check, returning never");
+            TypeId::NEVER
+        } else if matching.len() == members.len() {
+            trace!("All members matched, returning original");
+            union_type
+        } else if matching.len() == 1 {
+            trace!("Narrowed to single member");
+            matching[0]
+        } else {
+            trace!(
+                "Narrowed to {} of {} members",
+                matching.len(),
+                members.len()
+            );
+            self.interner.union(matching)
+        }
     }
 
     /// Narrow a union type by excluding variants with a specific discriminant value.
     ///
     /// Example: `action.type !== "add"` narrows to `{ type: "remove", ... } | { type: "clear" }`
+    ///
+    /// Uses the inverse logic of `narrow_by_discriminant`: we exclude a member
+    /// ONLY if its property is definitely and only the excluded value.
+    ///
+    /// For example:
+    /// - prop is "a", exclude "a" -> exclude (property is always "a")
+    /// - prop is "a" | "b", exclude "a" -> keep (could be "b")
+    /// - prop doesn't exist -> keep (property doesn't match excluded value)
     pub fn narrow_by_excluding_discriminant(
         &self,
         union_type: TypeId,
@@ -284,9 +376,25 @@ impl<'a> NarrowingContext<'a> {
             None => return union_type,
         };
 
+        trace!(
+            "Excluding discriminant value {} from union with {} members",
+            excluded_value.0,
+            members.len()
+        );
+
         let mut remaining: Vec<TypeId> = Vec::new();
 
         for &member in members.iter() {
+            // Special case: any and unknown always kept (could have any property value)
+            if member == TypeId::ANY || member == TypeId::UNKNOWN {
+                trace!(
+                    "Member {} is any/unknown, keeping in false branch",
+                    member.0
+                );
+                remaining.push(member);
+                continue;
+            }
+
             if let Some(shape_id) = object_shape_id(self.interner, member) {
                 let shape = self.interner.object_shape(shape_id);
                 let prop_type = shape
@@ -296,14 +404,33 @@ impl<'a> NarrowingContext<'a> {
                     .map(|p| p.type_id);
 
                 match prop_type {
-                    Some(ty) if ty == excluded_value => {
-                        // Exclude this member
+                    Some(ty) => {
+                        // Exclude member ONLY if property type is subtype of excluded value
+                        // This means the property is ALWAYS the excluded value
+                        // REVERSE of narrow_by_discriminant logic
+                        if is_subtype_of(self.interner, ty, excluded_value) {
+                            trace!(
+                                "Member {} has property type {} which is subtype of excluded {}, excluding",
+                                member.0, ty.0, excluded_value.0
+                            );
+                            // Exclude this member
+                        } else {
+                            trace!(
+                                "Member {} has property type {} which is not subtype of excluded {}, keeping",
+                                member.0, ty.0, excluded_value.0
+                            );
+                            remaining.push(member);
+                        }
                     }
-                    _ => {
+                    None => {
+                        // Property doesn't exist - keep the member
+                        // (property absence doesn't match excluded value)
+                        trace!("Member {} does not have property, keeping", member.0);
                         remaining.push(member);
                     }
                 }
             } else {
+                // Non-object member - keep it
                 remaining.push(member);
             }
         }
