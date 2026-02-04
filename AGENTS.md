@@ -261,6 +261,10 @@ What's the right approach? Which files need to change?"
 
 ---
 
+## Tesing 
+- Write unit tests for any new functionality
+- It is a good idea to write a failing test first before implementing a feature
+
 ## Git Workflow
 - Commit frequently with clear messages
 - Push branches to remote regularly and rebase from main before and after each commit
