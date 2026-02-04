@@ -26,11 +26,15 @@ impl<'a> TypePrinter<'a> {
         Self {
             interner,
             string_interner_cache: std::sync::Arc::new(|atom| {
-                // For now, return a placeholder. In production, this would
-                // look up the string from the interner
+                // Resolve the atom from the interner
                 format!("<atom:{}>", atom.0)
             }),
         }
+    }
+
+    /// Resolve an atom to its string representation.
+    fn resolve_atom(&self, atom: Atom) -> String {
+        self.interner.resolve_atom(atom).to_string()
     }
 
     /// Convert a TypeId to TypeScript syntax string.
@@ -158,7 +162,7 @@ impl<'a> TypePrinter<'a> {
             let mut member = String::new();
 
             // Property name
-            member.push_str(&format!("<atom:{}>", property.name.0));
+            member.push_str(&self.resolve_atom(property.name));
 
             // Optional marker
             if property.optional {
@@ -262,7 +266,7 @@ impl<'a> TypePrinter<'a> {
 
             // Parameter name (optional in function types)
             if let Some(name) = param.name {
-                param_str.push_str(&format!("<atom:{}>", name.0));
+                param_str.push_str(&self.resolve_atom(name));
                 param_str.push_str(": ");
             }
 
@@ -296,7 +300,7 @@ impl<'a> TypePrinter<'a> {
 
     fn print_type_parameter(&self, param_info: &crate::solver::types::TypeParamInfo) -> String {
         // Type parameter names are Atoms
-        format!("<atom:{}>", param_info.name.0)
+        self.resolve_atom(param_info.name)
     }
 
     fn print_lazy_type(&self, _def_id: crate::solver::def::DefId) -> String {
