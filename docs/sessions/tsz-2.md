@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 3 Complete - All Core Narrowing Tasks Complete
+**Status**: 🟢 Phase 4 Active - CFA Diagnostics & Safety (Task 8: Definite Assignment)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -663,6 +663,61 @@ while (cond) {
 
 **Technical Achievement**:
 This is the "final boss" of CFA correctness. Without fixed-point iteration, variables modified in loops would have incorrect types because the back-edge affects the entry type.
+
+## Phase 4: CFA Diagnostics & Safety (2026-02-04)
+
+### Overview
+
+Phase 3 completed all core narrowing tasks. Phase 4 focuses on **diagnostics and safety features** that make tsz a "real" compiler that catches actual logic bugs, not just a type-checker.
+
+**Gemini Recommendation**: Complete the CFA arc by implementing Definite Assignment Analysis - the logical payoff for the flow graph infrastructure built in Phases 1-3.
+
+### Task 8: Definite Assignment Analysis (CRITICAL)
+
+**Goal**: Detect "Variable used before being assigned" (TS2454) - a fundamental safety feature.
+
+**Implementation**:
+- Query CFA to determine if variable is "definitely assigned" at usage point
+- Use existing `check_flow` logic but track boolean `is_assigned` instead of `TypeId`
+- Handle `var` vs `let/const` differences (TDZ)
+- Handle `try/catch/finally` blocks (assignments in `try` not guaranteed if error occurs)
+
+**Why Critical**: Without DAA, the CFA engine is "silent" regarding one of its primary responsibilities. This is a core diagnostic users expect from a TypeScript compiler.
+
+**Files to modify**:
+- `src/checker/flow_analysis.rs`: Query definite assignment
+- `src/checker/type_checking.rs`: Report TS2454 errors
+- `src/checker/control_flow.rs`: Add `is_definitely_assigned` method
+
+### Task 12: Exhaustiveness Checking (HIGH - NEW)
+
+**Goal**: Check if `switch`/`if/else` chains narrow discriminant to `never` (all cases handled).
+
+**Implementation**:
+- At end of switch or if/else chain, check flow type of discriminant
+- If type is not `never` and no `default`/`else`, report error/hint
+- Validates that `narrow_by_excluding_discriminant` works perfectly
+
+**Why High Priority**: Natural sibling to narrowing. High-value diagnostic that proves narrowing implementation is correct.
+
+**Files to modify**:
+- `src/checker/statements.rs`: Check exhaustiveness at end of switch/if
+- `src/checker/control_flow.rs`: Ensure never-narrowing propagates correctly
+
+### Task 10: Array.isArray Narrowing (MEDIUM)
+
+**Goal**: Implement `Array.isArray()` narrowing pattern.
+
+**Implementation**:
+- Recognize `Array.isArray(x)` call pattern
+- Narrow to array type in true branch
+- Exclude array type in false branch
+
+**Why Medium**: Completeness task - common pattern but simpler than Tasks 8/12.
+
+**Files to modify**:
+- `src/checker/control_flow_narrowing.rs`: Recognize Array.isArray pattern
+- `src/solver/narrowing.rs`: Add array type guard handling
 
 
 ---
