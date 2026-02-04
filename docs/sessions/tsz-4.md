@@ -2,11 +2,16 @@
 
 ## Date: 2026-02-04
 
-## Status: PHASE 2 IN PROGRESS - Non-exported functions fixed ✅
+## Status: PHASE 2 - Major Progress (Function Overloads, Visibility, Defaults) ✅
 
-### Session Summary
+### Session Summary - 2026-02-04 (Continued)
 
-**Completed This Session:**
+**Completed This Session (NEW):**
+10. ✅ **Function overload detection** (766485146, a9c593c08)
+11. ✅ **Public keyword omission** (2eed3a1c5)
+12. ✅ **Array/object literal in default parameters** (0254ea7e8)
+
+**Previous Session Accomplishments:**
 1. ✅ Test runner migrated to CLI (major milestone)
 2. ✅ Enum declaration emit with explicit initializers
 3. ✅ Fixed enum value evaluation to match TypeScript exactly
@@ -17,9 +22,9 @@
 8. ✅ **Atom printing fixed**
 9. ✅ **Function return type inference added**
 
-**Committed**: ecb5ef44, 294a0e781, e26fcc9a3, 180ce2bde, be0bd43f1, de8b72d5c, 2dbc85b33, b43fa56b0, a19fd5401
+**Latest Commits**: 766485146, 17f466f27, a9c593c08, 2eed3a1c5, 0254ea7e8
 
-### Conformance Test Results: 42.2% Pass Rate (267/633)
+### Conformance Test Results: 41.9% Pass Rate (267/637)
 
 Current status: `./scripts/conformance.sh --filter=decl`
 - Passed: 267
