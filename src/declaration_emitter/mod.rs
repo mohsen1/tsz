@@ -57,8 +57,9 @@ pub struct DeclarationEmitter<'a> {
     type_interner: Option<&'a TypeInterner>,
     /// Binder state for symbol resolution (used by UsageAnalyzer)
     binder: Option<&'a BinderState>,
-    /// Set of symbols used in exported declarations (for import elision)
-    used_symbols: Option<FxHashSet<SymbolId>>,
+    /// Map of symbols to their usage kind (Type, Value, or Both) for import elision
+    used_symbols:
+        Option<FxHashMap<SymbolId, crate::declaration_emitter::usage_analyzer::UsageKind>>,
     /// Set of foreign symbols that need imports (for import generation)
     foreign_symbols: Option<FxHashSet<SymbolId>>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
@@ -163,7 +164,10 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// When this is set, the emitter will filter out imports that are not
     /// referenced in the exported API surface.
-    pub fn set_used_symbols(&mut self, symbols: FxHashSet<SymbolId>) {
+    pub fn set_used_symbols(
+        &mut self,
+        symbols: FxHashMap<SymbolId, crate::declaration_emitter::usage_analyzer::UsageKind>,
+    ) {
         self.used_symbols = Some(symbols);
     }
 
@@ -2517,7 +2521,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Check if the specifier's NAME symbol is used
         if let Some(&sym_id) = binder.node_symbols.get(&specifier.name.0) {
-            used.contains(&sym_id)
+            used.contains_key(&sym_id)
         } else {
             // No symbol found - emit conservatively
             true
@@ -2542,7 +2546,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(clause) = self.arena.get_import_clause(clause_node) {
                         if !clause.name.is_none() {
                             if let Some(&sym_id) = binder.node_symbols.get(&clause.name.0) {
-                                if used.contains(&sym_id) {
+                                if used.contains_key(&sym_id) {
                                     default_count = 1;
                                 }
                             }
@@ -2562,7 +2566,7 @@ impl<'a> DeclarationEmitter<'a> {
                                             if let Some(&sym_id) =
                                                 binder.node_symbols.get(&specifier.name.0)
                                             {
-                                                if used.contains(&sym_id) {
+                                                if used.contains_key(&sym_id) {
                                                     named_count += 1;
                                                 }
                                             }
@@ -2852,7 +2856,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Must be in used_symbols
-        if !used.contains(&sym_id) {
+        if !used.contains_key(&sym_id) {
             return false;
         }
 

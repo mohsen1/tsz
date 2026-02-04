@@ -1157,7 +1157,6 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
-        
         use crate::solver::evaluate::TypeEvaluator;
 
         // Handle poisoned locks gracefully

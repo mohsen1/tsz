@@ -21,8 +21,46 @@ use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeInterner;
 use crate::solver::visitor;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
+
+/// Tracks how a symbol is used - as a type, a value, or both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UsageKind {
+    bits: u8,
+}
+
+impl UsageKind {
+    pub const NONE: UsageKind = UsageKind { bits: 0 };
+    pub const TYPE: UsageKind = UsageKind { bits: 1 };
+    pub const VALUE: UsageKind = UsageKind { bits: 2 };
+
+    #[inline]
+    pub const fn is_type(self) -> bool {
+        self.bits & Self::TYPE.bits != 0
+    }
+
+    #[inline]
+    pub const fn is_value(self) -> bool {
+        self.bits & Self::VALUE.bits != 0
+    }
+}
+
+impl std::ops::BitOr for UsageKind {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        UsageKind {
+            bits: self.bits | rhs.bits,
+        }
+    }
+}
+
+impl std::ops::BitOrAssign for UsageKind {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.bits |= rhs.bits;
+    }
+}
 
 /// Usage analyzer for determining which symbols are referenced in exported declarations.
 pub struct UsageAnalyzer<'a> {
@@ -34,8 +72,8 @@ pub struct UsageAnalyzer<'a> {
     type_cache: &'a TypeCache,
     /// Type interner for type operations
     type_interner: &'a TypeInterner,
-    /// Set of symbols used in the exported API surface
-    used_symbols: FxHashSet<SymbolId>,
+    /// Map of symbols to their usage kind (Type, Value, or Both)
+    used_symbols: FxHashMap<SymbolId, UsageKind>,
     /// Visited AST nodes (for cycle detection)
     visited_nodes: FxHashSet<NodeIndex>,
     /// Visited TypeIds (for cycle detection)
@@ -44,6 +82,8 @@ pub struct UsageAnalyzer<'a> {
     current_arena: Arc<NodeArena>,
     /// Set of symbols from other modules that need imports
     foreign_symbols: FxHashSet<SymbolId>,
+    /// Context flag: true when we're in a value position (expression, typeof)
+    in_value_pos: bool,
 }
 
 impl<'a> UsageAnalyzer<'a> {
@@ -60,18 +100,19 @@ impl<'a> UsageAnalyzer<'a> {
             binder,
             type_cache,
             type_interner,
-            used_symbols: FxHashSet::default(),
+            used_symbols: FxHashMap::default(),
             visited_nodes: FxHashSet::default(),
             visited_types: FxHashSet::default(),
             current_arena,
             foreign_symbols: FxHashSet::default(),
+            in_value_pos: false,
         }
     }
 
     /// Analyze all exported declarations in a source file.
     ///
-    /// Returns the set of SymbolIds that are referenced in the public API.
-    pub fn analyze(&mut self, root_idx: NodeIndex) -> &FxHashSet<SymbolId> {
+    /// Returns the map of SymbolIds to their usage kinds that are referenced in the public API.
+    pub fn analyze(&mut self, root_idx: NodeIndex) -> &FxHashMap<SymbolId, UsageKind> {
         let Some(root_node) = self.arena.get(root_idx) else {
             return &self.used_symbols;
         };
@@ -114,9 +155,38 @@ impl<'a> UsageAnalyzer<'a> {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 self.analyze_variable_statement(stmt_idx);
             }
-            // Export declarations (re-exports are always used)
+            // Export declarations - check if clause contains a declaration to analyze
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                // Re-exports don't need analysis - they're part of the API
+                // Check if export_clause contains a declaration we need to analyze
+                if let Some(export_node) = self.arena.get(stmt_idx) {
+                    if let Some(export) = self.arena.get_export_decl(export_node) {
+                        if !export.export_clause.is_none() {
+                            if let Some(clause_node) = self.arena.get(export.export_clause) {
+                                match clause_node.kind {
+                                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                                        self.analyze_function_declaration(export.export_clause);
+                                    }
+                                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                                        self.analyze_class_declaration(export.export_clause);
+                                    }
+                                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                                        self.analyze_interface_declaration(export.export_clause);
+                                    }
+                                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                                        self.analyze_type_alias_declaration(export.export_clause);
+                                    }
+                                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                                        self.analyze_enum_declaration(export.export_clause);
+                                    }
+                                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                                        self.analyze_variable_statement(export.export_clause);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -648,7 +718,7 @@ impl<'a> UsageAnalyzer<'a> {
             //         } else {
             //             // If no qualifier, the node itself is the module reference
             //             if let Some(&sym_id) = self.binder.node_symbols.get(&type_idx.0) {
-            //                 self.mark_symbol_used(sym_id);
+            //                 self.mark_symbol_used(sym_id, crate::declaration_emitter::usage_analyzer::UsageKind::TYPE);
             //             }
             //         }
             //
@@ -741,9 +811,24 @@ impl<'a> UsageAnalyzer<'a> {
 
         match name_node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
+                eprintln!(
+                    "[DEBUG] analyze_entity_name: found Identifier, name_idx={:?}",
+                    name_idx
+                );
                 // Found the leftmost identifier - mark as used
                 if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
-                    self.mark_symbol_used(sym_id);
+                    eprintln!("[DEBUG] analyze_entity_name: found sym_id={:?}", sym_id);
+                    let kind = if self.in_value_pos {
+                        UsageKind::VALUE
+                    } else {
+                        UsageKind::TYPE
+                    };
+                    self.mark_symbol_used(sym_id, kind);
+                } else {
+                    eprintln!(
+                        "[DEBUG] analyze_entity_name: no symbol found for name_idx={:?}",
+                        name_idx
+                    );
                 }
             }
             k if k == syntax_kind_ext::QUALIFIED_NAME => {
@@ -790,34 +875,49 @@ impl<'a> UsageAnalyzer<'a> {
             // Extract Lazy(DefId)
             if let Some(def_id) = visitor::lazy_def_id(self.type_interner, other_type_id) {
                 if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
-                    self.mark_symbol_used(sym_id);
+                    self.mark_symbol_used(
+                        sym_id,
+                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                    );
                 }
             }
 
             // Extract Enum(DefId, _)
             if let Some((def_id, _)) = visitor::enum_components(self.type_interner, other_type_id) {
                 if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
-                    self.mark_symbol_used(sym_id);
+                    self.mark_symbol_used(
+                        sym_id,
+                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                    );
                 }
             }
 
             // Extract TypeQuery(SymbolRef) - marks as value usage
             if let Some(sym_ref) = visitor::type_query_symbol(self.type_interner, other_type_id) {
                 let sym_id = crate::binder::SymbolId(sym_ref.0);
-                self.mark_symbol_used(sym_id);
+                self.mark_symbol_used(
+                    sym_id,
+                    crate::declaration_emitter::usage_analyzer::UsageKind::VALUE,
+                );
             }
 
             // Extract UniqueSymbol(SymbolRef)
             if let Some(sym_ref) = visitor::unique_symbol_ref(self.type_interner, other_type_id) {
                 let sym_id = crate::binder::SymbolId(sym_ref.0);
-                self.mark_symbol_used(sym_id);
+                self.mark_symbol_used(
+                    sym_id,
+                    crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                );
             }
 
             // Extract ModuleNamespace(SymbolRef) - marks namespace import as used
             if let Some(type_key) = self.type_interner.lookup(other_type_id) {
                 if let crate::solver::TypeKey::ModuleNamespace(sym_ref) = type_key {
                     let sym_id = crate::binder::SymbolId(sym_ref.0);
-                    self.mark_symbol_used(sym_id);
+                    self.mark_symbol_used(
+                        sym_id,
+                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                    );
                 }
             }
 
@@ -828,7 +928,10 @@ impl<'a> UsageAnalyzer<'a> {
             {
                 let shape = self.type_interner.object_shape(shape_id);
                 if let Some(sym_id) = shape.symbol {
-                    self.mark_symbol_used(sym_id);
+                    self.mark_symbol_used(
+                        sym_id,
+                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                    );
                 }
             }
 
@@ -837,7 +940,10 @@ impl<'a> UsageAnalyzer<'a> {
             if let Some(shape_id) = visitor::callable_shape_id(self.type_interner, other_type_id) {
                 let shape = self.type_interner.callable_shape(shape_id);
                 if let Some(sym_id) = shape.symbol {
-                    self.mark_symbol_used(sym_id);
+                    self.mark_symbol_used(
+                        sym_id,
+                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                    );
                 }
             }
         }
@@ -849,8 +955,11 @@ impl<'a> UsageAnalyzer<'a> {
     /// - Global/lib symbols: Ignored (don't need imports)
     /// - Local symbols: Added to used_symbols (for elision logic)
     /// - Foreign symbols: Added to both used_symbols AND foreign_symbols (for import generation)
-    fn mark_symbol_used(&mut self, sym_id: SymbolId) {
-        eprintln!("[DEBUG] mark_symbol_used: sym_id={:?}", sym_id);
+    fn mark_symbol_used(&mut self, sym_id: SymbolId, usage_kind: UsageKind) {
+        eprintln!(
+            "[DEBUG] mark_symbol_used: sym_id={:?}, usage_kind={:?}",
+            sym_id, usage_kind
+        );
         // Check if this is a lib/global symbol
         if self.binder.lib_symbol_ids.contains(&sym_id) {
             eprintln!(
@@ -874,8 +983,11 @@ impl<'a> UsageAnalyzer<'a> {
             sym_id, is_local
         );
 
-        // Always add to used_symbols (for elision)
-        self.used_symbols.insert(sym_id);
+        // Add to used_symbols with bitwise OR to handle symbols used as both types and values
+        self.used_symbols
+            .entry(sym_id)
+            .and_modify(|kind| *kind |= usage_kind)
+            .or_insert(usage_kind);
 
         // If it's from another file, track as foreign (for import generation)
         if !is_local {
