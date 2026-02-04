@@ -24,6 +24,8 @@
 //! }
 //! ```
 
+pub mod usage_analyzer;
+
 use crate::checker::TypeCache;
 use crate::emitter::type_printer::TypePrinter;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
@@ -1855,6 +1857,15 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("(");
                     self.emit_type(paren.type_node);
                     self.write(")");
+                }
+            }
+
+            // Type query (typeof)
+            k if k == syntax_kind_ext::TYPE_QUERY => {
+                self.write("typeof ");
+                // TypeQuery has expr_name field containing the entity being queried
+                if let Some(type_query) = self.arena.get_type_query(type_node) {
+                    self.emit_entity_name(type_query.expr_name);
                 }
             }
 
