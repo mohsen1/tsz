@@ -6,47 +6,40 @@ Work is never done until all tests pass. This includes:
 - No existing `#[ignore]` tests
 - No cleanup work left undone
 - No large files (>3000 lines) left unaddressed
-## Current Work
+## Session Summary 2026-02-04
 
-**FIXED: TS1109 Missing for throw Statement**
+### Completed Work
 
-Fixed parser to emit TS1109 "Expression expected" when `throw` is followed by semicolon without an expression.
+#### 1. Fixed ClassDeclaration26 Parse Errors
+- **Problem**: Parser accepting invalid class member modifiers like `public var export foo`
+- **Solution**: Implemented look-ahead logic in `parse_class_member_modifiers()` to distinguish `var`/`let` as property names (valid) vs modifiers (invalid)
+- **Test Results**: All 287 parser tests pass
+- **Commit**: `3c0332859`
 
-### Problem
-The parser was not emitting TS1109 for `throw;` (semicolon immediately after throw keyword with no expression).
+#### 2. Fixed TS1109 for throw Statement
+- **Problem**: Parser not emitting TS1109 for `throw;` (semicolon after throw without expression)
+- **Solution**: Added explicit check in `parse_throw_statement()` to emit error when semicolon/brace/EOF follows throw
+- **Test Results**: All parser tests pass, 362/364 unit tests pass
+- **Commit**: `679cf3ad8`
 
-### Root Cause
-In `src/parser/state_declarations.rs`, the `parse_throw_statement` function had logic to emit TS1109 for line breaks after throw, but the semicolon case was falling through to the `else` branch which returned `NodeIndex::NONE` without emitting an error.
+### Conformance Progress
+- **Current**: 38% (38/100 tests)
+- **Top Issues**:
+  - TS1202: 17 extra (CommonJS import false positives)
+  - TS2695: 10 missing
+  - TS1005: 12 missing (down from 13 - throw fixed)
+  - TS2300: 9 missing
+  - TS2304: 3 missing, 9 extra
 
-### Solution
-Added explicit check for semicolon/brace/EOF tokens to emit TS1109 when throw is missing an expression:
-```rust
-} else if self.is_token(SyntaxKind::SemicolonToken)
-    || self.is_token(SyntaxKind::CloseBraceToken)
-    || self.is_token(SyntaxKind::EndOfFileToken)
-{
-    // Explicit semicolon, closing brace, or EOF after throw without expression
-    let start = self.token_pos();
-    let end = self.token_end();
-    self.parse_error_at(
-        start, end - start,
-        "Expression expected",
-        diagnostic_codes::EXPRESSION_EXPECTED,
-    );
-    NodeIndex::NONE
-}
-```
+### Test Status
+- ✅ All 287 parser tests passing
+- ✅ 362/364 unit tests passing (2 pre-existing abstract class failures)
+- ✅ No new regressions
 
-### Verification
-```typescript
-throw;  // Now emits TS1109 at (1,6) ✅
-throw new Error();  // Still valid ✅
-```
-
-### Test Results
-- ✅ All 287 parser tests pass
-- ✅ 362/364 unit tests pass (2 pre-existing abstract class failures)
-- ✅ No regressions
+### Next Session Priorities
+1. **TS1005** (12 missing) - Parse errors for missing delimiters
+2. **TS2300** (9 missing) - Duplicate identifier detection
+3. **TS2304** (3 missing, 9 extra) - Symbol resolution improvements
 
 ---
 
