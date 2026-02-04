@@ -28,11 +28,12 @@ Your goal is to keep making progress. If you get stuck, do not stop. Instead:
 - Document your questions and findings for future reference
 
 ## Use Skills
-- Use reasoning, planning, and coding skills
-- Use code analysis skills to understand existing code
-- Use debugging skills to trace and fix issues
-- Use testing skills to write effective tests
-- Use documentation skills to read and write docs
+- Use tsz-gemini skill for 
+  - codebase questions
+  - architecture understanding
+  - code reviews
+  - implementation strategies
+
 
 ## Required Reading
 
@@ -191,12 +192,3 @@ Use the provided cleanup script for safe automatic cleanup:
 - Only add files you touched, do not `git add -A`
 - Make semantic and short commit headers
 - Important: When syncing, also push to remote
-
-## Additional References
-
-| Topic | Document |
-|-------|----------|
-| Walkthrough of each phase | [docs/walkthrough/](docs/walkthrough/) |
-| TypeScript compatibility quirks | [docs/specs/TS_UNSOUNDNESS_CATALOG.md](docs/specs/TS_UNSOUNDNESS_CATALOG.md) |
-| Diagnostic guidelines | [docs/specs/DIAGNOSTICS.md](docs/specs/DIAGNOSTICS.md) |
-| Performance benchmarks | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) |
