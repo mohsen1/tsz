@@ -591,6 +591,7 @@ impl<'a> CheckerState<'a> {
                 name: atom,
                 constraint: None,
                 default: None,
+                is_const: false,
             };
             let type_id = self.ctx.types.intern(TypeKey::TypeParameter(info));
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
@@ -675,6 +676,7 @@ impl<'a> CheckerState<'a> {
                 name: atom,
                 constraint,
                 default,
+                is_const: false,
             };
             params.push(info.clone());
 

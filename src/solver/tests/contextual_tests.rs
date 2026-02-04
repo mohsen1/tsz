@@ -500,6 +500,7 @@ fn test_contextual_generic_call_union_preserves_literal() {
     let t_param = TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
+        is_const: false,
         default: None,
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
