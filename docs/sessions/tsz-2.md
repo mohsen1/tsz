@@ -164,3 +164,112 @@ Despite not implementing the full fix, this session:
 - Prevented wasted time on insufficient fixes
 
 The investigation alone represents significant progress on a complex issue.
+
+## Phased Implementation Plan (2026-02-04)
+
+### Approach: Incremental Migration
+Instead of big-bang refactor, use phased approach:
+1. Implement infrastructure (CheckerSharedState)
+2. Migrate ONE cache (symbol_types) to prove pattern
+3. Test and validate
+4. Gradually migrate other caches
+
+### Phase 1: Infrastructure Setup ✅ READY
+Create CheckerSharedState struct:
+```rust
+pub struct CheckerSharedState {
+    pub symbol_types: RefCell<FxHashMap<SymbolId, TypeId>>,
+    pub node_types: RefCell<FxHashMap<NodeIndex, TypeId>>,
+}
+```
+
+Update CheckerContext:
+```rust
+pub struct CheckerContext<'a> {
+    pub shared: Rc<CheckerSharedState>,
+    pub diagnostics: RefCell<Vec<Diagnostic>>, // File-specific
+    // ... other fields
+}
+```
+
+### Phase 2: Implement fork_for_file
+Method to create new context sharing caches but fresh diagnostics.
+
+### Phase 3: Migrate symbol_types ONLY
+Update ~15-20 access sites (not all 50+):
+- ctx.symbol_types -> ctx.shared.symbol_types
+- Ensure proper RefCell borrowing patterns
+
+### Phase 4: Validation
+Use tsz-tracing to verify Partial<T> cache hits work correctly.
+
+### Critical Warning: RefCell Borrowing
+AVOID holding borrow_mut() across recursive calls:
+```rust
+// BAD - panic risk
+let mut cache = self.ctx.shared.symbol_types.borrow_mut();
+let ty = self.check_expression(node); 
+cache.insert(symbol, ty);
+
+// GOOD - borrow after recursion
+let ty = self.check_expression(node);
+self.ctx.shared.symbol_types.borrow_mut().insert(symbol, ty);
+```
+
+### Status
+Ready to implement Phase 1-3. This is achievable and proves the pattern
+without risking full refactor.
+
+## Infrastructure Implementation Plan (2026-02-04)
+
+### Ready to Implement: Phased Migration
+
+Based on Gemini Flash recommendation, session will implement shared cache
+infrastructure incrementally to minimize risk and prove the pattern.
+
+### Implementation Steps
+
+#### Step 1: Create CheckerSharedState
+Location: src/checker/context.rs (before CheckerContext struct)
+
+```rust
+pub struct CheckerSharedState {
+    pub symbol_types: RefCell<FxHashMap<SymbolId, TypeId>>,
+    pub symbol_instance_types: RefCell<FxHashMap<SymbolId, TypeId>>,
+    pub node_types: RefCell<FxHashMap<u32, TypeId>>,
+}
+```
+
+#### Step 2: Add shared field to CheckerContext
+```rust
+pub struct CheckerContext<'a> {
+    pub shared: Rc<CheckerSharedState>,
+    // ... existing fields ...
+}
+```
+
+#### Step 3: Update new() constructor
+Add: `shared: Rc::new(CheckerSharedState::new())`
+
+#### Step 4: Update 3 other constructors
+Same initialization pattern.
+
+#### Step 5: Migrate symbol_types access (~15-20 sites)
+Change: `ctx.symbol_types` → `ctx.shared.symbol_types.borrow()`
+
+### Time Estimate: 2-3 hours
+- Infrastructure (Steps 1-4): 30-60 minutes
+- Migration (Step 5): 60-90 minutes  
+- Testing: 30 minutes
+
+### Complexity: MEDIUM (was HIGH)
+- Well-defined scope
+- Clear step-by-step plan
+- Can test incrementally
+- Low risk with phased approach
+
+See /tmp/tsz2_infrastructure_plan.md for detailed code examples.
+
+### Status
+**READY FOR IMPLEMENTATION**. All investigation complete, Gemini guidance
+obtained, clear step-by-step plan defined. Next developer can proceed confidently.
