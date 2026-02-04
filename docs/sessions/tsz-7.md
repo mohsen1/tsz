@@ -650,3 +650,47 @@ The type checker is structurally typing interfaces - when it sees `Helper`, it c
 
 This is a critical blocker for automatic import generation!
 
+---
+
+### Resolution (2026-02-04): SUCCESS! ✅
+
+**Gemini Consultation:**
+Confirmed that the root cause is interfaces being eagerly resolved to ObjectShape with `symbol=None`.
+
+**Solution:**
+DO NOT return `Lazy(DefId)` from `compute_type_of_symbol()` (would cause infinite recursion).
+Instead, **STAMP the structural type with the symbol** by setting `ObjectShape.symbol = Some(sym_id)`.
+
+**Implementation:**
+1. Added `lower_interface_declarations_with_symbol()` to TypeLowering
+2. Modified `finish_interface_parts()` to accept `Option<SymbolId>` parameter
+3. Updated `compute_type_of_symbol()` to pass SymbolId when lowering interfaces
+4. ObjectShape and CallableShape now preserve symbol connection
+
+**Files Modified:**
+- `src/solver/lower.rs`: Added symbol stamping to interface lowering
+- `src/checker/state_type_analysis.rs`: Pass SymbolId to interface lowering
+
+**Test Results:**
+```typescript
+// Input
+// utils.ts
+export interface Helper { x: number; }
+export const helper: Helper = { x: 42 };
+
+// main.ts
+import { helper, Helper } from './utils';
+export function getHelper(): Helper {
+    return helper;
+}
+```
+
+```typescript
+// Output (main.d.ts) - SUCCESS! ✅
+import { Helper } from "./utils";
+export declare function getHelper(): Helper;
+```
+
+**Commit:** feat(tsz-7): fix interface symbol tracking for import generation
+
+**Phase 3 Status:** ✅ COMPLETE - Automatic import generation is working!
