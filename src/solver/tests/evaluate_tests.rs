@@ -1,6 +1,6 @@
 use super::*;
 use crate::solver::def::DefId;
-use crate::solver::{SubtypeChecker, TypeSubstitution, instantiate_type};
+use crate::solver::{SubtypeChecker, TypeSubstitution, Visibility, instantiate_type};
 
 #[test]
 fn test_conditional_true_branch() {

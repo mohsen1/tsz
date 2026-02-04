@@ -6,7 +6,7 @@
 use crate::interner::Atom;
 use crate::solver::{
     CallableShape, FunctionShape, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId,
-    TypeInterner, TypeParamInfo,
+    TypeInterner, TypeParamInfo, Visibility,
 };
 use rayon::prelude::*;
 use std::sync::Arc;
