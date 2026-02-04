@@ -73,10 +73,35 @@
   - `36b18157a` - "docs(tsz-1): document test suite restoration progress"
   - `0fa3c40f3` - "feat: restore test suite after PropertyInfo API changes"
 
-**Next Steps**:
-1. ✅ COMPLETE - Test suite restoration finished
-2. Run full test suite to verify Priority 3 fix (Property Access Recursion Guard)
-3. Begin Priority 4: Nominal Subtyping Infrastructure audit
+**Status**: PARTIAL - Main library builds (0 errors), test suite has 237 errors
+- **Main library**: ✅ Builds (0 compilation errors)
+- **Test build**: ❌ 237 errors (217 Visibility imports, 18 PropertyInfo fields, 2 other)
+- **Progress**: 1484 → 0 main library errors, 1484 → 237 test errors
+
+**Strategic Decision** (from Gemini consultation):
+- **Priority 3 (Recursion Guard)**: Can proceed with targeted unit test
+- **Priority 4 (Nominal Audit)**: Must wait for full test suite restoration
+- **Recommended**: Fix `src/solver/tests/` first (30 mins), then implement P3 with targeted test
+
+**Remaining Test Errors**:
+```
+217x Visibility import errors in test files
+18x  Missing PropertyInfo fields (script missed these instances)
+2x   Other errors (SymbolId::from_u32, duplicate 'tests' mod)
+```
+
+**Blocker**: Cannot run `test_readonly_method_signature_assignment_2540` to verify Priority 3 fix
+without fixing test compilation errors first.
+
+**Automation Issues**:
+- `fix_all_visibility.py` breaks multi-line use statements
+- Script inserts imports in wrong locations (middle of use blocks)
+- Doc comment handling corrupted unsoundness_audit.rs multiple times
+- Manual fixing is more reliable than complex automation
+
+**Gemini Recommendation**:
+> "Bulk-fix Visibility imports (30 mins max) for src/solver/tests/ directory first.
+> This allows running Solver unit tests even if Checker tests are still broken."
 
 ## Updated Priorities (Pivoted from test-fixing to infrastructure)
 
