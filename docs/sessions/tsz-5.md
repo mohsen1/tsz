@@ -316,3 +316,29 @@ Only if hitting Solver blocker or critical type system regression.
 - Eliminates runtime crashes from missing imports
 - +5-10% conformance pass rate
 
+
+### Integration Challenge - 2026-02-04
+
+**Problem:** UsageAnalyzer requires `CheckerContext` for `DefId -> SymbolId` mapping, but:
+1. `CheckerContext` is only available during type checking phase
+2. Declaration emission happens after checking is complete
+3. `TypeInterner` doesn't provide `def_to_symbol_id()` mapping
+
+**Available Infrastructure:**
+- `TypeCache.symbol_dependencies` - already populated by Checker
+- `TypeCache.node_types` - for inferred types
+- `TypeCache.symbol_types` - for symbol type lookup
+
+**Current Blocker:**
+- Missing bridge from `DefId` (in TypeIds) to `SymbolId` (for import filtering)
+- `TypeResolver` trait exists but implementation is in `CheckerContext`
+- No global `DefId -> SymbolId` registry accessible from emission phase
+
+**Potential Solutions:**
+1. Add `def_to_symbol: FxHashMap<DefId, SymbolId>` to `TypeCache`
+2. Make `TypeCache.extract_def_to_symbol_map()` available
+3. Defer semantic walk until proper bridge exists
+4. Use only AST walk + symbol_dependencies graph initially
+
+**Status:** Blocked on architecture decision. Need to consult with team or revisit driver architecture.
+
