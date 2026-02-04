@@ -697,6 +697,13 @@ impl<'a> NarrowingContext<'a> {
         }
 
         if source_type == TypeId::UNKNOWN {
+            if !present {
+                // False branch: property is not present. Since unknown could be anything,
+                // it remains unknown in the false branch.
+                trace!("UNKNOWN in false branch for in operator, returning UNKNOWN");
+                return TypeId::UNKNOWN;
+            }
+
             // For unknown, narrow to object & { [prop]: unknown }
             // This matches TypeScript's behavior where `in` check on unknown
             // narrows to object type with the property
