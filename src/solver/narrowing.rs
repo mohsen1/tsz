@@ -358,6 +358,143 @@ impl<'a> NarrowingContext<'a> {
         self.narrow_to_type(source_type, target_type)
     }
 
+    /// Narrow a type based on an instanceof check.
+    ///
+    /// Example: `x instanceof MyClass` narrows `A | B` to include only `A` where `A` is an instance of `MyClass`
+    pub fn narrow_by_instanceof(
+        &self,
+        source_type: TypeId,
+        constructor_type: TypeId,
+        sense: bool,
+    ) -> TypeId {
+        let _span = span!(
+            Level::TRACE,
+            "narrow_by_instanceof",
+            source_type = source_type.0,
+            constructor_type = constructor_type.0,
+            sense
+        )
+        .entered();
+
+        // Handle ANY and UNKNOWN special cases
+        if source_type == TypeId::ANY {
+            trace!("Source type is ANY, returning unchanged");
+            return TypeId::ANY;
+        }
+
+        // Extract the instance type from the constructor
+        use crate::solver::type_queries_extended::InstanceTypeKind;
+        use crate::solver::type_queries_extended::classify_for_instance_type;
+
+        let instance_type = match classify_for_instance_type(self.interner, constructor_type) {
+            InstanceTypeKind::Callable(shape_id) => {
+                // For callable types with construct signatures, get the return type of the construct signature
+                let shape = self.interner.callable_shape(shape_id);
+                // Find a construct signature and get its return type (the instance type)
+                if let Some(construct_sig) = shape.construct_signatures.first() {
+                    construct_sig.return_type
+                } else {
+                    // No construct signature found, can't narrow
+                    trace!("No construct signature found in callable type");
+                    return source_type;
+                }
+            }
+            InstanceTypeKind::Function(shape_id) => {
+                // For function types, check if it's a constructor
+                let shape = self.interner.function_shape(shape_id);
+                if shape.is_constructor {
+                    // The return type is the instance type
+                    shape.return_type
+                } else {
+                    trace!("Function is not a constructor");
+                    return source_type;
+                }
+            }
+            InstanceTypeKind::Intersection(members) => {
+                // For intersection types, we need to extract instance types from all members
+                // For now, create an intersection of the instance types
+                let instance_types: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| self.narrow_by_instanceof(source_type, member, sense))
+                    .collect();
+
+                if sense {
+                    if instance_types.is_empty() {
+                        TypeId::NEVER
+                    } else if instance_types.len() == 1 {
+                        instance_types[0]
+                    } else {
+                        self.interner.intersection(instance_types)
+                    }
+                } else {
+                    // For negation with intersection, we can't easily exclude
+                    // Fall back to returning the source type unchanged
+                    source_type
+                }
+            }
+            InstanceTypeKind::Union(members) => {
+                // For union types, extract instance types from all members
+                let instance_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&member| {
+                        let result = self.narrow_by_instanceof(source_type, member, sense);
+                        if result != TypeId::NEVER {
+                            Some(result)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if sense {
+                    if instance_types.is_empty() {
+                        TypeId::NEVER
+                    } else if instance_types.len() == 1 {
+                        instance_types[0]
+                    } else {
+                        self.interner.union(instance_types)
+                    }
+                } else {
+                    // For negation with union, we can't easily exclude
+                    // Fall back to returning the source type unchanged
+                    source_type
+                }
+            }
+            InstanceTypeKind::Readonly(inner) => {
+                // Readonly wrapper - extract from inner type
+                return self.narrow_by_instanceof(source_type, inner, sense);
+            }
+            InstanceTypeKind::TypeParameter { constraint } => {
+                // Follow type parameter constraint
+                if let Some(constraint) = constraint {
+                    return self.narrow_by_instanceof(source_type, constraint, sense);
+                } else {
+                    trace!("Type parameter has no constraint");
+                    return source_type;
+                }
+            }
+            InstanceTypeKind::SymbolRef(_) | InstanceTypeKind::NeedsEvaluation => {
+                // Complex cases that need further evaluation
+                // For now, return the source type unchanged
+                trace!("Complex instance type (SymbolRef or NeedsEvaluation), returning unchanged");
+                return source_type;
+            }
+            InstanceTypeKind::NotConstructor => {
+                trace!("Constructor type is not a valid constructor");
+                return source_type;
+            }
+        };
+
+        // Now narrow based on the sense (positive or negative)
+        if sense {
+            // Positive: x instanceof Constructor - narrow to the instance type
+            self.narrow_to_type(source_type, instance_type)
+        } else {
+            // Negative: !(x instanceof Constructor) - exclude the instance type
+            self.narrow_excluding_type(source_type, instance_type)
+        }
+    }
+
     /// Narrow a type to include only members assignable to target.
     pub fn narrow_to_type(&self, source_type: TypeId, target_type: TypeId) -> TypeId {
         let _span = span!(
@@ -809,10 +946,13 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
 
-            TypeGuard::Instanceof(_class_type) => {
-                // TODO: Implement instanceof narrowing
-                // For now, return the source type unchanged
-                source_type
+            TypeGuard::Instanceof(class_type) => {
+                if sense {
+                    self.narrow_by_instanceof(source_type, *class_type, true)
+                } else {
+                    // Negation: !(x instanceof Class)
+                    self.narrow_by_instanceof(source_type, *class_type, false)
+                }
             }
 
             TypeGuard::LiteralEquality(literal_type) => {
