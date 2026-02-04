@@ -625,7 +625,6 @@ fn test_generic_overload_simple() {
 
     let t_name = interner.intern_string("T");
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -635,7 +634,6 @@ fn test_generic_overload_simple() {
 
     let generic_sig = CallSignature {
         type_params: vec![TypeParamInfo {
-            is_const: false,
             name: t_name,
             constraint: None,
             is_const: false,
@@ -684,7 +682,6 @@ fn test_generic_overload_with_constraint() {
 
     let t_name = interner.intern_string("T");
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: t_name,
         constraint: Some(TypeId::OBJECT),
         default: None,
@@ -695,11 +692,10 @@ fn test_generic_overload_with_constraint() {
 
     let constrained_sig = CallSignature {
         type_params: vec![TypeParamInfo {
-            is_const: false,
             name: t_name,
             constraint: Some(TypeId::OBJECT),
             default: None,
-            is_const: false,
+        is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -741,7 +737,6 @@ fn test_generic_overload_multiple_type_params() {
     let u_name = interner.intern_string("U");
 
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: t_name,
         constraint: None,
         is_const: false,
@@ -749,7 +744,6 @@ fn test_generic_overload_multiple_type_params() {
         
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: u_name,
         constraint: None,
         is_const: false,
@@ -775,7 +769,6 @@ fn test_generic_overload_multiple_type_params() {
     let multi_param_sig = CallSignature {
         type_params: vec![
             TypeParamInfo {
-                is_const: false,
                 name: t_name,
                 constraint: None,
                 is_const: false,
@@ -783,7 +776,6 @@ fn test_generic_overload_multiple_type_params() {
                 
             },
             TypeParamInfo {
-                is_const: false,
                 name: u_name,
                 constraint: None,
                 is_const: false,

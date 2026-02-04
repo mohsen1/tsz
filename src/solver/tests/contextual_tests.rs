@@ -498,7 +498,6 @@ fn test_contextual_generic_call_union_preserves_literal() {
     let mut checker = CompatChecker::new(&interner);
 
     let t_param = TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,

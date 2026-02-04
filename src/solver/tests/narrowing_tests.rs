@@ -538,7 +538,6 @@ fn test_narrow_by_typeof_negation_function_type_param_with_union_constraint() {
     });
     let constraint = interner.union(vec![func, TypeId::STRING]);
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -572,7 +571,6 @@ fn test_narrow_by_typeof_negation_function_type_param_to_never() {
         is_method: false,
     });
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(func),
         default: None,
@@ -588,7 +586,6 @@ fn test_narrow_by_typeof_type_param_with_union_constraint() {
     let interner = TypeInterner::new();
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -621,7 +618,6 @@ fn test_narrow_by_typeof_function_type_param_with_union_constraint() {
     });
     let constraint = interner.union(vec![func, TypeId::STRING]);
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -638,7 +634,6 @@ fn test_narrow_by_typeof_function_type_param_with_union_constraint() {
 fn test_narrow_by_typeof_function_type_param_with_non_function_constraint() {
     let interner = TypeInterner::new();
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -654,7 +649,6 @@ fn test_narrow_by_typeof_function_unconstrained_type_param() {
     let interner = TypeInterner::new();
     let ctx = NarrowingContext::new(&interner);
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -671,7 +665,6 @@ fn test_narrow_by_typeof_function_unconstrained_type_param() {
 fn test_narrow_by_typeof_type_param_with_non_overlapping_constraint() {
     let interner = TypeInterner::new();
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -686,7 +679,6 @@ fn test_narrow_by_typeof_type_param_with_non_overlapping_constraint() {
 fn test_narrow_by_typeof_unconstrained_type_param() {
     let interner = TypeInterner::new();
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -908,7 +900,6 @@ fn test_narrow_excluding_type_param_with_union_constraint() {
 
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -928,7 +919,6 @@ fn test_narrow_excluding_type_param_with_non_overlapping_constraint() {
     let ctx = NarrowingContext::new(&interner);
 
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -945,7 +935,6 @@ fn test_narrow_excluding_type_param_to_never() {
     let ctx = NarrowingContext::new(&interner);
 
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,

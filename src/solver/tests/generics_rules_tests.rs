@@ -142,7 +142,6 @@ fn test_try_expand_application_instantiates_type_params() {
     let interner = TypeInterner::new();
 
     let param_info = TypeParamInfo {
-        is_const: false,
         name: interner.intern_string("T"),
         constraint: None,
         is_const: false,
@@ -213,7 +212,6 @@ fn test_try_expand_application_self_reference_returns_none() {
         symbol,
         app_type,
         vec![TypeParamInfo {
-            is_const: false,
             name: interner.intern_string("T"),
             constraint: None,
             is_const: false,
