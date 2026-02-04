@@ -4,11 +4,19 @@
 **Status**: Active (Redefined 2026-02-04)
 **Goal**: Restore test suite, implement nominal subtyping, fix intersection reduction
 
-**Latest Update**: 2026-02-04 - New Priority 1 (Contextual Type Inference) COMPLETE ✅
+**Latest Update**: 2026-02-04 - 5 priorities complete! Starting new redefined priorities.
 
-**Session Redefined (2026-02-04)**:
-After completing Test Suite Restoration, Nominal Subtyping, and Intersection Reduction,
-Gemini provided 3 new high-leverage priorities.
+**Session Accomplishments (2026-02-04)**:
+Completed initial redefinition (3 priorities) + 2 additional priorities:
+1. Test Suite Restoration ✅
+2. Nominal Subtyping Implementation ✅
+3. Intersection Reduction (Rule #21) ✅
+4. Contextual Type Inference (Rule #32) ✅
+5. Homomorphic Mapped Types (Rule #27) ✅
+
+**New Session Redefinition (2026-02-04)**:
+After completing 5 major priorities, Gemini provided 3 new high-leverage priorities
+focused on fundamental correctness in generics and primitive/object boundaries.
 
 ## Session Redefinition (2026-02-04 - Updated)
 
@@ -155,30 +163,50 @@ Fixed src/solver/evaluate_rules/mapped.rs based on Gemini Pro review:
 **Commit**: `e91b8ce15` - "fix(tsz-1): implement homomorphic mapped types modifier preservation"
 
 **TODO**: Array/Tuple preservation deferred to future work (marked in code)
-**Goal**: Ensure mapped types like `{ [K in keyof T]: T[K] }` correctly preserve `readonly` and `optional` modifiers from source type.
+
+---
+
+## New Priorities (2026-02-04 - Second Redefinition)
+
+### 🔄 Priority 1: Variance Inference for Generic Types (Rule #31)
+**Goal**: Move beyond "assume covariant" stub to correctly infer variance (covariant, contravariant, invariant) for generic type parameters.
 
 **Files**:
-- `src/solver/evaluate_rules/mapped.rs`
-- `src/solver/types.rs` - `MappedModifier`
+- `src/solver/infer.rs` - `compute_variance`, `compute_variance_helper`
 
-**Task**: Refine `TypeEvaluator::get_mapped_modifiers` to detect homomorphic patterns and pull modifiers from source properties.
+**Problem**: Currently, `compute_variance_helper` (line ~1445) stubs out `TypeKey::Application` by assuming all arguments are covariant. This causes incorrect assignability for generic types with contravariant positions (like `Writer<T>` or `Comparator<T>`).
 
-**Impact**: Fixes `Partial<T>`, `Required<T>`, `Readonly<T>` utility types. Critical for modern TypeScript libraries and unblocks tsz-2.
+**Impact**: Critical for modern TypeScript libraries (Redux, RxJS). Correct variance inference prevents unsound assignments and allows valid assignments that conservative "invariant-only" solver would block.
 
-**Risk**: MEDIUM - Requires validation for Union of objects
+**Risk**: HIGH - Must handle recursive generic types without infinite loops
 
-### Priority 3: Intrinsic Boxing & Global Function (Rules #33 & #29)
-**Goal**: Implement "Lawyer" rules allowing primitives to be assigned to boxed interfaces (`number` to `Number`) and callables to global `Function` type.
+### Priority 2: Intrinsic Boxing & The Object Trifecta (Rules #33 & #20)
+**Goal**: Fully reconcile the relationship between primitives, boxed interfaces (`Number`, `String`), the `object` keyword, and empty object `{}`.
 
 **Files**:
-- `src/solver/compat.rs` - `CompatChecker`
 - `src/solver/subtype_rules/intrinsics.rs`
+- `src/solver/compat.rs`
 
-**Task**: Implement `is_boxed_primitive_subtype` and ensure `TypeId::FUNCTION` is supertype for all callables.
+**Problem**: Interaction between `Object` interface (from `lib.d.ts`) and `object` keyword (non-primitive) is often a source of subtle `tsc` mismatches. Need to ensure:
+- `number <: Number` (boxed) ✓
+- `number <: Object` (interface) ✓
+- `number <: object` (keyword) ✗
 
-**Impact**: Significantly improves `lib.d.ts` compatibility.
+**Impact**: Improves fundamental assignability conformance. "Hello World" barrier for code using standard library interfaces.
 
-**Risk**: LOW - Mostly wiring existing hooks
+**Risk**: MEDIUM - Requires TypeResolver to provide boxed TypeId from checker's global scope
+
+### Priority 3: Template Literal Backtracking Refinement (Rule #22)
+**Goal**: Refine backtracking logic for matching string literals against template literal types to match `tsc` edge cases.
+
+**Files**:
+- `src/solver/subtype_rules/literals.rs` - `match_template_literal_recursive`, `match_string_wildcard`
+
+**Problem**: Current implementation uses greedy-with-backtracking. Need to verify it correctly handles complex patterns like `${string}${string}` or `${string}middle${string}` where multiple valid partitions exist.
+
+**Impact**: High impact on CSS-in-JS libraries, URI routing types, string-based DSLs.
+
+**Risk**: MEDIUM - Backtracking can be exponential, need robust optimization
 
 ---
 
