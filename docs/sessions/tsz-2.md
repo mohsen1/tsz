@@ -202,3 +202,25 @@ Implemented shared cache infrastructure (planned in previous session phase).
 **Focus**: Task 1 - Lawyer-Layer Cache Partitioning
 **Estimated Time**: 4-6 hours (all 4 tasks)
 **Current Task**: Question 1 - Approach validation
+
+---
+
+## Progress Update (2026-02-04)
+
+### Task 1 Complete ✅
+
+**Commit**: `02a84a5de` - "feat(tsz-2): implement Lawyer-Layer Cache Partitioning (Task 1)"
+
+**Changes Made**:
+1. Added `RelationCacheKey` struct to `src/solver/types.rs`
+2. Updated Database layer (`src/solver/db.rs`)
+3. Updated `SubtypeChecker` (`src/solver/subtype.rs`)
+4. Updated `CheckerState.is_subtype_of` (`src/checker/assignability_checker.rs`)
+5. Updated `TypeCache` (`src/checker/context.rs`)
+
+**Correctness Impact**: Prevents `any` propagation results from non-strict checks from contaminating strict mode checks, fixing a fundamental unsoundness.
+
+**Gemini Guidance**: Followed Two-Question Rule (Question 1: Approach Validation)
+
+**Next**: Task 2 - CheckerState Refactoring
+
