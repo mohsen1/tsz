@@ -2895,13 +2895,6 @@ impl<'a> CheckerState<'a> {
                         continue; // Interface merging is always allowed
                     }
 
-                    // Check for type alias merging - multiple type alias declarations are allowed
-                    let both_type_aliases = (decl_flags & symbol_flags::TYPE_ALIAS) != 0
-                        && (other_flags & symbol_flags::TYPE_ALIAS) != 0;
-                    if both_type_aliases {
-                        continue; // Type alias merging is always allowed
-                    }
-
                     // Check for enum merging - multiple enum declarations are allowed
                     let both_enums = (decl_flags & symbol_flags::ENUM) != 0
                         && (other_flags & symbol_flags::ENUM) != 0;
