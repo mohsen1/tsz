@@ -12,33 +12,30 @@
 
 ## Current Session Plan (Redefined 2026-02-04)
 
-### Priority 1: Intersection Reduction (HIGHEST PRIORITY)
-**Why First**: Fundamental correctness requirement, prerequisite for BCT for Intersections
+### ✅ Priority 1: Intersection Reduction (COMPLETED 2026-02-04)
+**Status**: Implemented and committed (commit 7bf0f0fc6)
 
-**Problem**: Intersections need reduction to canonical form
-- `string & any` → `any`
-- `string & number` → `never`
-- `{a: number} & {b: string}` → `{a: number; b: string}`
+**What was implemented**:
+- Added recursive evaluation for `Intersection` and `Union` types
+- Implemented `evaluate_intersection()` and `evaluate_union()` methods
+- This enables "deferred reduction" where meta-types inside intersections/unions
+  are evaluated first, then re-interned to trigger normalization
 
-**Impact**:
-- Prevents type explosion in TypeInterner
-- Fixes ~58% of conformance failures
-- Required for correct `is_subtype_of` and `is_assignable_to`
+**Key changes in src/solver/evaluate.rs**:
+1. Added `TypeKey::Intersection` case to main `evaluate()` match statement
+2. Added `TypeKey::Union` case to main `evaluate()` match statement
+3. Implemented recursive evaluation methods that:
+   - Evaluate each member using `self.evaluate(member)`
+   - Re-intern the result to trigger normalization
+   - Properly handle recursion depth limits and cycle detection
 
-**Task**:
-- Implement reduction logic in `src/solver/operations.rs` or `src/solver/intersections.rs`
-- OR add `evaluate_intersection` function in `src/solver/evaluate.rs`
-- **⚠️ MANDATORY**: Follow Two-Question Rule before implementing
+**Tests added** (all passing):
+- `test_intersection_reduction_disjoint_primitives`: string & number -> never ✅
+- `test_intersection_reduction_any`: string & any -> any ✅
+- `test_union_reduction_duplicates`: string | string -> string ✅
+- `test_union_reduction_literal_into_base`: "hello" | string -> string ✅
 
-**Question 1 Template**:
-```bash
-./scripts/ask-gemini.mjs --include=src/solver "I need to implement Intersection Reduction.
-Problem: Intersections like 'string & any' need reduction.
-Planned approach: Add evaluate_intersection in src/solver/evaluate.rs.
-
-Is this right? Should reduction happen at interning or evaluation time?
-What edge cases (never, unknown) should I prioritize?"
-```
+**Gemini Pro Review**: Implementation confirmed correct ✅
 
 ### Priority 2: BCT for Intersections
 **File**: `src/solver/expression_ops.rs`
@@ -266,3 +263,9 @@ The chain: `InferenceContext` → `TypeResolver` → `CheckerContext` → `Binde
 - 2026-02-04: Redefined to BCT work
 - 2026-02-04: Question 1 complete - got detailed architectural guidance
 - 2026-04-04: Ready for implementation following Gemini guidance
+- 2026-02-04: **Intersection Reduction COMPLETED**
+  - Followed Two-Question Rule (asked Gemini Flash for approach, Gemini Pro for review)
+  - Implemented recursive evaluation for Intersection and Union types
+  - Added 4 unit tests (all passing)
+  - Commit 7bf0f0fc6 pushed to origin/main
+  - Gemini Pro confirmed implementation correct
