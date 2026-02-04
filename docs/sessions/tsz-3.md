@@ -2,7 +2,7 @@
 
 **Started**: 2026-02-04
 **Status**: ACTIVE
-**Focus**: Type Evaluation - Tail-Recursive Conditional Types
+**Focus**: Type Evaluation & Flow Analysis
 
 ## Completed Work
 
@@ -34,169 +34,44 @@
 - Updated documentation to clarify expected behavior
 - Behavior now matches tsc exactly
 
-## Current Task: Fix Tail-Recursive Conditional Type Evaluation ✅ COMPLETE
+✅ **Tail-Recursive Conditional Type Evaluation Fix**
+- Fixed depth limit bug in tail-recursion elimination
+- Check if result is conditional BEFORE calling evaluate (avoids depth increment)
+- Test `test_tail_recursive_conditional` now passes
+- Commit: `6b20e0180`
+
+## Current Task: Investigate Assignment Expression Narrowing
 
 ### Problem Statement
 
-Test `test_tail_recursive_conditional` fails with:
-```
-assertion `left == right` failed
-  left: TypeId(1)  // ERROR
- right: TypeId(10) // STRING
-```
+Test `test_assignment_expression_condition_narrows_discriminant` fails with TS2322 error.
 
-**Root Cause**: In `src/solver/evaluate_rules/conditional.rs`, the code called `self.evaluate(result_branch)` which increments the depth counter. After 50 nested conditionals, depth exceeded `MAX_EVALUATE_DEPTH` (50) and returned ERROR, even though `MAX_TAIL_RECURSION_DEPTH` is 1000.
-
-The tail-recursion elimination code never got a chance to work because `self.evaluate` returned ERROR before we could check if the result was a conditional.
-
-### Solution Implemented
-
-**File**: `src/solver/evaluate_rules/conditional.rs`
-
-**Fix**: Check if `result_branch` is a ConditionalType BEFORE calling evaluate. If it is, directly extract it for tail-recursion without going through evaluate (which would increment depth).
-
-**Modified**:
-- Line ~217: infer pattern path - check for conditional before evaluate
-- Line ~246: subtype check path - check for conditional before evaluate
-
-### Result
-
-✅ Test `test_tail_recursive_conditional` now passes
-✅ All 62 narrowing tests still pass
-✅ Commit: `6b20e0180`
-
-Fix the "poisoning" effect where missing global symbols (TS2304) cause types to default to `any`, which:
-- Suppresses subsequent type errors
-- Artificially inflates conformance scores
-- Hides real type checking issues
-
-## Problem Statement
-
-From `docs/specs/DIAGNOSTICS.md` Section 2:
-> When a global symbol like `console`, `Promise`, or `Array` fails to resolve (TS2304), it defaults to `any`. This "poisons" the type system by suppressing valid errors that should be emitted later.
-
-**Example**:
+**Test Code**:
 ```typescript
-// If 'console' doesn't resolve, it becomes 'any'
-console.log("hello");  // Should error but doesn't because console is 'any'
-console.nonExistent(); // Should error TS2339 but doesn't
-```
-
-## Task 1: Diagnose Global Resolution Gaps ✅ COMPLETE
-
-### Test Case
-```typescript
-console.nonExistentProperty;
-```
-
-**Results**:
-- **tsc**: TS2339 (Property doesn't exist on type 'Console') ✅
-- **tsz**: No errors - console is `any` (POISONING!) ❌
-
-### Root Cause Found
-**Location**: `src/binder/state.rs` lines 721-729
-
-```rust
-if !self.lib_symbols_merged {
-    for lib_binder in lib_binders {
-        if let Some(sym_id) = lib_binder.file_locals.get(name) {
-            // ...
-        }
-    }
+type D = { done: true, value: 1 } | { done: false, value: 2 };
+declare function fn(): D;
+let o: D;
+if ((o = fn()).done) {
+    const y: 1 = o.value; // Should work - o should be narrowed to { done: true, value: 1 }
 }
 ```
 
-**The Bug**: Lib binders are only queried when `lib_symbols_merged` is FALSE. When it's TRUE (after merging), the code skips lib binder lookup entirely.
+**Expected**: No errors (narrowing works)
+**Actual**: TS2322 error - `o.value` is not narrowed to `1`
 
-**Why this is wrong**: The checker's context has `lib_contexts` available (see `src/checker/generators.rs:925-926`), but `resolve_identifier_with_filter` doesn't check them - it only checks lib_binders conditionally.
+**Root Cause (Hypothesis)**: The flow analysis doesn't properly track narrowing when:
+1. Assignment happens in the condition expression (`o = fn()`)
+2. Property access (`o.done`) narrows the type
+3. The narrowed type should persist into the if block
 
-**Evidence**:
-- Checker can access lib_contexts directly: `self.ctx.lib_contexts.iter().map(|lc| &lc.binder)`
-- Generators.rs successfully queries lib_contexts.file_locals
-- But symbol_resolver.rs conditionally checks lib_binders based on lib_symbols_merged
+### Investigation Plan
 
-### Task 2: Fix Lib Context Merging ✅ COMPLETE
+1. Check how flow analysis tracks assignments in condition expressions
+2. Verify if discriminant narrowing is being applied to the result of the assignment
+3. Check if the narrowed type is being propagated to the if block
 
-**Solution Implemented**: Modified `src/checker/symbol_resolver.rs` to check lib_contexts directly
-
-**Implementation Details**:
-
-Two functions were modified:
-1. `resolve_identifier_symbol_inner` (value position)
-2. `resolve_identifier_symbol_in_type_position_inner` (type position)
-
-**Fix Pattern** (for value position):
-```rust
-// First try the binder's resolver which checks scope chain and file_locals
-let result = self.ctx.binder.resolve_identifier_with_filter(...);
-
-// IMPORTANT: If the binder didn't find the symbol, check lib_contexts directly as a fallback.
-if result.is_none() && !ignore_libs {
-    // Get the identifier name
-    let node = self.ctx.arena.get(idx)?;
-    let name = if let Some(ident) = self.ctx.arena.get_identifier(node) {
-        ident.escaped_text.as_str()
-    } else {
-        return None;
-    };
-
-    // Check lib_contexts directly for global symbols
-    for lib_ctx in &self.ctx.lib_contexts {
-        if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-            if !should_skip_lib_symbol(sym_id) {
-                return Some(sym_id);
-            }
-        }
-    }
-}
-
-result
-```
-
-**Key Design Decisions**:
-- Check lib_contexts AFTER binder's lookup (correct precedence)
-- Match pattern from generators.rs (lookup_global_type)
-- Same approach for both value and type position resolvers
-
-**Commit**: `031b39fde` - "fix: add lib_contexts fallback for global symbol resolution"
-
-### Task 3: Verify Conformance Improvement ✅ COMPLETE
-
-**Test Results**:
-
-Array global (works):
-```typescript
-const arr: Array<number> = [1, 2, 3];
-arr.nonExistentMethod();
-```
-- **tsc**: TS2339 (Property doesn't exist) ✅
-- **tsz**: TS2339 (Property doesn't exist) ✅ FIX WORKING!
-
-**Note on console**: `console` is defined in DOM-specific lib files (`dom.generated.d.ts`) which may not be loaded by default. This is expected behavior - users need to specify `--lib dom` to get DOM globals.
-
-**Pre-existing Test Failure**: `test_abstract_mixin_intersection_ts2339` was already failing before this change. Not related to this fix.
-Run tests to verify the fix:
-
-**Actions**:
-1. Run conformance tests that rely on globals
-2. Verify TS2304 is no longer emitted for valid globals
-3. Verify TS2339 and other errors are now correctly emitted
-
-## Context
-
-**Previous Session**: Completed error formatting and module validation cleanup
-
-**Key Insight**: This is a critical issue affecting conformance accuracy. Fixing it will likely reveal many hidden type errors that are currently being suppressed.
-
-**Files**:
-- `src/checker/symbol_resolver.rs` - Symbol resolution implementation
-- `src/checker/context.rs` - Type context with lib_contexts
-- `src/cli/driver.rs` - Where lib_contexts are created
-- `src/binder/mod.rs` - Binder implementation
-
-## Success Criteria
-
-- ✅ Standard globals (console, Promise, Array, etc.) resolve correctly
-- ✅ No TS2304 for valid global symbols
-- ✅ Type errors are emitted correctly (not suppressed by `any`)
-- ✅ Conformance tests show improvement
+### Key Files
+- `src/checker/flow_analysis.rs` - Flow analysis implementation
+- `src/checker/control_flow*.rs` - Control flow tracking
+- `src/solver/narrowing.rs` - Discriminant narrowing logic
+- `src/tests/checker_state_tests.rs` - Test at line 22821
