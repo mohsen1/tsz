@@ -1,9 +1,23 @@
-# Session tsz-3: Solver-First Narrowing & Discriminant Hardening
+# Session tsz-3: Advanced CFA & Type Predicates
 
 **Started**: 2026-02-04
-**Status**: ✅ ALL TASKS COMPLETE
-**Latest Update**: 2026-02-04 - Implemented truthiness narrowing for all falsy literals
-**Focus**: Fix discriminant narrowing bugs and harden narrowing logic for complex types
+**Status**: 🟢 ACTIVE (Previous phase: Narrowing Hardening COMPLETE)
+**Latest Update**: 2026-02-04 - Narrowing hardening complete, moving to advanced CFA
+**Focus**: User-defined type guards, instanceof narrowing, loop refinement
+
+---
+
+## Session History: Previous Phase COMPLETE ✅
+
+### Previous Phase: Solver-First Narrowing & Discriminant Hardening (COMPLETE)
+
+**Completed**: 2026-02-04
+- Task 1: Discriminant Subtype Direction ✅
+- Task 2-3: Lazy/Intersection Type Resolution ✅ (commit `5b0d2ee52`)
+- Task 4: Harden `in` Operator Narrowing ✅ (commit `bc80dd0fa`)
+- Task 5: Truthiness Narrowing for Literals ✅ (commit `97753bfef`)
+
+**Achievement**: Implemented comprehensive narrowing hardening for the Solver, following Two-Question Rule strictly for all changes. All code reviewed by Gemini Pro before committing.
 
 ---
 
@@ -532,3 +546,109 @@ make CheckerContext own it and clone when needed.
 - 2026-02-04: Implemented TypeResolver for BinderTypeDatabase (commit a379be1bb)
 - 2026-02-04: Discovered dual TypeEnvironment architecture issue
 - 2026-02-04: Redefined session to "Type Environment Unification" with simplified approach
+
+---
+
+## NEW SESSION PHASE: Advanced CFA & Type Predicates
+
+**Started**: 2026-02-04
+**Focus**: User-defined type guards, instanceof narrowing, loop refinement
+
+### Context
+
+Previous phase completed all narrowing hardening tasks. Now moving to advanced CFA features that require semantic understanding of the code (user-defined guards, class-based checks).
+
+### Priority 1: instanceof Narrowing
+
+**File**: `src/checker/control_flow_narrowing.rs`
+**Function**: Current implementation is a partial stub
+
+**Problem**: `instanceof` narrowing doesn't properly handle:
+- Nominal type checking (class inheritance)
+- Interface intersection quirk
+- Union filtering with instance types
+
+**TypeScript Quirk**: `instanceof` on interface types narrows via **intersection** rather than simple filtering:
+```rust
+// If standard narrowing returns NEVER, try:
+self.db.intersection2(source_type, instance_type)
+```
+
+**Expected Impact**: High - fixes dozens of class-based conformance tests
+
+### Priority 2: User-Defined Type Guards
+
+**File**: `src/checker/control_flow_narrowing.rs` or `FlowAnalyzer`
+**Feature**: Support `x is T` and `asserts x is T`
+
+**Implementation**:
+- Wire `TypePredicate` from `FunctionShape` into `FlowAnalyzer::handle_call_iterative`
+- Extract predicate info from function signatures
+- Apply narrowing based on predicate result
+
+**Example**:
+```typescript
+function isString(x: unknown): x is string {
+  return typeof x === "string";
+}
+
+function foo(x: unknown) {
+  if (isString(x)) {
+    // x should narrow to string
+  }
+}
+```
+
+**Expected Impact**: High - enables user-defined type assertions
+
+### Priority 3: this Type Predicates
+
+**File**: Same as Priority 2
+**Feature**: Enable narrowing for `this is T`
+
+**Use Cases**:
+- Fluent APIs
+- Class-based validation logic
+- Method chaining with type safety
+
+**Expected Impact**: Medium - important for specific patterns
+
+### Priority 4: Loop Narrowing Hardening
+
+**File**: `src/checker/control_flow.rs`
+**Function**: Conservative loop widening logic
+
+**Refinement Needed**:
+- `const` variables: never widened (constants can't be reassigned)
+- `let` variables: reset only if mutated in loop body
+- Track mutations through loop body analysis
+
+**Expected Impact**: Medium - improves precision of loop-based narrowing
+
+### Coordination Notes
+
+**With tsz-1 (Nominal Subtyping)**:
+- instanceof narrowing depends on `InheritanceGraph` work
+- Check `src/solver/inheritance.rs` before starting
+- Use `checker.check_nominal_inheritance(source, target)`
+
+**With tsz-2 (Type Aliases)**:
+- Continue using `self.resolve_type(type_id)` for Lazy types
+- Ensure type aliases work in instanceof checks
+
+**With tsz-5 (UsageAnalyzer)**:
+- Mark types in `is T` predicates as "referenced"
+- Prevents incorrect import elision
+
+### First Step: Run Conformance Tests
+
+Before implementing, run baseline:
+```bash
+./scripts/conformance/run.sh --server --max=100
+```
+
+Look specifically for:
+- `compiler/discriminatedUnion*.ts`
+- `compiler/typeGuards*.ts`
+- Class-based conformance tests
+
