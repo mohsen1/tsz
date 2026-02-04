@@ -764,6 +764,11 @@ impl<'a> CheckerState<'a> {
                             instantiate_type(self.ctx.types, interface_type, &substitution);
                     }
 
+                    // Resolve Lazy(DefId) to structural type before extracting shape
+                    // Phase 4.3: type_reference_symbol_type returns Lazy types for error messages,
+                    // but get_object_shape needs the actual Object type
+                    interface_type = self.resolve_lazy_type(interface_type);
+
                     if let Some(shape) = crate::solver::type_queries::get_object_shape(
                         self.ctx.types,
                         interface_type,
