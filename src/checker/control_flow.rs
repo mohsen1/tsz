@@ -1707,10 +1707,6 @@ impl<'a> FlowAnalyzer<'a> {
         is_true_branch: bool,
         narrowing: &NarrowingContext,
     ) -> TypeId {
-        eprintln!(
-            "DEBUG narrow_by_binary_expr: operator={}, target={}, is_true_branch={}",
-            bin.operator_token, target.0, is_true_branch
-        );
         let operator = bin.operator_token;
 
         if operator == SyntaxKind::InstanceOfKeyword as u16 {
@@ -1722,17 +1718,11 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let (is_equals, is_strict) = match operator {
-            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => {
-                eprintln!("DEBUG narrow_by_binary_expr: is === (strict equality)");
-                (true, true)
-            }
+            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => (true, true),
             k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => (false, true),
             k if k == SyntaxKind::EqualsEqualsToken as u16 => (true, false),
             k if k == SyntaxKind::ExclamationEqualsToken as u16 => (false, false),
-            _ => {
-                eprintln!("DEBUG narrow_by_binary_expr: not a comparison operator, returning");
-                return type_id;
-            }
+            _ => return type_id,
         };
 
         let effective_truth = if is_equals {
@@ -1766,13 +1756,9 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if is_strict {
-            eprintln!(
-                "DEBUG narrow_by_binary_expr: is_strict=true, calling discriminant_comparison"
-            );
             if let Some((prop_name, literal_type, is_optional)) =
                 self.discriminant_comparison(bin.left, bin.right, target)
             {
-                eprintln!("DEBUG narrow_by_binary_expr: discriminant_comparison returned Some");
                 let mut base_type = type_id;
                 if is_optional && effective_truth {
                     let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
@@ -1787,7 +1773,6 @@ impl<'a> FlowAnalyzer<'a> {
                 );
             }
 
-            eprintln!("DEBUG narrow_by_binary_expr: discriminant_comparison returned None");
             if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {
                 if effective_truth {
                     let narrowed = narrowing.narrow_to_type(type_id, literal_type);
@@ -1803,7 +1788,6 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        eprintln!("DEBUG narrow_by_binary_expr: returning type_id");
         type_id
     }
 

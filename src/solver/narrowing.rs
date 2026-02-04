@@ -245,28 +245,14 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        eprintln!(
-            "DEBUG narrow_by_discriminant: union_type={}, property_name={:?}, literal_value={}",
-            union_type.0, property_name, literal_value.0
-        );
-
         let members = match union_list_id(self.interner, union_type) {
             Some(members_id) => self.interner.type_list(members_id),
-            None => {
-                eprintln!("DEBUG narrow_by_discriminant: not a union type");
-                return union_type;
-            }
+            None => return union_type,
         };
-
-        eprintln!(
-            "DEBUG narrow_by_discriminant: union has {} members",
-            members.len()
-        );
 
         let mut matching: Vec<TypeId> = Vec::new();
 
         for &member in members.iter() {
-            eprintln!("DEBUG narrow_by_discriminant: checking member {}", member.0);
             if let Some(shape_id) = object_shape_id(self.interner, member) {
                 let shape = self.interner.object_shape(shape_id);
                 let prop_type = shape
@@ -277,61 +263,39 @@ impl<'a> NarrowingContext<'a> {
 
                 match prop_type {
                     Some(ty) => {
-                        eprintln!(
-                            "DEBUG narrow_by_discriminant: member has property, type={}",
-                            ty.0
-                        );
                         // Check if property type matches the literal value
                         // Use subtype check to handle cases where property type is wider than literal
-                        let is_match = is_subtype_of(self.interner, ty, literal_value);
-                        eprintln!(
-                            "DEBUG narrow_by_discriminant: is_subtype_of({}, {}) = {}",
-                            ty.0, literal_value.0, is_match
-                        );
-                        if is_match {
-                            eprintln!("DEBUG narrow_by_discriminant: MATCHED member {}", member.0);
+                        if is_subtype_of(self.interner, ty, literal_value) {
                             matching.push(member);
                         }
                         // If property type doesn't match, exclude this member
                     }
                     None => {
-                        eprintln!("DEBUG narrow_by_discriminant: member does not have property");
                         // Property doesn't exist on this member - exclude it
                         // (x.prop === value implies prop must exist)
                     }
                 }
             } else {
-                eprintln!("DEBUG narrow_by_discriminant: member is not an object type");
                 // Not an object type - can't match
             }
         }
 
         if matching.is_empty() {
             trace!("No members matched discriminant check, returning never type");
-            eprintln!("DEBUG narrow_by_discriminant: No matches, returning NEVER");
             return TypeId::NEVER;
         }
 
         if matching.len() == members.len() {
             trace!("All members matched, returning original type");
-            eprintln!("DEBUG narrow_by_discriminant: All members matched, returning original");
             union_type
         } else if matching.len() == 1 {
             trace!("Narrowed to single member");
-            eprintln!(
-                "DEBUG narrow_by_discriminant: Narrowed to single member {}",
-                matching[0].0
-            );
             matching[0]
         } else {
             trace!(
                 "Narrowed to {} of {} members",
                 matching.len(),
                 members.len()
-            );
-            eprintln!(
-                "DEBUG narrow_by_discriminant: Narrowed to {} members",
-                matching.len()
             );
             self.interner.union(matching)
         }
