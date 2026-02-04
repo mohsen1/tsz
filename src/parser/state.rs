@@ -472,25 +472,63 @@ impl ParserState {
     }
 
     /// Check if current token is a reserved word that cannot be used as an identifier
-    /// Reserved words: null, true, false (and void when not in type position)
+    /// Reserved words are keywords from BreakKeyword through WithKeyword
     #[inline]
     pub(crate) fn is_reserved_word(&self) -> bool {
-        matches!(
-            self.current_token,
-            SyntaxKind::NullKeyword | SyntaxKind::TrueKeyword | SyntaxKind::FalseKeyword
-        )
+        // Match TypeScript's isReservedWord logic:
+        // token >= SyntaxKind.FirstReservedWord && token <= SyntaxKind.LastReservedWord
+        self.current_token as u16 >= SyntaxKind::FIRST_RESERVED_WORD as u16
+            && self.current_token as u16 <= SyntaxKind::LAST_RESERVED_WORD as u16
+    }
+
+    /// Get the text representation of the current keyword token
+    fn current_keyword_text(&self) -> &'static str {
+        match self.current_token {
+            SyntaxKind::BreakKeyword => "break",
+            SyntaxKind::CaseKeyword => "case",
+            SyntaxKind::CatchKeyword => "catch",
+            SyntaxKind::ClassKeyword => "class",
+            SyntaxKind::ConstKeyword => "const",
+            SyntaxKind::ContinueKeyword => "continue",
+            SyntaxKind::DebuggerKeyword => "debugger",
+            SyntaxKind::DefaultKeyword => "default",
+            SyntaxKind::DeleteKeyword => "delete",
+            SyntaxKind::DoKeyword => "do",
+            SyntaxKind::ElseKeyword => "else",
+            SyntaxKind::EnumKeyword => "enum",
+            SyntaxKind::ExportKeyword => "export",
+            SyntaxKind::ExtendsKeyword => "extends",
+            SyntaxKind::FalseKeyword => "false",
+            SyntaxKind::FinallyKeyword => "finally",
+            SyntaxKind::ForKeyword => "for",
+            SyntaxKind::FunctionKeyword => "function",
+            SyntaxKind::IfKeyword => "if",
+            SyntaxKind::ImportKeyword => "import",
+            SyntaxKind::InKeyword => "in",
+            SyntaxKind::InstanceOfKeyword => "instanceof",
+            SyntaxKind::NewKeyword => "new",
+            SyntaxKind::NullKeyword => "null",
+            SyntaxKind::ReturnKeyword => "return",
+            SyntaxKind::SuperKeyword => "super",
+            SyntaxKind::SwitchKeyword => "switch",
+            SyntaxKind::ThisKeyword => "this",
+            SyntaxKind::ThrowKeyword => "throw",
+            SyntaxKind::TrueKeyword => "true",
+            SyntaxKind::TryKeyword => "try",
+            SyntaxKind::TypeOfKeyword => "typeof",
+            SyntaxKind::VarKeyword => "var",
+            SyntaxKind::VoidKeyword => "void",
+            SyntaxKind::WhileKeyword => "while",
+            SyntaxKind::WithKeyword => "with",
+            _ => "reserved word",
+        }
     }
 
     /// Error: TS1359 - Identifier expected. '{0}' is a reserved word that cannot be used here.
     pub(crate) fn error_reserved_word_identifier(&mut self) {
         if self.token_pos() != self.last_error_pos {
             use crate::checker::types::diagnostics::diagnostic_codes;
-            let word = match self.current_token {
-                SyntaxKind::NullKeyword => "null",
-                SyntaxKind::TrueKeyword => "true",
-                SyntaxKind::FalseKeyword => "false",
-                _ => "reserved word",
-            };
+            let word = self.current_keyword_text();
             self.parse_error_at_current_token(
                 &format!(
                     "Identifier expected. '{}' is a reserved word that cannot be used here.",

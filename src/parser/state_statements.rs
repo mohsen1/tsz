@@ -840,8 +840,6 @@ impl ParserState {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
-        } else if self.is_identifier_or_keyword() {
-            self.parse_identifier_name()
         } else {
             self.parse_identifier()
         };
