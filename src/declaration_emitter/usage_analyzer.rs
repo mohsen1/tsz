@@ -524,6 +524,8 @@ impl<'a> UsageAnalyzer<'a> {
     }
 
     /// Analyze a type node (AST walk for explicit types).
+    ///
+    /// Sets `in_value_pos = false` since we're in a type position.
     fn analyze_type_node(&mut self, type_idx: NodeIndex) {
         if !self.visited_nodes.insert(type_idx) {
             return;
@@ -532,6 +534,11 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(type_node) = self.arena.get(type_idx) else {
             return;
         };
+
+        // We're in a type position, so set in_value_pos to false
+        // Save the previous value to restore it later
+        let old_in_value_pos = self.in_value_pos;
+        self.in_value_pos = false;
 
         match type_node.kind {
             // Type references - extract the symbol
@@ -618,10 +625,15 @@ impl<'a> UsageAnalyzer<'a> {
                 }
             }
 
-            // Type query (typeof X) - marks X as value usage
+            // Type query (typeof X) - CRITICAL: marks X as VALUE usage
+            // Even though typeof appears in a type position, it requires the value to exist
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 if let Some(type_query) = self.arena.get_type_query(type_node) {
+                    // Set in_value_pos = true for typeof expressions
+                    self.in_value_pos = true;
                     self.analyze_entity_name(type_query.expr_name);
+                    self.in_value_pos = false; // Restore after
+
                     // TODO: Walk type arguments
                 }
             }
@@ -714,6 +726,9 @@ impl<'a> UsageAnalyzer<'a> {
 
             _ => {}
         }
+
+        // Restore the previous in_value_pos
+        self.in_value_pos = old_in_value_pos;
     }
 
     /// Analyze an entity name to extract the leftmost symbol.
