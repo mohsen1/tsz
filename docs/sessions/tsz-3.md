@@ -63,7 +63,36 @@ switch (x) {
 }
 ```
 **File**: `src/checker/control_flow.rs`
-**Status**: ⏸️ Not started
+**Status**: ✅ PARTIALLY COMPLETE
+
+**Findings**:
+1. ✅ **Fall-through union WORKS for literal types** (e.g., `"a" | "b" | "c"`)
+   - Test: `test_fallthrough_simple.ts` passes
+   - The code in `check_flow` (lines 533-563) correctly unions fallthrough antecedent types
+
+2. ❌ **Fall-through FAILS for type aliases (Lazy types)**
+   - Test: `test_fallthrough.ts` fails on line 9 with "never" error
+   - Root cause: `evaluate_type()` returns ERROR for Lazy types in narrowing context
+   - This is a SEPARATE bug from fall-through union logic
+
+**Technical Details**:
+- Fall-through union is implemented in `src/checker/control_flow.rs:533-563`
+- For switch clauses with multiple antecedents, the code unions `result_type` with types from `antecedent[1..]`
+- The union logic works correctly - the bug is in discriminant narrowing returning `never`
+
+**Related Issue**: Lazy type resolution in discriminant narrowing
+- When narrowing `type Action = { type: "add" } | { type: "remove" }` by `action.type === "add"`
+- The `resolve_type()` call in `narrow_by_discriminant` evaluates the Lazy type to ERROR
+- This causes narrowing to return `never` instead of the specific union member
+- This affects ALL discriminant narrowing on type aliases, not just fall-through
+
+**Root Cause Analysis** (from Gemini):
+- `QueryDatabase::evaluate_type()` uses `NoopResolver` which can't resolve Lazy types
+- The fix is to use `TypeEvaluator::with_resolver()` instead of `TypeEvaluator::new()`
+- Need to update `BinderTypeDatabase` to implement `TypeResolver` and use the correct evaluator
+- Reference: `src/solver/evaluate.rs:135` and `src/solver/db.rs:448`
+
+**Note**: Exhaustiveness works (commit fd12bb38e) because it doesn't require discriminant narrowing to resolve individual members - it just checks if all cases are covered. Fall-through narrowing requires actual narrowing, which exposes the Lazy type resolution bug.
 
 #### Task 4: Loop Narrowing (HIGH PRIORITY)
 **Goal**: Implement narrowing propagation for while/for loops
@@ -114,9 +143,10 @@ Ensure the checker correctly updates flow-sensitive type cache:
 
 ## Success Criteria
 
-- [x] Switch statements correctly narrow in each case
+- [x] Switch statements correctly narrow in each case (for non-Lazy types)
 - [x] Exhausted unions narrow to `never` in default/after switch
-- [ ] Fall-through cases accumulate narrowing correctly
+- [x] Fall-through cases accumulate narrowing correctly (for literal types)
+- [ ] Fall-through narrowing works for type aliases (Lazy types) - BLOCKED by evaluate_type bug
 - [ ] Flow cache is properly updated during switch traversal
 - [ ] All conformance tests for switch statements pass
 
