@@ -219,6 +219,42 @@ if (o.done) {
 
 **Commit**: `8fdd91417` - Added assignment unwrapping logic (test still reveals deeper issue)
 
+### Session Status: PAUSED
+
+**Summary of Work**:
+1. ✅ Fixed false positive TS2564 in switch statements without default clauses
+2. ⚠️ Started discriminant narrowing for assignment expressions - discovered deeper infrastructure issue
+
+**Discovery**:
+Basic discriminant narrowing (even without assignments) is not working in tsz. The solver logic exists in `src/solver/narrowing.rs` but the integration with flow analysis is broken.
+
+**Evidence**:
+```typescript
+type D = { done: true, value: 1 } | { done: false, value: 2 };
+let o: D = { done: true, value: 1 };
+if (o.done) {
+    const y: 1 = o.value;  // tsc: ok, tsz: TS2322
+}
+```
+
+**Root Cause Analysis**:
+The discriminant narrowing infrastructure requires broader investigation:
+- `narrow_by_discriminant` in solver is implemented and tested
+- Flow analysis calls `discriminant_property` to find discriminant patterns
+- Integration point exists but narrowing is not being applied to variable types
+- May require changes to how narrowed types flow from conditions to variable bindings
+
+**Recommendation**:
+This task is too complex for a single session. Requires:
+1. Deep dive into flow analysis → narrowed type propagation
+2. Possibly restructuring how narrowing is applied
+3. Testing across multiple narrowing patterns
+
+**Next Steps**:
+- Choose a different, more achievable CFA task for this session
+- Or defer discriminant narrowing to a dedicated multi-session effort
+- Focus on simpler flow analysis fixes with clear scope
+
 ## Notes
 
 - Builds on TDZ work from tsz-2
