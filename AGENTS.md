@@ -6,9 +6,10 @@
 
 Before starting work, check [docs/sessions/](docs/sessions/) to understand what other sessions are working on. Your session is determined by your directory name (tsz-1, tsz-2, tsz-3, tsz-4).
 
-1. Read all session files to avoid duplicate/conflicting work
-2. When starting work, update your session file immediately with the current task, commit and push so others see
-3. When finishing, move to history and note outcome
+1. Make sure you have the latest session files from the repo's origin remote
+2. Read all session files to avoid duplicate/conflicting work
+3. When starting work, update your session file immediately with the current task, commit and push so others see
+4. When finishing, move to history and note outcome
 
 ## CRITICAL: Always Ask Gemini
 
