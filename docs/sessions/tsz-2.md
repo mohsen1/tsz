@@ -93,18 +93,54 @@ These features are core to modern TypeScript's type system. Without them:
 
 **Next**: Task 3 - Implement nominal compatibility checking in subtype_rules/objects.rs
 
-#### Task 3: Implement Property Compatibility Checking
+#### Task 3: Implement Property Compatibility Checking ✅ COMPLETED (2026-02-04)
 **File**: `src/solver/subtype_rules/objects.rs`
 
-**Function**: `check_property_compatibility()`
+**Status**: COMPLETE
 
-**Requirements**:
-1. If `target.visibility` is `Private` or `Protected`:
-   - Source MUST have matching `parent_id` (nominal check)
-   - Return `SubtypeResult::False` if mismatch
-2. If `target.visibility` is `Public`:
-   - Standard structural compatibility
-3. Handle `any` propagation (Lawyer layer handles this)
+**Commits**:
+- `ac1e4432f`: feat(solver): implement nominal subtyping for private/protected properties
+
+**What Was Implemented**:
+
+1. **`check_property_compatibility` function**:
+   - Added nominal check: non-public target requires matching `parent_id`
+   - Added visibility guard: public target cannot be satisfied by private/protected source
+   - This prevents "private slot leakage" - private members can't satisfy public requirements
+
+2. **`check_object_with_index_to_object` function**:
+   - Added same visibility guards as check_property_compatibility
+   - Ensures nominal checking works for index signatures too
+
+3. **`check_missing_property_against_index_signatures` function**:
+   - Added guard: index signatures cannot satisfy private/protected properties
+   - This is correct because index signatures are always public
+
+4. **`check_object_subtype` function**:
+   - Added check: missing private/protected properties are rejected, even if optional
+   - Private/protected properties must be nominally present in the source
+
+**Critical Bugs Found and Fixed by Gemini Pro**:
+1. **Bug 1**: Original code allowed assigning private source to public target (TypeScript forbids this)
+   - Fixed by adding `else if source.visibility != Visibility::Public` check
+2. **Bug 2**: Original code allowed missing private optional properties (TypeScript requires them)
+   - Fixed by checking visibility before optional property logic
+
+**Examples of Correct Behavior**:
+```typescript
+// ✅ Correct: Private requires same declaration
+class A { private x = 1; }
+class B { private x = 1; }
+const a: A = new B(); // ERROR: different private declarations
+
+// ✅ Correct: Cannot assign private to public
+class C { private x = 1; }
+interface I { x: number; }
+const c: C = new C();
+const i: I = c; // ERROR: property 'x' is private in type 'C' but not in type 'I'
+```
+
+**Next**: Task 4 - Handle Inheritance and Overriding in class_hierarchy.rs
 
 #### Task 4: Handle Inheritance and Overriding
 **File**: `src/solver/class_hierarchy.rs`
