@@ -96,7 +96,10 @@ impl<'a> CheckerState<'a> {
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeKey::Ref(Error) returns ERROR, causing TS2339 false positives
             let populated_env = self.build_type_environment();
-            *self.ctx.type_env.borrow_mut() = populated_env;
+            *self.ctx.type_env.borrow_mut() = populated_env.clone();
+            // CRITICAL: Also populate type_environment (Rc-wrapped) for FlowAnalyzer
+            // This ensures type alias narrowing works during control flow analysis
+            *self.ctx.type_environment.borrow_mut() = populated_env;
 
             // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
             // This enables primitive property access to use lib definitions instead of hardcoded lists

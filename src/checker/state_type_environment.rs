@@ -839,6 +839,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // CRITICAL FIX: Skip registering Lazy types to their own DefId
+        // This creates circular references: DefId(1) -> Lazy(DefId(1)) -> DefId(1) -> ...
+        // Lazy types are resolved by TypeEvaluator, not by TypeEnvironment lookup
+        if let Some(_def_id) =
+            crate::solver::type_queries::get_lazy_def_id(self.ctx.types, resolved)
+        {
+            return;
+        }
+
         let type_params = self.get_type_params_for_symbol(sym_id);
         // Use try_borrow_mut to avoid panic if type_env is already borrowed.
         // This can happen during recursive type resolution.
