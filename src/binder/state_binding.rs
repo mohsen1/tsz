@@ -1194,13 +1194,6 @@ impl BinderState {
                 {
                     let module_specifier = lit.text.clone();
 
-                    eprintln!(
-                        "[MODULE-DECL] Found declare module \"{}\" - is_external_module={}, is_potential_augmentation={}",
-                        module_specifier,
-                        self.is_external_module,
-                        self.is_potential_module_augmentation(&module_specifier)
-                    );
-
                     // Rule #44: Detect module augmentation
                     // A `declare module "x"` in an external module (file with imports/exports)
                     // is a module augmentation if it references an existing or external module.
@@ -1208,7 +1201,6 @@ impl BinderState {
                         && self.is_potential_module_augmentation(&module_specifier);
 
                     if is_augmentation {
-                        eprintln!("[MODULE-DECL] Recognized as MODULE AUGMENTATION!");
                         // Track as module augmentation - bind body with augmentation context
                         if !module.body.is_none() {
                             self.node_scope_ids

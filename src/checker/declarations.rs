@@ -859,7 +859,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check if the current file is an external module (has import/export statements).
     /// Script files (global scope) don't have imports/exports.
     fn is_external_module(&self) -> bool {
-        // Check if the binder detected this file as a module (has imports/exports)
+        // Check the per-file cache first (set by CLI driver for multi-file mode)
+        // This preserves the correct is_external_module value across sequential file bindings
+        if let Some(ref map) = self.ctx.is_external_module_by_file {
+            if let Some(&is_ext) = map.get(&self.ctx.file_name) {
+                return is_ext;
+            }
+        }
+        // Fallback to binder (for single-file mode or tests)
         self.ctx.binder.is_external_module()
     }
 

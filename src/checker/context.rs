@@ -435,6 +435,11 @@ pub struct CheckerContext<'a> {
     /// Resolved module specifiers for this file (multi-file CLI mode).
     pub resolved_modules: Option<HashSet<String>>,
 
+    /// Per-file cache of is_external_module values to preserve state across files.
+    /// Maps file path -> whether that file is an external module (has imports/exports).
+    /// This prevents state corruption when binding multiple files sequentially.
+    pub is_external_module_by_file: Option<FxHashMap<String, bool>>,
+
     /// Map of resolution errors: (source_file_idx, specifier) -> Error details.
     /// Populated by the driver when ModuleResolver returns a specific error.
     /// Contains structured error information (code, message) for TS2834, TS2835, TS2792, etc.
@@ -573,6 +578,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
@@ -658,6 +664,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
@@ -745,6 +752,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),
@@ -831,6 +839,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_paths: None,
             current_file_idx: 0,
             resolved_modules: None,
+            is_external_module_by_file: None,
             resolved_module_errors: None,
             import_resolution_stack: Vec::new(),
             lib_contexts: Vec::new(),

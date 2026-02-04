@@ -4,12 +4,11 @@
 
 **Completed Investigation**: TS2307, TS2318, TS2305 all verified working ✅
 
-**Found Issue**: TS2664 (Invalid module name in augmentation) not emitting in CLI despite code existing
+**COMPLETED FIX**: TS2664 (Invalid module name in augmentation) ✅
 
-**Next Steps**: Either:
-1. Fix test suite to run TS2664 test and debug
-2. Work on TS2322 false positives (8 extra in conformance)
-3. Help fix remaining compilation errors
+**Next Steps**:
+1. Work on TS2322 false positives (8 extra in conformance)
+2. Help fix remaining compilation errors
 
 ---
 
@@ -78,34 +77,39 @@ import { privateFn } from './module'; // TS2305
 
 ---
 
-### TS2664 (Invalid module name in augmentation) - ❌ ROOT CAUSE FOUND
+### TS2664 (Invalid module name in augmentation) - ✅ FIXED
 
 **Bug Identified**: Binder state corruption when multiple files share one binder instance.
 
 **Root Cause**:
 1. User file is bound → `is_external_module=true` (has import)
-2. Lib files are bound → `is_external_module=false` (no imports)
-3. Checker runs on user file but sees `is_external_module=false` from lib files!
-4. TS2694 check requires `is_external_module=true`, so it's skipped
+2. When binders are recreated for type checking, `is_external_module` resets to `false` by default
+3. Checker runs on user file but sees `is_external_module=false`!
+4. TS2664 check requires `is_external_module=true`, so it's skipped
 
-**Evidence**: Debug output shows:
+**Solution**: Store `is_external_module` per-file in `BindResult` and `BoundFile` to preserve state through the binding → type checking transition.
+
+**Files Modified**:
+- `src/parallel.rs`: Added `is_external_module` field to `BindResult` and `BoundFile`
+- `src/cli/driver.rs`: Extract and pass `is_external_module` to `CheckerContext`
+- `src/checker/context.rs`: Added `is_external_module_by_file` field to cache values
+- `src/checker/declarations.rs`: Updated `is_external_module()` to check per-file cache
+- `src/cli/driver.rs`: Restored `is_external_module` in `create_binder_from_bound_file()`
+
+**Test Case**:
+```typescript
+// test.ts
+export {};  // Makes this a module
+declare module "ext" {
+  export class C { }
+}
 ```
-[BINDER] Set is_external_module=true (user file)
-[BINDER] Set is_external_module=false (lib files - many times)
-[CHECKER] is_external_module() called, returning=false
-```
 
-**Fix Required**: The checker needs to see the binder state AS IT WAS WHEN THE USER FILE WAS BOUND. Options:
-1. Store `is_external_module` per-file in file metadata
-2. Pass a snapshot of binder state to checker for each file
-3. Use separate binder instances per file (may be expensive)
+**Results**:
+- TSC: `error TS2664: Invalid module name in augmentation, module 'ext' cannot be found.`
+- tsz: `error TS2664: Invalid module name in augmentation, module 'ext' cannot be found.` ✅
 
-**Files Modified for Investigation**:
-- `src/binder/state_binding.rs`: Fixed `is_augmentation` logic, added debug output
-- `src/checker/declarations.rs`: Added debug output
-- `src/binder/state.rs`: Added debug output
-
-**Status**: Root cause identified, requires architectural fix in driver/binder.
+**Status**: TS2664 is now working correctly and matching TSC behavior!
 
 ---
 
@@ -274,6 +278,22 @@ These are "Environment" errors. If tsz fails to load the standard library or imp
 ---
 
 ## History (Last 20)
+
+### 2025-02-04: FIXED TS2664 (Invalid module name in augmentation)
+
+**Root Cause**: `is_external_module` field was reset to `false` when binders were recreated for type checking, causing TS2664 checks to be incorrectly skipped.
+
+**Solution**: Store `is_external_module` per-file in `BindResult` and `BoundFile`, pass it through to `CheckerContext` and check it via a per-file cache.
+
+**Files Modified**:
+- `src/parallel.rs`: Added `is_external_module: bool` field to `BindResult` and `BoundFile`
+- `src/cli/driver.rs`: Extract `is_external_module` from `BoundFile` and populate `CheckerContext.is_external_module_by_file`
+- `src/checker/context.rs`: Added `is_external_module_by_file: Option<FxHashMap<String, bool>>` field
+- `src/checker/declarations.rs`: Updated `is_external_module()` to check per-file cache first
+
+**Test Results**:
+- ✅ TS2664 now emits correctly for non-existent module augmentations in module files
+- ✅ Matches TSC behavior exactly
 
 ### 2025-02-04: FIXED TS2322 accessor false positive with class inheritance
 
