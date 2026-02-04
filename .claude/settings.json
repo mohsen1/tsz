@@ -1,13 +1,4 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(*)",
-      "Edit(*)",
-      "Write(*)",
-      "Read(*)",
-      "mcp__*"
-    ]
-  },
   "hooks": {
     "SessionStart": [
       {
