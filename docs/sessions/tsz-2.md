@@ -1,243 +1,196 @@
-# Session tsz-2: Lawyer-Layer Cache Partitioning & Type Cache Unification
+# Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
 **Status**: 🟢 Active (Redefined 2026-02-04)
-**Previous**: Cache Isolation Bug Investigation (COMPLETE)
+**Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
 
-**Gemini Consultation**: Asked for session redefinition after completing Cache Isolation Bug investigation.
+**Gemini Consultation**: Asked for session redefinition after completing Cache Isolation Bug fix.
 
-**New Direction**: **Implementation of Unified Type Caching and Lawyer-Layer Isolation**
+**New Direction**: **Type Narrowing Correctness and Completeness**
 
 ### Rationale
 
-Based on the current state of all sessions and North Star architecture goals:
+Based on completion of Tasks 1 & 2 (Lawyer-Layer Cache Partitioning, CheckerState Refactoring):
+- Cache isolation foundation is now in place
+- Cache Isolation Bug is fixed (Partial<T>, Pick<T,K> resolve correctly)
+- Ready to tackle **Type Narrowing**, which is notoriously difficult to cache correctly
 
-- **tsz-1**: Core Solver Correctness - Active (nominal subtyping, intersection reduction)
-- **tsz-2**: Cache Unification - **THIS SESSION** (implementation phase)
-- **tsz-3**: CFA - COMPLETE
-- **tsz-4**: Declaration Emit - COMPLETE
-- **tsz-5**: Import/Export Elision - ACTIVE
-- **tsz-6**: Advanced Type Nodes - COMPLETE
-- **tsz-7**: Automatic Import Generation - COMPLETE
-
-The Cache Isolation Bug fix is **critical path** for both correctness (preventing `any` leakage) and performance (enabling safe parallel/incremental checking).
+From **AGENTS.md**: Recent discriminant narrowing implementation had **3 critical bugs**:
+1. Reversed subtype check
+2. Missing type resolution (Lazy, Ref, Intersection)
+3. Broken for optional properties
 
 ### Why This Matters
 
-1. **Correctness**: Type relations computed under different "Lawyer" rules (strict vs. non-strict) are currently leaking into each other, making the compiler unsound
-2. **Foundation for Salsa**: Cannot integrate Salsa (incremental recomputation) until state is unified and "Judge vs. Lawyer" separation is strictly enforced at cache level
-3. **North Star Alignment**: Section 3.3 requires Lawyer to manage object literal freshness and `any` propagation - the cache must respect these boundaries
+1. **Correctness**: Narrowing is essential for TypeScript's type safety - without it, types don't properly refine in conditionals
+2. **North Star Alignment**: Section 3.1 requires Solver to handle narrowing, not Checker
+3. **Foundation for CFA**: Proper narrowing is required for Control Flow Analysis
 
 ## Implementation Tasks
 
-### Task 1: Lawyer-Layer Cache Partitioning (HIGH PRIORITY - Correctness)
+### Task 1: Fix Discriminant Narrowing Regressions (CRITICAL - Bug Fix)
 
-**Goal**: Modify `TypeCache` to support partitioned caching based on Lawyer rules.
-
-**Implementation**:
-- Modify `TypeCache` in `src/checker/context.rs`
-- Replace single `relation_cache` with keyed cache
-- Cache key includes: `AnyPropagationMode` or bitmask of active Lawyer rules
-- Rules to track: strict function types, strict null checks
-
-**Why High Priority**: `any` propagation results are currently leaking into strict checks, causing fundamental unsoundness.
-
-**Files to modify**:
-- `src/checker/context.rs`: TypeCache struct
-- `src/solver/db.rs`: Update `lookup_subtype_cache` and `insert_subtype_cache` methods
-
-### Task 2: CheckerState Refactoring (HIGH PRIORITY - Architecture)
-
-**Goal**: Update `src/checker/state.rs` to delegate all caching logic to `ctx.type_cache`.
+**Goal**: Fix the 3 critical bugs in discriminant narrowing identified in AGENTS.md.
 
 **Implementation**:
-- Remove ad-hoc caches from `CheckerState` or `CheckerContext`
-- Ensure all caching goes through unified `TypeCache`
-- Eliminate private cache instances in temporary `CheckerState` (fixes Cache Isolation Bug)
+1. Fix reversed subtype check: use `is_subtype_of(literal, property_type)` not reverse
+2. Add type resolution: handle `Lazy`, `Ref`, `Intersection` types before narrowing
+3. Fix optional properties: correct logic for `{ prop?: "a" }` cases
 
-**Why High Priority**: Completes the Cache Isolation Bug fix and unifies architecture.
+**Why High Priority**: These bugs cause incorrect type narrowing in object literals, a fundamental TypeScript feature.
 
 **Files to modify**:
-- `src/checker/state.rs`: Main checker state
-- `src/checker/state_type_resolution.rs`: Temporary checker creation
+- `src/solver/narrowing.rs`: Discriminant narrowing logic
+- `src/checker/control_flow_narrowing.rs`: If applicable
 
-### Task 3: Thread-Safe Cache Access (MEDIUM PRIORITY - Performance)
+### Task 2: Implement Solver::narrow (HIGH PRIORITY - Architecture)
 
-**Goal**: Enable parallel checking by making `TypeCache` thread-safe.
+**Goal**: Move narrowing logic from Checker to Solver using Visitor pattern.
 
 **Implementation**:
-- Replace `RefCell<FxHashMap>` with `DashMap` or similar concurrent structure
-- Ensure no deadlocks in recursive type resolution paths
-- Aligns with North Star Section 2.1 (parallel checking)
+- Add `narrow(type_id: TypeId, narrower: TypeId) -> TypeId` to `src/solver/narrowing.rs`
+- Use Visitor Pattern from `src/solver/visitor.rs` to traverse unions
+- Filter out constituents that don't match the narrower
 
-**Why Medium Priority**: Important for performance but can be added after Task 1-2 are stable.
+**Why High Priority**: North Star Section 3.1 requires Solver to calculate narrowed types, not Checker.
 
 **Files to modify**:
-- `src/checker/context.rs`: TypeCache data structures
-- Potential deadlock zones: recursive type resolution paths
+- `src/solver/narrowing.rs`: Add narrow() function
+- `src/solver/visitor.rs`: Use visitor pattern for union traversal
 
-### Task 4: Symbol Dependency Integration (MEDIUM PRIORITY - Future-proofing)
+### Task 3: Checker Integration with CFA (MEDIUM PRIORITY - Feature)
 
-**Goal**: Wire `symbol_dependencies` map in `TypeCache` to `get_type_of_symbol` logic.
+**Goal**: Update Checker to query Solver for narrowed types when traversing control flow.
 
 **Implementation**:
-- Connect `TypeCache.symbol_dependencies` to type resolution
-- Foundation for "Incremental Checking" metric in North Star
-- Helps tsz-5 (Import/Export Elision) track type-only vs value usage
+- Update `src/checker/flow_analysis.rs` to use Solver::narrow
+- Ensure Checker identifies WHERE narrowing happens (AST node) and WHAT the condition is
+- Delegate the RESULT calculation to Solver
 
-**Why Medium Priority**: Critical foundation for incremental checking but not blocking correctness.
+**Why Medium Priority**: Critical for complete CFA but depends on Task 2.
 
 **Files to modify**:
-- `src/checker/state_type_analysis.rs`: `get_type_of_symbol` logic
+- `src/checker/flow_analysis.rs`: Update to call Solver::narrow
+- `src/checker/control_flow_narrowing.rs`: Update narrowing calls
+
+### Task 4: Truthiness Narrowing (MEDIUM PRIORITY - Feature)
+
+**Goal**: Implement truthiness narrowing (e.g., `if (x) { ... }` narrows `T | null | undefined` to `T`).
+
+**Implementation**:
+- Use Solver::narrow to filter out falsy types from unions
+- Handle null, undefined, false, 0, "" as falsy values
+- Apply narrowing in IfStatement, WhileStatement, logical operators (&&, ||, ??)
+
+**Why Medium Priority**: Important feature but builds on Task 2 foundation.
+
+**Files to modify**:
+- `src/solver/narrowing.rs`: Add truthiness narrowing logic
+- `src/checker/flow_analysis.rs`: Apply truthiness narrowing
 
 ## Coordination Notes
 
 ### With tsz-1 (Core Solver)
-- **tsz-1** is working on `src/solver/subtype.rs`
-- **tsz-2** work is primarily in `src/checker/context.rs` and `src/checker/state.rs`
-- **Coordination Point**: tsz-2 provides `QueryDatabase` implementation that tsz-1's solver uses
-- Ensure `lookup_subtype_cache` and `insert_subtype_cache` in `src/solver/db.rs` are updated for partitioned cache
-
-### With tsz-5 (Import/Export Elision)
-- **tsz-5** is working on symbol usage tracking
-- **tsz-2** work on `symbol_dependencies` will help tsz-5 track type-only vs value-carrying symbols across file boundaries
-- **Synergy**: tsz-2's cache improvements provide better dependency tracking for tsz-5
+- **tsz-1** is working on `src/solver/subtype.rs` and core solver correctness
+- **tsz-2** work is primarily in `src/solver/narrowing.rs` and `src/checker/flow_analysis.rs`
+- **Coordination Point**: tsz-2's narrowing depends on tsz-1's subtype checks
+- Ensure narrow() uses is_subtype_of correctly (not reversed!)
 
 ### Avoid Conflicts
 - **tsz-3** (CFA) - COMPLETE, no conflicts
 - **tsz-4** (Declaration Emit) - COMPLETE, no conflicts
+- **tsz-5** (Import/Export Elision) - ACTIVE, minimal overlap
 - **tsz-6/7** (Advanced Type Nodes/Import Generation) - COMPLETE, no conflicts
 
 ## Mandatory Two-Question Rule
 
-Per AGENTS.md, since modifying `src/checker/` and `src/solver/db.rs`:
+Per AGENTS.md, since modifying `src/solver/` or `src/checker/`:
 
 **Question 1 (PRE-implementation)**:
 ```bash
-./scripts/ask-gemini.mjs --include=src/checker "I need to implement Lawyer-Layer Cache Partitioning.
+./scripts/ask-gemini.mjs --include=src/solver "I need to fix the 3 bugs in discriminant narrowing.
 
-Planned approach:
-1. Add cache key struct with AnyPropagationMode bitmask
-2. Replace TypeCache.relation_cache with partitioned cache
-3. Update all cache access sites to include Lawyer context
+Bugs:
+1. Reversed subtype check - using is_subtype_of(property_type, literal) instead of is_subtype_of(literal, property_type)
+2. Missing type resolution - not handling Lazy/Ref/Intersection types
+3. Broken for optional properties - failing on { prop?: "a" } cases
 
-Is this the right approach? What about the cache key structure?
-Are there edge cases I'm missing?
+My planned approach:
+1. Fix the subtype check order
+2. Add resolve_type() call before narrowing
+3. Handle optional properties with explicit undefined check
+
+Is this the right approach? What exact functions should I modify?
+Please provide: 1) File paths, 2) Function names, 3) Edge cases."
 ```
 
 **Question 2 (POST-implementation)**:
 ```bash
-./scripts/ask-gemini.mjs --pro --include=src/checker "I implemented Lawyer-Layer Cache Partitioning.
+./scripts/ask-gemini.mjs --pro --include=src/solver "I fixed the discriminant narrowing bugs.
 
 Changes:
 [PASTE CODE OR DIFF]
 
 Please review:
 1. Is this logic correct for TypeScript?
-2. Did I miss any Lawyer rule combinations?
-3. Are there deadlock risks in recursive resolution?
+2. Did I miss any edge cases?
+3. Are there type system bugs?"
 ```
 
 ## Success Criteria
 
 1. **Correctness**:
-   - [ ] Strict mode checks don't leak `any` from non-strict checks
-   - [ ] Cache isolation prevents cross-contamination
+   - [ ] Discriminant narrowing works correctly for object literals
+   - [ ] Optional properties handled properly
+   - [ ] No regressions in existing narrowing tests
 
 2. **Architecture**:
-   - [ ] All caching delegated to unified `TypeCache`
-   - [ ] No ad-hoc caches in `CheckerState`
+   - [ ] Solver::narrow implemented using Visitor pattern
+   - [ ] Checker delegates narrowing calculation to Solver
 
-3. **Conformance**:
-   - [ ] Type aliases (Partial<T>, Pick<T,K>) resolve correctly
-   - [ ] No regressions in existing tests
-
-4. **Performance** (Task 3):
-   - [ ] Thread-safe cache access enables parallel checking
+3. **Completeness**:
+   - [ ] Truthiness narrowing implemented
+   - [ ] CFA integration complete
 
 ## Session History
 
 - 2026-02-04: Started as "Intersection Reduction and Advanced Type Operations"
-- 2026-02-04: **COMPLETED** BCT, Intersection Reduction, Literal Widening
-- 2026-02-04: **COMPLETED** Phase 1: Nominal Subtyping (all 4 tasks)
-- 2026-02-04: **INVESTIGATED** Cache Isolation Bug
-- 2026-02-04: **COMPLETE** Investigation phase
-- 2026-02-04: **REDEFINED** to Lawyer-Layer Cache Partitioning & Type Cache Unification
+- 2026-02-04: COMPLETED BCT, Intersection Reduction, Literal Widening
+- 2026-02-04: COMPLETED Phase 1: Nominal Subtyping (all 4 tasks)
+- 2026-02-04: INVESTIGATED Cache Isolation Bug
+- 2026-02-04: COMPLETE Cache Isolation Bug investigation
+- 2026-02-04: REDEFINED to Lawyer-Layer Cache Partitioning & Type Cache Unification
+- 2026-02-04: COMPLETED Task 1: Lawyer-Layer Cache Partitioning
+- 2026-02-04: COMPLETED Task 2: CheckerState Refactoring
+- 2026-02-04: **REDEFINED** to Type Narrowing & Control Flow Analysis
 
-## Previous Investigation Work (Archived)
+## Previous Work (Archived)
 
-### Root Cause Discovery
-**Cache Isolation Bug** - temporary `CheckerState` instances in `get_type_of_symbol` discard their caches, preventing main context from seeing resolved lib types like `Partial<T>` and `Pick<T,K>`.
+### Task 1: Lawyer-Layer Cache Partitioning ✅
+**Commit**: `02a84a5de`
 
-### Attempted Fixes (Insufficient)
-1. TypeEnvironment Registration → No improvement
-2. Return Lazy(DefId) → No improvement
+Fixed `any` propagation results leaking between strict/non-strict modes.
 
-### Solution
-Implemented shared cache infrastructure (planned in previous session phase).
+### Task 2: CheckerState Refactoring ✅
+**Commit**: `5f4072f36`
 
-## Complexity: MEDIUM (was HIGH)
+Fixed Cache Isolation Bug where lib.d.ts type aliases weren't resolving correctly.
+
+## Complexity: MEDIUM
 
 **Why Medium**:
-- Clear architectural guidance from Gemini
-- Phased approach minimizes risk
-- Tasks can be implemented incrementally
-- No unknown architectural issues
+- Narrowing logic is complex but well-defined
+- Clear architectural guidance from North Star
+- Can implement incrementally (Task 1 → 2 → 3 → 4)
 
-**Mitigation**: Follow Two-Question Rule strictly. Use --pro flag for all architectural changes.
-
-## Next Steps
-
-1. ✅ Update session file with redefinition (THIS STEP)
-2. 🔄 Ask Gemini Question 1: Approach validation for Task 1
-3. 🔄 Implement Task 1: Lawyer-Layer Cache Partitioning
-4. 🔄 Ask Gemini Question 2: Implementation review
-5. 🔄 Continue with Tasks 2-4
+**Mitigation**: Follow Two-Question Rule strictly. Use --pro flag for implementation reviews.
 
 ## Session Status: 🟢 ACTIVE
 
-**Phase**: Implementation
-**Focus**: Task 1 - Lawyer-Layer Cache Partitioning
-**Estimated Time**: 4-6 hours (all 4 tasks)
+**Phase**: Task 1 - Fix Discriminant Narrowing Regressions
+**Focus**: Critical bug fix
 **Current Task**: Question 1 - Approach validation
 
 ---
-
-## Progress Update (2026-02-04)
-
-### Task 1 Complete ✅
-
-**Commit**: `02a84a5de` - "feat(tsz-2): implement Lawyer-Layer Cache Partitioning (Task 1)"
-
-**Changes Made**:
-1. Added `RelationCacheKey` struct to `src/solver/types.rs`
-2. Updated Database layer (`src/solver/db.rs`)
-3. Updated `SubtypeChecker` (`src/solver/subtype.rs`)
-4. Updated `CheckerState.is_subtype_of` (`src/checker/assignability_checker.rs`)
-5. Updated `TypeCache` (`src/checker/context.rs`)
-
-**Correctness Impact**: Prevents `any` propagation results from non-strict checks from contaminating strict mode checks, fixing a fundamental unsoundness.
-
-**Gemini Guidance**: Followed Two-Question Rule (Question 1: Approach Validation)
-
-**Next**: Task 2 - CheckerState Refactoring
-
----
-
-### Task 2 Complete ✅
-
-**Commit**: `5f4072f36` - "feat(tsz-2): implement CheckerState Refactoring (Task 2)"
-
-**Changes Made**:
-1. Expanded TypeCache with specialized caches (application_eval_cache, mapped_eval_cache, object_spread_property_cache, element_access_type_cache, flow_analysis_cache, class_instance_type_to_decl, class_instance_type_cache)
-2. Fixed `with_cache` and `with_cache_and_options` to use specialized caches from TypeCache instead of creating fresh empty HashMaps
-3. Added `CheckerContext::with_parent_cache` method to create child contexts that share parent's caches through RefCell cloning
-4. Added `CheckerState::with_parent_cache` method for convenience
-5. Updated temporary checker creation in `state_type_analysis.rs` and `state_type_environment.rs` to use `with_parent_cache` instead of `new`
-
-**Correctness Impact**: Fixes Cache Isolation Bug where temporary checkers created for cross-file symbol resolution were discarding their caches, preventing lib.d.ts type aliases like `Partial<T>` and `Pick<T,K>` from resolving correctly.
-
-**Next**: Task 3 - Thread-Safe Cache Access (NOT STARTED - requires large refactoring)
-
