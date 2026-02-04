@@ -8,28 +8,23 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: ✅ Fixed ClassDeclaration26.ts conformance test
+**Status**: ✅ Fixed abstractPropertyNegative.ts (getter/setter without body)
 
-**Completed** (commit 8e21d5d71):
-Successfully fixed ClassDeclaration26.ts to match TypeScript's error output exactly:
-1. ✅ Line 3 col 18: TS1440 - Variable declaration not allowed
-2. ✅ Line 5 col 5: TS1068 - Unexpected token
-3. ✅ Line 5 col 20: TS1005 - ',' expected
-4. ✅ Line 5 col 23: TS1005 - '=>' expected
-5. ✅ Line 6 col 1: TS1128 - Declaration or statement expected
+**Completed** (commit 8a034be71):
+Fixed missing TS1005 error for accessors without bodies in non-abstract, non-ambient classes.
 
-**Key Changes**:
-- When var/let appears before 'constructor', emit TS1068 instead of TS1440
-- Add var/let to modifiers list and return early from `parse_class_member_modifiers`
-- Skip constructor/method parsing when var/let is in modifiers
-- When var/let + () pattern detected, emit TS1005 errors at '(' and '{'
-- Return NONE and parse statement for recovery to cause TS1128 at '}'
+**Changes Made**:
+- Added check in `parse_get_accessor_with_modifiers` and `parse_set_accessor_with_modifiers` to emit TS1005 '{' expected when accessor has no body
+- Check skips error emission for ambient contexts (`declare class`) and abstract accessors
+- Added `CONTEXT_FLAG_AMBIENT` to imports in state_statements.rs
+- Set ambient context flag in `parse_declare_class` and `parse_declare_abstract_class` when parsing class members
 
-**Conformance Status**: 97/200 passed (48.5%)
-- Top error mismatches: TS1005 (13 missing), TS2304 (6 missing, 9 extra), TS2695 (11 missing)
-- Most TS1005 errors are from API tests with `noTypesAndSymbols: true` (JSON parsing with trailing commas)
+**Previously Completed** (commit 8e21d5d71):
+- Fixed ClassDeclaration26.ts (var constructor() in class body)
 
-**Note**: Unit tests show ~20 failures from recent pull from origin/main (other sessions' work), not related to ClassDeclaration26.ts fix.
+**Conformance Status**: Running next conformance check...
+
+**Focus**: Per Gemini's recommendation, working on TS1005 parser errors (13 missing) - highest impact parser/binder issue.
 
 ### Punted Items
 
