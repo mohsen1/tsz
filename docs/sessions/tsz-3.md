@@ -15,7 +15,17 @@ Updated `resolve_heritage_symbol` in `src/checker/class_inheritance.rs` to use `
 **Remaining Issue**:
 The test `test_abstract_constructor_assignability` still fails because when `Animal` is used as a value (e.g., `createAnimal(Animal)`), its type incorrectly includes Object.prototype properties like `isPrototypeOf`, `propertyIsEnumerable`, etc.
 
-This is a separate bug in how the type for a class reference (not `typeof` class) is calculated.
+Error message:
+```
+Type '{ isPrototypeOf: { (v: Object): boolean }; propertyIsEnumerable: { (v: PropertyKey): boolean }; constructor: Function; speak: { (): void }; ... }' is not assignable to type 'Animal'.
+```
+
+TypeScript shows no errors for this test, confirming it should work.
+
+**Investigation**:
+The issue appears to be in how the type for a class reference (not `typeof` class) is calculated. When resolving the identifier `Animal` in `createAnimal(Animal)`, we should get the constructor type, but we're getting an instance type with Object.prototype properties merged in.
+
+`get_type_of_symbol` for classes calls `get_class_constructor_type` which should return the constructor type. Need to trace through to find where Object.prototype properties are being added.
 
 **Failing Tests**:
 1. `test_abstract_constructor_assignability` - TS2322 error: Type for `Animal` includes Object.prototype properties
