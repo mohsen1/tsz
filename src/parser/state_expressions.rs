@@ -2193,14 +2193,15 @@ impl ParserState {
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 // Missing comma - check if next token looks like another array element
-                // If so, suppress the error and continue parsing (better recovery)
+                // If so, emit error and continue parsing (better recovery)
                 if self.is_expression_start()
                     && !self.is_token(SyntaxKind::CloseBracketToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     // We have an element-like token but no comma - likely missing comma
-                    // Suppress the comma error and continue parsing for better recovery
+                    // Emit the comma error and continue parsing for better recovery
                     // This handles cases like: [1 2 3] instead of [1, 2, 3]
+                    self.error_comma_expected();
                 } else {
                     // Not followed by an element, so we're really done
                     break;
@@ -2261,11 +2262,12 @@ impl ParserState {
             // Try to parse comma separator
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 // Missing comma - check if next token looks like another property
-                // If so, suppress the error and continue parsing (better recovery)
+                // If so, emit error and continue parsing (better recovery)
                 if self.is_property_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
                     // We have a property-like token but no comma - likely missing comma
-                    // Suppress the comma error and continue parsing for better recovery
+                    // Emit the comma error and continue parsing for better recovery
                     // This handles cases like: {a: 1 b: 2} instead of {a: 1, b: 2}
+                    self.error_comma_expected();
                 } else {
                     // Not followed by a property, so we're really done
                     break;
