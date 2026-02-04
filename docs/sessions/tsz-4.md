@@ -197,6 +197,28 @@ cargo nextest run test_assignment_expression_condition_narrows_discriminant
 
 **Impact**: High - common pattern in iterators (`while (!(res = iter.next()).done)`) and result handling
 
+### 2025-02-04: Discovery - Basic Discriminant Narrowing Not Working
+
+**Investigation**:
+Created test case for simple discriminant narrowing (without assignment):
+```typescript
+type D = { done: true, value: 1 } | { done: false, value: 2 };
+let o: D = { done: true, value: 1 };
+if (o.done) {
+    const y: 1 = o.value;  // Should narrow to { done: true, value: 1 }
+}
+```
+
+**Finding**: Even basic discriminant narrowing (without assignment expressions) is not working!
+- **tsc**: No errors (correct narrowing)
+- **tsz**: TS2322 error (narrowing not applied)
+
+**Root Cause**: The issue is NOT with the integration point I fixed, but with the discriminant narrowing infrastructure itself. The narrowing logic in `narrow_by_discriminant` may not be correctly integrated with the flow analysis.
+
+**Next Steps**: Need to investigate why discriminant narrowing is not being applied even for simple cases before the assignment expression fix can be properly tested.
+
+**Commit**: `8fdd91417` - Added assignment unwrapping logic (test still reveals deeper issue)
+
 ## Notes
 
 - Builds on TDZ work from tsz-2
