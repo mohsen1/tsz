@@ -21,5 +21,14 @@
 3. Timebox each investigation to 30 minutes
 4. Document blockers and move on when needed
 
-## Status: ACTIVE
-Ready to continue with remaining 48 failing tests.
+## Test Investigation: test_contextual_property_type_infers_callback_param
+
+**Issue**: TS2339 not emitted when arrow function parameter used incorrectly
+- Test expects error on `x => x.toUpperCase()` where `x: number` from contextual type
+- Root cause: Contextual typing for arrow function parameters in object literals
+- Complexity: Medium-High (type inference system)
+
+**Status**: DEFERRED - Requires type inference expertise
+
+## Current Task: Finding Simple Fixes
+Continuing to review remaining 48 tests for simple expectation corrections.
