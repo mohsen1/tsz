@@ -1654,7 +1654,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         match cond_node.kind {
-            // typeof x === "string"
+            // typeof x === "string", x instanceof Class, "prop" in x, etc.
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 eprintln!("DEBUG narrow_type_by_condition_inner: is binary expression");
                 if let Some(bin) = self.arena.get_binary_expr(cond_node) {
@@ -1662,6 +1662,7 @@ impl<'a> FlowAnalyzer<'a> {
                         "DEBUG narrow_type_by_condition_inner: operator={}",
                         bin.operator_token
                     );
+                    // Handle logical operators (&&, ||) with special recursion
                     if let Some(narrowed) = self.narrow_by_logical_expr(
                         type_id,
                         bin,
@@ -1675,16 +1676,32 @@ impl<'a> FlowAnalyzer<'a> {
                         );
                         return narrowed;
                     }
+
+                    // CRITICAL: Use Solver-First architecture for other binary expressions
+                    // Extract TypeGuard from AST (Checker responsibility: WHERE + WHAT)
+                    if let Some((guard, guard_target)) = self.extract_type_guard(condition_idx) {
+                        eprintln!(
+                            "DEBUG narrow_type_by_condition_inner: extracted guard, guard_target={}",
+                            guard_target.0
+                        );
+                        // Check if the guard applies to our target reference
+                        if self.is_matching_reference(guard_target, target) {
+                            eprintln!(
+                                "DEBUG narrow_type_by_condition_inner: guard matches target, calling narrowing.narrow_type"
+                            );
+                            // Delegate to Solver for the calculation (Solver responsibility: RESULT)
+                            return narrowing.narrow_type(type_id, &guard, is_true_branch);
+                        } else {
+                            eprintln!(
+                                "DEBUG narrow_type_by_condition_inner: guard does not match target"
+                            );
+                        }
+                    }
+
                     eprintln!(
-                        "DEBUG narrow_type_by_condition_inner: calling narrow_by_binary_expr"
+                        "DEBUG narrow_type_by_condition_inner: no guard extracted or guard doesn't match, returning type_id"
                     );
-                    return self.narrow_by_binary_expr(
-                        type_id,
-                        bin,
-                        target,
-                        is_true_branch,
-                        &narrowing,
-                    );
+                    return type_id;
                 }
             }
 
