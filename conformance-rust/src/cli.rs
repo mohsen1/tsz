@@ -32,6 +32,10 @@ pub struct Args {
     #[arg(long)]
     pub print_test: bool,
 
+    /// Print test file contents with line numbers (enables verbose mode)
+    #[arg(long)]
+    pub print_test_files: bool,
+
     /// Filter pattern for test files
     #[arg(long)]
     pub filter: Option<String>,
@@ -69,5 +73,10 @@ impl Args {
             // No additional validation needed
         }
         Ok(())
+    }
+
+    /// Check if verbose mode should be enabled (either explicitly or via print_test_files)
+    pub fn is_verbose(&self) -> bool {
+        self.verbose || self.print_test_files
     }
 }

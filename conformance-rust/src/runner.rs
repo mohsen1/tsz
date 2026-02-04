@@ -92,15 +92,16 @@ impl Runner {
                 let stats = self.stats.clone();
                 let error_freq = self.error_freq.clone();
                 let tsz_binary = self.tsz_binary.clone();
-                let verbose = self.args.verbose;
+                let verbose = self.args.is_verbose();
                 let print_test = self.args.print_test;
+                let print_test_files = self.args.print_test_files;
                 let base = base_path.clone();
 
                 async move {
                     let _permit = permit.acquire().await.unwrap();
                     let rel_path = relative_display(&path, &base);
 
-                    match Self::run_test(&path, cache, tsz_binary, verbose).await {
+                    match Self::run_test(&path, cache, tsz_binary, verbose, print_test_files).await {
                         Ok(result) => {
                             // Update stats
                             stats.total.fetch_add(1, Ordering::SeqCst);
@@ -282,6 +283,7 @@ impl Runner {
         cache: Arc<crate::cache::TscCache>,
         tsz_binary: String,
         _verbose: bool,
+        print_test_files: bool,
     ) -> anyhow::Result<TestResult> {
         // CRITICAL PERFORMANCE OPTIMIZATION:
         // Get metadata FIRST (fast syscall) before reading file content
@@ -294,6 +296,16 @@ impl Runner {
 
         // Read file content (only if we need it)
         let content = tokio::fs::read_to_string(path).await?;
+
+        // Print test file content with line numbers if requested
+        if print_test_files {
+            println!("\n📄 Test file: {}", path.display());
+            println!("{}", "-".repeat(60));
+            for (i, line) in content.lines().enumerate() {
+                println!("{:4}: {}", i + 1, line);
+            }
+            println!("{}", "-".repeat(60));
+        }
 
         // Parse directives
         let parsed = parse_test_file(&content)?;

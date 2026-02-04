@@ -560,6 +560,7 @@ pub mod diagnostic_codes {
 
     // Parameter default value errors
     pub const AWAIT_IN_PARAMETER_DEFAULT: u32 = 2524; // 'await' expressions cannot be used in a parameter initializer.
+    pub const YIELD_IN_PARAMETER_DEFAULT: u32 = 2523; // 'yield' expressions cannot be used in a parameter initializer.
     pub const PARAMETER_CANNOT_REFERENCE_ITSELF: u32 = 2372; // Parameter '{0}' cannot reference itself.
 
     // Const/variable declaration errors
