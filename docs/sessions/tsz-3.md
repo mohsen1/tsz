@@ -8,7 +8,22 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**Status**: Implementing Array Mutation Detection in Flow Graph Builder
+**Status**: Completed array mutation detection. Ready for next task.
+
+**Completed** (commit 77521fff2):
+- Implemented array mutation detection in FlowGraphBuilder
+- Added `is_array_mutation_call` to detect push, pop, shift, unshift, splice, sort, reverse, fill, copyWithin
+- Added `create_flow_array_mutation` method to create ARRAY_MUTATION flow nodes
+- Updated `handle_expression_for_assignments` to detect and create mutation flow nodes
+- Optional chaining (?.) correctly handled as non-definite mutation
+
+**Conformance Results**:
+- 5039/12638 passed (39.9%)
+- Minimal improvement: +2 tests (5037 → 5039)
+- TS2322: missing=271, extra=465 (was missing=272, extra=462)
+- TS2339: missing=410, extra=285 (was missing=411, extra=287)
+
+**Note**: Array mutation detection is just one piece of type narrowing. The modest improvement suggests other factors (like discriminant narrowing, typeof narrowing, etc.) may need more attention.
 
 **Task**: Port array mutation detection logic from state_binding.rs into FlowGraphBuilder
 
