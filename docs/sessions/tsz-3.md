@@ -54,11 +54,40 @@ let spread2 = [...[1, true]]; // Should be (number | boolean)[]
 
 ## Progress
 
-- [ ] Test current behavior with array/tuple inference
-- [ ] Identify gaps in contextual tuple inference
-- [ ] Fix best common type computation
-- [ ] Verify spread handling
-- [ ] Run conformance tests to measure impact
+### Investigation Results
+
+**Tested Cases:**
+- ✅ Basic array inference: `const nums = [1, 2, 3]` → `number[]`
+- ✅ Best common type: `const mixed = [1, "a"]` → `(string | number)[]`
+- ✅ Contextual tuple: `const t1: [number, string] = [1, "a"]`
+- ✅ Tuple destructuring: `const [x, y] = [1, "a"]`
+- ✅ Array literal with context: All working correctly
+
+**Bug Found: Class Instance Type Formatting**
+
+**File**: `TypeScript/tests/cases/compiler/arrayLiteralContextualType.ts`
+
+**Issue**: tsz reports errors but tsc passes:
+```
+tsz: error TS2345: Argument of type '{ isPrototypeOf: { (v: Infinity): boolean }; ... }'
+tsc: (no errors)
+```
+
+**Root Cause**: Class instance types include Object.prototype methods in their expanded form:
+- The type shows `isPrototypeOf`, `propertyIsEnumerable`, `toLocaleString`, `toString`, `valueOf`
+- These methods should not be visible in the type representation
+- The issue is in how class instance types are created/formatted, not array/tuple inference
+
+**Impact**: This is a type formatting/display issue that affects many class-related type errors, not specific to arrays/tuples.
+
+**Conclusion**: Array and tuple inference appears to be working correctly. The main issue found is a broader problem with class instance type representation.
+
+## Next Steps
+
+Given that array/tuple inference is working, consider switching focus to:
+1. Fix the class instance type formatting issue (affects many tests)
+2. Move to a different area for this session
+3. Run broader conformance tests to identify higher-impact issues
 
 ## Session Coordination
 
