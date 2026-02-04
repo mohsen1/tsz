@@ -4,7 +4,7 @@
 **Status**: Active (Redefined 2026-02-04)
 **Goal**: Restore test suite, implement nominal subtyping, fix intersection reduction
 
-**Latest Update**: 2026-02-04 - 5 priorities complete! Starting new redefined priorities.
+**Latest Update**: 2026-02-04 - 5 priorities complete! Started Priority 1 (Variance Inference) - HIGH complexity
 
 **Session Accomplishments (2026-02-04)**:
 Completed initial redefinition (3 priorities) + 2 additional priorities:
@@ -168,7 +168,26 @@ Fixed src/solver/evaluate_rules/mapped.rs based on Gemini Pro review:
 
 ## New Priorities (2026-02-04 - Second Redefinition)
 
-### 🔄 Priority 1: Variance Inference for Generic Types (Rule #31)
+### 🔄 Priority 1: Variance Inference for Generic Types (Rule #31) - IN PROGRESS
+**Status**: Research complete, requires significant implementation effort
+
+**Current State** (2026-02-04):
+- Reviewed current implementation in `src/solver/infer.rs` lines 2754-2769
+- Identified stub: "assume covariant for all type arguments"
+- Consulted Gemini for approach validation (Question 1 of Two-Question Rule)
+- Received detailed guidance on implementation
+
+**Implementation Requirements** (from Gemini):
+1. Modify `compute_variance_helper` for `TypeKey::Application`
+2. Create `get_variances_for_generic(base: TypeId)` helper
+3. Add `Variance` enum to `src/solver/types.rs`
+4. Implement caching for recursive generic types
+5. Handle polarity flipping for contravariant parameters
+6. Handle invariant parameters (recurse twice)
+
+**Complexity**: HIGH - Requires new infrastructure and careful handling of recursive types
+
+**Recommendation**: This priority is a good candidate for a dedicated focused session due to its complexity and the amount of new code required.
 **Goal**: Move beyond "assume covariant" stub to correctly infer variance (covariant, contravariant, invariant) for generic type parameters.
 
 **Files**:
