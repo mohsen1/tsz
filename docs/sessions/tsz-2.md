@@ -142,16 +142,37 @@ const i: I = c; // ERROR: property 'x' is private in type 'C' but not in type 'I
 
 **Next**: Task 4 - Handle Inheritance and Overriding in class_hierarchy.rs
 
-#### Task 4: Handle Inheritance and Overriding
+#### Task 4: Handle Inheritance and Overriding ✅ COMPLETED (2026-02-04)
 **File**: `src/solver/class_hierarchy.rs`
 
-**Function**: `merge_properties()`
+**Status**: COMPLETE
 
-**Requirements**:
-1. When derived class overrides base property:
-   - Update `parent_id` to derived class symbol
-   - Preserve visibility from base (private stays private)
-2. Handle protected member inheritance correctly
+**Commits**:
+- `8bb483b73`: feat(solver): implement visibility-aware inheritance in class_hierarchy
+
+**What Was Implemented**:
+
+1. **`merge_properties` function**:
+   - Added `current_class: SymbolId` parameter for parent_id tracking
+   - ALL base properties (including private) are inherited
+   - Private members are inherited but not accessible (Checker enforces access control)
+   - `parent_id` updated to `current_class` for all own/overriding members
+   - Updated test to use new function signature
+
+2. **Key Insight from Gemini Pro**:
+   - Initial implementation filtered out private base properties
+   - **Critical Bug**: In TypeScript, private members ARE inherited (just not accessible)
+   - This is required for subtyping: `class B extends A` must structurally contain all of A's properties for `B <: A` assignability
+   - Filtering out private members would break: `let a: A = new B()`
+
+3. **Correct Behavior**:
+   ```typescript
+   class A { private x = 1; }
+   class B extends A {}  // B inherits private x (but can't access it)
+   const a: A = new B(); // ✅ OK: B is subtype of A (has x nominally)
+   ```
+
+**Phase 1 Complete**: All four tasks for nominal subtyping implementation are now complete!
 
 ---
 
