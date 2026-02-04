@@ -1,10 +1,33 @@
 # Session tsz-3: Type Environment Unification
 
 **Started**: 2026-02-04
-**Status**: ACTIVE (REDEFINED)
+**Status**: ACTIVE (Phase 1 Tasks 1-3 COMPLETE)
 **Focus**: Share single TypeEnvironment between CheckerContext and BinderTypeDatabase to fix Lazy type resolution
 
-## Context
+## Completed Work (2026-02-04)
+
+### Phase 1: Architecture Unification - Tasks 1-3 ✅
+
+**Problem Solved**: Type aliases couldn't be resolved during narrowing because:
+1. Type aliases were registered in one TypeEnvironment instance
+2. Narrowing operations used a TypeInterner without access to that TypeEnvironment
+3. Lazy types remained unresolved during discriminant narrowing
+
+**Solution Implemented**:
+1. **Task 1**: Made `ctx.type_environment` shareable as `Rc<RefCell<TypeEnvironment>>`
+2. **Task 2**: Updated type registration and evaluation to use the shareable `type_environment`
+3. **Task 3**: Created BinderTypeDatabase in flow analysis to bridge TypeInterner and TypeEnvironment
+
+**Result**: FlowAnalyzer can now resolve Lazy types during narrowing operations, enabling type alias narrowing for discriminated unions.
+
+### Commits
+- 11ee4cbec: feat: update CheckerContext type_environment to Rc<RefCell<>> (Task 1)
+- 457774e05: feat: use shareable type_environment for type resolution (Task 2)
+- 532f7f0ee: feat: use BinderTypeDatabase for flow analysis to enable Lazy type resolution (Task 3)
+
+---
+
+## Original Context
 
 Previous session completed all 8 narrowing bug fixes (discriminant, instanceof, in operator). This session initially focused on CFA orchestration (switch exhaustiveness, fall-through narrowing) but discovered a critical architectural issue blocking Lazy type resolution.
 
@@ -25,7 +48,25 @@ These are NOT the same instance, so:
 
 ### Phase 1: Architecture Unification (HIGH PRIORITY)
 
-#### Task 1: Update CheckerContext (src/checker/context.rs)
+#### Task 1: Update CheckerContext (src/checker/context.rs) ✅ COMPLETE
+**Changes** (Commit 11ee4cbec):
+- Changed `type_env` field from `RefCell<Option<TypeEnvironment>>` to `Rc<RefCell<TypeEnvironment>>`
+- Updated all 4 constructor initializations (new, with_options, with_cache, with_cache_and_options)
+- This enables sharing the TypeEnvironment with BinderTypeDatabase
+
+#### Task 2: Update TypeResolver Usage Points ✅ COMPLETE
+**Changes** (Commit 457774e05):
+- Updated `register_resolved_type` to use `ctx.type_environment` (Rc<RefCell<>>)
+- Updated `evaluate_type_with_env` to use `ctx.type_environment` (Rc<RefCell<>>)
+- This ensures both type registration and evaluation use the same TypeEnvironment
+
+#### Task 3: Update Flow Analyzer Creation ✅ COMPLETE
+**Changes** (Commit 532f7f0ee):
+- Modified `apply_flow_narrowing` to create BinderTypeDatabase locally
+- Pass `ctx.type_environment.clone()` to BinderTypeDatabase
+- Use BinderTypeDatabase instead of TypeInterner for FlowAnalyzer
+- This allows narrowing operations to resolve Lazy types (type aliases)
+- Added imports for BinderTypeDatabase and QueryCache
 **Goal**: Make CheckerContext own the shared Rc<RefCell<TypeEnvironment>>
 
 **Changes**:
