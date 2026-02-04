@@ -78,26 +78,34 @@ import { privateFn } from './module'; // TS2305
 
 ---
 
-### TS2664 (Invalid module name in augmentation) - ❌ Not Working
+### TS2664 (Invalid module name in augmentation) - ❌ ROOT CAUSE FOUND
 
-Test case:
-```typescript
-import {} from "dummy"; // Make this a module file
+**Bug Identified**: Binder state corruption when multiple files share one binder instance.
 
-declare module "nonExistentPackage" {
-  export function foo(): void;
-}
+**Root Cause**:
+1. User file is bound → `is_external_module=true` (has import)
+2. Lib files are bound → `is_external_module=false` (no imports)
+3. Checker runs on user file but sees `is_external_module=false` from lib files!
+4. TS2694 check requires `is_external_module=true`, so it's skipped
+
+**Evidence**: Debug output shows:
+```
+[BINDER] Set is_external_module=true (user file)
+[BINDER] Set is_external_module=false (lib files - many times)
+[CHECKER] is_external_module() called, returning=false
 ```
 
-**Expected**: TS2694 - "Invalid module name in augmentation, module 'nonExistentPackage' cannot be found."
-**Actual**: tsz does NOT emit TS2664 (TSC does)
+**Fix Required**: The checker needs to see the binder state AS IT WAS WHEN THE USER FILE WAS BOUND. Options:
+1. Store `is_external_module` per-file in file metadata
+2. Pass a snapshot of binder state to checker for each file
+3. Use separate binder instances per file (may be expensive)
 
-**Status**: The code EXISTS in `src/checker/declarations.rs:829-843` and there's a passing test (`test_ts2307_import_with_module_augmentation`), but manual testing shows it's not being emitted in CLI usage.
+**Files Modified for Investigation**:
+- `src/binder/state_binding.rs`: Fixed `is_augmentation` logic, added debug output
+- `src/checker/declarations.rs`: Added debug output
+- `src/binder/state.rs`: Added debug output
 
-**Next Steps**: Investigate why the TS2664 check isn't working despite the code and test existing. Possible issues:
-- Binder not setting `is_external_module` correctly
-- `module_exists` returning incorrect value
-- Order of operations issue
+**Status**: Root cause identified, requires architectural fix in driver/binder.
 
 ---
 
