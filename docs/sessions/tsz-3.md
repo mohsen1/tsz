@@ -23,9 +23,20 @@ Type '{ isPrototypeOf: { (v: Object): boolean }; propertyIsEnumerable: { (v: Pro
 TypeScript shows no errors for this test, confirming it should work.
 
 **Investigation**:
-The issue appears to be in how the type for a class reference (not `typeof` class) is calculated. When resolving the identifier `Animal` in `createAnimal(Animal)`, we should get the constructor type, but we're getting an instance type with Object.prototype properties merged in.
+Traced through the code:
+1. `get_type_of_node` for identifier → `get_type_of_identifier` (type_computation_complex.rs:1413)
+2. `get_type_of_identifier` resolves symbol via `resolve_identifier_symbol` (line 1436)
+3. Then calls `get_type_of_symbol(sym_id)` to get the type (line 1525)
+4. `get_type_of_symbol` for classes calls `get_class_constructor_type` (state_type_analysis.rs:1052)
 
-`get_type_of_symbol` for classes calls `get_class_constructor_type` which should return the constructor type. Need to trace through to find where Object.prototype properties are being added.
+The error shows we're getting a type with Object.prototype properties when passing `Animal` to a function expecting `typeof Animal`.
+
+This could mean:
+- `get_type_of_symbol(Animal)` is returning the wrong type (instance instead of constructor), OR
+- There's an issue with how `typeof Animal` type query is resolved, OR
+- The assignability check is incorrectly comparing instance type to constructor type
+
+Next: Need to add debug logging to trace what type `get_type_of_symbol` returns for the Animal class symbol.
 
 **Failing Tests**:
 1. `test_abstract_constructor_assignability` - TS2322 error: Type for `Animal` includes Object.prototype properties
