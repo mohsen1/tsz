@@ -70,3 +70,24 @@ Work is never done until all tests pass. This includes:
 - Started with TS1005/TS1109 parser focus
 - Added infrastructure investigation (TS1202)
 - Refined to include unit test stability for clean baseline
+
+## Investigation: Abstract Constructor Assignability (2026-02-04)
+
+**Issue**: Test `test_abstract_constructor_assignability` expects 0 errors but gets 1:
+```typescript
+const ctor1: AnimalCtor = Dog; // Position 609 - ERROR
+```
+
+**Error**: TS2322 - Dog's type is instance type (with methods like speak, isPrototypeOf) instead of constructor type
+
+**Root Cause Analysis**:
+- Constructor types ARE being computed correctly
+- Cached in type environment for value contexts (state_type_analysis.rs:854-863)
+- Bug is in identifier → type resolution path
+- Path: `get_type_of_node` → `compute_type_of_node_complex` → `ExpressionDispatcher::dispatch_type_computation`
+
+**Status**: Complex type resolution issue. Requires deeper investigation or tsz-tracing skill.
+
+**Next Steps**:
+- Use tsz-tracing skill to debug the resolution path
+- Or continue with Task 2 (TS1005 parser fixes) which have been very productive
