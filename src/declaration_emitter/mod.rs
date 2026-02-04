@@ -81,6 +81,7 @@ impl<'a> DeclarationEmitter<'a> {
             type_cache: None,
             type_interner: None,
             binder: None,
+            used_symbols: None,
             inside_declare_namespace: false,
             in_constructor_params: false,
         }
@@ -102,6 +103,7 @@ impl<'a> DeclarationEmitter<'a> {
             type_cache: Some(type_cache),
             type_interner: Some(type_interner),
             binder: Some(binder),
+            used_symbols: None,
             inside_declare_namespace: false,
             in_constructor_params: false,
         }
@@ -122,10 +124,28 @@ impl<'a> DeclarationEmitter<'a> {
         self.writer.generate_source_map_json()
     }
 
+    /// Set the set of used symbols for import/export elision.
+    ///
+    /// When this is set, the emitter will filter out imports that are not
+    /// referenced in the exported API surface.
+    pub fn set_used_symbols(&mut self, symbols: FxHashSet<SymbolId>) {
+        self.used_symbols = Some(symbols);
+    }
+
     /// Emit declaration for a source file
     pub fn emit(&mut self, root_idx: NodeIndex) -> String {
         self.reset_writer();
         self.indent_level = 0;
+
+        // Run usage analyzer if we have all required components
+        if let (Some(cache), Some(interner), Some(binder)) =
+            (&self.type_cache, self.type_interner, self.binder)
+        {
+            let mut analyzer =
+                usage_analyzer::UsageAnalyzer::new(self.arena, binder, cache, interner);
+            let used = analyzer.analyze(root_idx);
+            self.used_symbols = Some(used.clone());
+        }
 
         let Some(root_node) = self.arena.get(root_idx) else {
             return String::new();
@@ -1506,11 +1526,28 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        // Side-effect imports (no clause) are always emitted
+        if import.import_clause.is_none() {
+            self.write_indent();
+            self.write("import ");
+            self.emit_node(import.module_specifier);
+            self.write(";");
+            self.write_line();
+            return;
+        }
+
+        // Check if we should elide this import based on usage
+        let (default_used, named_used) = self.count_used_imports(&import);
+        if default_used == 0 && named_used == 0 {
+            // No used symbols in this import - elide it
+            return;
+        }
+
+        // Emit the import with filtering
         self.write_indent();
         self.write("import ");
 
-        if !import.import_clause.is_none()
-            && let Some(clause_node) = self.arena.get(import.import_clause)
+        if let Some(clause_node) = self.arena.get(import.import_clause)
             && let Some(clause) = self.arena.get_import_clause(clause_node)
         {
             if clause.is_type_only {
@@ -1519,18 +1556,18 @@ impl<'a> DeclarationEmitter<'a> {
 
             let mut has_default = false;
 
-            // Default import
-            if !clause.name.is_none() {
+            // Default import (only if used)
+            if !clause.name.is_none() && default_used > 0 {
                 self.emit_node(clause.name);
                 has_default = true;
             }
 
-            // Named imports
-            if !clause.named_bindings.is_none() {
+            // Named imports (filter to used ones)
+            if !clause.named_bindings.is_none() && named_used > 0 {
                 if has_default {
                     self.write(", ");
                 }
-                self.emit_named_imports(clause.named_bindings, !clause.is_type_only);
+                self.emit_named_imports_filtered(clause.named_bindings, !clause.is_type_only);
             }
 
             self.write(" from ");
@@ -1558,6 +1595,45 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("{ ");
         let mut first = true;
         for &spec_idx in &imports.elements.nodes {
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            self.emit_import_specifier(spec_idx, allow_type_prefix);
+        }
+        self.write(" }");
+    }
+
+    /// Emit named imports, filtering out unused specifiers.
+    ///
+    /// This version only emits import specifiers that are in the used_symbols set.
+    fn emit_named_imports_filtered(&mut self, imports_idx: NodeIndex, allow_type_prefix: bool) {
+        let Some(imports_node) = self.arena.get(imports_idx) else {
+            return;
+        };
+        let Some(imports) = self.arena.get_named_imports(imports_node) else {
+            return;
+        };
+
+        // Handle namespace imports (* as ns)
+        if !imports.name.is_none() && imports.elements.nodes.is_empty() {
+            // Check if namespace is used
+            if self.should_emit_import_specifier(imports.name) {
+                self.write("* as ");
+                self.emit_node(imports.name);
+            }
+            return;
+        }
+
+        // Filter individual specifiers
+        self.write("{ ");
+        let mut first = true;
+        for &spec_idx in &imports.elements.nodes {
+            // Only emit if the specifier is used
+            if !self.should_emit_import_specifier(spec_idx) {
+                continue;
+            }
+
             if !first {
                 self.write(", ");
             }
@@ -2262,6 +2338,87 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         false
+    }
+
+    /// Check if an import specifier should be emitted based on usage analysis.
+    ///
+    /// Returns true if:
+    /// - No usage tracking is enabled (used_symbols is None)
+    /// - The specifier's symbol is in the used_symbols set
+    fn should_emit_import_specifier(&self, specifier_idx: NodeIndex) -> bool {
+        // If no usage tracking, emit everything
+        let Some(used) = &self.used_symbols else {
+            return true;
+        };
+
+        // If no binder, we can't check symbols - emit conservatively
+        let Some(binder) = &self.binder else {
+            return true;
+        };
+
+        // Check if the specifier's symbol is used
+        if let Some(&sym_id) = binder.node_symbols.get(&specifier_idx.0) {
+            used.contains(&sym_id)
+        } else {
+            // No symbol found - emit conservatively
+            true
+        }
+    }
+
+    /// Count how many import specifiers in an ImportClause should be emitted.
+    ///
+    /// Returns (default_count, named_count) where:
+    /// - default_count: 1 if default import is used, 0 otherwise
+    /// - named_count: number of used named import specifiers
+    fn count_used_imports(&self, import: &crate::parser::node::ImportDeclData) -> (usize, usize) {
+        let mut default_count = 0;
+        let mut named_count = 0;
+
+        if let Some(used) = &self.used_symbols
+            && let Some(binder) = &self.binder
+        {
+            // Check default import
+            if !import.import_clause.is_none() {
+                if let Some(clause_node) = self.arena.get(import.import_clause) {
+                    if let Some(clause) = self.arena.get_import_clause(clause_node) {
+                        if !clause.name.is_none() {
+                            if let Some(&sym_id) = binder.node_symbols.get(&clause.name.0) {
+                                if used.contains(&sym_id) {
+                                    default_count = 1;
+                                }
+                            }
+                        }
+
+                        // Count named imports
+                        if !clause.named_bindings.is_none() {
+                            if let Some(bindings_node) = self.arena.get(clause.named_bindings) {
+                                if let Some(bindings) = self.arena.get_named_imports(bindings_node)
+                                {
+                                    for &spec_idx in &bindings.elements.nodes {
+                                        if let Some(&sym_id) = binder.node_symbols.get(&spec_idx.0)
+                                        {
+                                            if used.contains(&sym_id) {
+                                                named_count += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // No usage tracking - count everything as used
+            default_count = if !import.import_clause.is_none() {
+                1
+            } else {
+                0
+            };
+            named_count = 1; // At least one if present
+        }
+
+        (default_count, named_count)
     }
 
     fn reset_writer(&mut self) {
