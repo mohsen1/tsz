@@ -839,13 +839,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // CRITICAL FIX: Skip registering Lazy types to their own DefId
-        // This creates circular references: DefId(1) -> Lazy(DefId(1)) -> DefId(1) -> ...
-        // Lazy types are resolved by TypeEvaluator, not by TypeEnvironment lookup
-        if let Some(_def_id) =
+        // CRITICAL FIX: Only skip registering Lazy types if they point to THEMSELVES.
+        // Skipping all Lazy types breaks alias chains (type A = B).
+        let current_def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
+        if let Some(target_def_id) =
             crate::solver::type_queries::get_lazy_def_id(self.ctx.types, resolved)
         {
-            return;
+            if Some(target_def_id) == current_def_id {
+                return; // Skip self-recursive alias (A -> A)
+            }
         }
 
         let type_params = self.get_type_params_for_symbol(sym_id);
