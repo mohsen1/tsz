@@ -33,6 +33,7 @@ Your goal is to keep making progress. If you get stuck, do not stop. Instead:
   - architecture understanding
   - code reviews
   - implementation strategies
+  - fixing bugs and failing tests
 
 
 ## Required Reading
