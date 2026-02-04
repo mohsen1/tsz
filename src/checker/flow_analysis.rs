@@ -517,10 +517,11 @@ impl<'a> CheckerState<'a> {
         // AND the switch covers all possible values (has default)
         if !has_default_clause {
             // Without a default, we can't guarantee any case will execute
-            // Return empty normal flow to indicate properties are not definitely assigned
+            // However, execution CAN continue after the switch (fall-through)
+            // Return the incoming assignments to preserve the normal flow
             return FlowResult {
-                normal: None,
-                exits: Some(assigned.clone()),
+                normal: Some(assigned),
+                exits,
             };
         }
 
