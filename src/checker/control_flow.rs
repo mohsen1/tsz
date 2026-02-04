@@ -26,7 +26,8 @@ use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 #[allow(unused_imports)]
 use crate::solver::{
-    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeId, TypePredicate, Visibility,
+    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeGuard, TypeId, TypePredicate,
+    Visibility,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -1778,27 +1779,16 @@ impl<'a> FlowAnalyzer<'a> {
 
                 // Handle truthiness narrowing for property/element access: if (y.a)
                 if self.is_matching_reference(condition_idx, target) {
-                    if is_true_branch {
-                        // Remove null/undefined (truthy narrowing)
-                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                        let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                        return narrowed;
-                    }
-                    // False branch - keep only falsy types
-                    return self.narrow_to_falsy(type_id);
+                    // Use TypeGuard::Truthy for Solver-First architecture
+                    return narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch);
                 }
             }
 
             // Truthiness check: if (x)
             _ => {
                 if self.is_matching_reference(condition_idx, target) {
-                    if is_true_branch {
-                        // Remove null/undefined (truthy narrowing)
-                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                        return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                    }
-                    // False branch - keep only falsy types
-                    return self.narrow_to_falsy(type_id);
+                    // Use TypeGuard::Truthy for Solver-First architecture
+                    return narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch);
                 }
             }
         }
