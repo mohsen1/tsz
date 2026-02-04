@@ -2,31 +2,39 @@
 
 ## Current Work
 
-**Status**: Investigating abstract class test failures
+**Status**: Investigating abstract class test failures - Found root cause!
 
-**Current Task**: Debugging 2 failing tests related to abstract class constructor types
+**Current Task**: Fixing nominal class subtype checking
+
+**Root Cause Identified**:
+The `CompatChecker` was not configured with the `inheritance_graph`, causing nominal class subtype checks to fail. Without the inheritance graph, class instance types fall back to structural checking, which incorrectly fails for inheritance relationships.
+
+**Fix Applied**:
+1. Added `set_inheritance_graph` method to `CompatChecker` in `src/solver/compat.rs`
+2. Updated `configure_compat_checker` in `src/checker/context.rs` to set the inheritance_graph
+3. Used `transmute` to handle lifetime constraints (safe because InheritanceGraph is owned by CheckerContext)
+
+**Remaining Issue**:
+Tests still fail after fix. Investigation reveals:
+1. `SymbolRef` (solver) and `SymbolId` (binder) are different types wrapping `u32`
+2. `check_object_subtype` passes `SymbolRef` to `is_derived_from` which expects `SymbolId`
+3. The code in `generics.rs` (lines 107-108) shows explicit conversion is needed:
+   ```rust
+   let s_sid = SymbolId(s_sym.0);
+   let t_sid = SymbolId(t_sym.0);
+   ```
+4. But `objects.rs` line 83 doesn't do this conversion - this may be a type mismatch bug
+
+**Next Steps**:
+1. Fix `check_object_subtype` in `src/solver/subtype_rules/objects.rs` to convert `SymbolRef` to `SymbolId` before calling `is_derived_from`
+2. Verify that instance types have the correct `symbol` field set
+3. Run tests to confirm nominal checking works
 
 **Failing Tests**:
 1. `test_abstract_constructor_assignability` - TS2322 error on `const animal = createAnimal(Animal);`
 2. `test_abstract_mixin_intersection_ts2339` - TS2339 errors for missing properties
 
-**Analysis**:
-Both errors show types with Object.prototype properties (`isPrototypeOf`, `propertyIsEnumerable`) mixed with instance methods. This suggests the instance prototype type is being used instead of:
-- The proper instance type (for instance properties)
-- The constructor type (for static properties and construct signatures)
-
-Example error type:
-```
-'{ isPrototypeOf: { (v: Object): boolean };
-   propertyIsEnumerable: { (v: PropertyKey): boolean };
-   constructor: Function;
-   speak: { (): void }; ... }'
-```
-
-This type incorrectly combines:
-- Object.prototype properties (should not be in the type)
-- Instance methods like `speak` (correct for instance type)
-- `constructor: Function` (correct for constructor type)
+**Last completed**: Const Type Parameters (TS 5.0) Implementation (2025-02-04)
 
 **Next Step**: Need to trace through type resolution for `typeof Animal` and understand why instance prototype properties are being included in the type.
 
