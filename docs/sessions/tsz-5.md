@@ -24,6 +24,81 @@ Per Gemini strategic consultation, TSZ-5 is **PAUSED** until TSZ-6 completes.
 
 **See:** `docs/sessions/tsz-6.md` for active session
 
+### Gemini Critical Review - 2026-02-04
+
+**Attempted Implementation Review (QUESTION 2):**
+
+I created `src/declaration_emitter/usage_analyzer.rs` and asked Gemini (Pro model) to review the implementation.
+
+**Gemini's Response: CRITICAL ARCHITECTURAL FLAWS**
+
+#### 1. Fatal Flaw: AST Walk vs. Semantic Walk
+**Problem:** My implementation performs purely syntactic (AST) walk, missing inferred types.
+
+**Example Failure Case:**
+```typescript
+import { Something } from './module';
+// No type annotation! Return type is inferred as 'Something'.
+export function create() {
+    return new Something();
+}
+```
+
+**My Code Bug:**
+```rust
+// analyze_function_declaration
+if !func.type_annotation.is_none() {
+    self.analyze_type_annotation(...);
+}
+// If no annotation, you do NOTHING.  // <- BUG
+```
+
+**Result:** `Something` not marked as used → import elided → .d.ts contains broken reference → "Module not found" error.
+
+**Correct Architecture (from Gemini):**
+```rust
+pub fn analyze_symbol(&mut self, symbol_id: SymbolId) {
+    // 1. Get declaration node
+    // 2. If explicit type node exists -> walk_ast_type(node)
+    // 3. If implicit -> let type_id = solver.get_type_of_symbol(symbol_id);
+    //    walk_semantic_type(type_id)
+}
+
+fn walk_ast_type(&mut self, node: NodeIndex) {
+    // AST walking logic (for explicit annotations)
+}
+
+fn walk_semantic_type(&mut self, type_id: TypeId) {
+    if !self.visited_types.insert(type_id) { return; }
+    // Use TypeVisitor pattern to find referenced symbols in TypeId
+}
+```
+
+#### 2. Dead Code & Confusion
+**Problem:** Defined `visited_types: FxHashSet<TypeId>` and `visited_defs: FxHashSet<DefId>` but never used them.
+
+**Gemini's Analysis:** "This confirms you confused walking the AST (Nodes) with walking the Type System (TypeIds). You need *both*."
+
+#### 3. Broken Qualified Name Handling
+**Problem:** For `MyModule.SomeType`, my code marks `SomeType` as used but fails to mark `MyModule` as used.
+
+**Result:** `import * as MyModule from ...` elided → broken generated .d.ts
+
+**Required Fix:** Recursively walk `TypeName` node structure to find leftmost identifier.
+
+#### 4. Missing Critical Type Nodes
+**Problem:** As warned in session pause, missing handlers for:
+- `TypeQuery` (`typeof X`) - **Critical**
+- `IndexedAccessType` (`T[K]`)
+- `MappedType`
+- `ConditionalType`
+- `InferType`
+
+**Gemini's Strong Recommendation:**
+> "Revert/Stash your changes. Do not commit this. Switch to Session tsz-6. Help complete the Advanced Type Nodes first."
+
+**Status:** Implementation reverted (files kept for reference when tsz-5 resumes after tsz-6).
+
 ### Session Goal
 
 Implement Import/Export Elision to remove unused imports from .d.ts files, preventing "Module not found" errors and matching TypeScript's behavior exactly.
