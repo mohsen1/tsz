@@ -1585,8 +1585,9 @@ impl<'a> NarrowingContext<'a> {
                     // Truthy: remove null and undefined (TypeScript doesn't narrow other falsy values)
                     self.narrow_by_truthiness(source_type)
                 } else {
-                    // Falsy: TypeScript doesn't narrow in falsy branches
-                    source_type
+                    // Falsy: narrow to the falsy component(s)
+                    // This handles cases like: if (!x) where x: string → "" in false branch
+                    self.narrow_to_falsy(source_type)
                 }
             }
 
@@ -1774,6 +1775,114 @@ impl<'a> NarrowingContext<'a> {
         }
 
         source_type
+    }
+
+    /// Narrow a type to its falsy component(s).
+    ///
+    /// This is the negation of `narrow_by_truthiness`.
+    /// For example, narrowing `string | number` with falsy (sense=false)
+    /// yields `"" | 0` (the falsy literals).
+    ///
+    /// TypeScript behavior:
+    /// - `string` → `""`
+    /// - `number` → `0 | NaN`
+    /// - `boolean` → `false`
+    /// - `bigint` → `0n`
+    /// - `null | undefined` → unchanged (already falsy)
+    fn narrow_to_falsy(&self, source_type: TypeId) -> TypeId {
+        // Handle special cases
+        if source_type == TypeId::ANY {
+            return source_type;
+        }
+
+        // For UNKNOWN, narrow to the union of all falsy types
+        // TypeScript allows narrowing unknown through type guards
+        if source_type == TypeId::UNKNOWN {
+            return self.db.union(vec![
+                TypeId::NULL,
+                TypeId::UNDEFINED,
+                self.db.literal_boolean(false),
+                self.db.literal_string(""),
+                self.db.literal_number(0.0),
+                self.db.literal_bigint("0"),
+            ]);
+        }
+
+        // Use falsy_component to get the falsy representation
+        match self.falsy_component(source_type) {
+            Some(falsy) => falsy,
+            None => TypeId::NEVER,
+        }
+    }
+
+    /// Get the falsy component of a type.
+    ///
+    /// Returns Some(type) where type is the falsy representation:
+    /// - `null` → `null`
+    /// - `undefined` → `undefined`
+    /// - `boolean` → `false`
+    /// - `string` → `""`
+    /// - `number` → `0`
+    /// - `bigint` → `0n`
+    fn falsy_component(&self, type_id: TypeId) -> Option<TypeId> {
+        // Intrinsics that are already falsy
+        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+            return Some(type_id);
+        }
+
+        // Intrinsics that have literal falsy values
+        if type_id == TypeId::BOOLEAN {
+            return Some(self.db.literal_boolean(false));
+        }
+        if type_id == TypeId::STRING {
+            return Some(self.db.literal_string(""));
+        }
+        if type_id == TypeId::NUMBER {
+            return Some(self.db.literal_number(0.0));
+        }
+        if type_id == TypeId::BIGINT {
+            return Some(self.db.literal_bigint("0"));
+        }
+
+        // Handle other types using classifier
+        use crate::solver::type_queries::FalsyComponentKind;
+        use crate::solver::type_queries::classify_for_falsy_component;
+
+        match classify_for_falsy_component(self.db, type_id) {
+            FalsyComponentKind::Literal(literal) => {
+                if self.literal_is_falsy(&literal) {
+                    Some(type_id)
+                } else {
+                    None
+                }
+            }
+            FalsyComponentKind::Union(members) => {
+                let mut falsy_members = Vec::new();
+                for member in members {
+                    if let Some(falsy) = self.falsy_component(member) {
+                        falsy_members.push(falsy);
+                    }
+                }
+                match falsy_members.len() {
+                    0 => None,
+                    1 => Some(falsy_members[0]),
+                    _ => Some(self.db.union(falsy_members)),
+                }
+            }
+            FalsyComponentKind::TypeParameter => Some(type_id),
+            FalsyComponentKind::None => None,
+        }
+    }
+
+    /// Check if a literal value is falsy.
+    fn literal_is_falsy(&self, literal: &LiteralValue) -> bool {
+        match literal {
+            LiteralValue::Boolean(false) => true,
+            LiteralValue::Number(value) => value.0 == 0.0,
+            LiteralValue::String(atom) => self.db.resolve_atom(*atom).is_empty(),
+            LiteralValue::BigInt(atom) => self.db.resolve_atom(*atom) == "0",
+            _ => false,
+        }
     }
 
     /// Narrows a type by another type using the Visitor pattern.
