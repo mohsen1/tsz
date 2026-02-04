@@ -369,3 +369,49 @@ Together, they provide complete import management for valid .d.ts files.
 - Borrow checker issues resolved by cloning data before mutations
 - Used `std::path::Component` instead of `pathdiff` crate
 - Symbol table access via `table.iter()` not `symbols` (private field)
+
+---
+
+### Next Phase: Task 4 - Type-Only vs Value Symbol Usage
+
+**Gemini's Recommendation (2026-02-04):**
+Task 4 MUST come before Task 3 because:
+- Consolidation (Task 3) needs to know type-only vs value to emit correct `import type` syntax
+- Implementing consolidation first would require a rewrite
+
+**Implementation Plan:**
+
+1. **Add UsageKind bitset** to `src/declaration_emitter/usage_analyzer.rs`:
+   ```rust
+   bitflags::bitflags! {
+       pub struct UsageKind: u8 {
+           const Type = 1 << 0;
+           const Value = 1 << 1;
+       }
+   }
+   ```
+
+2. **Update UsageAnalyzer** to track context:
+   - Add `symbol_usage: FxHashMap<SymbolId, UsageKind>` field
+   - Add `in_value_pos: bool` flag to track current context
+
+3. **Modify visitor logic**:
+   - `TypeReference`: mark as Type
+   - `TypeQuery` (typeof): mark as Value (critical edge case!)
+   - `HeritageClause` (extends/implements): mark as Value
+   - `Expression`: mark as Value
+
+4. **Update DeclarationEmitter** to use UsageKind in import emission
+
+**Key Edge Cases:**
+- `typeof X` requires X as Value even in type position
+- `class A extends B` requires B as Value (classes are dual-natured)
+- Re-exports: preserve user's `type` keyword if present
+- Name collisions: Use aliases from Task 2
+
+**Files to Modify:**
+- `src/declaration_emitter/usage_analyzer.rs` - Add UsageKind tracking
+- `src/declaration_emitter/mod.rs` - Use UsageKind in `emit_required_imports()`
+
+**Validation Step:**
+Consult Gemini before committing to verify visitor logic for TypeQuery and HeritageClause.
