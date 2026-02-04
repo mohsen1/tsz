@@ -997,6 +997,18 @@ impl TypeInterner {
         // Remove `unknown` from intersections (identity element)
         flat.retain(|id| *id != TypeId::UNKNOWN);
 
+        // Abort reduction if any member is a Lazy type.
+        // The interner (Judge) cannot resolve symbols, so if we have unresolved types,
+        // we must preserve the intersection as-is without attempting to merge or reduce.
+        // This prevents incorrect reductions on type aliases like `type A = { x: number }`.
+        let has_unresolved = flat
+            .iter()
+            .any(|&id| matches!(self.lookup(id), Some(TypeKey::Lazy(_))));
+        if has_unresolved {
+            let list_id = self.intern_type_list(flat.into_vec());
+            return self.intern(TypeKey::Intersection(list_id));
+        }
+
         // Narrow literal & primitive to literal (e.g., "hello" & string = "hello")
         if let Some(literal) = self.narrow_literal_primitive_intersection(&flat) {
             return literal;
@@ -1176,8 +1188,11 @@ impl TypeInterner {
         let mut merged_props: Vec<PropertyInfo> = Vec::new();
         let mut merged_string_index: Option<IndexSignature> = None;
         let mut merged_number_index: Option<IndexSignature> = None;
+        let mut merged_flags = ObjectFlags::empty();
 
         for obj in &objects {
+            // Propagate FRESH_LITERAL flag if any constituent has it
+            merged_flags |= obj.flags & ObjectFlags::FRESH_LITERAL;
             // Merge properties
             for prop in &obj.properties {
                 // Check if property already exists
@@ -1246,7 +1261,7 @@ impl TypeInterner {
         merged_props.sort_by_key(|p| p.name.0);
 
         let shape = ObjectShape {
-            flags: ObjectFlags::empty(),
+            flags: merged_flags,
             properties: merged_props,
             string_index: merged_string_index,
             number_index: merged_number_index,
@@ -1322,10 +1337,10 @@ impl TypeInterner {
             }
         }
 
-        // If we have both primitives and non-primitives (objects), they're disjoint
-        if has_primitive && has_non_primitive {
-            return true;
-        }
+        // NOTE: We do NOT check `has_primitive && has_non_primitive` here.
+        // TypeScript allows branded types like `string & { __brand: "UserId" }`.
+        // This pattern is used for nominal typing and should NOT reduce to never.
+        // The check was removed because it incorrectly broke valid branded types.
 
         false
     }
@@ -1389,13 +1404,13 @@ impl TypeInterner {
         };
 
         for prop in small {
-            if prop.optional {
-                continue;
-            }
             let Some(other) = Self::find_property(large, prop.name) else {
                 continue;
             };
-            if other.optional {
+
+            // If BOTH are optional, the object intersection is NOT never
+            // (the property itself just becomes never).
+            if prop.optional && other.optional {
                 continue;
             }
 
@@ -1405,6 +1420,7 @@ impl TypeInterner {
 
             // Check literal sets for discriminant-based reduction
             // { kind: "a" } & { kind: "b" } should be never
+            // Also handles { kind: "a" } & { kind?: "b" } => never
             if let Some(left_set) = self.literal_set_from_type(prop.type_id) {
                 if let Some(right_set) = self.literal_set_from_type(other.type_id) {
                     if self.literal_sets_disjoint(&left_set, &right_set) {
