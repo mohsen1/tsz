@@ -165,15 +165,66 @@ type ExtractedState = ExtractState<NumberReducer>; // Should be number
 - Numeric enum assignability (bidirectional with number)
 - Mixin pattern with generic functions and nested classes
 
-## Status: Priorities 1-2 Complete - Session Paused
+## Session Status: ACTIVE (Redefined 2026-02-04)
 
-**Summary**: Successfully completed core infrastructure fixes for Application expansion and index signatures.
-- Priority 1: Application expansion for type aliases ✅
-- Priority 2: Index signature subtyping ✅
-- Priority 3: Readonly TS2540 ⏸️ (deferred to dedicated session)
+**Previous Achievements:**
+- ✅ **Priority 1**: Application expansion for type aliases - WORKING
+  - Modified `lower_type_alias_declaration` to return type parameters
+  - Added parameter caching in `compute_type_of_symbol` and `type_checking_queries`
+  - Fixed test: `test_redux_pattern_extract_state_with_infer`
 
-**Reason for pausing**: Priority 3 requires extensive architectural refactoring (~30+ locations across multiple files) that should be done in a dedicated session with proper testing.
+**Test Progress:** 51 → 43 failing tests (16% reduction)
 
-**Recommendation**: Create new session (tsz-2) for readonly refactoring work.
+## Redefined Priorities (2026-02-04 - from Gemini consultation)
 
-**Progress**: 51 → 32 failing tests (-19 tests, 37% reduction)
+### Priority 1: Generic Inference with Index Signatures (4 tests)
+**Problem**: `constrain_types` doesn't correctly propagate constraints when type parameters are matched against types with index signatures.
+
+**Files to Modify**:
+- `src/solver/operations.rs`:
+  - `constrain_types_impl`: Add logic for `TypeParameter` vs `ObjectWithIndex`
+  - `constrain_properties_against_index_signatures`: Handle placeholder types correctly
+
+**Target Tests**:
+- test_infer_generic_missing_numeric_property_uses_number_index_signature
+- test_infer_generic_missing_property_uses_index_signature
+- test_infer_generic_property_from_number_index_signature_infinity
+- test_infer_generic_property_from_source_index_signature
+
+**Why This is High Leverage**: Fixes the "missing link" in generic inference - when `T` is matched against `{ [k: string]: number }`, T should be constrained to that index signature's value type.
+
+### Priority 2: Numeric Enum Assignability Rule #7 (2 tests)
+**Problem**: TypeScript has an unsound but required rule where `number` is bidirectional-assignable with numeric enums. Current implementation is inconsistent.
+
+**Files to Modify**:
+- `src/solver/compat.rs`:
+  - `enum_assignability_override`: Correctly identify numeric enums via `resolver.is_numeric_enum(def_id)`
+  - `is_assignable_to`: Apply Rule #7 at top level before structural checking
+
+**Target Tests**:
+- test_numeric_enum_number_bidirectional
+- test_numeric_enum_open_and_nominal_assignability
+
+**Why This is High Leverage**: Fundamental "Lawyer" (compatibility) task that doesn't interfere with "Judge" (structural) work or CFA.
+
+### Priority 3: Readonly TS2540 for Lazy Types (4 tests)
+**Problem**: Checker fails to report TS2540 when object type is `Lazy(DefId)` because property lookup doesn't resolve lazy type before checking `readonly` flag.
+
+**Files to Modify**:
+- `src/checker/state_checking_members.rs`:
+  - `check_readonly_assignment`: Must call `resolve_lazy_type` before querying `is_property_readonly`
+- `src/solver/operations_property.rs`:
+  - Verify `property_is_readonly` handles `TypeKey::Lazy`
+
+**Target Tests**:
+- test_readonly_element_access_assignment_2540
+- test_readonly_index_signature_element_access_assignment_2540
+- test_readonly_index_signature_variable_access_assignment_2540
+- test_readonly_method_signature_assignment_2540
+
+**Why This is High Leverage**: Completes the `DefId` migration for property access validation.
+
+## Coordination Notes
+- **Avoid**: `src/checker/flow_analysis.rs` (owned by tsz-3)
+- **Avoid**: `CallEvaluator::resolve_callable_call` (likely being touched by tsz-4)
+- **Focus**: Structural recursion inside `constrain_types_impl` (engine for `infer T`)
