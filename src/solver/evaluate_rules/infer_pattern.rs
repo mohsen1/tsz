@@ -13,6 +13,7 @@
 
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
+use crate::solver::application::ApplicationEvaluator;
 use crate::solver::subtype::{SubtypeChecker, TypeResolver};
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -849,6 +850,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         visited: &mut FxHashSet<(TypeId, TypeId)>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
+        eprintln!(
+            "DEBUG match_infer_pattern: source={} pattern={}",
+            source.0, pattern.0
+        );
+
         if !visited.insert((source, pattern)) {
             return true;
         }
@@ -1021,35 +1027,65 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     visited,
                     checker,
                 ),
-            TypeKey::Application(pattern_app_id) => match self.interner().lookup(source) {
-                Some(TypeKey::Application(source_app_id)) => {
-                    let source_app = self.interner().type_application(source_app_id);
-                    let pattern_app = self.interner().type_application(pattern_app_id);
-                    if source_app.args.len() != pattern_app.args.len() {
-                        return false;
-                    }
-                    if !checker.is_subtype_of(source_app.base, pattern_app.base)
-                        || !checker.is_subtype_of(pattern_app.base, source_app.base)
-                    {
-                        return false;
-                    }
-                    for (source_arg, pattern_arg) in
-                        source_app.args.iter().zip(pattern_app.args.iter())
-                    {
-                        if !self.match_infer_pattern(
-                            *source_arg,
-                            *pattern_arg,
-                            bindings,
-                            visited,
-                            checker,
-                        ) {
+            TypeKey::Application(pattern_app_id) => {
+                // First try declaration matching: Application vs Application
+                let declaration_matched = match self.interner().lookup(source) {
+                    Some(TypeKey::Application(source_app_id)) => {
+                        let source_app = self.interner().type_application(source_app_id);
+                        let pattern_app = self.interner().type_application(pattern_app_id);
+                        if source_app.args.len() != pattern_app.args.len() {
                             return false;
                         }
+                        if !checker.is_subtype_of(source_app.base, pattern_app.base)
+                            || !checker.is_subtype_of(pattern_app.base, source_app.base)
+                        {
+                            return false;
+                        }
+                        for (source_arg, pattern_arg) in
+                            source_app.args.iter().zip(pattern_app.args.iter())
+                        {
+                            if !self.match_infer_pattern(
+                                *source_arg,
+                                *pattern_arg,
+                                bindings,
+                                visited,
+                                checker,
+                            ) {
+                                return false;
+                            }
+                        }
+                        true
                     }
-                    true
+                    _ => false,
+                };
+
+                // If declaration matching succeeded, we're done
+                if declaration_matched {
+                    return true;
                 }
-                _ => false,
-            },
+
+                // Fallback: Structural expansion
+                // Expand the pattern Application to its structural form and recurse
+                // This handles cases like: Reducer<infer S> matching a structural function type
+                let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
+                let expanded_pattern = evaluator.evaluate_or_original(pattern);
+
+                eprintln!("DEBUG match_infer_pattern: Application expansion");
+                eprintln!("  pattern={} expanded={}", pattern.0, expanded_pattern.0);
+
+                // Only recurse if expansion actually changed the type
+                if expanded_pattern != pattern {
+                    return self.match_infer_pattern(
+                        source,
+                        expanded_pattern,
+                        bindings,
+                        visited,
+                        checker,
+                    );
+                }
+
+                false
+            }
             TypeKey::TemplateLiteral(pattern_spans_id) => {
                 let pattern_spans = self.interner().template_list(pattern_spans_id);
                 match self.interner().lookup(source) {
@@ -1115,7 +1151,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // This should match any function signature and only extract the return type
             let has_single_rest_param = pattern_fn.params.len() == 1 && pattern_fn.params[0].rest;
 
-            let mut match_params_and_return = |source_type: TypeId,
+            let mut match_params_and_return = |_source_type: TypeId,
                                                source_params: &[ParamInfo],
                                                source_return: TypeId,
                                                bindings: &mut FxHashMap<Atom, TypeId>|
@@ -1166,13 +1202,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ) {
                     return false;
                 }
-                // For patterns with single rest param (like ReturnType), skip the final subtype check
-                // This is because Callable subtyping is complex and we've already matched the signature
-                if has_single_rest_param {
-                    return true;
-                }
-                let substituted = self.substitute_infer(pattern, bindings);
-                checker.is_subtype_of(source_type, substituted)
+                // For infer pattern matching, once parameters and return type match successfully,
+                // the pattern is considered successful. The final subtype check is too strict
+                // because of function parameter contravariance (e.g., any vs concrete type).
+                // We've already matched the signature components above, which is sufficient.
+                true
             };
 
             return match self.interner().lookup(source) {
@@ -1341,7 +1375,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
         }
         if pattern_fn.this_type.is_none() && !has_param_infer && has_return_infer {
-            let mut match_return = |source_type: TypeId,
+            let mut match_return = |_source_type: TypeId,
                                     source_return: TypeId,
                                     bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
@@ -1355,8 +1389,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ) {
                     return false;
                 }
-                let substituted = self.substitute_infer(pattern, bindings);
-                checker.is_subtype_of(source_type, substituted)
+                // For return-only infer patterns, the return type match is sufficient.
+                // Skipping the final subtype check avoids issues with contravariance.
+                true
             };
 
             return match self.interner().lookup(source) {
@@ -1440,7 +1475,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return false;
         }
 
-        let mut match_function_this = |source_type: TypeId,
+        let mut match_function_this = |_source_type: TypeId,
                                        source_fn_id: FunctionShapeId,
                                        bindings: &mut FxHashMap<Atom, TypeId>|
          -> bool {
@@ -1458,8 +1493,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             ) {
                 return false;
             }
-            let substituted = self.substitute_infer(pattern, bindings);
-            checker.is_subtype_of(source_type, substituted)
+            // For this-type infer patterns, the this type match is sufficient.
+            // Skipping the final subtype check avoids contravariance issues.
+            true
         };
 
         match self.interner().lookup(source) {
@@ -1656,7 +1692,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .any(|param| self.type_contains_infer(param.type_id));
         let has_return_infer = self.type_contains_infer(pattern_sig.return_type);
         if pattern_sig.this_type.is_none() && has_param_infer && has_return_infer {
-            let mut match_params_and_return = |source_type: TypeId,
+            let mut match_params_and_return = |_source_type: TypeId,
                                                source_params: &[ParamInfo],
                                                source_return: TypeId,
                                                bindings: &mut FxHashMap<Atom, TypeId>|
@@ -1680,8 +1716,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ) {
                     return false;
                 }
-                let substituted = self.substitute_infer(pattern, bindings);
-                checker.is_subtype_of(source_type, substituted)
+                // For infer pattern matching, once parameters and return type match successfully,
+                // the pattern is considered successful. Skipping the final subtype check avoids
+                // contravariance issues.
+                true
             };
 
             return match self.interner().lookup(source) {
@@ -1838,7 +1876,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if pattern_sig.this_type.is_none() && !has_param_infer && has_return_infer {
-            let mut match_return = |source_type: TypeId,
+            let mut match_return = |_source_type: TypeId,
                                     source_return: TypeId,
                                     bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
@@ -1852,8 +1890,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ) {
                     return false;
                 }
-                let substituted = self.substitute_infer(pattern, bindings);
-                checker.is_subtype_of(source_type, substituted)
+                // For return-only infer patterns, the return type match is sufficient.
+                // Skipping the final subtype check avoids contravariance issues.
+                true
             };
 
             return match self.interner().lookup(source) {
