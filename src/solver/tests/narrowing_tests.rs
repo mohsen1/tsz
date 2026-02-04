@@ -284,9 +284,10 @@ fn test_narrow_by_discriminant_no_match() {
 
     let union = interner.union(vec![member]);
 
-    // Narrow to non-existent variant - returns original
+    // Narrowing {type: "add"} by (type === "unknown") results in never
+    // because "add" can never equal "unknown"
     let narrowed = narrow_by_discriminant(&interner, union, type_name, type_unknown);
-    assert_eq!(narrowed, union);
+    assert_eq!(narrowed, TypeId::NEVER);
 }
 
 #[test]

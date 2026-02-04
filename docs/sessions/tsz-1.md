@@ -31,9 +31,14 @@
     - test_new_expression_infers_parameter_properties
     - test_new_expression_infers_base_class_properties
     - test_new_expression_infers_generic_class_type_params
+- ✅ **Fixed implements property access** (35 → 36 failing tests overall, -1 in category)
+  - Added resolve_lazy_type() call before get_object_shape() for interface merging
+  - Test fixed: test_class_implements_interface_property_access
+  - Code change: src/checker/class_type.rs line 770
+  - Note: One new test appeared (test_narrow_by_discriminant_no_match)
 
 ### Total Progress
-- **51 → 35 failing tests (-16 tests total)**
+- **51 → 36 failing tests (-15 tests total)**
 
 ## Current Focus
 
@@ -57,7 +62,7 @@ match alias_key {
 }
 ```
 
-## Remaining 35 Failing Tests - Categorized
+## Remaining 36 Failing Tests - Categorized
 
 **Namespace/Module Merging** (0 tests remaining) ✅
 - test_checker_cross_namespace_type_reference ✅ FIXED
@@ -68,21 +73,45 @@ match alias_key {
 - test_new_expression_infers_parameter_properties ✅ FIXED
 - test_new_expression_infers_base_class_properties ✅ FIXED
 - test_new_expression_infers_generic_class_type_params ✅ FIXED
+
+**Property Access** (1 test remaining - mixin pattern, complex)
+- test_mixin_inheritance_property_access (requires type param scope handling for nested classes)
+
 **Readonly Assignment TS2540** (4 tests) - **DEFERRED**
-**Property Access** (2 tests)
+- test_readonly_element_access_assignment_2540
+- test_readonly_index_signature_element_access_assignment_2540
+- test_readonly_index_signature_variable_access_assignment_2540
+- test_readonly_method_signature_assignment_2540
+
 **Numeric Enum** (2 tests) - **DEFERRED**
+- test_numeric_enum_number_bidirectional
+- test_numeric_enum_open_and_nominal_assignability
+
 **Complex Type Inference** (5 tests)
-**Other Issues** (6 tests)
+- test_contextual_property_type_infers_callback_param (contextual typing for arrow params - DEFERRED)
+- test_redux_pattern_extract_state_with_infer
+- test_abstract_mixin_intersection_ts2339
+- test_ts2339_computed_name_this_in_class_expression
+- test_ts2339_computed_name_this_missing_static
+
+**Narrowing Tests** (1 new test)
+- test_narrow_by_discriminant_no_match (NEW - appeared after recent changes)
+
+**Other Issues** (23 tests)
+- CLI cache tests (many)
+- LSP signature help (2 tests)
+- Generic inference with index signatures (4 tests)
+- Various other type inference issues
 
 ## Target Files for Remaining Issues
-- `src/checker/namespace_checker.rs`
+- `src/checker/class_type.rs` (implements - FIXED)
 - `src/checker/state_type_analysis.rs`
-- `src/checker/state_type_resolution.rs`
+- `src/checker/control_flow_narrowing.rs`
 
 ## Documented Complex Issues (Deferred)
 - TS2540 readonly properties (TypeKey::Lazy handling - architectural blocker)
 - Contextual typing for arrow function parameters
 - Numeric enum assignability (bidirectional with number)
-- **Enum+namespace property access** (requires VALUE vs TYPE context handling)
+- Mixin pattern with generic functions and nested classes
 
-## Status: Excellent progress - 35 failing tests remain
+## Status: Good progress - 36 failing tests remain
