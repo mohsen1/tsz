@@ -292,7 +292,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Use Solver API for Best Common Type computation (Solver-First architecture)
-        let element_type = expression_ops::compute_best_common_type(self.ctx.types, &element_types);
+        let element_type = expression_ops::compute_best_common_type(
+            self.ctx.types,
+            &element_types,
+            Some(&self.ctx), // Pass TypeResolver for class hierarchy BCT
+        );
 
         self.ctx.types.array(element_type)
     }

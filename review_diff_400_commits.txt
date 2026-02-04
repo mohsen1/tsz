@@ -1,0 +1,1305 @@
+diff --git src/checker/flow_analysis.rs src/checker/flow_analysis.rs
+index 0e5daa7aa..786f07245 100644
+--- src/checker/flow_analysis.rs
++++ src/checker/flow_analysis.rs
+@@ -517,10 +517,11 @@ impl<'a> CheckerState<'a> {
+         // AND the switch covers all possible values (has default)
+         if !has_default_clause {
+             // Without a default, we can't guarantee any case will execute
+-            // Return empty normal flow to indicate properties are not definitely assigned
++            // However, execution CAN continue after the switch (fall-through)
++            // Return the incoming assignments to preserve the normal flow
+             return FlowResult {
+-                normal: None,
+-                exits: Some(assigned.clone()),
++                normal: Some(assigned),
++                exits,
+             };
+         }
+ 
+@@ -1322,9 +1323,14 @@ impl<'a> CheckerState<'a> {
+             None => return declared_type,
+         };
+ 
+-        // Check if we're inside a closure and if the variable is mutable
+-        if self.is_inside_closure() && self.is_mutable_binding(sym_id) {
+-            // Rule #42: Reset narrowing for mutable bindings in closures
++        // Bug #1.2: Check if this is a captured mutable variable
++        // Rule #42 only applies to variables captured from outer scope, not local variables
++        if self.is_inside_closure()
++            && self.is_captured_variable(sym_id)
++            && self.is_mutable_binding(sym_id)
++        {
++            // Rule #42: Reset narrowing for captured mutable bindings in closures
++            // (const variables preserve narrowing, let/var reset to declared type)
+             return declared_type;
+         }
+ 
+@@ -1346,7 +1352,8 @@ impl<'a> CheckerState<'a> {
+             self.ctx.binder,
+             self.ctx.types,
+             &self.ctx.node_types,
+-        );
++        )
++        .with_flow_cache(&self.ctx.flow_analysis_cache);
+ 
+         analyzer.get_flow_type(idx, declared_type, flow_node)
+     }
+@@ -1378,23 +1385,23 @@ impl<'a> CheckerState<'a> {
+         self.ctx.inside_closure_depth > 0
+     }
+ 
+-    /// Check if a binding is mutable (let/var) vs immutable (const).
++    /// Check if a symbol is a mutable binding (let or var) vs immutable (const).
+     ///
+-    /// This determines whether Rule #42 applies: mutable bindings lose narrowing
+-    /// in closures, while const bindings maintain narrowing.
++    /// This is used to implement TypeScript's Rule #42 for type narrowing in closures:
++    /// - const variables preserve narrowing through closures (immutable)
++    /// - let/var variables lose narrowing when accessed from closures (mutable)
+     ///
+-    /// ## Detection Strategy:
+-    ///
+-    /// 1. Get the value declaration for the symbol
++    /// Implementation checks:
++    /// 1. Get the symbol's value declaration
+     /// 2. Check if it's a VariableDeclaration
+-    /// 3. Look at the parent VariableStatement's modifiers
+-    /// 4. If ConstKeyword is present → const (immutable)
+-    /// 5. If LetKeyword or no const modifier → let/var (mutable)
++    /// 3. Look at the parent VariableDeclarationList's NodeFlags
++    /// 4. If CONST flag is set → const (immutable)
++    /// 5. Otherwise → let/var (mutable)
+     ///
+     /// Returns true for let/var (mutable), false for const (immutable).
+     fn is_mutable_binding(&self, sym_id: SymbolId) -> bool {
++        use crate::parser::node_flags;
+         use crate::parser::syntax_kind_ext;
+-        use crate::scanner::SyntaxKind;
+ 
+         let symbol = match self.ctx.binder.get_symbol(sym_id) {
+             Some(sym) => sym,
+@@ -1412,53 +1419,90 @@ impl<'a> CheckerState<'a> {
+             None => return true,
+         };
+ 
+-        // Check if this is a VariableDeclaration
+-        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+-            // Not a variable declaration (e.g., parameter, import)
+-            // Parameters are effectively mutable for narrowing purposes
+-            return true;
++        // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
++        // The value_declaration points to VARIABLE_DECLARATION, we need to check its parent's flags
++        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
++            // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
++            if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
++                if !ext.parent.is_none() {
++                    if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
++                        let flags = parent_node.flags as u32;
++                        let is_const = (flags & node_flags::CONST) != 0;
++                        return !is_const; // Return true if NOT const (i.e., let or var)
++                    }
++                }
++            }
+         }
+ 
+-        // Check the parent VariableStatement for the ConstKeyword modifier
+-        let parent = match self.ctx.arena.get_extended(decl_idx) {
+-            Some(ext) => ext.parent,
+-            None => return true,
+-        };
++        // For other node types, check the node's own flags
++        let flags = decl_node.flags as u32;
++        let is_const = (flags & node_flags::CONST) != 0;
++        !is_const // Return true if NOT const (i.e., let or var)
++    }
+ 
+-        if parent.is_none() {
+-            return true;
+-        }
++    /// Check if a variable is captured from an outer scope (vs declared locally).
++    ///
++    /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
++    /// - Variables declared INSIDE the closure should narrow normally
++    /// - Variables captured from OUTER scope reset narrowing (for let/var)
++    ///
++    /// This is determined by checking if the variable's declaration is in an ancestor scope.
++    fn is_captured_variable(&self, sym_id: SymbolId) -> bool {
++        use crate::binder::ScopeId;
+ 
+-        let parent_node = match self.ctx.arena.get(parent) {
+-            Some(node) => node,
+-            None => return true,
++        let symbol = match self.ctx.binder.get_symbol(sym_id) {
++            Some(sym) => sym,
++            None => return false, // If no symbol, assume not captured
+         };
+ 
+-        // Check if the parent is a VariableStatement
+-        if parent_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+-            // Could be a FOR_OF, FOR_IN, etc. - assume mutable
+-            return true;
++        // Get the declaration node
++        let decl_idx = symbol.value_declaration;
++        if decl_idx.is_none() {
++            return false;
+         }
+ 
+-        // Check the modifiers on the VariableStatement
+-        let var_stmt = match self.ctx.arena.get_variable(parent_node) {
+-            Some(stmt) => stmt,
+-            None => return true,
++        // Find the enclosing scope of the declaration
++        let decl_scope_id = match self
++            .ctx
++            .binder
++            .find_enclosing_scope(self.ctx.arena, decl_idx)
++        {
++            Some(scope_id) => scope_id,
++            None => return false, // No scope info, assume not captured
+         };
+ 
+-        if let Some(ref modifiers) = var_stmt.modifiers {
+-            // Check if any modifier is ConstKeyword
+-            for &mod_idx in &modifiers.nodes {
+-                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+-                    if mod_node.kind == SyntaxKind::ConstKeyword as u16 {
+-                        return false; // const - immutable
+-                    }
+-                }
++        // Get the current scope (where the variable is being accessed)
++        // We need to get the current scope from the binder's state
++        let current_scope_id = self.ctx.binder.current_scope_id;
++
++        // If declared in current scope, not captured
++        if decl_scope_id == current_scope_id {
++            return false;
++        }
++
++        // Check if declaration scope is an ancestor of current scope
++        // Walk up the scope chain from current scope to see if we find the declaration scope
++        let mut scope_id = current_scope_id;
++        let mut iterations = 0;
++        while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
++            if scope_id == decl_scope_id {
++                // Found declaration scope in ancestor chain → captured variable
++                return true;
+             }
++
++            // Move to parent scope
++            scope_id = self
++                .ctx
++                .binder
++                .scopes
++                .get(scope_id.0 as usize)
++                .map(|scope| scope.parent)
++                .unwrap_or(ScopeId::NONE);
++
++            iterations += 1;
+         }
+ 
+-        // No const modifier found - it's let or var (mutable)
+-        true
++        false
+     }
+ 
+     /// Check flow-aware usage of a variable (definite assignment + type narrowing).
+@@ -1760,7 +1804,8 @@ impl<'a> CheckerState<'a> {
+             self.ctx.binder,
+             self.ctx.types,
+             &self.ctx.node_types,
+-        );
++        )
++        .with_flow_cache(&self.ctx.flow_analysis_cache);
+ 
+         analyzer.is_definitely_assigned(idx, flow_node)
+     }
+@@ -1771,14 +1816,75 @@ impl<'a> CheckerState<'a> {
+ 
+     /// Check if a variable is used before its declaration in a static block.
+     ///
+-    /// Static blocks have special TDZ rules where class members cannot be
+-    /// accessed before their declaration within the same static block.
++    /// This detects Temporal Dead Zone (TDZ) violations where a block-scoped variable
++    /// is accessed inside a class static block before it has been declared in the source.
++    ///
++    /// # Example
++    /// ```typescript
++    /// class C {
++    ///   static {
++    ///     console.log(x); // Error: x used before declaration
++    ///   }
++    /// }
++    /// let x = 1;
++    /// ```
+     pub(crate) fn is_variable_used_before_declaration_in_static_block(
+         &self,
+-        _sym_id: SymbolId,
+-        _usage_idx: NodeIndex,
++        sym_id: SymbolId,
++        usage_idx: NodeIndex,
+     ) -> bool {
+-        // TODO: Implement TDZ checking for static blocks
++        use crate::binder::symbol_flags;
++
++        // 1. Get the symbol
++        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
++            return false;
++        };
++
++        // 2. Check if it is a block-scoped variable (let, const, class, enum)
++        // var and function are hoisted, so they don't have TDZ issues in this context.
++        // Imports (ALIAS) are also hoisted or handled differently.
++        let is_block_scoped = (symbol.flags
++            & (symbol_flags::BLOCK_SCOPED_VARIABLE
++                | symbol_flags::CLASS
++                | symbol_flags::REGULAR_ENUM))
++            != 0;
++
++        if !is_block_scoped {
++            return false;
++        }
++
++        // 3. Get the declaration node
++        // Prefer value_declaration, fall back to first declaration
++        let decl_idx = if !symbol.value_declaration.is_none() {
++            symbol.value_declaration
++        } else if let Some(&first_decl) = symbol.declarations.first() {
++            first_decl
++        } else {
++            return false;
++        };
++
++        // 4. Check textual order: Usage must be textually before declaration
++        // We ensure both nodes exist in the current arena
++        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
++            return false;
++        };
++        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
++            return false;
++        };
++
++        // If usage is after declaration, it's valid
++        if usage_node.pos >= decl_node.pos {
++            return false;
++        }
++
++        // 5. Check if usage is inside a static block
++        // Use find_enclosing_static_block which walks up the AST and stops at function boundaries.
++        // This ensures we only catch immediate usage, not usage inside a closure/function
++        // defined within the static block (which would execute later).
++        if self.find_enclosing_static_block(usage_idx).is_some() {
++            return true;
++        }
++
+         false
+     }
+ 
+@@ -1788,10 +1894,53 @@ impl<'a> CheckerState<'a> {
+     /// creating a TDZ for the class being declared.
+     pub(crate) fn is_variable_used_before_declaration_in_computed_property(
+         &self,
+-        _sym_id: SymbolId,
+-        _usage_idx: NodeIndex,
++        sym_id: SymbolId,
++        usage_idx: NodeIndex,
+     ) -> bool {
+-        // TODO: Implement TDZ checking for computed properties
++        use crate::binder::symbol_flags;
++
++        // 1. Get the symbol
++        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
++            return false;
++        };
++
++        // 2. Check if it is a block-scoped variable (let, const, class, enum)
++        let is_block_scoped = (symbol.flags
++            & (symbol_flags::BLOCK_SCOPED_VARIABLE
++                | symbol_flags::CLASS
++                | symbol_flags::REGULAR_ENUM))
++            != 0;
++
++        if !is_block_scoped {
++            return false;
++        }
++
++        // 3. Get the declaration node
++        let decl_idx = if !symbol.value_declaration.is_none() {
++            symbol.value_declaration
++        } else if let Some(&first_decl) = symbol.declarations.first() {
++            first_decl
++        } else {
++            return false;
++        };
++
++        // 4. Check textual order: Usage must be textually before declaration
++        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
++            return false;
++        };
++        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
++            return false;
++        };
++
++        if usage_node.pos >= decl_node.pos {
++            return false;
++        }
++
++        // 5. Check if usage is inside a computed property name
++        if self.find_enclosing_computed_property(usage_idx).is_some() {
++            return true;
++        }
++
+         false
+     }
+ 
+@@ -1801,10 +1950,53 @@ impl<'a> CheckerState<'a> {
+     /// creating a TDZ for the class being declared.
+     pub(crate) fn is_variable_used_before_declaration_in_heritage_clause(
+         &self,
+-        _sym_id: SymbolId,
+-        _usage_idx: NodeIndex,
++        sym_id: SymbolId,
++        usage_idx: NodeIndex,
+     ) -> bool {
+-        // TODO: Implement TDZ checking for heritage clauses
++        use crate::binder::symbol_flags;
++
++        // 1. Get the symbol
++        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
++            return false;
++        };
++
++        // 2. Check if it is a block-scoped variable (let, const, class, enum)
++        let is_block_scoped = (symbol.flags
++            & (symbol_flags::BLOCK_SCOPED_VARIABLE
++                | symbol_flags::CLASS
++                | symbol_flags::REGULAR_ENUM))
++            != 0;
++
++        if !is_block_scoped {
++            return false;
++        }
++
++        // 3. Get the declaration node
++        let decl_idx = if !symbol.value_declaration.is_none() {
++            symbol.value_declaration
++        } else if let Some(&first_decl) = symbol.declarations.first() {
++            first_decl
++        } else {
++            return false;
++        };
++
++        // 4. Check textual order: Usage must be textually before declaration
++        let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
++            return false;
++        };
++        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
++            return false;
++        };
++
++        if usage_node.pos >= decl_node.pos {
++            return false;
++        }
++
++        // 5. Check if usage is inside a heritage clause (extends/implements)
++        if self.find_enclosing_heritage_clause(usage_idx).is_some() {
++            return true;
++        }
++
+         false
+     }
+ 
+diff --git src/solver/evaluate_rules/conditional.rs src/solver/evaluate_rules/conditional.rs
+index a34901ab6..58cfdf33e 100644
+--- src/solver/evaluate_rules/conditional.rs
++++ src/solver/evaluate_rules/conditional.rs
+@@ -11,6 +11,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
+ use super::super::evaluate::TypeEvaluator;
+ 
+ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
++    /// Maximum depth for tail-recursive conditional evaluation.
++    /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
++    /// to work with up to 1000 recursive calls instead of being limited to MAX_EVALUATE_DEPTH.
++    const MAX_TAIL_RECURSION_DEPTH: usize = 1000;
++
+     /// Evaluate a conditional type: T extends U ? X : Y
+     ///
+     /// Algorithm:
+@@ -19,145 +24,186 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+     /// 3. If true -> return true_type
+     /// 4. If false (disjoint) -> return false_type
+     /// 5. If ambiguous (unresolved type param) -> return deferred conditional
+-    pub fn evaluate_conditional(&mut self, cond: &ConditionalType) -> TypeId {
+-        let check_type = self.evaluate(cond.check_type);
+-        let extends_type = self.evaluate(cond.extends_type);
+-
+-        if cond.is_distributive && check_type == TypeId::NEVER {
+-            return TypeId::NEVER;
+-        }
+-
+-        if check_type == TypeId::ANY {
+-            // For distributive `any extends X ? T : F`:
+-            // - Distributive: return union of both branches (any distributes over the conditional)
+-            // - Non-distributive: return union of both branches (any poisons the result)
+-            // In both cases, we evaluate and union the branches to handle infer types correctly
+-            let true_eval = self.evaluate(cond.true_type);
+-            let false_eval = self.evaluate(cond.false_type);
+-            return self.interner().union2(true_eval, false_eval);
+-        }
+-
+-        // Step 1: Check for distributivity
+-        // Only distribute for naked type parameters (recorded at lowering time).
+-        if cond.is_distributive
+-            && let Some(TypeKey::Union(members)) = self.interner().lookup(check_type)
+-        {
+-            let members = self.interner().type_list(members);
+-            return self.distribute_conditional(
+-                members.as_ref(),
+-                check_type, // Pass original check_type for substitution
+-                extends_type,
+-                cond.true_type,
+-                cond.false_type,
+-            );
+-        }
+-
+-        if let Some(TypeKey::Infer(info)) = self.interner().lookup(extends_type) {
+-            if matches!(
+-                self.interner().lookup(check_type),
+-                Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+-            ) {
+-                return self.interner().conditional(cond.clone());
++    ///
++    /// ## Tail-Recursion Elimination
++    /// If the chosen branch (true/false) evaluates to another ConditionalType,
++    /// we immediately evaluate it in the current stack frame instead of recursing.
++    /// This allows tail-recursive patterns to work with up to MAX_TAIL_RECURSION_DEPTH
++    /// iterations instead of being limited by MAX_EVALUATE_DEPTH.
++    pub fn evaluate_conditional(&mut self, initial_cond: &ConditionalType) -> TypeId {
++        // Setup loop state for tail-recursion elimination
++        let mut current_cond = initial_cond.clone();
++        let mut tail_recursion_count = 0;
++
++        loop {
++            let cond = &current_cond;
++            let check_type = self.evaluate(cond.check_type);
++            let extends_type = self.evaluate(cond.extends_type);
++
++            if cond.is_distributive && check_type == TypeId::NEVER {
++                return TypeId::NEVER;
+             }
+ 
+             if check_type == TypeId::ANY {
+-                let mut subst = TypeSubstitution::new();
+-                subst.insert(info.name, check_type);
+-                let true_eval = self.evaluate(instantiate_type_with_infer(
+-                    self.interner(),
+-                    cond.true_type,
+-                    &subst,
+-                ));
+-                let false_eval = self.evaluate(instantiate_type_with_infer(
+-                    self.interner(),
+-                    cond.false_type,
+-                    &subst,
+-                ));
++                // For distributive `any extends X ? T : F`:
++                // - Distributive: return union of both branches (any distributes over the conditional)
++                // - Non-distributive: return union of both branches (any poisons the result)
++                // In both cases, we evaluate and union the branches to handle infer types correctly
++                let true_eval = self.evaluate(cond.true_type);
++                let false_eval = self.evaluate(cond.false_type);
+                 return self.interner().union2(true_eval, false_eval);
+             }
+ 
+-            let mut subst = TypeSubstitution::new();
+-            subst.insert(info.name, check_type);
+-            let mut inferred = check_type;
+-            if let Some(constraint) = info.constraint {
+-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+-                checker.allow_bivariant_rest = true;
+-                let Some(filtered) =
+-                    self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+-                else {
+-                    let false_inst =
+-                        instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
+-                    return self.evaluate(false_inst);
+-                };
+-                inferred = filtered;
++            // Step 1: Check for distributivity
++            // Only distribute for naked type parameters (recorded at lowering time).
++            if cond.is_distributive
++                && let Some(TypeKey::Union(members)) = self.interner().lookup(check_type)
++            {
++                let members = self.interner().type_list(members);
++                return self.distribute_conditional(
++                    members.as_ref(),
++                    check_type, // Pass original check_type for substitution
++                    extends_type,
++                    cond.true_type,
++                    cond.false_type,
++                );
+             }
+ 
+-            subst.insert(info.name, inferred);
++            if let Some(TypeKey::Infer(info)) = self.interner().lookup(extends_type) {
++                if matches!(
++                    self.interner().lookup(check_type),
++                    Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
++                ) {
++                    return self.interner().conditional(cond.clone());
++                }
+ 
+-            let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
+-            return self.evaluate(true_inst);
+-        }
++                if check_type == TypeId::ANY {
++                    let mut subst = TypeSubstitution::new();
++                    subst.insert(info.name, check_type);
++                    let true_eval = self.evaluate(instantiate_type_with_infer(
++                        self.interner(),
++                        cond.true_type,
++                        &subst,
++                    ));
++                    let false_eval = self.evaluate(instantiate_type_with_infer(
++                        self.interner(),
++                        cond.false_type,
++                        &subst,
++                    ));
++                    return self.interner().union2(true_eval, false_eval);
++                }
+ 
+-        let extends_unwrapped = match self.interner().lookup(extends_type) {
+-            Some(TypeKey::ReadonlyType(inner)) => inner,
+-            _ => extends_type,
+-        };
+-        let check_unwrapped = match self.interner().lookup(check_type) {
+-            Some(TypeKey::ReadonlyType(inner)) => inner,
+-            _ => check_type,
+-        };
++                let mut subst = TypeSubstitution::new();
++                subst.insert(info.name, check_type);
++                let mut inferred = check_type;
++                if let Some(constraint) = info.constraint {
++                    let mut checker =
++                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
++                    checker.allow_bivariant_rest = true;
++                    let Some(filtered) =
++                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
++                    else {
++                        let false_inst =
++                            instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
++                        return self.evaluate(false_inst);
++                    };
++                    inferred = filtered;
++                }
+ 
+-        // Handle array extends pattern with infer
+-        if let Some(TypeKey::Array(ext_elem)) = self.interner().lookup(extends_unwrapped)
+-            && let Some(TypeKey::Infer(info)) = self.interner().lookup(ext_elem)
+-        {
+-            return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+-        }
++                subst.insert(info.name, inferred);
+ 
+-        // Handle tuple extends pattern with infer
+-        if let Some(TypeKey::Tuple(extends_elements)) = self.interner().lookup(extends_unwrapped) {
+-            let extends_elements = self.interner().tuple_list(extends_elements);
+-            if extends_elements.len() == 1
+-                && !extends_elements[0].rest
+-                && let Some(TypeKey::Infer(info)) =
+-                    self.interner().lookup(extends_elements[0].type_id)
+-            {
+-                return self.eval_conditional_tuple_infer(
+-                    cond,
+-                    check_unwrapped,
+-                    &extends_elements[0],
+-                    info,
+-                );
++                let true_inst =
++                    instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
++                return self.evaluate(true_inst);
+             }
+-        }
+ 
+-        // Handle object extends pattern with infer
+-        if let Some(extends_shape_id) = match self.interner().lookup(extends_unwrapped) {
+-            Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => Some(shape_id),
+-            _ => None,
+-        } {
+-            if let Some(result) =
+-                self.eval_conditional_object_infer(cond, check_unwrapped, extends_shape_id)
++            let extends_unwrapped = match self.interner().lookup(extends_type) {
++                Some(TypeKey::ReadonlyType(inner)) => inner,
++                _ => extends_type,
++            };
++            let check_unwrapped = match self.interner().lookup(check_type) {
++                Some(TypeKey::ReadonlyType(inner)) => inner,
++                _ => check_type,
++            };
++
++            // Handle array extends pattern with infer
++            if let Some(TypeKey::Array(ext_elem)) = self.interner().lookup(extends_unwrapped)
++                && let Some(TypeKey::Infer(info)) = self.interner().lookup(ext_elem)
+             {
+-                return result;
++                return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+             }
+-        }
+ 
+-        // Step 2: Check for naked type parameter
+-        if let Some(TypeKey::TypeParameter(param)) = self.interner().lookup(check_type) {
+-            // If extends_type contains infer patterns and the type parameter has a constraint,
+-            // try to infer from the constraint. This handles cases like:
+-            // R extends Reducer<infer S, any> ? S : never
+-            // where R is constrained to Reducer<any, any>
+-            if self.type_contains_infer(extends_type)
+-                && let Some(constraint) = param.constraint
++            // Handle tuple extends pattern with infer
++            if let Some(TypeKey::Tuple(extends_elements)) =
++                self.interner().lookup(extends_unwrapped)
+             {
+-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+-                checker.allow_bivariant_rest = true;
++                let extends_elements = self.interner().tuple_list(extends_elements);
++                if extends_elements.len() == 1
++                    && !extends_elements[0].rest
++                    && let Some(TypeKey::Infer(info)) =
++                        self.interner().lookup(extends_elements[0].type_id)
++                {
++                    return self.eval_conditional_tuple_infer(
++                        cond,
++                        check_unwrapped,
++                        &extends_elements[0],
++                        info,
++                    );
++                }
++            }
++
++            // Handle object extends pattern with infer
++            if let Some(extends_shape_id) = match self.interner().lookup(extends_unwrapped) {
++                Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => {
++                    Some(shape_id)
++                }
++                _ => None,
++            } {
++                if let Some(result) =
++                    self.eval_conditional_object_infer(cond, check_unwrapped, extends_shape_id)
++                {
++                    return result;
++                }
++            }
++
++            // Step 2: Check for naked type parameter
++            if let Some(TypeKey::TypeParameter(param)) = self.interner().lookup(check_type) {
++                // If extends_type contains infer patterns and the type parameter has a constraint,
++                // try to infer from the constraint. This handles cases like:
++                // R extends Reducer<infer S, any> ? S : never
++                // where R is constrained to Reducer<any, any>
++                if self.type_contains_infer(extends_type)
++                    && let Some(constraint) = param.constraint
++                {
++                    let mut checker =
++                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
++                    checker.allow_bivariant_rest = true;
++                    let mut bindings = FxHashMap::default();
++                    let mut visited = FxHashSet::default();
++                    if self.match_infer_pattern(
++                        constraint,
++                        extends_type,
++                        &mut bindings,
++                        &mut visited,
++                        &mut checker,
++                    ) {
++                        let substituted_true = self.substitute_infer(cond.true_type, &bindings);
++                        return self.evaluate(substituted_true);
++                    }
++                }
++                // Type parameter hasn't been substituted - defer evaluation
++                return self.interner().conditional(cond.clone());
++            }
++
++            // Step 3: Perform subtype check or infer pattern matching
++            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
++            checker.allow_bivariant_rest = true;
++
++            if self.type_contains_infer(extends_type) {
+                 let mut bindings = FxHashMap::default();
+                 let mut visited = FxHashSet::default();
+                 if self.match_infer_pattern(
+-                    constraint,
++                    check_type,
+                     extends_type,
+                     &mut bindings,
+                     &mut visited,
+@@ -166,40 +212,50 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+                     let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                     return self.evaluate(substituted_true);
+                 }
+-            }
+-            // Type parameter hasn't been substituted - defer evaluation
+-            return self.interner().conditional(cond.clone());
+-        }
+ 
+-        // Step 3: Perform subtype check or infer pattern matching
+-        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+-        checker.allow_bivariant_rest = true;
++                // Check if the result branch is directly a conditional for tail-recursion
++                // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
++                if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
++                    if let Some(TypeKey::Conditional(next_cond_id)) =
++                        self.interner().lookup(cond.false_type)
++                    {
++                        let next_cond = self.interner().conditional_type(next_cond_id);
++                        current_cond = (*next_cond).clone();
++                        tail_recursion_count += 1;
++                        continue;
++                    }
++                }
+ 
+-        if self.type_contains_infer(extends_type) {
+-            let mut bindings = FxHashMap::default();
+-            let mut visited = FxHashSet::default();
+-            if self.match_infer_pattern(
+-                check_type,
+-                extends_type,
+-                &mut bindings,
+-                &mut visited,
+-                &mut checker,
+-            ) {
+-                let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+-                return self.evaluate(substituted_true);
++                // Not a tail-recursive case - evaluate normally
++                return self.evaluate(cond.false_type);
+             }
+ 
+-            return self.evaluate(cond.false_type);
+-        }
++            // Subtype check path
++            let result_branch = if checker.is_subtype_of(check_type, extends_type) {
++                // T <: U -> true branch
++                cond.true_type
++            } else {
++                // Check if types are definitely disjoint
++                // For now, we use a simple heuristic: if not subtype, assume disjoint
++                // More sophisticated: check if intersection is never
++                cond.false_type
++            };
++
++            // Check if the result branch is directly a conditional for tail-recursion
++            // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
++            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
++                if let Some(TypeKey::Conditional(next_cond_id)) =
++                    self.interner().lookup(result_branch)
++                {
++                    let next_cond = self.interner().conditional_type(next_cond_id);
++                    current_cond = (*next_cond).clone();
++                    tail_recursion_count += 1;
++                    continue;
++                }
++            }
+ 
+-        if checker.is_subtype_of(check_type, extends_type) {
+-            // T <: U -> true branch
+-            self.evaluate(cond.true_type)
+-        } else {
+-            // Check if types are definitely disjoint
+-            // For now, we use a simple heuristic: if not subtype, assume disjoint
+-            // More sophisticated: check if intersection is never
+-            self.evaluate(cond.false_type)
++            // Not a tail-recursive case - evaluate normally
++            return self.evaluate(result_branch);
+         }
+     }
+ 
+diff --git src/solver/narrowing.rs src/solver/narrowing.rs
+index 4a6ccbb35..0f5c8eab7 100644
+--- src/solver/narrowing.rs
++++ src/solver/narrowing.rs
+@@ -29,6 +29,7 @@
+ 
+ use crate::interner::Atom;
+ use crate::solver::TypeDatabase;
++use crate::solver::subtype::is_subtype_of;
+ use crate::solver::types::*;
+ use crate::solver::visitor::{
+     intersection_list_id, is_function_type_db, is_literal_type_db, is_object_like_type_db,
+@@ -244,21 +245,96 @@ impl<'a> NarrowingContext<'a> {
+         )
+         .entered();
+ 
+-        let discriminants = self.find_discriminants(union_type);
++        eprintln!(
++            "DEBUG narrow_by_discriminant: union_type={}, property_name={:?}, literal_value={}",
++            union_type.0, property_name, literal_value.0
++        );
+ 
+-        for disc in &discriminants {
+-            if disc.property_name == property_name {
+-                // Find the variant matching this literal
+-                for (lit, member) in &disc.variants {
+-                    if *lit == literal_value {
+-                        return *member;
++        let members = match union_list_id(self.interner, union_type) {
++            Some(members_id) => self.interner.type_list(members_id),
++            None => {
++                eprintln!("DEBUG narrow_by_discriminant: not a union type");
++                return union_type;
++            }
++        };
++
++        eprintln!(
++            "DEBUG narrow_by_discriminant: union has {} members",
++            members.len()
++        );
++
++        let mut matching: Vec<TypeId> = Vec::new();
++
++        for &member in members.iter() {
++            eprintln!("DEBUG narrow_by_discriminant: checking member {}", member.0);
++            if let Some(shape_id) = object_shape_id(self.interner, member) {
++                let shape = self.interner.object_shape(shape_id);
++                let prop_type = shape
++                    .properties
++                    .iter()
++                    .find(|p| p.name == property_name)
++                    .map(|p| p.type_id);
++
++                match prop_type {
++                    Some(ty) => {
++                        eprintln!(
++                            "DEBUG narrow_by_discriminant: member has property, type={}",
++                            ty.0
++                        );
++                        // Check if property type matches the literal value
++                        // Use subtype check to handle cases where property type is wider than literal
++                        let is_match = is_subtype_of(self.interner, ty, literal_value);
++                        eprintln!(
++                            "DEBUG narrow_by_discriminant: is_subtype_of({}, {}) = {}",
++                            ty.0, literal_value.0, is_match
++                        );
++                        if is_match {
++                            eprintln!("DEBUG narrow_by_discriminant: MATCHED member {}", member.0);
++                            matching.push(member);
++                        }
++                        // If property type doesn't match, exclude this member
++                    }
++                    None => {
++                        eprintln!("DEBUG narrow_by_discriminant: member does not have property");
++                        // Property doesn't exist on this member - exclude it
++                        // (x.prop === value implies prop must exist)
+                     }
+                 }
++            } else {
++                eprintln!("DEBUG narrow_by_discriminant: member is not an object type");
++                // Not an object type - can't match
+             }
+         }
+ 
+-        // No narrowing possible - return original
+-        union_type
++        if matching.is_empty() {
++            trace!("No members matched discriminant check, returning never type");
++            eprintln!("DEBUG narrow_by_discriminant: No matches, returning NEVER");
++            return TypeId::NEVER;
++        }
++
++        if matching.len() == members.len() {
++            trace!("All members matched, returning original type");
++            eprintln!("DEBUG narrow_by_discriminant: All members matched, returning original");
++            union_type
++        } else if matching.len() == 1 {
++            trace!("Narrowed to single member");
++            eprintln!(
++                "DEBUG narrow_by_discriminant: Narrowed to single member {}",
++                matching[0].0
++            );
++            matching[0]
++        } else {
++            trace!(
++                "Narrowed to {} of {} members",
++                matching.len(),
++                members.len()
++            );
++            eprintln!(
++                "DEBUG narrow_by_discriminant: Narrowed to {} members",
++                matching.len()
++            );
++            self.interner.union(matching)
++        }
+     }
+ 
+     /// Narrow a union type by excluding variants with a specific discriminant value.
+@@ -358,6 +434,289 @@ impl<'a> NarrowingContext<'a> {
+         self.narrow_to_type(source_type, target_type)
+     }
+ 
++    /// Narrow a type based on an instanceof check.
++    ///
++    /// Example: `x instanceof MyClass` narrows `A | B` to include only `A` where `A` is an instance of `MyClass`
++    pub fn narrow_by_instanceof(
++        &self,
++        source_type: TypeId,
++        constructor_type: TypeId,
++        sense: bool,
++    ) -> TypeId {
++        let _span = span!(
++            Level::TRACE,
++            "narrow_by_instanceof",
++            source_type = source_type.0,
++            constructor_type = constructor_type.0,
++            sense
++        )
++        .entered();
++
++        // Handle ANY and UNKNOWN special cases
++        if source_type == TypeId::ANY {
++            trace!("Source type is ANY, returning unchanged");
++            return TypeId::ANY;
++        }
++
++        // Extract the instance type from the constructor
++        use crate::solver::type_queries_extended::InstanceTypeKind;
++        use crate::solver::type_queries_extended::classify_for_instance_type;
++
++        let instance_type = match classify_for_instance_type(self.interner, constructor_type) {
++            InstanceTypeKind::Callable(shape_id) => {
++                // For callable types with construct signatures, get the return type of the construct signature
++                let shape = self.interner.callable_shape(shape_id);
++                // Find a construct signature and get its return type (the instance type)
++                if let Some(construct_sig) = shape.construct_signatures.first() {
++                    construct_sig.return_type
++                } else {
++                    // No construct signature found, can't narrow
++                    trace!("No construct signature found in callable type");
++                    return source_type;
++                }
++            }
++            InstanceTypeKind::Function(shape_id) => {
++                // For function types, check if it's a constructor
++                let shape = self.interner.function_shape(shape_id);
++                if shape.is_constructor {
++                    // The return type is the instance type
++                    shape.return_type
++                } else {
++                    trace!("Function is not a constructor");
++                    return source_type;
++                }
++            }
++            InstanceTypeKind::Intersection(members) => {
++                // For intersection types, we need to extract instance types from all members
++                // For now, create an intersection of the instance types
++                let instance_types: Vec<TypeId> = members
++                    .iter()
++                    .map(|&member| self.narrow_by_instanceof(source_type, member, sense))
++                    .collect();
++
++                if sense {
++                    if instance_types.is_empty() {
++                        TypeId::NEVER
++                    } else if instance_types.len() == 1 {
++                        instance_types[0]
++                    } else {
++                        self.interner.intersection(instance_types)
++                    }
++                } else {
++                    // For negation with intersection, we can't easily exclude
++                    // Fall back to returning the source type unchanged
++                    source_type
++                }
++            }
++            InstanceTypeKind::Union(members) => {
++                // For union types, extract instance types from all members
++                let instance_types: Vec<TypeId> = members
++                    .iter()
++                    .filter_map(|&member| {
++                        let result = self.narrow_by_instanceof(source_type, member, sense);
++                        if result != TypeId::NEVER {
++                            Some(result)
++                        } else {
++                            None
++                        }
++                    })
++                    .collect();
++
++                if sense {
++                    if instance_types.is_empty() {
++                        TypeId::NEVER
++                    } else if instance_types.len() == 1 {
++                        instance_types[0]
++                    } else {
++                        self.interner.union(instance_types)
++                    }
++                } else {
++                    // For negation with union, we can't easily exclude
++                    // Fall back to returning the source type unchanged
++                    source_type
++                }
++            }
++            InstanceTypeKind::Readonly(inner) => {
++                // Readonly wrapper - extract from inner type
++                return self.narrow_by_instanceof(source_type, inner, sense);
++            }
++            InstanceTypeKind::TypeParameter { constraint } => {
++                // Follow type parameter constraint
++                if let Some(constraint) = constraint {
++                    return self.narrow_by_instanceof(source_type, constraint, sense);
++                } else {
++                    trace!("Type parameter has no constraint");
++                    return source_type;
++                }
++            }
++            InstanceTypeKind::SymbolRef(_) | InstanceTypeKind::NeedsEvaluation => {
++                // Complex cases that need further evaluation
++                // For now, return the source type unchanged
++                trace!("Complex instance type (SymbolRef or NeedsEvaluation), returning unchanged");
++                return source_type;
++            }
++            InstanceTypeKind::NotConstructor => {
++                trace!("Constructor type is not a valid constructor");
++                return source_type;
++            }
++        };
++
++        // Now narrow based on the sense (positive or negative)
++        if sense {
++            // Positive: x instanceof Constructor - narrow to the instance type
++            self.narrow_to_type(source_type, instance_type)
++        } else {
++            // Negative: !(x instanceof Constructor) - exclude the instance type
++            self.narrow_excluding_type(source_type, instance_type)
++        }
++    }
++
++    /// Narrow a type based on an `in` operator check.
++    ///
++    /// Example: `"a" in x` narrows `A | B` to include only types that have property `a`
++    pub fn narrow_by_property_presence(
++        &self,
++        source_type: TypeId,
++        property_name: Atom,
++        present: bool,
++    ) -> TypeId {
++        let _span = span!(
++            Level::TRACE,
++            "narrow_by_property_presence",
++            source_type = source_type.0,
++            ?property_name,
++            present
++        )
++        .entered();
++
++        // Handle special cases
++        if source_type == TypeId::ANY {
++            trace!("Source type is ANY, returning unchanged");
++            return TypeId::ANY;
++        }
++
++        if source_type == TypeId::NEVER {
++            trace!("Source type is NEVER, returning unchanged");
++            return TypeId::NEVER;
++        }
++
++        if source_type == TypeId::UNKNOWN {
++            // For unknown, we don't know what properties it has
++            // If checking for property presence, we can't narrow
++            trace!("Source type is UNKNOWN, returning unchanged");
++            return source_type;
++        }
++
++        // If source is a union, filter members based on property presence
++        if let Some(members_id) = union_list_id(self.interner, source_type) {
++            let members = self.interner.type_list(members_id);
++            trace!(
++                "Checking property {} in union with {} members",
++                self.interner.resolve_atom_ref(property_name),
++                members.len()
++            );
++
++            let matching: Vec<TypeId> = members
++                .iter()
++                .filter(|&&member| {
++                    let has_property = self.type_has_property(member, property_name);
++                    present == has_property
++                })
++                .copied()
++                .collect();
++
++            if matching.is_empty() {
++                trace!("No matching members found, returning NEVER");
++                return TypeId::NEVER;
++            } else if matching.len() == 1 {
++                trace!("Found single matching member, returning {}", matching[0].0);
++                return matching[0];
++            } else if matching.len() == members.len() {
++                trace!("All members match, returning unchanged");
++                return source_type;
++            } else {
++                trace!(
++                    "Found {} matching members, creating new union",
++                    matching.len()
++                );
++                return self.interner.union(matching);
++            }
++        }
++
++        // For non-union types, check if the property exists
++        let has_property = self.type_has_property(source_type, property_name);
++        if present == has_property {
++            source_type
++        } else {
++            trace!(
++                "Property {} mismatch, returning NEVER",
++                self.interner.resolve_atom_ref(property_name)
++            );
++            TypeId::NEVER
++        }
++    }
++
++    /// Check if a type has a specific property.
++    ///
++    /// Returns true if the type has the property (required or optional),
++    /// or has an index signature that would match the property.
++    fn type_has_property(&self, type_id: TypeId, property_name: Atom) -> bool {
++        // Check object shape
++        if let Some(shape_id) = object_shape_id(self.interner, type_id) {
++            let shape = self.interner.object_shape(shape_id);
++
++            // Check if the property exists in the object's properties
++            if shape.properties.iter().any(|p| p.name == property_name) {
++                return true;
++            }
++
++            // Check index signatures
++            // If the object has a string index signature, it has any string property
++            if let Some(ref string_idx) = shape.string_index {
++                // String index signature matches any string property
++                return true;
++            }
++
++            // If the object has a number index signature and the property name is numeric
++            if let Some(ref number_idx) = shape.number_index {
++                let prop_str = self.interner.resolve_atom_ref(property_name);
++                if prop_str.chars().all(|c| c.is_ascii_digit()) {
++                    return true;
++                }
++            }
++
++            return false;
++        }
++
++        // Check object with index signature
++        if let Some(shape_id) = object_with_index_shape_id(self.interner, type_id) {
++            let shape = self.interner.object_shape(shape_id);
++
++            // Check properties first
++            if shape.properties.iter().any(|p| p.name == property_name) {
++                return true;
++            }
++
++            // Check index signatures
++            if shape.string_index.is_some() {
++                return true;
++            }
++
++            if shape.number_index.is_some() {
++                let prop_str = self.interner.resolve_atom_ref(property_name);
++                if prop_str.chars().all(|c| c.is_ascii_digit()) {
++                    return true;
++                }
++            }
++
++            return false;
++        }
++
++        // For other types (functions, classes, arrays, etc.), assume they don't have arbitrary properties
++        // unless they have been handled above (object shapes, etc.)
++        false
++    }
++
+     /// Narrow a type to include only members assignable to target.
+     pub fn narrow_to_type(&self, source_type: TypeId, target_type: TypeId) -> TypeId {
+         let _span = span!(
+@@ -809,10 +1168,13 @@ impl<'a> NarrowingContext<'a> {
+                 }
+             }
+ 
+-            TypeGuard::Instanceof(_class_type) => {
+-                // TODO: Implement instanceof narrowing
+-                // For now, return the source type unchanged
+-                source_type
++            TypeGuard::Instanceof(class_type) => {
++                if sense {
++                    self.narrow_by_instanceof(source_type, *class_type, true)
++                } else {
++                    // Negation: !(x instanceof Class)
++                    self.narrow_by_instanceof(source_type, *class_type, false)
++                }
+             }
+ 
+             TypeGuard::LiteralEquality(literal_type) => {
+@@ -838,11 +1200,10 @@ impl<'a> NarrowingContext<'a> {
+ 
+             TypeGuard::Truthy => {
+                 if sense {
+-                    // Truthy: remove falsy types (null, undefined, false, 0, "", NaN)
++                    // Truthy: remove null and undefined (TypeScript doesn't narrow other falsy values)
+                     self.narrow_by_truthiness(source_type)
+                 } else {
+-                    // Falsy: intersection with falsy types
+-                    // TODO: Implement proper falsy narrowing
++                    // Falsy: TypeScript doesn't narrow in falsy branches
+                     source_type
+                 }
+             }
+@@ -860,10 +1221,14 @@ impl<'a> NarrowingContext<'a> {
+                 }
+             }
+ 
+-            TypeGuard::InProperty(_property_name) => {
+-                // TODO: Implement `in` operator narrowing
+-                // For now, return the source type unchanged
+-                source_type
++            TypeGuard::InProperty(property_name) => {
++                if sense {
++                    // Positive: "prop" in x - narrow to types that have the property
++                    self.narrow_by_property_presence(source_type, *property_name, true)
++                } else {
++                    // Negative: !("prop" in x) - narrow to types that don't have the property
++                    self.narrow_by_property_presence(source_type, *property_name, false)
++                }
+             }
+         }
+     }
+@@ -908,22 +1273,24 @@ impl<'a> NarrowingContext<'a> {
+         self.narrow_excluding_type(source_type, excluded)
+     }
+ 
+-    /// Narrow a type by removing falsy values.
++    /// Narrow a type by removing null and undefined (truthiness check).
+     ///
+-    /// Removes: null, undefined, false, 0, "", NaN
++    /// Note: TypeScript only removes null and undefined in truthiness checks,
++    /// not other falsy values like false, 0, or "". This matches tsc behavior.
+     fn narrow_by_truthiness(&self, source_type: TypeId) -> TypeId {
++        let _span = span!(
++            Level::TRACE,
++            "narrow_by_truthiness",
++            source_type = source_type.0
++        )
++        .entered();
++
+         let mut result = source_type;
+ 
+-        // Remove nullish types
++        // Remove nullish types only (TypeScript doesn't narrow other falsy literals)
+         result = self.narrow_excluding_type(result, TypeId::NULL);
+         result = self.narrow_excluding_type(result, TypeId::UNDEFINED);
+ 
+-        // Remove false literal
+-        if let Some(_false_type) = self.interner.lookup(TypeId::BOOLEAN) {
+-            // For now, just keep the implementation simple
+-            // TODO: Remove false literal from unions
+-        }
+-
+         result
+     }
+ }
