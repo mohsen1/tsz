@@ -1,193 +1,122 @@
-# Session tsz-3: CFA Core & Resolution
+# Session tsz-3: Type Environment Unification
 
 **Started**: 2026-02-04
-**Status**: ACTIVE
-**Focus**: Fix Lazy type resolution to unblock complex narrowing, then complete fall-through and loop orchestration
+**Status**: ACTIVE (REDEFINED)
+**Focus**: Share single TypeEnvironment between CheckerContext and BinderTypeDatabase to fix Lazy type resolution
 
 ## Context
 
-Previous session completed all 8 narrowing bug fixes (discriminant, instanceof, in operator). This session builds on that work by:
-1. Fixing the fundamental Lazy type resolution bug in the Solver
-2. Completing fall-through narrowing orchestration
-3. Implementing loop narrowing
-
-## Context
-
-Previous session completed all 8 narrowing bug fixes (discriminant, instanceof, in operator). This session builds on that work by focusing on the orchestration layer - how the checker applies narrowing primitives in control flow analysis.
+Previous session completed all 8 narrowing bug fixes (discriminant, instanceof, in operator). This session initially focused on CFA orchestration (switch exhaustiveness, fall-through narrowing) but discovered a critical architectural issue blocking Lazy type resolution.
 
 ## Problem Statement
 
-While the solver's narrowing primitives are now correct, the checker's orchestration of switch statement narrowing has gaps:
-1. **Exhaustiveness**: Not detecting when all union members are covered
-2. **Fall-through**: Not handling narrowing across fall-through cases
-3. **Default narrowing**: Not narrowing to `never` when union is exhausted
-4. **Flow cache**: May not be updating flow-sensitive type cache correctly during switch traversal
-
-## Impact
-
-Correct exhaustiveness checking is critical for:
-- Redux-style action patterns
-- Algebraic data types
-- Type-safe state machines
-- Modern TypeScript discriminated union patterns
-
-## Tasks
-
-### ✅ COMPLETED: Switch Exhaustiveness (2026-02-04)
-
-#### Task 1: Switch Clause Mapping ✅ COMPLETE (Commit: bdac7f8df)
-**Fixed Issue**: The binder's `switch_clause_to_switch` map was lost during binding/checking pipeline.
-
-#### Task 2: Lazy Type Resolution ✅ COMPLETE (Commit: fd12bb38e)
-**Bug Fixed**: Lazy types (type aliases) were not being resolved before union narrowing.
-
-**Test Result**:
-```typescript
-type Action = { type: "add" } | { type: "remove" };
-function handle(action: Action) {
-  switch (action.type) {
-    case "add": break;
-    case "remove": break;
-    default:
-      const impossible: never = action; // ✅ Works!
-  }
-}
-```
-
----
-
-### 🔄 CURRENT TASK: Fix Lazy Type Resolution (BLOCKED)
-
-#### Task 3.1: Implement TypeResolver for BinderTypeDatabase
-**Status**: ⛔ BLOCKED by Architecture Issue (Commit: a379be1bb)
-
-**What Was Completed**:
-- ✅ Implemented `TypeResolver` trait for `BinderTypeDatabase`
-- ✅ Added `type_env: Rc<RefCell<TypeEnvironment>>` field
-- ✅ Implemented all `TypeResolver` methods (delegate to `type_env`)
-- ✅ Updated `evaluate_type()` to use `TypeEvaluator::with_resolver()`
-
-**Critical Architecture Issue**:
 The current architecture has TWO separate `TypeEnvironment` instances:
 1. **CheckerContext.type_environment**: Where type aliases are INSERTED during checking
 2. **BinderTypeDatabase.type_environment**: Where types are READ during narrowing
 
-These are NOT the same instance, so Lazy type resolution fails even with the fix.
+These are NOT the same instance, so:
+- Type aliases get registered in CheckerContext's environment
+- But BinderTypeDatabase reads from a different (empty) environment
+- Result: Lazy type resolution fails
 
-**Required Fix** (Multi-File Refactoring):
-To share a single `TypeEnvironment` instance, need to update:
-1. `src/cli/driver.rs`: Create shared `Rc<RefCell<TypeEnvironment>>` and pass to both places
-2. `src/checker/context.rs`: Change field type, update 4 constructors to accept `type_env` parameter
-3. `src/checker/state.rs`: Update `CheckerState::new()` and `with_cache()` to pass `type_env`
-4. Test files: Update all test files that create `CheckerContext` or `CheckerState`
+## Solution: "Internal Initialization" Pattern (from Gemini Pro)
 
-**Impact**: ~20+ files need updates. This is too large for current session context.
+**Key Insight**: Make `CheckerContext::new()` create the `Rc` internally, so most tests don't need changes.
 
-**Recommendation**: Create dedicated session for this architectural refactoring.
+### Phase 1: Architecture Unification (HIGH PRIORITY)
 
-**Current Test Results**:
-- ✅ `test_fallthrough_simple.ts`: Fall-through works for LITERAL types
-- ❌ `test_fallthrough.ts`: Fall-through fails for TYPE ALIASES (blocked by this issue)
+#### Task 1: Update CheckerContext (src/checker/context.rs)
+**Goal**: Make CheckerContext own the shared Rc<RefCell<TypeEnvironment>>
 
----
+**Changes**:
+1. Change `type_env` field from `RefCell<Option<TypeEnvironment>>` to `Rc<RefCell<TypeEnvironment>>`
+2. Update `CheckerContext::new()` to initialize with `Rc::new(RefCell::new(TypeEnvironment::new()))`
+3. Update 4 constructors: `new()`, `with_options()`, `with_cache()`, `with_cache_and_options()`
 
-### COMPLETED TASKS
+**Impact**: Minimal - tests calling `::new()` don't need signature changes
 
-#### Task 1: Switch Clause Mapping ✅ COMPLETE (Commit: bdac7f8df)
+#### Task 2: Update TypeResolver Usage Points
+**Goal**: Ensure BinderTypeDatabase uses CheckerContext's environment
 
-#### Task 2: Lazy Type Resolution ✅ COMPLETE (Commit: fd12bb38e)
-**Bug Fixed**: Lazy types (type aliases) were not being resolved before union narrowing.
-**Note**: This fix was incomplete - it added `resolve_type()` but `evaluate_type()` still uses `NoopResolver`
+**Pattern**:
+```rust
+// Instead of creating new environment:
+let type_env = Rc::new(RefCell::new(TypeEnvironment::new()));
+let db = BinderTypeDatabase::new(..., type_env);
 
-#### Task 3: Fall-through Narrowing (LITERAL TYPES) ✅ COMPLETE
-**Test**: `test_fallthrough_simple.ts` passes - fall-through union works for literal types
-**Test**: `test_fallthrough.ts` fails - fall-through for type aliases blocked by Lazy resolution bug
-**Goal**: Ensure fall-through cases correctly union narrowed types
-**Test Case**:
-```typescript
-switch (x) {
-  case 'a':
-  case 'b':
-    // x should be narrowed to 'a' | 'b'
-    break;
-}
+// Clone from CheckerContext:
+let type_env = self.ctx.type_env.clone();
+let db = BinderTypeDatabase::new(..., type_env);
 ```
-**File**: `src/checker/control_flow.rs`
-**Status**: ✅ PARTIALLY COMPLETE
 
-**Findings**:
-1. ✅ **Fall-through union WORKS for literal types** (e.g., `"a" | "b" | "c"`)
-   - Test: `test_fallthrough_simple.ts` passes
-   - The code in `check_flow` (lines 533-563) correctly unions fallthrough antecedent types
+**Files to update**:
+- `src/checker/state_type_resolution.rs`: Where BinderTypeDatabase is instantiated
+- Any other place that creates `BinderTypeDatabase`
 
-2. ❌ **Fall-through FAILS for type aliases (Lazy types)**
-   - Test: `test_fallthrough.ts` fails on line 9 with "never" error
-   - Root cause: `evaluate_type()` returns ERROR for Lazy types in narrowing context
-   - This is a SEPARATE bug from fall-through union logic
+#### Task 3: Update Sub-Checker Creation
+**Goal**: Ensure sub-checkers share the parent's environment
 
-**Technical Details**:
-- Fall-through union is implemented in `src/checker/control_flow.rs:533-563`
-- For switch clauses with multiple antecedents, the code unions `result_type` with types from `antecedent[1..]`
-- The union logic works correctly - the bug is in discriminant narrowing returning `never`
+**File**: `src/checker/state.rs`
 
-**Related Issue**: Lazy type resolution in discriminant narrowing
-- When narrowing `type Action = { type: "add" } | { type: "remove" }` by `action.type === "add"`
-- The `resolve_type()` call in `narrow_by_discriminant` evaluates the Lazy type to ERROR
-- This causes narrowing to return `never` instead of the specific union member
-- This affects ALL discriminant narrowing on type aliases, not just fall-through
+**Pattern**:
+```rust
+let mut checker = CheckerState::new(...);
+checker.ctx.type_env = self.ctx.type_env.clone(); // Share env
+```
 
-**Root Cause Analysis** (from Gemini):
-- `QueryDatabase::evaluate_type()` uses `NoopResolver` which can't resolve Lazy types
-- The fix is to use `TypeEvaluator::with_resolver()` instead of `TypeEvaluator::new()`
-- Need to update `BinderTypeDatabase` to implement `TypeResolver` and use the correct evaluator
-- Reference: `src/solver/evaluate.rs:135` and `src/solver/db.rs:448`
+#### Task 4: Fix Test Struct Literals
+**Goal**: Update tests that construct CheckerContext with struct literals
 
-**Note**: Exhaustiveness works (commit fd12bb38e) because it doesn't require discriminant narrowing to resolve individual members - it just checks if all cases are covered. Fall-through narrowing requires actual narrowing, which exposes the Lazy type resolution bug.
+**Pattern**:
+```rust
+// OLD (if exists):
+type_env: RefCell::new(TypeEnvironment::new())
 
-#### Task 4: Loop Narrowing (HIGH PRIORITY)
+// NEW:
+type_env: Rc::new(RefCell::new(TypeEnvironment::new()))
+```
+
+**Impact**: Only affects tests using struct literals (rare)
+
+### Phase 2: Validation
+
+#### Task 5: Validate Fall-Through with Type Aliases
+**Test**: Create test with `type Action = { type: "add" } | { type: "remove" }`
+**Goal**: Confirm fall-through narrowing works for type aliases
+
+#### Task 6: Complete Loop Narrowing
 **Goal**: Implement narrowing propagation for while/for loops
-**Test Case**:
-```typescript
-while (x.type === 'a') {
-  // x should be narrowed to 'a'
-}
-```
-**File**: `src/solver/flow_analysis.rs`
-**Status**: ⏸️ Not started
+**Benefit**: Now that Lazy types work, can test with complex type aliases
 
-#### Task 5: CFA Completeness Validation
-**Goal**: Validate that flow cache is correctly updated during complex CFA traversal
-**File**: `src/checker/flow_analysis.rs`
-**Status**: ⏸️ Not started
+#### Task 7: CFA Cache Validation
+**Goal**: Ensure flow cache is correctly updated during complex CFA traversal
 
 ---
 
-### Task 3: Fall-through Narrowing
-**File**: `src/checker/flow_analysis.rs`
+## Previous Work (Archived)
 
-Handle narrowing when cases fall through:
-```typescript
-switch (x) {
-  case 'a':
-  case 'b':
-    // x should be narrowed to 'a' | 'b'
-    break;
-}
-```
+### Completed (Commit: a379be1bb)
+- ✅ Implemented `TypeResolver` trait for `BinderTypeDatabase`
+- ✅ Added `type_env: Rc<RefCell<TypeEnvironment>>` field to BinderTypeDatabase
+- ✅ Implemented all `TypeResolver` methods (delegate to `type_env`)
+- ✅ Updated `evaluate_type()` to use `TypeEvaluator::with_resolver()`
+- ✅ Updated imports to include `Rc` and `RefCell`
 
-**Status**: ⏸️ Not started
+### Completed (Earlier Session)
+- ✅ Switch exhaustiveness (Tasks 1-2)
+- ✅ Fall-through narrowing for LITERAL types
+- ✅ Discriminant narrowing for direct unions
 
 ---
 
-### Task 4: Flow Cache Validation
-**File**: `src/checker/flow_analysis.rs`
+## Gemini Pro Recommendations
 
-Ensure the checker correctly updates flow-sensitive type cache:
-- Each case block should have narrowed type
-- Fall-through should accumulate narrowing
-- After switch, variable should be correctly narrowed (or never)
+1. **Rc<RefCell<...>> is correct** for single-threaded WASM
+2. **Don't move to GlobalState** - keep it session-scoped in CheckerContext
+3. **Use "Internal Initialization"** pattern - minimize test changes
 
-**Status**: ⏸️ Not started
+The key insight: instead of passing type_env as parameter through all constructors,
+make CheckerContext own it and clone when needed.
 
 ---
 
@@ -196,80 +125,31 @@ Ensure the checker correctly updates flow-sensitive type cache:
 - [x] Switch statements correctly narrow in each case (for non-Lazy types)
 - [x] Exhausted unions narrow to `never` in default/after switch
 - [x] Fall-through cases accumulate narrowing correctly (for literal types)
-- [ ] Fall-through narrowing works for type aliases (Lazy types) - BLOCKED by evaluate_type bug
+- [ ] Fall-through narrowing works for type aliases (BLOCKED by this issue)
 - [ ] Flow cache is properly updated during switch traversal
 - [ ] All conformance tests for switch statements pass
 
 ---
 
-## Complexity: MEDIUM-HIGH
+## Complexity: MEDIUM
 
-**Why Medium-High**:
-- `flow_analysis.rs` is complex orchestration code
-- Requires understanding FlowNode graph and flow-sensitive typing
-- Must coordinate with solver's narrowing primitives
-- Edge cases: breaks, returns, throws in switch
+**Why Medium**: The fix is architectural but localized:
+- `CheckerContext` changes are isolated to one file
+- Most test files don't need updates (they use `::new()` constructor)
+- Only places that create `BinderTypeDatabase` need updates
+- Only struct literal tests need updates
 
 **Implementation Principles**:
-1. Use the fixed narrowing primitives from solver
-2. Respect FlowNode graph structure
-3. Follow Two-Question Rule (AGENTS.md)
-4. Test with Redux-style patterns
+1. Use the "Internal Initialization" pattern to minimize test changes
+2. Follow Gemini's guidance on using `Rc<RefCell<...>>`
+3. Clone the Rc when sharing environment (cheap pointer copy)
+4. Test incrementally after each file update
 
 ---
 
-## Next Steps
+## Session History
 
-### Option A: Fix Lazy Type Resolution (HIGH IMPACT)
-**Problem**: `QueryDatabase::evaluate_type()` can't resolve Lazy types because it uses `NoopResolver`
-
-**Files to modify**:
-1. `src/solver/db.rs`: Update `BinderTypeDatabase` to implement `TypeResolver`
-2. `src/solver/db.rs`: Change `BinderTypeDatabase::evaluate_type()` to use `TypeEvaluator::with_resolver()`
-3. `src/solver/evaluate.rs`: Consider renaming `evaluate_type()` to `evaluate_pure_type()` to prevent misuse
-
-**Impact**: Fixes ALL discriminant narrowing on type aliases, not just fall-through
-
-**Test**: `test_fallthrough.ts` should pass after fix
-
-### Option B: Focus on Loop Narrowing (MEDIUM IMPACT)
-**Task 4**: Implement narrowing propagation for while/for loops
-
-**File**: `src/solver/flow_analysis.rs`
-
-**Test case**:
-```typescript
-while (x.type === 'a') {
-  // x should be narrowed to 'a'
-}
-```
-
-**Status**: ⏸️ Not started
-
-### Option C: Redefine Session
-If Lazy type resolution is too complex for this session, redefine tsz-3 to focus on what's working and defer Lazy resolution to a dedicated session.
-
-## Root Cause Identified 🐛
-
-**File**: `src/checker/control_flow.rs`
-**Function**: `handle_switch_clause_iterative` (line 582)
-
-**Bug**: `binder.get_switch_for_clause(clause_idx)` returns `None`
-- flow.node=34 (default clause)
-- Expected: Should return the switch statement node index
-- Actual: Returns None, causing early return before narrowing logic
-
-**Impact**: Switch exhaustiveness cannot work because the binder doesn't associate default clause flow nodes with their switch statements.
-
-**Status**: 🐛 Root cause found - requires binder investigation
-
-## Next Steps
-
-Ask Gemini to investigate binder's get_switch_for_clause function to understand why it's not finding the switch for default clauses.
-
-## Previous Achievements (Archived)
-
-All narrowing bug fixes completed:
-- instanceof narrowing (interface vs class)
-- in operator narrowing (unknown, optional, open objects, intersection)
-- discriminant narrowing (filtering approach with proper resolution)
+- 2026-02-04: Session started - focus on switch exhaustiveness and fall-through
+- 2026-02-04: Implemented TypeResolver for BinderTypeDatabase (commit a379be1bb)
+- 2026-02-04: Discovered dual TypeEnvironment architecture issue
+- 2026-02-04: Redefined session to "Type Environment Unification" with simplified approach
