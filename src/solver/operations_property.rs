@@ -6,7 +6,7 @@
 //! Extracted from operations.rs to keep file sizes manageable.
 
 use crate::interner::Atom;
-use crate::solver::evaluate::{TypeEvaluator, evaluate_type};
+use crate::solver::evaluate::evaluate_type;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
 use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
@@ -1079,16 +1079,14 @@ impl<'a, R: TypeResolver> PropertyAccessEvaluator<'a, R> {
                 }
             }
 
-            // Lazy types (interfaces, classes, type aliases) need evaluation
-            TypeKey::Lazy(_) => {
-                // Use TypeEvaluator with resolver to properly resolve Lazy types
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
-                let evaluated = evaluator.evaluate(obj_type);
-                if evaluated != obj_type {
-                    // Successfully evaluated - resolve property on the concrete type
-                    self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
+            // Lazy types (interfaces, classes, type aliases) need resolution
+            TypeKey::Lazy(def_id) => {
+                // Resolve the lazy type using the resolver
+                if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
+                    // Successfully resolved - resolve property on the concrete type
+                    self.resolve_property_access_inner(resolved, prop_name, prop_atom)
                 } else {
-                    // Evaluation didn't change the type - try apparent members
+                    // Can't resolve - try apparent members
                     let prop_atom =
                         prop_atom.unwrap_or_else(|| self.interner.intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
