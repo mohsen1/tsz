@@ -2,27 +2,23 @@
 
 ## Current Work
 
-**Status**: Investigating why tests still fail after fixes
+**Status**: Heritage clause symbol resolution fixed, but test fails due to separate bug
 
-**Root Cause Identified**:
-The `CompatChecker` was not configured with the `inheritance_graph`, and `check_object_subtype` was not converting `SymbolRef` to `SymbolId` before calling `is_derived_from`.
+**Fix Applied**:
+Updated `resolve_heritage_symbol` in `src/checker/class_inheritance.rs` to use `self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx)` instead of `self.ctx.binder.get_node_symbol(expr_idx)`.
 
-**Fixes Applied**:
-1. Added `set_inheritance_graph` method to `CompatChecker` (src/solver/compat.rs)
-2. Updated `configure_compat_checker` to set the inheritance_graph (src/checker/context.rs)
-3. Added SymbolRef to SymbolId conversion in check_object_subtype (src/solver/subtype_rules/objects.rs)
+**Why This Fix Was Needed**:
+- `node_symbols` HashMap only contains mappings for declaration sites (where symbols are declared)
+- Heritage clause identifiers are *references*, not declarations
+- `resolve_identifier` walks the scope chain to find the symbol by name
 
-**Current Status**:
-Both fixes have been pushed, but tests still fail. This suggests there's another issue preventing nominal class subtype checking from working.
+**Remaining Issue**:
+The test `test_abstract_constructor_assignability` still fails because when `Animal` is used as a value (e.g., `createAnimal(Animal)`), its type incorrectly includes Object.prototype properties like `isPrototypeOf`, `propertyIsEnumerable`, etc.
 
-**Remaining Investigation Needed**:
-1. Verify that instance types have the correct `symbol` field set
-2. Verify that the `inheritance_graph` is being populated before type checking
-3. Add debug output to trace through the nominal check path
-4. Check if there's a different code path being used for type checking that bypasses the nominal check
+This is a separate bug in how the type for a class reference (not `typeof` class) is calculated.
 
 **Failing Tests**:
-1. `test_abstract_constructor_assignability` - TS2322 error on `const animal = createAnimal(Animal);`
+1. `test_abstract_constructor_assignability` - TS2322 error: Type for `Animal` includes Object.prototype properties
 2. `test_abstract_mixin_intersection_ts2339` - TS2339 errors for missing properties
 
 **Last completed**: Const Type Parameters (TS 5.0) Implementation (2025-02-04)

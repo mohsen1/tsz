@@ -147,15 +147,23 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         use crate::parser::syntax_kind_ext;
 
         let node = self.ctx.arena.get(expr_idx)?;
-        if node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
-            self.ctx.binder.get_node_symbol(expr_idx)
+        let sym = if node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
+            // FIX: Use resolve_identifier instead of get_node_symbol
+            // get_node_symbol only works for declaration nodes, not references
+            self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx)
         } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             self.resolve_qualified_symbol(expr_idx)
         } else if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             self.resolve_heritage_symbol_access(expr_idx)
         } else {
             None
-        }
+        };
+        tracing::debug!(
+            "resolve_heritage_symbol: expr_idx={:?}, sym={:?}",
+            expr_idx,
+            sym
+        );
+        sym
     }
 
     /// Resolve qualified name like 'Namespace.Class'
