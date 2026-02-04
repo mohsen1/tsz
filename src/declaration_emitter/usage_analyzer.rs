@@ -615,6 +615,12 @@ impl<'a> UsageAnalyzer<'a> {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {
                     self.analyze_entity_name(type_ref.type_name);
+                    // CRITICAL: Walk type arguments to catch generic types like Promise<User>
+                    if let Some(ref type_args) = type_ref.type_arguments {
+                        for &arg_idx in &type_args.nodes {
+                            self.analyze_type_node(arg_idx);
+                        }
+                    }
                 }
             }
 
