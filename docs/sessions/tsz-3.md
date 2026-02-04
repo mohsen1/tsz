@@ -1,169 +1,139 @@
-# Session tsz-3 - Critical Bug Review (Last 400 Commits)
+# Session tsz-3: Narrowing Logic Correctness
 
 **Started**: 2026-02-04
-**Status**: IN_PROGRESS
-**Focus**: Review and fix critical bugs from the last 400 commits
+**Status**: ACTIVE
+**Focus**: Implement robust, tsc-compliant narrowing logic to fix 8+ critical bugs
 
 ## Context
 
-Systematic review of the last 400 commits to find and fix type system bugs before continuing new feature work.
+Transitioning from **review phase** (COMPLETE) to **implementation phase**.
+Review findings archived in `docs/sessions/history/tsz-3-review-20260204.md`.
 
-## Findings
+## Problem Statement
 
-### 1. Discriminant Narrowing (COMMIT: f2d4ae5d5) ✅ FIXED
+The narrowing logic in `src/solver/narrowing.rs` has 8+ critical bugs that cause incorrect type narrowing in control flow analysis. These bugs affect discriminant narrowing, instanceof, and the `in` operator.
 
-**Issue**: The `narrow_by_discriminant` rewrite had 3 critical bugs:
-1. **Reversed subtype check**: Asked `is_subtype_of(property_type, literal)` instead of `is_subtype_of(literal, property_type)`
-2. **Missing type resolution**: Didn't handle `Lazy`/`Ref`/`Intersection` types
-3. **Broken for optional properties**: Failed on `{ prop?: "a" }` cases
+## Tasks
 
-**Resolution**: REVERTED commit f2d4ae5d5
+### Task 1: Discriminant Narrowing Fix
+**Function**: `narrow_by_discriminant`
+**Bugs**: 3 (reversed check, no resolution, optional props)
 
-**Correct Approach** (from Gemini):
-- Use **filtering approach**, not pre-discovery
-- For each union member, use `resolve_property_access` to handle Lazy/Intersection/Apparent
-- Check `is_subtype_of(literal, property_type)` - NOT reversed
-- Handle edge cases: optional properties, shared discriminant values, non-object members
+**Implementation**:
+1. Use **filtering approach** - not pre-discovery
+2. For each union member, use `resolve_property_access` to handle Lazy/Intersection/Apparent
+3. Check `is_subtype_of(literal, property_type)` - NOT reversed
+4. Handle optional properties: `{ prop?: "a" }` accounts for implicit `undefined`
 
-**Status**: ✅ Reverted, ready for re-implementation
+**Reference**: Gemini Question 1 response from review phase
 
----
-
-### 2. instanceof Narrowing (FILE: src/solver/narrowing.rs)
-
-**Issue**: `narrow_by_instanceof` has 1 critical bug:
-
-#### Bug: Interface vs Class Narrowing
-- **Current**: Returns `NEVER` for interface vs class (uses `narrow_to_type` which checks assignability)
-- **Expected**: Should narrow to `I & C` (intersection)
-- **Example**:
-  ```typescript
-  interface I {}
-  class C implements I {}
-  function test(x: I) {
-      if (x instanceof C) {
-          // Should narrow to I & C
-          // Currently returns NEVER (wrong!)
-      }
-  }
-  ```
-
-**Fix**: Use `interner.intersection2(source, target)` instead of `narrow_to_type` when not assignable
-
-**Status**: ⚠️ BUG FOUND, NOT FIXED
+**Status**: ⏸️ Plan ready, pending Question 1 validation
 
 ---
 
-### 3. `in` Operator Narrowing (FILE: src/solver/narrowing.rs)
+### Task 2: `in` Operator Narrowing Fix
+**Function**: `narrow_by_property_presence`, `type_has_property`
+**Bugs**: 4+ (unknown, optional, resolution, intersection)
 
-**Issue**: `narrow_by_property_presence` has 4+ critical bugs:
-
-#### Bug A: unknown Handling
-- **Current**: Returns `unknown` unchanged
-- **Expected**: Should narrow to `object & { prop: unknown }`
-
-#### Bug B: Optional Property Promotion
-- **Current**: Property stays optional after `in` check
-- **Expected**: Should become required
-- **Example**:
-  ```typescript
-  function test(x: { a?: string }) {
-      if ("a" in x) {
-          x.a; // Should be string (not string | undefined)
-      }
-  }
-  ```
-
-#### Bug C: Missing Type Resolution
-- **Current**: Uses `object_shape_id` which doesn't resolve `Lazy`/`Ref`
-- **Expected**: Must call `resolve_ref_type` before shape lookup
-- **Impact**: Fails for named interfaces and classes
-
-#### Bug D: No Intersection Support
-- **Current**: Returns `false` for intersection types
-- **Expected**: Should return `true` if ANY member has the property
-
-#### Missing Features:
-- Prototype property checks (should use `apparent_object_member_kind`)
-- Private field handling
-
-**Status**: ⚠️ BUGS FOUND, NOT FIXED
-
----
-
-## Summary
-
-| Feature | Bugs Found | Status |
-|---------|-----------|--------|
-| Discriminant narrowing | 3 (reversed check, no resolution, optional props) | ✅ Reverted |
-| instanceof narrowing | 1 (interface vs class) | ⚠️ Not fixed |
-| `in` operator narrowing | 4+ (unknown, optional, resolution, intersection) | ⚠️ Not fixed |
-
-**Total Critical Bugs**: 8+
-
-## Implementation Plan (from Gemini Question 1)
-
-### Priority 1: `in` Operator Narrowing Fix
-
-**Files**: `src/solver/narrowing.rs`
-**Functions**: `type_has_property`, `narrow_by_property_presence`
-
-**Changes Required**:
+**Implementation**:
 
 1. **Enhance `type_has_property`**:
-   - Add `Lazy`/`Ref` resolution: Call resolution helper to unwrap wrappers
-   - Add `Intersection` support: Return true if ANY member has property
-   - Add prototype checking: Call `apparent_object_member_kind`
-   - Keep existing index signature logic
+   - Add `Lazy`/`Ref` resolution before shape lookup
+   - Add `Intersection` support (true if ANY member has property)
+   - Add prototype property checking
+   - Keep index signature logic
 
 2. **Fix `narrow_by_property_presence`**:
-   - Transform from filter to transformer
-   - For `unknown`: Return `object & { prop: unknown }`
-   - Add `promote_optional_property` helper to synthesize new ObjectShape
-   - Handle readonly wrappers
+   - Transform from filter to **transformer**
+   - For `unknown`: return `object & { prop: unknown }`
+   - Add `promote_optional_property` helper
 
 3. **New Helper: `promote_optional_property`**:
    - Clone ObjectShape
-   - Find property and set `optional: false`
+   - Set `optional: false` for the property
    - Re-intern shape
-   - Handle visited set for recursive types
 
-**Edge Cases**:
-- Recursive types (use visited set)
-- `any`/`error` (leave unchanged)
-- Numeric keys (match numeric index signatures)
-- Private fields (always required)
+**Reference**: Gemini Question 1 response from review phase
 
-**Status**: ⏸️ Plan approved, implementation pending
+**Status**: ⏸️ Plan ready, Question 1 already done
 
 ---
 
-### Priority 2: instanceof Narrowing Fix
-
-**File**: `src/solver/narrowing.rs`
+### Task 3: instanceof Narrowing Fix
 **Function**: `narrow_by_instanceof`
+**Bugs**: 1 (interface vs class)
 
-**Change**: Use `interner.intersection2(source, target)` instead of `narrow_to_type` when not assignable
+**Implementation**:
+- Use `interner.intersection2(source, target)` instead of `narrow_to_type`
+- Handle structural vs nominal types correctly
+- Respect prototype chain
+
+**Status**: ⏸️ Plan ready, implementation pending
+
+---
+
+### Task 4: Regression Testing
+**File**: `src/solver/tests/narrowing_regression_tests.rs`
+
+**Test Cases**:
+- Discriminant narrowing with shared values
+- Optional properties in discriminants
+- instanceof with interfaces vs classes
+- `in` operator with unknown
+- `in` operator with optional properties
+- `in` operator with intersections
+- All 8+ identified bug scenarios
 
 **Status**: Not started
 
 ---
 
-### Priority 3: Discriminant Narrowing Re-implementation
+## Success Criteria
 
-**File**: `src/solver/narrowing.rs`
-**Function**: `narrow_by_discriminant`
+- [ ] All 3 narrowing functions fixed
+- [ ] Unit tests pass with 100% coverage of edge cases
+- [ ] Conformance tests match tsc exactly
+- [ ] No "any poisoning" - unknown narrows correctly
+- [ ] No regressions in existing narrowing tests
 
-**Requirements**:
-- Use filtering approach (not pre-discovery)
-- Use visitor pattern for all TypeKey variants
-- Handle Lazy, Intersection, ReadonlyType
-- Ask Gemini Question 1 BEFORE implementing
+---
 
-**Status**: Not started
+## Complexity: HIGH
+
+**Why High**:
+- `src/solver/narrowing.rs` is high-traffic, high-impact
+- Errors in union filtering → unsoundness or infinite recursion
+- `Lazy` type resolution is tricky
+- Must handle 25+ TypeKey variants correctly
+
+**Implementation Principles**:
+1. Use visitor pattern from `visitor.rs`
+2. Always resolve `Lazy` types before inspection
+3. Respect `strictNullChecks` setting
+4. Follow Two-Question Rule (AGENTS.md)
+
+---
+
+## Next Step
+
+**Start with Task 2** (`in` operator fix):
+- Question 1 already completed
+- Clear implementation plan
+- Will fix 4+ bugs at once
+
+**Then Task 3** (instanceof fix):
+- Simpler, quick win
+- Uses similar patterns
+
+**Then Task 1** (discriminant narrowing):
+- Requires new Question 1
+- Most complex
+- Must not repeat revert mistakes
+
+---
 
 ## Session History
 
-- 2026-02-04: Started review of last 400 commits
-- 2026-02-04: Reverted discriminant narrowing commit
-- 2026-02-04: Found 5+ additional bugs in narrowing
+- 2026-02-04: Completed review phase (8+ bugs found)
+- 2026-02-04: Redefined as implementation session
+- 2026-02-04: Ready to start Task 2 (in operator fix)
