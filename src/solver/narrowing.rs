@@ -250,14 +250,31 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        // Get union members
-        let members = match union_list_id(self.interner, union_type) {
-            Some(members_id) => self.interner.type_list(members_id),
-            None => {
-                trace!("Not a union type, returning unchanged");
-                return union_type;
-            }
+        // Get union members - normalize single types to "union of 1" slice
+        // This allows single-object narrowing to work correctly
+        let single_member_storage;
+        let members_list_storage;
+        let members: &[TypeId] = if let Some(members_id) = union_list_id(self.interner, union_type)
+        {
+            members_list_storage = self.interner.type_list(members_id);
+            &members_list_storage
+        } else {
+            single_member_storage = [union_type];
+            &single_member_storage[..]
         };
+
+        trace!(
+            "Checking {} member(s) for discriminant match",
+            members.len()
+        );
+
+        eprintln!(
+            "DEBUG narrow_by_discriminant: union_type={}, property={:?}, literal={}, members={}",
+            union_type.0,
+            self.interner.resolve_atom_ref(property_name),
+            literal_value.0,
+            members.len()
+        );
 
         trace!(
             "Narrowing union with {} members by discriminant property",
@@ -326,7 +343,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Return result based on matches
-        if matching.is_empty() {
+        let result = if matching.is_empty() {
             trace!("No members matched discriminant check, returning never");
             TypeId::NEVER
         } else if matching.len() == members.len() {
@@ -342,7 +359,10 @@ impl<'a> NarrowingContext<'a> {
                 members.len()
             );
             self.interner.union(matching)
-        }
+        };
+
+        eprintln!("DEBUG narrow_by_discriminant: result={}", result.0);
+        result
     }
 
     /// Narrow a union type by excluding variants with a specific discriminant value.
@@ -371,9 +391,17 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let members = match union_list_id(self.interner, union_type) {
-            Some(members_id) => self.interner.type_list(members_id),
-            None => return union_type,
+        // Get union members - normalize single types to "union of 1" slice
+        // This allows single-object narrowing to work correctly
+        let single_member_storage;
+        let members_list_storage;
+        let members: &[TypeId] = if let Some(members_id) = union_list_id(self.interner, union_type)
+        {
+            members_list_storage = self.interner.type_list(members_id);
+            &members_list_storage
+        } else {
+            single_member_storage = [union_type];
+            &single_member_storage[..]
         };
 
         trace!(
@@ -435,13 +463,20 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        if remaining.is_empty() {
+        let remaining_count = remaining.len();
+        let result = if remaining.is_empty() {
             TypeId::NEVER
-        } else if remaining.len() == 1 {
+        } else if remaining_count == 1 {
             remaining[0]
         } else {
             self.interner.union(remaining)
-        }
+        };
+
+        eprintln!(
+            "DEBUG narrow_by_excluding_discriminant: result={}, remaining_count={}",
+            result.0, remaining_count
+        );
+        result
     }
 
     /// Narrow a type based on a typeof check.
