@@ -221,3 +221,48 @@ Fixed Cache Isolation Bug where lib.d.ts type aliases weren't resolving correctl
 **Next**: Task 2 - Implement Solver::narrow
 
 ---
+
+### Task 2 Complete ✅
+
+**Commit**: `f7e11cdf5` - "feat(tsz-2): implement Solver::narrow using Visitor pattern"
+
+**Changes Made**:
+1. Added `narrow()` method to `NarrowingContext` (src/solver/narrowing.rs:1784)
+   - Fast path: returns early if type is already subtype of narrower
+   - Uses `NarrowingVisitor` to perform type-based narrowing
+
+2. Created `NarrowingVisitor` struct implementing `TypeVisitor` (src/solver/narrowing.rs:1800-2010)
+   - `visit_union()`: Recursively narrows each union member (CRITICAL bug fix)
+   - `visit_intrinsic()`: Proper overlap/disjoint logic for primitives
+   - `visit_intersection()`: Checks if all members match narrower
+   - `visit_type_parameter()`: Intersects constraint with narrower
+   - `visit_lazy/visit_ref/visit_application()`: Conservative returns with TODOs
+
+3. Added `narrow()` to `QueryDatabase` trait (src/solver/db.rs:296)
+   - Added `Self: Sized` constraint for dyn trait compatibility
+
+**Critical Bugs Fixed** (via Gemini Code Review):
+1. **Union logic broken**: Changed from `is_subtype_of()` check to recursive `narrow()` call
+   - Before: Filtered union members by subtype check only
+   - After: Recursively narrows each member, handling cases like `string` narrowed by `"foo"` → `"foo"`
+
+2. **Intrinsic disjoint checks**: Added proper overlap/disjoint logic
+   - Case 1: `narrower` is subtype of `type_id` (e.g., `narrow(string, "foo")`) → returns `narrower`
+   - Case 2: `type_id` is subtype of `narrower` (e.g., `narrow("foo", string)`) → returns `type_id`
+   - Case 3: Disjoint types (e.g., `narrow(string, number)`) → returns `never`
+
+3. **Lazy/Ref/Application handling**: Added conservative returns with TODOs
+   - Safely returns `narrower` (may over-narrow but won't crash)
+   - TODO comments explain need to resolve types before recursing
+
+**Gemini Guidance**:
+- Question 1 (PRE): Approach validation - use Visitor pattern
+- Question 2 (POST): Implementation review - found 3 critical bugs, all fixed
+
+**Merge Conflict Resolved**: Successfully resolved merge conflict with remote commit `d1989079f`
+- Kept local changes (bug fixes from Gemini review)
+- Rebased and pushed successfully
+
+**Next**: Task 3 - Checker Integration with CFA
+
+---
