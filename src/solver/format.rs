@@ -190,8 +190,19 @@ impl<'a> TypeFormatter<'a> {
             TypeKey::Literal(lit) => self.format_literal(lit),
             TypeKey::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
-                // Try to find a matching interface/class definition to use its name
-                // instead of expanding the object literal
+
+                // First, check if this is a class instance type with a symbol
+                // Class instance types have their symbol set for nominal typing
+                if let Some(sym_id) = shape.symbol {
+                    if let Some(arena) = self.symbol_arena {
+                        if let Some(sym) = arena.get(sym_id) {
+                            // Use the class name instead of expanding all properties
+                            return sym.escaped_name.to_string();
+                        }
+                    }
+                }
+
+                // If not a class or symbol not available, try definition store
                 if let Some(def_store) = self.def_store {
                     if let Some(def_id) = def_store.find_def_by_shape(&shape) {
                         if let Some(def) = def_store.get(def_id) {
@@ -204,8 +215,19 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeKey::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
-                // Try to find a matching interface/class definition to use its name
-                // instead of expanding the object literal
+
+                // First, check if this is a class instance type with a symbol
+                // Class instance types have their symbol set for nominal typing
+                if let Some(sym_id) = shape.symbol {
+                    if let Some(arena) = self.symbol_arena {
+                        if let Some(sym) = arena.get(sym_id) {
+                            // Use the class name instead of expanding all properties
+                            return sym.escaped_name.to_string();
+                        }
+                    }
+                }
+
+                // If not a class or symbol not available, try definition store
                 if let Some(def_store) = self.def_store {
                     if let Some(def_id) = def_store.find_def_by_shape(&shape) {
                         if let Some(def) = def_store.get(def_id) {
