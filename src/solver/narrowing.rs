@@ -636,11 +636,16 @@ impl<'a> NarrowingContext<'a> {
             return TypeId::ANY;
         }
 
+        // CRITICAL: Resolve Lazy types for both source and constructor
+        // This ensures type aliases are resolved to their actual types
+        let resolved_source = self.resolve_type(source_type);
+        let resolved_constructor = self.resolve_type(constructor_type);
+
         // Extract the instance type from the constructor
         use crate::solver::type_queries_extended::InstanceTypeKind;
         use crate::solver::type_queries_extended::classify_for_instance_type;
 
-        let instance_type = match classify_for_instance_type(self.db, constructor_type) {
+        let instance_type = match classify_for_instance_type(self.db, resolved_constructor) {
             InstanceTypeKind::Callable(shape_id) => {
                 // For callable types with construct signatures, get the return type of the construct signature
                 let shape = self.db.callable_shape(shape_id);
@@ -743,19 +748,19 @@ impl<'a> NarrowingContext<'a> {
         if sense {
             // Positive: x instanceof Constructor - narrow to the instance type
             // First, try standard assignability-based narrowing
-            let narrowed = self.narrow_to_type(source_type, instance_type);
+            let narrowed = self.narrow_to_type(resolved_source, instance_type);
 
             // If that returns NEVER, try intersection approach for interface vs class cases
             // In TypeScript, instanceof on an interface narrows to intersection, not NEVER
-            if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
+            if narrowed == TypeId::NEVER && resolved_source != TypeId::NEVER {
                 // Use intersection for interface vs class (or other non-assignable but overlapping types)
-                self.db.intersection2(source_type, instance_type)
+                self.db.intersection2(resolved_source, instance_type)
             } else {
                 narrowed
             }
         } else {
             // Negative: !(x instanceof Constructor) - exclude the instance type
-            self.narrow_excluding_type(source_type, instance_type)
+            self.narrow_excluding_type(resolved_source, instance_type)
         }
     }
 
