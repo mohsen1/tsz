@@ -127,27 +127,30 @@
 
 ---
 
-### 🆕 Priority 4: Nominal Subtyping Infrastructure (UNBLOCKS tsz-2)
-**Problem**: tsz-2 is blocked because `PropertyInfo` lacks visibility metadata
-- Cannot distinguish between public/private/protected members
-- Needed for correct nominal subtyping behavior
+### 🔄 Priority 4: Audit and Complete Nominal Subtyping (ACTIVE - 2026-02-04 Redefinition)
 
-**Solution** (from Gemini consultation):
-- Add `pub visibility: MemberAccessLevel` to `PropertyInfo` struct
-- Update `src/solver/intern.rs`: object, object_with_flags, object_with_index
-- Update `src/solver/subtype.rs`: `object_subtype_of` to check visibility
-- Private/protected property in target can only be satisfied by same/stricter visibility in source
+**Discovery**: PropertyInfo already has `visibility` and `parent_id` fields (commit 883ed90e7)
+- Struct fields exist but implementation is incomplete/buggy
+- Tests weren't updated when fields were added → test suite broken
+- Need to verify fields are actually used in subtyping logic
 
-**Files to modify**:
-- `src/solver/types.rs`: `PropertyInfo` struct
-- `src/solver/intern.rs`: Object creation functions
+**Current Task** (from Gemini consultation):
+1. ✅ Fix test suite compilation errors (update PropertyInfo in all tests)
+2. ✅ Verify Priority 3 fix works (run tests after fixing)
+3. 🔄 **NEXT**: Audit Nominal Subtyping implementation
+   - Review `subtype.rs`: Does `is_subtype_of` use `parent_id`?
+   - Review `lawyer.rs`: Does it handle `any` bypass correctly?
+   - Review `class_hierarchy.rs`: Does it assign `parent_id` correctly?
+4. Fix/Complete based on audit findings
+
+**Files to audit**:
 - `src/solver/subtype.rs`: `object_subtype_of` function
-- `src/checker/class_type.rs`: Update PropertyInfo creation
-- `src/solver/lower.rs`: Update PropertyInfo lowering
+- `src/solver/lawyer.rs`: "Lawyer" layer logic
+- `src/solver/class_hierarchy.rs`: `ClassTypeBuilder`
 
-**Impact**: Unblocks tsz-2 (Advanced Type Evaluation)
+**Why Not Priority 5**: Building on shaky foundation. Quote AGENTS.md: "100% of unreviewed solver/checker changes had critical bugs."
 
-**Status**: Not started
+**Status**: Fixing test suite, then audit
 
 ---
 
