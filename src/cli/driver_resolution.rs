@@ -1620,34 +1620,39 @@ fn calculate_required_imports(
         let current_path = std::path::Path::new(&program.files[file_idx].file_name);
         let decl_path = std::path::Path::new(&decl_file.file_name);
 
-        // Get the parent directories
+        // Get the directory of the current file (where the import will be written)
         let current_dir = current_path.parent().unwrap_or(current_path);
-        let decl_dir = decl_path.parent().unwrap_or(decl_path);
 
-        // Calculate relative path (simplified - handles same directory case)
-        let relative_path = if decl_dir == current_dir {
-            decl_file.file_name.clone()
-        } else {
-            // Different directory - for now use full path
-            // TODO: Implement proper relative path calculation
-            decl_file.file_name.clone()
-        };
+        // Calculate the relative path using the helper
+        let relative_path_buf = diff_paths(decl_path, current_dir);
 
-        // Convert to module specifier (remove extension, use / separators)
-        let module_specifier = relative_path.replace('\\', "/");
+        // Convert to module specifier (use / separators regardless of OS)
+        let module_specifier = relative_path_buf.to_string_lossy().replace('\\', "/");
 
-        // Remove .ts or .d.ts extension if present
-        let module_specifier = if let Some(stem) = module_specifier.strip_suffix(".ts") {
+        // Remove .ts, .tsx, .d.ts extension if present
+        // Note: We check d.ts first to avoid stripping just .ts from .d.ts
+        let module_specifier = if let Some(stem) = module_specifier.strip_suffix(".d.ts") {
             stem.to_string()
-        } else if let Some(stem) = module_specifier.strip_suffix(".d.ts") {
+        } else if let Some(stem) = module_specifier.strip_suffix(".d.mts") {
+            stem.to_string()
+        } else if let Some(stem) = module_specifier.strip_suffix(".d.cts") {
+            stem.to_string()
+        } else if let Some(stem) = module_specifier.strip_suffix(".tsx") {
+            stem.to_string()
+        } else if let Some(stem) = module_specifier.strip_suffix(".ts") {
+            stem.to_string()
+        } else if let Some(stem) = module_specifier.strip_suffix(".mts") {
+            stem.to_string()
+        } else if let Some(stem) = module_specifier.strip_suffix(".cts") {
             stem.to_string()
         } else {
             module_specifier
         };
 
-        // Add ./ prefix if not a node_module path
+        // Add ./ prefix if not a node_module path (doesn't start with . or /)
+        // and doesn't already start with ..
         let module_specifier =
-            if !module_specifier.starts_with('.') && !module_specifier.starts_with('@') {
+            if !module_specifier.starts_with('.') && !module_specifier.starts_with('/') {
                 format!("./{}", module_specifier)
             } else {
                 module_specifier
@@ -2037,6 +2042,46 @@ pub(crate) fn normalize_type_roots(
 
 pub(crate) fn canonicalize_or_owned(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Calculates the relative path from `base` to `path`.
+///
+/// This replaces the functionality of the `pathdiff` crate using only std::path.
+/// It determines the common prefix, calculates how many ".." segments are needed
+/// to get out of `base`, and then appends the remaining segments of `path`.
+fn diff_paths(path: &Path, base: &Path) -> PathBuf {
+    
+
+    let path_comps: Vec<_> = path.components().collect();
+    let base_comps: Vec<_> = base.components().collect();
+
+    // 1. Find length of common prefix
+    let mut i = 0;
+    while i < path_comps.len() && i < base_comps.len() && path_comps[i] == base_comps[i] {
+        i += 1;
+    }
+
+    let mut result = PathBuf::new();
+
+    // 2. Add ".." for every component left in base (navigating up)
+    for _ in i..base_comps.len() {
+        result.push("..");
+    }
+
+    // 3. Add remaining components from path (navigating down)
+    for component in &path_comps[i..] {
+        result.push(component);
+    }
+
+    // Edge case: if result is empty, it means path == base.
+    // For module resolution, we usually want the filename, but this function
+    // is typically called with base=dir and path=file, so result won't be empty.
+    // If it is empty, returning "." is a safe fallback for directory paths.
+    if result.as_os_str().is_empty() {
+        result.push(".");
+    }
+
+    result
 }
 
 pub(crate) fn env_flag(name: &str) -> bool {

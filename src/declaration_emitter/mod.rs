@@ -191,12 +191,27 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Run usage analyzer if we have all required components AND haven't run yet
         if self.used_symbols.is_none() {
+            eprintln!(
+                "[DEBUG] emit: type_cache.is_none()={}",
+                self.type_cache.is_none()
+            );
+            eprintln!(
+                "[DEBUG] emit: type_interner.is_none()={}",
+                self.type_interner.is_none()
+            );
+            eprintln!("[DEBUG] emit: binder.is_none()={}", self.binder.is_none());
+            eprintln!(
+                "[DEBUG] emit: current_arena.is_none()={}",
+                self.current_arena.is_none()
+            );
+
             if let (Some(cache), Some(interner), Some(binder), Some(current_arena)) = (
                 &self.type_cache,
                 self.type_interner,
                 self.binder,
                 &self.current_arena,
             ) {
+                eprintln!("[DEBUG] emit: running UsageAnalyzer");
                 let mut analyzer = usage_analyzer::UsageAnalyzer::new(
                     self.arena,
                     binder,
@@ -204,9 +219,17 @@ impl<'a> DeclarationEmitter<'a> {
                     interner,
                     current_arena.clone(),
                 );
-                let used = analyzer.analyze(root_idx);
-                self.used_symbols = Some(used.clone());
-                self.foreign_symbols = Some(analyzer.get_foreign_symbols().clone());
+                let used = analyzer.analyze(root_idx).clone();
+                eprintln!("[DEBUG] emit: used_symbols has {} symbols", used.len());
+                let foreign = analyzer.get_foreign_symbols();
+                eprintln!(
+                    "[DEBUG] emit: foreign_symbols has {} symbols",
+                    foreign.len()
+                );
+                self.used_symbols = Some(used);
+                self.foreign_symbols = Some(foreign.clone());
+            } else {
+                eprintln!("[DEBUG] emit: skipping UsageAnalyzer - missing components");
             }
         }
 
@@ -220,6 +243,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Emit required imports first (before other declarations)
         self.emit_required_imports();
+
+        // Emit auto-generated imports for foreign symbols
+        self.emit_auto_imports();
 
         for &stmt_idx in &source_file.statements.nodes {
             self.emit_statement(stmt_idx);
@@ -2759,18 +2785,124 @@ impl<'a> DeclarationEmitter<'a> {
     fn group_foreign_symbols_by_module(&self) -> FxHashMap<String, Vec<SymbolId>> {
         let mut module_map: FxHashMap<String, Vec<SymbolId>> = FxHashMap::default();
 
+        eprintln!(
+            "[DEBUG] group_foreign_symbols_by_module: foreign_symbols = {:?}",
+            self.foreign_symbols
+        );
+
         if let Some(foreign_symbols) = &self.foreign_symbols {
             for &sym_id in foreign_symbols {
+                eprintln!(
+                    "[DEBUG] group_foreign_symbols_by_module: resolving symbol {:?}",
+                    sym_id
+                );
                 if let Some(module_path) = self.resolve_symbol_module_path(sym_id) {
-                    module_map
-                        .entry(module_path)
-                        .or_default()
-                        .push(sym_id);
+                    eprintln!(
+                        "[DEBUG] group_foreign_symbols_by_module: symbol {:?} -> module '{}'",
+                        sym_id, module_path
+                    );
+                    module_map.entry(module_path).or_default().push(sym_id);
+                } else {
+                    eprintln!(
+                        "[DEBUG] group_foreign_symbols_by_module: symbol {:?} -> no module path",
+                        sym_id
+                    );
                 }
             }
         }
 
+        eprintln!(
+            "[DEBUG] group_foreign_symbols_by_module: returning {} modules",
+            module_map.len()
+        );
         module_map
+    }
+
+    /// Emit auto-generated imports for foreign symbols.
+    ///
+    /// This should be called before emitting other declarations to ensure
+    /// imports appear at the top of the .d.ts file.
+    fn emit_auto_imports(&mut self) {
+        eprintln!("[DEBUG] emit_auto_imports: starting");
+
+        let binder = match &self.binder {
+            Some(b) => b,
+            None => {
+                eprintln!("[DEBUG] emit_auto_imports: no binder, returning");
+                return;
+            }
+        };
+
+        // Group foreign symbols by their module paths
+        let module_map = self.group_foreign_symbols_by_module();
+        eprintln!(
+            "[DEBUG] emit_auto_imports: module_map has {} entries",
+            module_map.len()
+        );
+
+        // Collect and sort imports as owned data to avoid borrow issues
+        let mut imports: Vec<(String, Vec<String>)> = Vec::new();
+
+        for (module_path, symbol_ids) in &module_map {
+            eprintln!(
+                "[DEBUG] emit_auto_imports: processing module '{}' with {} symbols",
+                module_path,
+                symbol_ids.len()
+            );
+            if symbol_ids.is_empty() {
+                continue;
+            }
+
+            // Get symbol names and sort them
+            let mut symbol_names: Vec<String> = symbol_ids
+                .iter()
+                .filter_map(|&sym_id| {
+                    let symbol = binder.symbols.get(sym_id)?;
+                    eprintln!(
+                        "[DEBUG] emit_auto_imports: found symbol '{}' (id={:?})",
+                        symbol.escaped_name, sym_id
+                    );
+                    Some(symbol.escaped_name.clone())
+                })
+                .collect();
+            symbol_names.sort();
+
+            if !symbol_names.is_empty() {
+                imports.push((module_path.clone(), symbol_names));
+            }
+        }
+
+        eprintln!(
+            "[DEBUG] emit_auto_imports: collected {} imports to emit",
+            imports.len()
+        );
+
+        // Sort by module path for consistent output
+        imports.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Emit the import statements
+        for (module_path, symbol_names) in imports {
+            eprintln!(
+                "[DEBUG] emit_auto_imports: emitting import from '{}' with symbols: {:?}",
+                module_path, symbol_names
+            );
+            self.write_indent();
+            self.write("import { ");
+
+            let mut first = true;
+            for name in &symbol_names {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                self.write(name);
+            }
+
+            self.write(" } from \"");
+            self.write(&module_path);
+            self.write("\";");
+            self.write_line();
+        }
     }
 
     /// Emit required imports at the beginning of the .d.ts file.
