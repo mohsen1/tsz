@@ -1,7 +1,7 @@
 # Session tsz-2: Type Narrowing & Control Flow Analysis
 
 **Started**: 2026-02-04
-**Status**: 🟢 Phase 4 Active - CFA Diagnostics & Safety (Task 8: Definite Assignment)
+**Status**: 🟢 Phase 4 Active - CFA Diagnostics & Safety (Task 12: Exhaustiveness Checking)
 **Previous**: Lawyer-Layer Cache Partitioning (COMPLETE)
 
 ## SESSION REDEFINITION (2026-02-04)
@@ -672,22 +672,41 @@ Phase 3 completed all core narrowing tasks. Phase 4 focuses on **diagnostics and
 
 **Gemini Recommendation**: Complete the CFA arc by implementing Definite Assignment Analysis - the logical payoff for the flow graph infrastructure built in Phases 1-3.
 
-### Task 8: Definite Assignment Analysis (CRITICAL)
+### Task 8: Definite Assignment Analysis (CRITICAL) ✅ COMPLETE
 
 **Goal**: Detect "Variable used before being assigned" (TS2454) - a fundamental safety feature.
 
 **Implementation**:
-- Query CFA to determine if variable is "definitely assigned" at usage point
-- Use existing `check_flow` logic but track boolean `is_assigned` instead of `TypeId`
-- Handle `var` vs `let/const` differences (TDZ)
-- Handle `try/catch/finally` blocks (assignments in `try` not guaranteed if error occurs)
+- ✅ Integrate `check_flow_usage` into `get_type_of_identifier` in `type_computation_complex.rs`
+- ✅ Replaces inline DAA logic with centralized `check_flow_usage` call
+- ✅ Returns `declared_type` instead of `ERROR` on DAA violation (avoids cascading errors)
+- ✅ Infrastructure already existed: `check_flow_usage` (line 1555 in flow_analysis.rs)
 
 **Why Critical**: Without DAA, the CFA engine is "silent" regarding one of its primary responsibilities. This is a core diagnostic users expect from a TypeScript compiler.
 
-**Files to modify**:
-- `src/checker/flow_analysis.rs`: Query definite assignment
-- `src/checker/type_checking.rs`: Report TS2454 errors
-- `src/checker/control_flow.rs`: Add `is_definitely_assigned` method
+**Files modified**:
+- `src/checker/type_computation_complex.rs`: Integrated `check_flow_usage` call (line 1583)
+
+**Test Results**:
+```typescript
+function test1() {
+    let x: string;
+    return x;  // ✅ Emits TS2454
+}
+
+function test2() {
+    let x: string = "hello";
+    return x;  // ✅ No error: x is initialized
+}
+
+function test3() {
+    let x: string;
+    x = "world";
+    return x;  // ✅ No error: x is assigned before use
+}
+```
+
+**Commit**: `be72c05be` - feat(tsz-2): integrate Definite Assignment Analysis into type checking
 
 ### Task 12: Exhaustiveness Checking (HIGH - NEW)
 
