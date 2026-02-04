@@ -24,9 +24,16 @@
   - Tests affected:
     - test_checker_cross_namespace_type_reference
     - test_checker_module_augmentation_merges_exports
+- ✅ **Fixed 4 new expression tests** (39 → 35 failing tests, **-4 tests**)
+  - Updated to handle ObjectWithIndex types
+  - Tests affected:
+    - test_new_expression_infers_class_instance_type
+    - test_new_expression_infers_parameter_properties
+    - test_new_expression_infers_base_class_properties
+    - test_new_expression_infers_generic_class_type_params
 
 ### Total Progress
-- **51 → 39 failing tests (-12 tests total)**
+- **51 → 35 failing tests (-16 tests total)**
 
 ## Current Focus
 
@@ -50,13 +57,17 @@ match alias_key {
 }
 ```
 
-## Remaining 39 Failing Tests - Categorized
+## Remaining 35 Failing Tests - Categorized
 
 **Namespace/Module Merging** (0 tests remaining) ✅
 - test_checker_cross_namespace_type_reference ✅ FIXED
 - test_checker_module_augmentation_merges_exports ✅ FIXED
 
-**New Expression Inference** (4 tests)
+**New Expression Inference** (0 tests remaining) ✅
+- test_new_expression_infers_class_instance_type ✅ FIXED
+- test_new_expression_infers_parameter_properties ✅ FIXED
+- test_new_expression_infers_base_class_properties ✅ FIXED
+- test_new_expression_infers_generic_class_type_params ✅ FIXED
 **Readonly Assignment TS2540** (4 tests) - **DEFERRED**
 **Property Access** (2 tests)
 **Numeric Enum** (2 tests) - **DEFERRED**
@@ -74,4 +85,4 @@ match alias_key {
 - Numeric enum assignability (bidirectional with number)
 - **Enum+namespace property access** (requires VALUE vs TYPE context handling)
 
-## Status: Excellent progress - 39 failing tests remain
+## Status: Excellent progress - 35 failing tests remain
