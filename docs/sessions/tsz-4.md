@@ -1,461 +1,82 @@
-# Session tsz-4 - Declaration Emit (.d.ts file generation)
-
-## Date: 2025-02-04
-
-## Status: ACTIVE - TypePrinter Complete, Integrating with DeclarationEmitter
-
-## Current Work
-
-**Completed**: TypePrinter Implementation (Phase 1)
-- `src/emitter/type_printer.rs` already implemented (12,488 bytes)
-- Handles primitives, unions, intersections, arrays, tuples, functions, objects, etc.
-- Comprehensive type reification from TypeId to TypeScript syntax
-
-**Current Task**: Integrate TypePrinter with DeclarationEmitter
-- Need to add Solver/Checker context to DeclarationEmitter
-- Call TypePrinter.print_type() when type annotations are missing
-- Test with `./scripts/emit/run.sh --dts-only --max=50`
-
-### Executive Summary
-
-Session tsz-4 is focused entirely on implementing declaration file generation (`tsc --declaration` or `-d`) using **test-driven development**. All work will be verified against TypeScript's test baselines in `scripts/emit/`.
-
-### Goal: Match TypeScript's Declaration Output Exactly
-
-**For every TypeScript test case, tsz must emit identical `.d.ts` output.**
-
-Example:
-```typescript
-// Input (test.ts)
-export function add(a: number, b: number): number {
-    return a + b;
-}
-export class Calculator {
-    private value: number;
-    add(n: number): this { ... }
-}
-```
-
-**Expected output** (must match tsc exactly):
-```typescript
-// test.d.ts
-export declare function add(a: number, b: number): number;
-export declare class Calculator {
-    private value: number;
-    add(n: number): this;
-}
-```
-
-## Testing Infrastructure
-
-### Existing Test Framework: `scripts/emit/`
-
-The test infrastructure already exists:
-- **Runner**: `scripts/emit/run.sh` - Runs emit tests against TypeScript baselines
-- **Flags**: `--dts-only` - Test declaration emit only
-- **Source**: `scripts/emit/src/runner.ts` - Compares tsz output vs tsc baselines
-- **Baselines**: `TypeScript/tests/baselines/reference/` - TypeScript's test outputs
-
-### How to Run Tests
-
-```bash
-# Test declaration emit only (run this frequently)
-cd scripts/emit
-./run.sh --dts-only
-
-# Run specific number of tests
-./run.sh --dts-only --max=100
-
-# Filter by test name
-./run.sh --dts-only --filter=class
-
-# Verbose output for debugging
-./run.sh --dts-only --verbose
-```
-
-## Current State
-
-### ✅ Already Implemented
-- `src/declaration_emitter.rs` - Basic declaration emitter (~1800 lines)
-- Handles: functions, classes, interfaces, type aliases, enums, imports, exports
-- Modifiers: public, private, protected, static, readonly, abstract
-- Type parameters and constraints
-- Heritage clauses (extends, implements)
-- **Test infrastructure exists** in `scripts/emit/`
-
-### ❌ Missing/Incomplete Features
-
-**CRITICAL GAP - Type Reification:**
-1. **TypeId → TypeScript syntax conversion** - MUST HAVE
-   - Need to convert Solver's `TypeId` back into printable syntax
-   - Required for inferred types in declarations
-   - Example: `function add(a, b) { return a + b; }` → `declare function add(a: any, b: any): any;`
-   - Implementation: Create `src/emitter/type_printer.rs` (new module)
-
-2. **Solver integration** - MUST HAVE
-   - DeclarationEmitter needs access to Checker/Solver for type queries
-   - Must call `get_type_at_location()` when type annotations missing
-
-3. **Test coverage gaps** - MUST FIX
-   - Get baseline tests passing in `scripts/emit/`
-   - Currently: JS emit works, declaration emit needs implementation
-
-4. **Export filtering** - NEEDED
-   - Use Binder's `is_exported` flag to filter output
-   - Only emit exported symbols
-
-5. **Import rewriting** - NEEDED
-   - Generate correct `import` statements in `.d.ts` files
-   - Handle type-only imports
-
-## Implementation Plan (Test-Driven)
-
-### Phase 1: Basic Type Reification (HIGH PRIORITY)
-
-**Goal:** Get simple declaration tests passing
-
-**Tasks:**
-1. Create `src/emitter/type_printer.rs` module
-2. Implement primitive type printing:
-   - `TypeId::STRING` → `"string"`
-   - `TypeId::NUMBER` → `"number"`
-   - `TypeId::BOOLEAN` → `"boolean"`
-   - `TypeId::ANY` → `"any"`
-   - `TypeId::VOID` → `"void"`
-3. Integrate with DeclarationEmitter
-4. Add Solver/Checker context to emitter
-5. **Run tests**: `./scripts/emit/run.sh --dts-only --max=50`
-6. Fix failures until baseline matches
-
-**Test Cases:**
-- Functions with explicit types
-- Variables with explicit types
-- Simple class declarations
-
-### Phase 2: Composite Types
-
-**Goal:** Handle unions, intersections, arrays
-
-**Tasks:**
-1. Implement `TypeKey::Union` printing
-   - Join with ` | `
-   - Handle parentheses for precedence
-2. Implement `TypeKey::Intersection` printing
-   - Join with ` & `
-3. Implement `TypeKey::Array` printing
-   - Output: `string[]` format
-4. **Run tests**: `./scripts/emit/run.sh --dts-only --filter=union`
-5. Fix failures
-
-**Test Cases:**
-- Union types: `type X = string | number;`
-- Array types: `const arr: string[];`
-- Intersection types: `type Y = A & B;`
-
-### Phase 3: Function and Object Types
-
-**Goal:** Handle function signatures and object literals
-
-**Tasks:**
-1. Implement `TypeKey::Function` printing
-   - Parameters and return type
-   - Type parameters
-2. Implement `TypeKey::Object` / `TypeKey::ObjectShape`
-   - Property signatures
-   - Method signatures
-3. **Run tests**: `./scripts/emit/run.sh --dts-only --filter=function`
-4. Fix failures
-
-**Test Cases:**
-- Function types: `type Fn = (x: number) => string;`
-- Object literals: `const obj: { a: number; b: string; };`
-
-### Phase 4: Advanced Features
-
-**Goal:** Handle generics, mapped types, conditional types
-
-**Tasks:**
-1. Implement generic type printing
-2. Handle type parameters with constraints
-3. Implement literal types
-4. **Run full test suite**: `./scripts/emit/run.sh --dts-only`
-5. Fix remaining failures
-
-## Architecture
-
-### Data Flow
-```
-TypeScript Source → Parser → Binder (marks is_exported)
-                                     ↓
-                          Checker/Solver (infers TypeId)
-                                     ↓
-  ┌────────────────────────────────────────────────┐
-  │ DeclarationEmitter                               │
-  │   - Checks if type annotation exists in AST      │
-  │   - If NO: calls TypePrinter.reify(type_id)     │
-  │   - If YES: emits AST node directly             │
-  └────────────────────────────────────────────────┘
-                                     ↓
-                    TypePrinter (NEW MODULE)
-                      - Converts TypeId → TypeScript syntax
-                      - Handles all TypeKey variants
-                                     ↓
-                          .d.ts output
-```
-
-### Key Components
-
-**Binder** (`src/binder/`)
-- Provides `is_exported` flag on symbols
-- Already working ✓
-
-**Solver** (`src/solver/`)
-- Provides type inference and `TypeId`
-- Has `TypeInterner` mapping TypeId → TypeKey
-- Already working ✓
-
-**DeclarationEmitter** (`src/declaration_emitter.rs`)
-- Orchestration: decides what to emit
-- Missing: Solver integration
-- Missing: TypePrinter usage
-
-**TypePrinter** (`src/emitter/type_printer.rs`) - **NEW**
-- Converts TypeId → TypeScript syntax string
-- MUST handle all TypeKey variants
-- Output must match tsc exactly
-
-## Code Skeleton (from Gemini)
-
-### File: `src/emitter/type_printer.rs` (NEW)
-
-```rust
-use crate::solver::types::{TypeId, TypeKey, TypeInterner};
-use crate::solver::types::IntrinsicKind;
-
-pub struct TypePrinter<'a> {
-    interner: &'a TypeInterner,
-}
-
-impl<'a> TypePrinter<'a> {
-    pub fn new(interner: &'a TypeInterner) -> Self {
-        Self { interner }
-    }
-
-    pub fn print_type(&self, type_id: TypeId) -> String {
-        // 1. Check reserved IDs first (fast path)
-        match type_id {
-            TypeId::STRING => return "string".to_string(),
-            TypeId::NUMBER => return "number".to_string(),
-            TypeId::BOOLEAN => return "boolean".to_string(),
-            TypeId::ANY => return "any".to_string(),
-            TypeId::VOID => return "void".to_string(),
-            _ => {}
-        }
-
-        // 2. Look up the structure
-        let type_key = match self.interner.get(type_id) {
-            Some(k) => k,
-            None => return "any".to_string(),
-        };
-
-        // 3. Switch on structure
-        match type_key {
-            TypeKey::Intrinsic(kind) => self.print_intrinsic(kind),
-            TypeKey::Union(types) => self.print_union(types),
-            TypeKey::Intersection(types) => self.print_intersection(types),
-            TypeKey::Array(elem_id) => format!("{}[]", self.print_type(elem_id)),
-            TypeKey::Function(func) => self.print_function(func),
-            TypeKey::Object(shape) => self.print_object(shape),
-            _ => "any".to_string(),
-        }
-    }
-}
-```
-
-### File: `src/declaration_emitter.rs` (MODIFY)
-
-```rust
-use crate::emitter::type_printer::TypePrinter;
-use crate::solver::types::TypeId;
-
-pub struct DeclarationEmitter<'a> {
-    arena: &'a NodeArena,
-    writer: SourceWriter,
-    // NEW: Add solver access
-    checker: &'a CheckerContext,  // or Solver directly
-    // ... rest of fields
-}
-
-impl<'a> DeclarationEmitter<'a> {
-    fn emit_variable_declaration(&mut self, node: NodeIndex) {
-        // ... emit "declare const x" ...
-
-        if let Some(type_annotation) = self.get_type_annotation(node) {
-            // Existing: emit AST node directly
-            self.emit_type(type_annotation);
-        } else {
-            // NEW: Reify inferred type from Solver
-            let type_id = self.checker.get_type_at_location(node);
-            let printer = TypePrinter::new(&self.checker.solver.interner);
-            let type_text = printer.print_type(type_id);
-            self.write(": ");
-            self.write(&type_text);
-        }
-
-        self.write(";");
-    }
-}
-```
-
-## Session Coordination
-
-**Other Sessions** (no conflicts):
-- **tsz-1**: Parse errors (TS1005, TS1109, etc.)
-- **tsz-2**: Module resolution (TS2307, TS2664, TS2322)
-- **tsz-3**: Const type parameters, type system issues
-
-**Declaration emit is independent** - no overlap with other sessions
+# Session tsz-4: Control Flow Analysis & Narrowing Refinement
+
+**Started**: 2026-02-04
+**Goal**: Refine Control Flow Analysis (CFA) to reduce false positives and improve soundness
+
+## Problem Statement
+
+TypeScript's type system relies on precise control flow analysis and type narrowing to correctly:
+1. Narrow union types based on type guards (`typeof`, `instanceof`, discriminants)
+2. Track definite assignment of variables
+3. Detect when properties exist on narrowed types
+
+Current issues:
+- **TS2339 High Extra Errors**: "Property does not exist" false positives when property exists on narrowed type
+- **TS2454 Missing Errors**: Variables used before assignment not being detected in all cases
+- **52 Pre-existing Test Failures**: Many likely related to missing or incorrect narrowing logic
+
+## Scope
+
+Refine control flow analysis and narrowing in three areas:
+
+### 1. Union Type Narrowing
+- Discriminant narrowing (tagged unions)
+- `typeof` narrowing
+- `instanceof` narrowing
+- Truthiness narrowing
+- Assignment narrowing
+
+### 2. Definite Assignment Analysis
+- Track variable assignments through control flow
+- Detect use-before-assignment in all branches
+- Handle nested scopes and closures
+
+### 3. Property Existence Checking
+- Use narrowed types for property access
+- Reduce TS2339 false positives
+- Distinguish between "definitely missing" and "might be missing"
+
+## Target Files
+
+- `src/checker/control_flow.rs` - Flow graph traversal
+- `src/checker/control_flow_narrowing.rs` - Narrowing predicates
+- `src/checker/flow_analysis.rs` - Definite assignment
+- `src/checker/flow_analyzer.rs` - Forward dataflow analysis
+
+## Implementation Strategy
+
+### Phase 1: Audit Current State
+- Identify specific test failures related to narrowing
+- Document current narrowing behavior vs tsc
+- Measure baseline TDZ and narrowing accuracy
+
+### Phase 2: Fix High-Impact Issues
+- Focus on narrowing patterns that affect many tests
+- Discriminant narrowing (if statements, switch statements)
+- Type guard narrowing (`typeof`, `instanceof`)
+
+### Phase 3: Refine Definite Assignment
+- Improve flow-sensitive assignment tracking
+- Handle complex control flow (loops, try/catch, early returns)
+- Fix TDZ detection edge cases
 
 ## Success Criteria
 
-### Definition of Done
-
-1. ✅ All declaration tests pass: `./scripts/emit/run.sh --dts-only`
-2. ✅ No regressions in JS emit tests
-3. ✅ Output matches tsc byte-for-byte for all test cases
-4. ✅ TypePrinter handles all TypeKey variants
-5. ✅ DeclarationEmitter integrated with Solver
-
-### Test Coverage
-
-- Run `./scripts/emit/run.sh --dts-only` frequently (after every commit)
-- Compare output against tsc baselines
-- Fix mismatches immediately
-
-## Commits
-
-- `7142615c0` - docs: restructure tsz-4 session for declaration emit work
-- `d18a96de5` - feat: add TypePrinter module for declaration emit
-- `a41c2c492` - feat: implement composite type printing in TypePrinter
-- [NEW] - feat: integrate TypePrinter with DeclarationEmitter
-
-## Progress
-
-### ✅ Completed (2026-02-04)
-
-**Phase 1.1: TypePrinter Module Created** ✅
-- Created `src/emitter/type_printer.rs` module
-- Implemented intrinsic type printing (all primitives)
-- 246 lines added, all tests pass
-
-**Phase 1.2: Composite Type Printing** ✅
-- Union types: `A | B | C` (joined with " | ")
-- Intersection types: `A & B & C` (joined with " & ")
-- Tuple types: `[A, B, C]` with optional/rest support
-- Object types: `{ prop: Type; ... }`
-- Function types: `<T>(a: Type, b: Type) => ReturnType`
-- Generic type applications: `Base<Args>`
-- 143 lines added, all tests pass
-
-**Total: 389 lines of type printing code**
-
-**Phase 1.3: Integration Completed** ✅
-- Added `TypeCache::merge()` method to `src/checker/context.rs`
-- Modified `DeclarationEmitter` to accept `TypeCache` and `TypeInterner`
-- Updated `emit_outputs()` to pass type caches from compilation
-- Modified variable declaration emit to reify inferred types
-- Declaration emit now works end-to-end with type information
-- Verified: `tsz --declaration test.ts` generates correct `.d.ts` files
-
-### 🚧 In Progress
-
-**Phase 1.4: Testing via CLI**
-- Note: WASM module doesn't currently expose declaration emit API
-- Test infrastructure (`scripts/emit/`) uses WASM and can't test DTS yet
-- Use CLI testing instead: `tsz --declaration file.ts`
-- Test with various TypeScript constructs to verify output
-
-**Testing Results:**
-- Basic functions and variables: ✅ Working
-- Interfaces: ✅ Working
-- Need to test: complex types, generics, enums, etc.
-
-### 📋 TODO
-
-**WASM Integration (Optional):**
-- Add `emitDeclaration()` function to `src/wasm.rs`
-- Update `scripts/emit/src/emit-worker.ts` to call DTS emit
-- Update test runner to compare DTS output
-
-**Remaining TypePrinter Work:**
-- Lazy type resolution (DefId → Symbol name)
-- Enum type printing with members
-- Conditional types
-- Mapped types
-- Callable types (overloaded signatures)
-- Template literal types
-
-## Recent Work (2026-02-04)
-
-### Type Inference for Declaration Emit
-
-Fixed declaration emit to support type inference from initializers, matching TypeScript's behavior.
-
-**Problem:**
-```typescript
-// Input
-abstract class C {
-    abstract prop = 1  // Invalid but should infer type
-}
-
-// Expected output
-declare abstract class C {
-    abstract prop: number;  // Type inferred from initializer
-}
-
-// Was emitting
-declare abstract class C {
-    abstract prop;  // Missing type annotation
-}
-```
-
-**Solution:**
-1. **CLI cache fix** (`src/cli/driver.rs`): Always create `local_cache` to preserve type checking results
-2. **Type caching** (`src/checker/state_checking_members.rs`): Cache inferred types for property declarations
-3. **DeclarationEmitter** (`src/declaration_emitter.rs`): Use inferred types when annotation is missing
-4. **Test runner** (`scripts/emit/src/runner.ts`): Fixed DTS status display and comparison logic
-
-**Status:**
-- ✅ CLI declaration emit works with type inference
-- ⏳ WASM API needs type checking integration (larger change)
-
-## Next Steps
-
-1. ✅ Reviewed existing DeclarationEmitter implementation
-2. ✅ Identified test infrastructure in `scripts/emit/`
-3. ✅ Got implementation plan from Gemini
-4. ✅ Created `src/emitter/type_printer.rs` module
-5. ✅ Implemented primitive type printing
-6. ✅ Implemented composite types (union, intersection, array, object, function, generics)
-7. ✅ Integrated TypePrinter with DeclarationEmitter
-8. ✅ Fixed type inference for property declarations
-9. **OPTIONAL**: Add type checking to WASM API for full test support
-10. **TODO**: Test against more TypeScript baselines
-
-## Resources
-
-- Gemini conversation 2026-02-04: Declaration emit architecture and implementation plan
-- File: `src/declaration_emitter.rs` - Current implementation
-- File: `scripts/emit/src/runner.ts` - Test runner
-- File: `docs/architecture/NORTH_STAR.md` - Architecture reference
-- Command: `./scripts/emit/run.sh --dts-only` - Run declaration tests
-
----
+- [ ] Reduce TS2339 extra errors by 20%+
+- [ ] Increase TS2454 missing errors by 10%+
+- [ ] Fix 10+ of the 52 pre-existing test failures
+- [ ] All changes tested, committed, and pushed
+- [ ] No regressions in previously passing tests
 
 ## Notes
 
-- **Test-driven development**: Run tests after every change
-- **Match tsc exactly**: Output must be byte-identical
-- **CLI works**: Type inference is now working for CLI declaration emit
-- **WASM limitation**: Test runner uses WASM API which doesn't do type checking yet
-- **Architecture**: Type cache must be populated and passed to DeclarationEmitter
+- Builds on TDZ work from tsz-2
+- Addresses documented gaps in `docs/walkthrough/04-checker.md`
+- Focuses on soundness (missing errors) and precision (extra errors)
+- High value for improving conformance and user experience
+
+## Related Sessions
+
+- tsz-1: Parser fixes (COMPLETED)
+- tsz-2: TDZ checking (COMPLETED)
+- tsz-3: Scope-aware symbol merging (COMPLETED)
