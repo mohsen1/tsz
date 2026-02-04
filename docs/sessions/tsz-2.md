@@ -48,6 +48,24 @@ Work is never done until all tests pass. This includes:
 - No new regressions introduced
 - All changes committed and pushed
 
+**Failing Tests Details**:
+1. `test_abstract_constructor_assignability`
+   - Issue: Shows Object prototype type instead of class type
+   - Error: `Type '{ isPrototypeOf, propertyIsEnumerable, ... }' is not assignable to type 'Animal'`
+   - Root cause: `typeof AbstractClass` returns Object prototype instead of constructor type
+
+2. `test_abstract_mixin_intersection_ts2339`
+   - Issue: Property access fails on Object prototype type
+   - Errors: TS2339 for `baseMethod` and `mixinMethod` not existing
+   - Root cause: Same issue - abstract class types represented as Object prototype
+
+**Ignored Tests**: 61 tests marked `#[ignore]` - candidates for investigation
+
+**Next Steps**:
+- Fix abstract class constructor type representation
+- Investigate and enable ignored tests that now pass
+- Improve conformance pass rate further
+
 ### Commits Pushed
 ```
 dcebfa46b docs: verify TS2339 working for basic cases
