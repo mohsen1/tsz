@@ -19,6 +19,14 @@
 
 **Why**: Cannot safely implement Priority 2 or 3 without a working test suite.
 
+**Progress** (2026-02-04):
+- 235 test compilation errors remaining (down from 237)
+- Fixed 2 errors in control_flow.rs and typescript_quirks_tests.rs
+- Most errors are missing `visibility` and `parent_id` fields in `PropertyInfo` initializers
+- Commit: `4079247e8` - "fix(tsz-1): add Visibility import to control_flow tests"
+
+**Blockers**: This is tedious manual work. Cannot run conformance tests to verify Priority 2 and Priority 3 without fixing test suite first.
+
 ### Priority 2: Nominal Subtyping Audit & Implementation
 **Problem**: `PropertyInfo` has the fields, but the "Judge" (`src/solver/subtype.rs`) may not be fully enforcing them, and the "Lawyer" (`src/solver/lawyer.rs`) might be missing `any` bypass rules for private members.
 
