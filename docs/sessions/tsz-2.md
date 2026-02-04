@@ -1,13 +1,66 @@
-# Session tsz-2: Advanced BCT and Intersection Reduction
+# Session tsz-2: Intersection Reduction and Advanced Type Operations
 
 **Started**: 2026-02-04
-**Current Focus**: Complete Best Common Type implementation and strengthen intersection reduction
+**Current Focus**: Implement Intersection Reduction as highest priority
 
-## Background
+## Completed Work
 
-Successfully implemented nominal subtyping check for class instances. Conformance baseline at 41.7% (5357/12847). Now focusing on advanced BCT features to improve inference accuracy.
+✅ **BCT Implementation**: get_base_type for ObjectWithIndex class instances
+✅ **Nominal Subtyping Fix**: check_nominal_inheritance for class instances
+✅ **Conformance Baseline**: 5357/12847 passed (41.7%)
+✅ **Application Expansion**: Verified working correctly
 
 ## Current Session Plan (Redefined 2026-02-04)
+
+### Priority 1: Intersection Reduction (HIGHEST PRIORITY)
+**Why First**: Fundamental correctness requirement, prerequisite for BCT for Intersections
+
+**Problem**: Intersections need reduction to canonical form
+- `string & any` → `any`
+- `string & number` → `never`
+- `{a: number} & {b: string}` → `{a: number; b: string}`
+
+**Impact**:
+- Prevents type explosion in TypeInterner
+- Fixes ~58% of conformance failures
+- Required for correct `is_subtype_of` and `is_assignable_to`
+
+**Task**:
+- Implement reduction logic in `src/solver/operations.rs` or `src/solver/intersections.rs`
+- OR add `evaluate_intersection` function in `src/solver/evaluate.rs`
+- **⚠️ MANDATORY**: Follow Two-Question Rule before implementing
+
+**Question 1 Template**:
+```bash
+./scripts/ask-gemini.mjs --include=src/solver "I need to implement Intersection Reduction.
+Problem: Intersections like 'string & any' need reduction.
+Planned approach: Add evaluate_intersection in src/solver/evaluate.rs.
+
+Is this right? Should reduction happen at interning or evaluation time?
+What edge cases (never, unknown) should I prioritize?"
+```
+
+### Priority 2: BCT for Intersections
+**File**: `src/solver/expression_ops.rs`
+
+**Dependency**: Requires stable Intersection Reduction first
+
+**Problem**: BCT doesn't extract common members from intersections
+- `(A & B)` and `(A & C)` should result in `A`
+- Currently returns flat union
+
+### Priority 3: Refine get_base_type for Lazy
+**File**: `src/checker/context.rs`
+
+**Critical for**: Recursive types and class-like structures
+
+---
+
+## Summary
+
+**Session Status**: Continue current session (momentum built in Solver)
+
+**Next Step**: Ask Gemini Question 1 for Intersection Reduction approach
 
 ### ✅ Priority 1: Conformance Testing (COMPLETE)
 **Status**: Baseline established
