@@ -763,6 +763,21 @@ impl ParserState {
             declarations.push(decl);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                // Missing comma - check if next token looks like another declaration
+                // If so, emit comma error for better diagnostics
+                let can_start_next = self.is_identifier_or_keyword()
+                    || self.is_token(SyntaxKind::OpenBraceToken)
+                    || self.is_token(SyntaxKind::OpenBracketToken);
+
+                if can_start_next
+                    && !self.is_token(SyntaxKind::SemicolonToken)
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    self.error_comma_expected();
+                    // Break after emitting error to avoid infinite loop
+                    // The next statement will be parsed separately
+                }
                 break;
             }
 
