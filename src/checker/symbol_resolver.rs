@@ -1558,6 +1558,7 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::INTERFACE_DECLARATION
                 | syntax_kind_ext::TYPE_ALIAS_DECLARATION
                 | syntax_kind_ext::ENUM_DECLARATION
+                | syntax_kind_ext::MODULE_DECLARATION
                 | syntax_kind_ext::GET_ACCESSOR
                 | syntax_kind_ext::SET_ACCESSOR
                 | syntax_kind_ext::CONSTRUCTOR => {
