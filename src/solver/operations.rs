@@ -34,6 +34,7 @@ use crate::solver::infer::{InferenceContext, InferencePriority};
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
 use crate::solver::types::*;
 use crate::solver::utils;
+use crate::solver::visitor::TypeVisitor;
 use crate::solver::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -166,6 +167,77 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             CallResult::ArgumentTypeMismatch { .. } => TypeId::ERROR,
             _ => TypeId::ERROR,
         }
+    }
+
+    /// Retrieves the contextual function signature from a type.
+    ///
+    /// This is used to infer parameter types for function expressions.
+    /// e.g., given `let x: (a: string) => void = (a) => ...`, this returns
+    /// the shape of `(a: string) => void` so we can infer `a` is `string`.
+    ///
+    /// # Arguments
+    /// * `db` - The type database
+    /// * `type_id` - The contextual type to extract a signature from
+    ///
+    /// # Returns
+    /// * `Some(FunctionShape)` if the type suggests a function structure
+    /// * `None` if the type is not callable or has no suitable signature
+    pub fn get_contextual_signature(
+        db: &dyn TypeDatabase,
+        type_id: TypeId,
+    ) -> Option<FunctionShape> {
+        struct ContextualSignatureVisitor<'a> {
+            db: &'a dyn TypeDatabase,
+        }
+
+        impl<'a> TypeVisitor for ContextualSignatureVisitor<'a> {
+            type Output = Option<FunctionShape>;
+
+            fn default_output() -> Self::Output {
+                None
+            }
+
+            fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+                None
+            }
+
+            fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+                None
+            }
+
+            fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+                // Direct match: return the function shape
+                let shape = self.db.function_shape(FunctionShapeId(shape_id));
+                Some(shape.as_ref().clone())
+            }
+
+            fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+                let shape = self.db.callable_shape(CallableShapeId(shape_id));
+
+                // For contextual typing, we look at call signatures (not construct signatures).
+                // If there are multiple (overloads), we pick the first one for now.
+                // TODO: Handle overloads properly by selecting the best match
+                if let Some(sig) = shape.call_signatures.first() {
+                    Some(FunctionShape {
+                        type_params: sig.type_params.clone(),
+                        params: sig.params.clone(),
+                        this_type: sig.this_type,
+                        return_type: sig.return_type,
+                        type_predicate: sig.type_predicate.clone(),
+                        is_constructor: false,
+                        is_method: sig.is_method,
+                    })
+                } else {
+                    None
+                }
+            }
+
+            // Future: Handle Union (return None or intersect of params)
+            // Future: Handle Intersection (pick first callable member)
+        }
+
+        let mut visitor = ContextualSignatureVisitor { db };
+        visitor.visit_type(db, type_id)
     }
 
     /// Resolve a function call: func(args...) -> result

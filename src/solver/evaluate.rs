@@ -352,10 +352,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::Lazy(def_id) => {
                 let result =
                     if let Some(resolved) = self.resolver.resolve_lazy(*def_id, self.interner) {
-                        resolved
+                        // Re-evaluate the resolved type in case it's a compound type
+                        // (e.g., IndexAccess, KeyOf) that needs further evaluation.
+                        self.evaluate(resolved)
                     } else {
-                        // Lazy type not resolved - return ERROR
-                        TypeId::ERROR
+                        // Lazy type not resolved - return as-is so downstream
+                        // code can still use the Lazy type for display purposes
+                        type_id
                     };
                 self.visiting.remove(&type_id);
                 self.cache.insert(type_id, result);

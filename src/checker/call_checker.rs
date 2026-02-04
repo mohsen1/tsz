@@ -275,6 +275,17 @@ impl<'a> CheckerState<'a> {
             }
             let result = {
                 let env = self.ctx.type_env.borrow();
+                // Resolve Lazy func_type via type_env before passing to solver.
+                // The solver's resolve_call doesn't handle Lazy types, so we must
+                // resolve to the concrete Function/Callable type here.
+                let resolved_func_type = {
+                    use crate::solver::TypeKey;
+                    if let Some(TypeKey::Lazy(def_id)) = self.ctx.types.lookup(func_type) {
+                        env.get_def(def_id).unwrap_or(func_type)
+                    } else {
+                        func_type
+                    }
+                };
                 let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
                 self.ctx.configure_compat_checker(&mut checker);
                 let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
@@ -282,7 +293,7 @@ impl<'a> CheckerState<'a> {
                 // Pass contextual type for generic type inference
                 // Example: `let x: string = id(42)` should infer T = string from context
                 evaluator.set_contextual_type(self.ctx.contextual_type);
-                evaluator.resolve_call(func_type, &arg_types)
+                evaluator.resolve_call(resolved_func_type, &arg_types)
             };
 
             if let CallResult::Success(return_type) = result {

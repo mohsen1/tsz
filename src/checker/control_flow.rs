@@ -239,6 +239,92 @@ impl<'a> FlowAnalyzer<'a> {
         self.check_definite_assignment(reference, flow_node, &mut visited, &mut cache)
     }
 
+    /// Analyze a loop using fixed-point iteration to determine the stable type of a variable.
+    ///
+    /// This implements TypeScript's loop flow analysis where the type of a variable
+    /// at the start of a loop depends on its type at the end (back-edge). We iterate
+    /// until the type stabilizes (reaches a fixed point).
+    ///
+    /// # Arguments
+    /// * `loop_flow_id` - The FlowNodeId of the LOOP_LABEL (for cache key)
+    /// * `loop_flow` - The LOOP_LABEL flow node
+    /// * `reference` - The variable reference we're analyzing
+    /// * `entry_type` - The type entering the loop (from antecedent[0])
+    /// * `initial_type` - The declared type of the variable (for widening)
+    /// * `symbol_id` - The symbol ID (for cache key)
+    ///
+    /// # Returns
+    /// The stabilized type after fixed-point iteration
+    fn analyze_loop_fixed_point(
+        &self,
+        loop_flow_id: FlowNodeId,
+        loop_flow: &FlowNode,
+        reference: NodeIndex,
+        entry_type: TypeId,
+        initial_type: TypeId,
+        symbol_id: Option<SymbolId>,
+    ) -> TypeId {
+        const MAX_ITERATIONS: usize = 5;
+
+        // For const symbols, no fixed-point needed - they can't be reassigned
+        if let Some(sym_id) = symbol_id {
+            if self.is_const_symbol(sym_id) {
+                return entry_type;
+            }
+        }
+
+        // If there's only one antecedent (just the entry, no back-edges), no iteration needed
+        if loop_flow.antecedent.len() <= 1 {
+            return entry_type;
+        }
+
+        let mut current_type = entry_type;
+
+        // Fixed-point iteration: union entry type with all back-edge types
+        for _iteration in 0..MAX_ITERATIONS {
+            let prev_type = current_type;
+
+            // CRITICAL FIX: Inject current assumption into cache to break infinite recursion
+            // Without this, get_flow_type -> check_flow -> LOOP_LABEL -> analyze_loop_fixed_point
+            // would cause stack overflow
+            //
+            // This tells the recursive traversal: "If you hit this loop header again,
+            // assume its type is current_type and stop"
+            if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache) {
+                let key = (loop_flow_id, sym_id, initial_type);
+                cache.borrow_mut().insert(key, current_type);
+            }
+
+            // Union entry type with all back-edge types (antecedents[1+])
+            for &back_edge in loop_flow.antecedent.iter().skip(1) {
+                // Get the type at the back-edge point in the flow
+                // Thanks to the cache injection above, this won't infinitely recurse
+                let back_edge_type = self.get_flow_type(reference, initial_type, back_edge);
+
+                // Union current type with back-edge type
+                current_type = self.interner.union2(current_type, back_edge_type);
+            }
+
+            // Check if we've reached a fixed point (type stopped changing)
+            if current_type == prev_type {
+                return current_type;
+            }
+        }
+
+        // Fixed point not reached within iteration limit
+        // Conservative widening: return union of entry type and initial declared type
+        // This matches TypeScript's behavior for complex loops
+        let widened = self.interner.union2(entry_type, initial_type);
+
+        // Update cache with final widened result
+        if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache) {
+            let key = (loop_flow_id, sym_id, initial_type);
+            cache.borrow_mut().insert(key, widened);
+        }
+
+        widened
+    }
+
     /// Iterative flow graph traversal using a worklist algorithm.
     ///
     /// This replaces the recursive implementation to prevent stack overflow
@@ -387,16 +473,20 @@ impl<'a> FlowAnalyzer<'a> {
                     current_type // Will be updated when antecedents are processed
                 }
             } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
-                // Loop label - selective widening based on mutation analysis
+                // CRITICAL FIX: Implement proper fixed-point iteration for loops
                 //
-                // Strategy:
-                // 1. Get the type entering the loop (Antecedent 0).
-                // 2. Check if the variable is mutated in the loop body.
-                // 3. If const OR not mutated: preserve narrowing.
-                // 4. If mutable AND mutated: widen to initial_type.
+                // Previous implementation: Simple mutation check (unreliable)
+                // New implementation: Fixed-point iteration that unions entry type with back-edge types
                 //
-                // This matches TypeScript's behavior: only reset narrowing when
-                // the variable is actually reassigned within the loop.
+                // Fixed-Point Algorithm:
+                // 1. Start with entry type (antecedent[0] - before the loop)
+                // 2. Get types at all back-edges (antecedents[1+] - continue/end of body)
+                // 3. Union entry type with all back-edge types
+                // 4. Repeat until type stabilizes (max 5 iterations)
+                // 5. If not stabilized, widen to union(entry, initial)
+                //
+                // This matches TypeScript's behavior where variables in loops have
+                // types that depend on both the entry condition and assignments within the loop.
 
                 let entry_type = if let Some(&ant) = flow.antecedent.first() {
                     // Ensure entry is processed (is_merge_point logic guarantees this)
@@ -405,26 +495,15 @@ impl<'a> FlowAnalyzer<'a> {
                     current_type
                 };
 
-                if let Some(sym_id) = symbol_id {
-                    let is_const = self.is_const_symbol(sym_id);
-                    if !is_const {
-                        // Mutable: Check if it's mutated in the loop
-                        if self.is_symbol_mutated_in_loop(current_flow, sym_id) {
-                            // Variable is mutated in loop - conservative widening
-                            self.interner.union2(entry_type, initial_type)
-                        } else {
-                            // Variable is NOT mutated in loop - preserve narrowing!
-                            entry_type
-                        }
-                    } else {
-                        // Const: Preserve entry narrowing
-                        // Constants cannot be reassigned, so narrowing is safe
-                        entry_type
-                    }
-                } else {
-                    // No symbol info: conservatively widen
-                    self.interner.union2(entry_type, initial_type)
-                }
+                // Use fixed-point iteration to determine stable loop type
+                self.analyze_loop_fixed_point(
+                    current_flow,
+                    flow,
+                    reference,
+                    entry_type,
+                    initial_type,
+                    symbol_id,
+                )
             } else if flow.has_any_flags(flow_flags::CONDITION) {
                 // Condition node - apply narrowing
                 let pre_type = if let Some(&ant) = flow.antecedent.first() {
@@ -1844,11 +1923,15 @@ impl<'a> FlowAnalyzer<'a> {
                 if let Some(prop_name) = self.discriminant_property(condition_idx, target) {
                     let literal_true = self.interner.literal_boolean(true);
                     if is_true_branch {
-                        return narrowing.narrow_by_discriminant(type_id, prop_name, literal_true);
+                        return narrowing.narrow_by_discriminant(
+                            type_id,
+                            &[prop_name],
+                            literal_true,
+                        );
                     }
                     return narrowing.narrow_by_excluding_discriminant(
                         type_id,
-                        prop_name,
+                        &[prop_name],
                         literal_true,
                     );
                 }

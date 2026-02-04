@@ -2,9 +2,9 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟢 ACTIVE - Phase 1 Continuing (2026-02-04)
+## Status: 🟢 ACTIVE - Phase 2 (Project Structure) - ~77% Complete (10/13 tasks)
 
-### Completed Tasks (8)
+### Completed Tasks (10)
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
@@ -13,6 +13,8 @@
 6. **Class Member Synthesis and Default Export Synthesis** (property inference, accessors, parameter props, default exports)
 7. **Visibility-Based Type Inlining** (local types, recursion depth, symbol visibility)
 8. **Destructuring Export Flattening** (binding pattern flattening, nested destructuring)
+9. **Advanced Type Emission** (template literal types, labeled tuple members)
+10. **Triple-Slash Directive Emission** (/// <reference>, /// <amd-module>, etc.)
 
 ---
 
@@ -52,41 +54,177 @@ export declare const value: number;
 **Commits:**
 - b016ca788 (feat(tsz-4): implement Destructuring Export Flattening for declaration emit)
 
-#### Task 9: Advanced Type Emission (NEXT)
+#### Task 9: Advanced Type Emission ✅ COMPLETE (2026-02-04)
 **Description**: Implement emission for `TemplateLiteralType` and `NamedTupleMember` (labeled tuples).
-**Complexity**: Low
-**Files**: `src/declaration_emitter/mod.rs` (`emit_type`)
-**Status**: Not started
+
+**Completed:**
+- ✅ `print_tuple()` - Updated to emit labels for named tuple members
+- ✅ `print_template_literal()` - Implemented full template literal type emission
+
+**Test Results:**
+```typescript
+// Input
+export type UserId = `user-${number}`;
+export type Args = [name: string, age?: number];
+export type Event = `on-${string}`;
+export type RestArgs = [first: string, ...rest: number[]];
+
+// Output (matches tsc exactly ✅)
+export type UserId = `user-${number}`;
+export type Args = [name: string, age?: number];
+export type Event = `on-${string}`;
+export type RestArgs = [first: string, ...rest: number[]];
+```
+
+**Implementation Details:**
+- Template literals: Iterate through TemplateSpan list (Text/Type)
+- Labeled tuples: Handle name field in TupleElement, position optional markers correctly
+- Rest parameters: Work correctly with labels
+
+**Commits:**
+- 131359852 (feat(tsz-4): implement Advanced Type Emission for declaration emit)
+
+---
+
+## Session Redefinition (2026-02-04)
+
+### Assessment
+**Status:** 🟢 **ON TRACK** - ~70% Complete (9/13 tasks)
+
+Phase 1 (Syntax Fidelity) is **COMPLETE**. The remaining work shifts from "How to print X" (Syntax) to "What to print" (Project Structure & Correctness).
 
 ### Phase 2: Project Structure & Metadata
 
-#### Task 10: Triple-Slash Directive Emission
+#### Task 10: Triple-Slash Directive Emission ✅ COMPLETE (2026-02-04)
 **Description**: Emit `/// <reference ... />` directives at the top of the file.
-**Complexity**: Low
-**Files**: `src/declaration_emitter/mod.rs` (`emit`)
-**Status**: Not started
+- **Why**: Essential for module resolution and file concatenation
+- **Complexity**: Low
+- **Files**: `src/declaration_emitter/mod.rs`
 
-#### Task 11: JSDoc Comment Preservation
-**Description**: Extract JSDoc comments from the AST and emit them before their associated nodes.
-**Complexity**: Medium
-**Files**: `src/declaration_emitter/mod.rs`, `src/scanner/mod.rs`
-**Status**: Not started
+**Completed:**
+- ✅ `emit_triple_slash_directives()` - Iterates through source_file.comments and filters for directives
+- ✅ Integrated into `emit()` before `emit_required_imports()` to ensure correct ordering
 
-### Phase 3: The Enforcer (Final Boss)
+**Test Results:**
+```typescript
+// Input
+/// <reference path="./other.d.ts" />
+/// <reference types="node" />
+/// <reference lib="es2015" />
+/// <amd-module />
+/// <amd-dependency name="jquery" />
+export const x = 1;
+
+// Output ✅ (matches tsc exactly)
+/// <reference path="./other.d.ts" />
+/// <reference types="node" />
+/// <reference lib="es2015" />
+/// <amd-module />
+/// <amd-dependency name="jquery" />
+export declare const x = 1;
+```
+
+**Implementation:**
+- Extracts comment text from source file using byte offsets (pos/end)
+- Filters for comments starting with `///`
+- Matches directives: `<reference`, `<amd-module`, `<amd-dependency`
+- Directives appear at the very top of the file, before imports or exports
+
+**Commits:**
+- 345b29a87 (feat(declaration-emitter): complete triple-slash directive emission)
+
+#### Task 11: Import/Export Elision (NEXT)
+
+**Success Criteria:**
+```typescript
+// Input
+/// <reference path="other.ts" />
+/// <reference types="node" />
+export const x = 1;
+
+// Output
+/// <reference path="other.ts" />
+/// <reference types="node" />
+export declare const x: number;
+```
+
+#### Task 11: Import/Export Elision ⏳ IN PROGRESS (Partial - 2026-02-04)
+**Description**: Only emit imports that are actually used in the public API.
+- **Why**: Prevents broken `.d.ts` files that reference unused modules
+- **Complexity**: High (Requires usage analysis and binder changes)
+- **Files**: `src/declaration_emitter/mod.rs`, `src/checker/` or `src/binder/mod.rs`
+- **Status**: Partially implemented
+
+**Completed So Far:**
+- ✅ Added `has_export_modifier()` helper to check for Export keyword
+- ✅ Updated `analyze_statement()` to only analyze exported declarations
+- ✅ Fixed `is_local` check to use `declaration_arenas` instead of `symbol_arenas`
+- ✅ Foreign symbols are correctly identified and added to `foreign_symbols` set
+
+**Remaining Work:**
+- ❌ Module path resolution for imported symbols doesn't work
+- `resolve_symbol_module_path()` needs to track which module each symbol comes from
+- `declaration_arenas` isn't populated for imported symbols
+- Requires binder changes to track symbol provenance properly
+
+**Test Case:**
+```typescript
+// Input
+import { InternalType } from './internal';  // Should be elided
+import { PublicType } from './public';      // Should be kept
+
+export interface Api {
+    value: PublicType;
+}
+
+// Expected output
+import { PublicType } from './public';
+export interface Api {
+    value: PublicType;
+}
+```
+
+**Commits:**
+- 59ca8c3cd (feat(tsz-4): partial progress on Import/Export Elision)
+
+### Phase 3: The Enforcer (Final Polish)
 
 #### Task 12: Accessibility Diagnostics (TS4023/TS4058)
-**Description**: Implement the "Lawyer" logic for exports. Error when a public API references a type that is not exported, not reachable, or cannot be inlined.
-**Complexity**: High
-**Files**: `src/declaration_emitter/mod.rs`, `src/checker/diagnostics.rs`
-**Status**: Not started
+**Description**: Error when public API references non-exported types.
+- **Why**: Ensures we don't emit valid syntax that is semantically invalid
+- **Complexity**: High
+- **Files**: `src/declaration_emitter/mod.rs`, `src/checker/diagnostics.rs`
+- **Status**: Not started
+
+#### Task 13: JSDoc Comment Preservation
+**Description**: Extract and emit JSDoc comments.
+- **Why**: Critical for IDE experience, but `.d.ts` is valid without them
+- **Complexity**: Medium
+- **Files**: `src/declaration_emitter/mod.rs`, `src/scanner/mod.rs`
+- **Status**: Not started
 
 ---
 
 ## Immediate Next Step
 
-**Task 8: Destructuring Export Flattening**
+**Task 11: Import/Export Elision (IN PROGRESS)**
 
-This is the next task to work on. MANDATORY Gemini consultation is required before implementation per the workflow.
+This is a high-complexity task. Partial implementation is complete - foreign symbols are correctly identified, but module path resolution requires deeper binder changes.
+
+**Current Blocker:**
+The `resolve_symbol_module_path()` function cannot determine which module an imported symbol comes from because `declaration_arenas` isn't populated for imported symbols. The `symbol_arenas` map stores the LAST arena where a symbol was seen (the current file), not where it was originally declared.
+
+**Potential Solutions:**
+1. Modify binder to populate `declaration_arenas` for all imported symbols
+2. Create a separate map tracking `SymbolId -> ModulePath` from import statements
+3. Parse import statements directly to build the symbol-to-module mapping
+
+This task is blocked on architectural decisions in the binder layer.
+
+**Alternative Next Tasks:**
+While Task 11 is blocked, consider:
+- Task 12: Accessibility Diagnostics (TS4023/TS4058) - Also high complexity
+- Task 13: JSDoc Comment Preservation - Medium complexity, independent of binder
 
 ### Class Member Synthesis and Default Export Synthesis ✅ COMPLETE (2026-02-04)
 

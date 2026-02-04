@@ -31,6 +31,8 @@ pub struct InferenceVar(pub u32);
 pub enum InferencePriority {
     /// Inferred from a return type (lowest).
     ReturnType,
+    /// Inferred from contextual typing (a hint, can be overridden by arguments).
+    Contextual,
     /// Inferred from a circular dependency.
     Circular,
     /// Inferred from an argument (standard).
@@ -1120,6 +1122,12 @@ impl<'a> InferenceContext<'a> {
 
     /// Resolve all type parameters using constraints.
     pub fn resolve_all_with_constraints(&mut self) -> Result<Vec<(Atom, TypeId)>, InferenceError> {
+        // CRITICAL: Strengthen inter-parameter constraints before resolution
+        // This ensures that constraints flow between dependent type parameters
+        // Example: If T extends U, and T is constrained to string, then U is also
+        // constrained to accept string (string must be assignable to U)
+        self.strengthen_constraints()?;
+
         let type_params: Vec<_> = self.type_params.clone();
         let mut results = Vec::new();
 
@@ -2935,24 +2943,44 @@ impl<'a> InferenceContext<'a> {
             let lower_root = self.table.find(lower_var);
             let lower_info = self.table.probe_value(lower_root);
 
-            // Add all upper bounds of the lower param as our upper bounds
-            for &upper in &lower_info.upper_bounds {
-                self.add_upper_bound(var, upper);
+            // CRITICAL FIX: When S <: T (S is a lower bound of T), S's lower bounds
+            // should also be lower bounds of T (transitivity: L <: S <: T)
+            //
+            // Previous (WRONG) implementation added S's upper bounds to T
+            // Correct implementation: Add S's candidates (lower bounds) to T
+            for candidate in lower_info.candidates.iter() {
+                self.add_candidate(var, candidate.type_id, InferencePriority::Circular);
+            }
+
+            // Also: Our upper bounds should flow to S (T <: U => S <: U)
+            let root = self.table.find(var);
+            let info = self.table.probe_value(root);
+            for &upper in info.upper_bounds.iter() {
+                self.add_upper_bound(lower_var, upper);
             }
         }
     }
 
     fn propagate_upper_bound(&mut self, var: InferenceVar, upper: TypeId, exclude_param: Atom) {
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(upper)
+        if let Some(TypeKey::TypeParameter(info)) = self.interner().lookup(upper)
             && info.name != exclude_param
             && let Some(upper_var) = self.find_type_param(info.name)
         {
             let upper_root = self.table.find(upper_var);
             let upper_info = self.table.probe_value(upper_root);
 
-            // Add all lower bounds of the upper param as our lower bounds
-            for candidate in upper_info.candidates.iter() {
-                self.add_candidate(var, candidate.type_id, InferencePriority::Circular);
+            // CRITICAL FIX: Transitivity T <: U <: V implies T <: V
+            // We must propagate U's upper bounds DOWN to T (not up to U)
+            // Previous (WRONG) implementation added U's upper bounds back to U (no-op)
+            for &upper_bound_of_u in upper_info.upper_bounds.iter() {
+                self.add_upper_bound(var, upper_bound_of_u);
+            }
+
+            // Also: Our lower bounds should flow to U (L <: T => L <: U)
+            let root = self.table.find(var);
+            let info = self.table.probe_value(root);
+            for candidate in info.candidates.iter() {
+                self.add_candidate(upper_var, candidate.type_id, InferencePriority::Circular);
             }
         }
     }
