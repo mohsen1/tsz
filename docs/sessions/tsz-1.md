@@ -117,4 +117,39 @@ match alias_key {
 - Numeric enum assignability (bidirectional with number)
 - Mixin pattern with generic functions and nested classes
 
+## Investigation: Redux Pattern (test_redux_pattern_extract_state_with_infer)
+
+**Status**: IN PROGRESS - Not fixed yet, made progress on infer pattern infrastructure
+
+**Problem**: Redux pattern test fails - `ExtractedState` is not being inferred as `number`
+
+**Test Code**:
+```typescript
+type Reducer<S, A> = (state: S | undefined, action: A) => S;
+type ExtractState<R> = R extends Reducer<infer S, any> ? S : never;
+type NumberReducer = Reducer<number, { type: string }>;
+type ExtractedState = ExtractState<NumberReducer>; // Should be number
+```
+
+**Root Cause Investigation** (with Gemini consultation):
+1. `match_infer_pattern` is NOT being called at all
+2. The issue is earlier in conditional type evaluation - the `extends` check
+3. Debug logging shows no Application expansion code is reached
+
+**Changes Made** (following Gemini guidance):
+1. ✅ Added Application expansion to `match_infer_pattern`
+   - When pattern is Application and source is not, expand pattern to structural form
+   - Use `ApplicationEvaluator::evaluate_or_original(pattern)`
+   - Recurse with expanded pattern
+
+2. ✅ Removed overly-strict final subtype checks
+   - For infer pattern matching, once components match, pattern succeeds
+   - Final subtype check was failing due to function parameter contravariance
+   - Applied to: params+return, return-only, this-type, callable patterns
+
+**Next Steps** (require further investigation):
+- The issue is in conditional type evaluation BEFORE pattern matching
+- Need to trace why `extends` check is not calling `match_infer_pattern`
+- May need to investigate `evaluate_conditional_type` or similar function
+
 ## Status: Good progress - 35 failing tests remain
