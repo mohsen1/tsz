@@ -459,7 +459,7 @@ impl<'a> TypePrinter<'a> {
                 crate::solver::types::TemplateSpan::Type(type_id) => {
                     result.push_str("${");
                     result.push_str(&self.print_type(*type_id));
-                    result.push_str("}");
+                    result.push('}');
                 }
             }
         }
