@@ -270,3 +270,8 @@ This is a non-trivial architectural fix requiring careful implementation.
 ## Punted Todos
 
 - **TS1040 false positive**: Async functions in regular namespaces incorrectly flagged as ambient context. Requires deeper runtime debugging or more targeted Gemini queries with smaller context.
+
+#### 3. Fixed TS1005 for Arrow Functions (2026-02-04 03:00)
+- **Problem**: Arrow function `() => var x` was emitting TS2304 instead of TS1005 "'{' expected"
+- **Solution**: Added check in `parse_arrow_function_expression_with_async()` to detect statement starts that aren't expressions
+- **Commit**: `969968b8c`
