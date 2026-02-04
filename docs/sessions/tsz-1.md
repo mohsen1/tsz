@@ -8,42 +8,45 @@ Work is never done until all tests pass. This includes:
 - No large files (>3000 lines) left unaddressed
 ## Current Work
 
-**FIXED: ClassDeclaration26 Parse Errors**
+**FIXED: TS1109 Missing for throw Statement**
 
-Implemented look-ahead logic to distinguish between `var`/`let` as property names (valid) vs modifiers (invalid).
+Fixed parser to emit TS1109 "Expression expected" when `throw` is followed by semicolon without an expression.
+
+### Problem
+The parser was not emitting TS1109 for `throw;` (semicolon immediately after throw keyword with no expression).
+
+### Root Cause
+In `src/parser/state_declarations.rs`, the `parse_throw_statement` function had logic to emit TS1109 for line breaks after throw, but the semicolon case was falling through to the `else` branch which returned `NodeIndex::NONE` without emitting an error.
 
 ### Solution
+Added explicit check for semicolon/brace/EOF tokens to emit TS1109 when throw is missing an expression:
+```rust
+} else if self.is_token(SyntaxKind::SemicolonToken)
+    || self.is_token(SyntaxKind::CloseBraceToken)
+    || self.is_token(SyntaxKind::EndOfFileToken)
+{
+    // Explicit semicolon, closing brace, or EOF after throw without expression
+    let start = self.token_pos();
+    let end = self.token_end();
+    self.parse_error_at(
+        start, end - start,
+        "Expression expected",
+        diagnostic_codes::EXPRESSION_EXPECTED,
+    );
+    NodeIndex::NONE
+}
+```
 
-Added look-ahead logic in `src/parser/state_statements.rs` (lines 2332-2362) that checks:
-- If followed by `(` → method name (valid, break out of modifier loop)
-- If followed by line break → property name via ASI (valid, break out)
-- Otherwise → used as modifier (invalid, emit TS1012 error)
-
-This matches the existing pattern for `const` handling (lines 2307-2320).
+### Verification
+```typescript
+throw;  // Now emits TS1109 at (1,6) ✅
+throw new Error();  // Still valid ✅
+```
 
 ### Test Results
 - ✅ All 287 parser tests pass
-- ✅ `test_parser_class_member_named_var` passes - `class Foo { var() { return 1; } }` parses without errors
-- ✅ ClassDeclaration26 now emits TS1012 errors for invalid modifiers
-
-### Verification
-
-**Valid case** - `var` as method name:
-```typescript
-class Foo { var() { return 1; } }
-```
-tsz: No errors ✅
-
-**Invalid case** - `var` as modifier:
-```typescript
-class C { public const var export foo = 10; }
-```
-tsz errors:
-- TS1248: A class member cannot have the 'const' keyword.
-- TS1012: Unexpected modifier. (for `export`)
-- TS1012: Unexpected modifier. (for `var`)
-
-TSC emits different errors (TS1440, TS1068, etc.) but both correctly reject the invalid syntax.
+- ✅ 362/364 unit tests pass (2 pre-existing abstract class failures)
+- ✅ No regressions
 
 ---
 

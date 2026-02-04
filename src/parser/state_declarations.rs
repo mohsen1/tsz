@@ -2219,6 +2219,21 @@ impl ParserState {
                 diagnostic_codes::EXPRESSION_EXPECTED,
             );
             NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::SemicolonToken)
+            || self.is_token(SyntaxKind::CloseBraceToken)
+            || self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            // Explicit semicolon, closing brace, or EOF after throw without expression
+            // TypeScript requires an expression after throw
+            let start = self.token_pos();
+            let end = self.token_end();
+            self.parse_error_at(
+                start,
+                end - start,
+                "Expression expected",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            NodeIndex::NONE
         } else if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
         } else {
