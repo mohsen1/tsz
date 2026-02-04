@@ -2,7 +2,7 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟢 COMPLETE - Module System Fidelity (2026-02-04)
+## Status: 🟡 ACTIVE - 5th Task Defined (2026-02-04)
 
 Completed 4 tasks successfully:
 1. Class Heritage and Generics (type literal formatting fix)
@@ -797,7 +797,113 @@ export as namespace MyLib;
 
 ---
 
-## Next Task: TBD (2026-02-04)
+## Next Task: Function and Method Overload Normalization (2026-02-04)
+
+**Gemini Consultation Summary:**
+
+Based on the progress of other sessions and the current state of Declaration Emit, the most high-impact next task for **tsz-4** is **Function and Method Overload Normalization**.
+
+### Problem Description
+
+Currently, `tsz` likely emits function bodies or implementation signatures that should be stripped in `.d.ts` files. In TypeScript, when a function or method has overloads, the implementation signature is "hidden" from the public API and should not appear in the declaration file.
+
+Additionally, **Default Export Synthesis** for expressions needs to be handled:
+- `export default 42;` should be emitted as `declare const _default: 42; export default _default;`
+
+### Implementation Plan
+
+**Estimated Complexity: Medium (3-5 days)**
+
+#### Phase 1: Overload Detection
+- Add utility methods to determine if a `NodeIndex` is an implementation vs overload
+- Check `node.flags` and sibling nodes in the symbol's declarations
+- Identify implementation signatures (have bodies, no overload flag)
+
+#### Phase 2: Implementation Stripping
+- Update `emit_function_declaration` to skip bodies
+- Suppress implementation signatures when overloads exist
+- Keep single-function implementations (no overloads)
+
+#### Phase 3: Method and Constructor Overloads
+- Update `emit_method_declaration` for method overloads
+- Update `emit_constructor_declaration` for constructor overloads
+- Handle class member overload sequences
+
+#### Phase 4: Default Export Synthesis
+- Implement synthesis logic for `ExportAssignment`
+- Generate synthetic `_default` variable for expression exports
+- Ensure `.d.ts` syntactic validity
+
+### Files to Modify
+- **`src/checker/symbol_resolver.rs`**: Add utility methods to detect implementation vs overload signatures
+- **`src/declaration_emitter/mod.rs`**: Update function/method/constructor emission
+  - Update `emit_function_declaration` to skip bodies
+  - Update `emit_method_declaration`
+  - Update `emit_constructor_declaration`
+  - Implement `emit_export_default_expression` synthesis
+- **`src/parser/node.rs`**: Check relevant flags on function declarations
+
+### Success Criteria
+
+**Overload Stripping:**
+```typescript
+// Input
+function foo(x: string): void;
+function foo(x: number): void;
+function foo(x: string | number): void {
+    console.log(x);
+}
+
+// Output ✅
+declare function foo(x: string): void;
+declare function foo(x: number): void;
+```
+
+**Single Function (Keep Implementation Signature):**
+```typescript
+// Input
+function bar(x: number): void {
+    console.log(x);
+}
+
+// Output ✅
+declare function bar(x: number): void;
+```
+
+**Constructor Overloads:**
+```typescript
+// Input
+class C {
+    constructor(x: string);
+    constructor(x: number);
+    constructor(x: string | number) {}
+}
+
+// Output ✅
+declare class C {
+    constructor(x: string);
+    constructor(x: number);
+}
+```
+
+**Default Export Synthesis:**
+```typescript
+// Input
+export default 42;
+
+// Output ✅
+declare const _default: 42;
+export default _default;
+```
+
+### Implementation Pitfalls
+- Must NOT strip functions that only have implementations (no overloads)
+- Must coordinate with tsz-5 UsageAnalyzer to avoid bloating `.d.ts` with implementation-only types
+- Ambient (top-level) overloads need `declare` modifier
+- Method overloads in classes/interfaces need correct sequencing
+- Constructor overloads must not include implementation constructor
+
+---
 
 **Gemini Consultation Summary:**
 
