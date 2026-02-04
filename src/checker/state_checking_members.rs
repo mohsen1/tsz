@@ -407,8 +407,8 @@ impl<'a> CheckerState<'a> {
             if indices.len() <= 1 {
                 continue;
             }
-            // Skip the first occurrence - only emit errors for subsequent declarations
-            for &idx in indices.iter().skip(1) {
+            // Emit errors for ALL duplicate declarations (matching tsc behavior)
+            for &idx in indices.iter() {
                 let Some(member_node) = self.ctx.arena.get(idx) else {
                     continue;
                 };
