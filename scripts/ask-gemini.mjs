@@ -637,7 +637,7 @@ const activePreset = activePresets[0] ? PRESETS[activePresets[0]] : null;
 const presetName = activePresets[0] || null;
 
 // Use Pro model if --pro flag is set
-const effectiveModel = values.pro ? PRO_MODEL : effectiveModel;
+const effectiveModel = values.pro ? PRO_MODEL : values.model;
 
 // Token limit: explicit flag overrides auto-sizing
 const explicitTokenLimit = values.tokens || null;
