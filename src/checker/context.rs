@@ -1706,9 +1706,22 @@ impl<'a> crate::solver::TypeResolver for CheckerContext<'a> {
         def_id: crate::solver::DefId,
         _interner: &dyn crate::solver::TypeDatabase,
     ) -> Option<crate::solver::TypeId> {
+        use crate::binder::symbol_flags;
+
         // Convert DefId to SymbolId using the reverse mapping
         if let Some(sym_id) = self.def_to_symbol_id(def_id) {
-            // Look up the cached type for this symbol
+            // For classes, check if we should return instance type instead of constructor type
+            if let Some(symbol) = self.binder.symbols.get(sym_id) {
+                // Check if symbol is a class
+                if (symbol.flags & symbol_flags::CLASS) != 0 {
+                    // For classes in TYPE position, return instance type
+                    if let Some(instance_type) = self.symbol_instance_types.get(&sym_id) {
+                        return Some(*instance_type);
+                    }
+                }
+            }
+
+            // Look up the cached type for this symbol (constructor type for classes)
             self.symbol_types.get(&sym_id).copied()
         } else {
             None
