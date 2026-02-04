@@ -46,6 +46,8 @@ pub struct DeclarationEmitter<'a> {
     type_cache: Option<TypeCache>,
     /// Type interner for printing types
     type_interner: Option<&'a TypeInterner>,
+    /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
+    inside_declare_namespace: bool,
 }
 
 struct SourceMapState {
@@ -64,6 +66,7 @@ impl<'a> DeclarationEmitter<'a> {
             pending_source_pos: None,
             type_cache: None,
             type_interner: None,
+            inside_declare_namespace: false,
         }
     }
 
@@ -81,6 +84,7 @@ impl<'a> DeclarationEmitter<'a> {
             pending_source_pos: None,
             type_cache: Some(type_cache),
             type_interner: Some(type_interner),
+            inside_declare_namespace: false,
         }
     }
 
@@ -126,7 +130,8 @@ impl<'a> DeclarationEmitter<'a> {
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
 
-        match stmt_node.kind {
+        let kind = stmt_node.kind;
+        match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_declaration(stmt_idx);
             }
@@ -157,7 +162,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.emit_module_declaration(stmt_idx);
             }
-            _ => {}
+            _ => {
+                eprintln!("DEBUG: Unhandled statement kind: {} (0x{:x})", kind, kind);
+            }
         }
 
         if self.writer.len() == before_len {
@@ -699,10 +706,13 @@ impl<'a> DeclarationEmitter<'a> {
 
                 for &decl_idx in &decl_list.declarations.nodes {
                     self.write_indent();
-                    if is_exported {
-                        self.write("export ");
+                    // Don't emit 'export' or 'declare' keywords inside a declare namespace
+                    if !self.inside_declare_namespace {
+                        if is_exported {
+                            self.write("export ");
+                        }
+                        self.write("declare ");
                     }
-                    self.write("declare ");
                     self.write(keyword);
                     self.write(" ");
 
@@ -785,6 +795,10 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                     self.emit_exported_variable(export.export_clause);
+                    return;
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    self.emit_module_declaration(export.export_clause);
                     return;
                 }
                 _ => {}
@@ -985,7 +999,10 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        self.write("export interface ");
+        if !self.inside_declare_namespace {
+            self.write("export ");
+        }
+        self.write("interface ");
         self.emit_node(iface.name);
 
         if let Some(ref type_params) = iface.type_parameters
@@ -1021,7 +1038,10 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        self.write("export declare class ");
+        if !self.inside_declare_namespace {
+            self.write("export declare ");
+        }
+        self.write("class ");
         self.emit_node(class.name);
 
         if let Some(ref type_params) = class.type_parameters
@@ -1057,7 +1077,10 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        self.write("export declare function ");
+        if !self.inside_declare_namespace {
+            self.write("export declare ");
+        }
+        self.write("function ");
         self.emit_node(func.name);
 
         if let Some(ref type_params) = func.type_parameters
@@ -1088,7 +1111,10 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        self.write("export type ");
+        if !self.inside_declare_namespace {
+            self.write("export ");
+        }
+        self.write("type ");
         self.emit_node(alias.name);
 
         if let Some(ref type_params) = alias.type_parameters
@@ -1112,7 +1138,10 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        self.write("export declare enum ");
+        if !self.inside_declare_namespace {
+            self.write("export declare ");
+        }
+        self.write("enum ");
         self.emit_node(enum_data.name);
 
         self.write(" {");
@@ -1210,7 +1239,10 @@ impl<'a> DeclarationEmitter<'a> {
 
                 for &decl_idx in &decl_list.declarations.nodes {
                     self.write_indent();
-                    self.write("export declare ");
+                    // Don't emit 'export' or 'declare' keywords inside a declare namespace
+                    if !self.inside_declare_namespace {
+                        self.write("export declare ");
+                    }
                     self.write(keyword);
                     self.write(" ");
 
@@ -1330,10 +1362,13 @@ impl<'a> DeclarationEmitter<'a> {
         let is_exported = self.has_export_modifier(&module.modifiers);
 
         self.write_indent();
-        if is_exported {
-            self.write("export ");
+        // Don't emit 'export' or 'declare' inside a declare namespace
+        if !self.inside_declare_namespace {
+            if is_exported {
+                self.write("export ");
+            }
+            self.write("declare ");
         }
-        self.write("declare ");
 
         // namespace or module
         self.write("namespace ");
@@ -1344,14 +1379,26 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
             self.increase_indent();
 
-            if let Some(body_node) = self.arena.get(module.body)
-                && let Some(block) = self.arena.get_block(body_node)
-            {
-                for &stmt_idx in &block.statements.nodes {
-                    self.emit_statement(stmt_idx);
+            // Inside a declare namespace, don't emit 'declare' keyword for members
+            let prev_inside_declare_namespace = self.inside_declare_namespace;
+            self.inside_declare_namespace = true;
+
+            if let Some(body_node) = self.arena.get(module.body) {
+                if let Some(module_block) = self.arena.get_module_block(body_node) {
+                    if let Some(ref stmts) = module_block.statements {
+                        for &stmt_idx in &stmts.nodes {
+                            self.emit_statement(stmt_idx);
+                        }
+                    }
+                } else {
+                    // Nested namespace: module A.B is represented as ModuleDeclaration with body = ModuleDeclaration of C
+                    if let Some(_nested_module) = self.arena.get_module(body_node) {
+                        self.emit_module_declaration(module.body);
+                    }
                 }
             }
 
+            self.inside_declare_namespace = prev_inside_declare_namespace;
             self.decrease_indent();
             self.write_indent();
             self.write("}");
