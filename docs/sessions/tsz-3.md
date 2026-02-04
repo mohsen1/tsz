@@ -68,10 +68,16 @@ declare class m3d { foo(): void; }
 tsc: No errors (3 separate m3d symbols)
 tsz: TS2300 on each `declare class m3d` (symbols incorrectly merged)
 
-**Next Steps**:
-1. Trace where symbols are consolidated after binding
-2. Check if there's a symbol merging step in the compilation pipeline
-3. Investigate whether the checker's symbol lookup bypasses scope
+**Next Steps** (from Gemini guidance):
+1. **Locate `declare_symbol`** in `src/binder/state.rs` (already found at line 3139)
+2. **Audit the merge logic**: The bug is that `declare_symbol` checks `self.current_scope.get(name)` but this might be finding symbols from parent scopes
+3. **Add debug traces** to verify cross-scope merging:
+   ```rust
+   eprintln!("Declaring '{}' in scope {:?}, found existing {:?} in same scope",
+       name, self.current_scope_id, existing_id);
+   ```
+4. **Fix the merge condition**: Only merge if existing symbol is in CURRENT scope, not parent scopes
+5. **Verify** with test case - should get 3 distinct m3d symbols instead of 1 merged symbol
 
 
 **Conformance Status**: 97/200 passed (48.5%)
