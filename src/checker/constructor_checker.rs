@@ -586,6 +586,7 @@ impl<'a> CheckerState<'a> {
         env: Option<&crate::solver::TypeEnvironment>,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<MemberAccessLevel> {
+        
         use crate::solver::type_queries::{ConstructorAccessKind, classify_for_constructor_access};
 
         if !visited.insert(type_id) {

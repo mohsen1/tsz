@@ -1673,6 +1673,7 @@ pub fn is_readonly_index_signature(
     wants_string: bool,
     wants_number: bool,
 ) -> bool {
+    
     use crate::solver::index_signatures::{IndexKind, IndexSignatureResolver};
 
     let resolver = IndexSignatureResolver::new(interner);

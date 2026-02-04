@@ -2163,6 +2163,7 @@ pub fn classify_for_non_object(db: &dyn TypeDatabase, type_id: TypeId) -> NonObj
         TypeKey::Literal(_) => NonObjectKind::Literal,
         TypeKey::Intrinsic(kind) => {
             use crate::solver::IntrinsicKind;
+            
             match kind {
                 IntrinsicKind::Void
                 | IntrinsicKind::Undefined
