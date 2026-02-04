@@ -1125,38 +1125,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_array_to_tuple_subtype(s_elem, &t_elems);
         }
 
-        // FIX: Nominal type checking for class instances MUST come before structural checks
-        //
-        // Previously, the structural checks at lines 1128-1144 returned early, making
-        // the nominal check unreachable. This caused class A and class B (with identical
-        // structure but no inheritance relationship) to be incorrectly treated as subtypes.
-        //
-        // Now we check nominal identity FIRST for ObjectWithIndex types (class instances).
-        // Only if nominal check passes do we proceed to structural checks.
-
-        // Get shape IDs for source and target
-        let s_shape_id = object_with_index_shape_id(self.interner, source)
-            .or_else(|| object_shape_id(self.interner, source));
-        let t_shape_id = object_with_index_shape_id(self.interner, target)
-            .or_else(|| object_shape_id(self.interner, target));
-
-        // Nominal check: if BOTH have symbols (class instances), verify inheritance
-        if let (Some(s_id), Some(t_id)) = (s_shape_id, t_shape_id) {
-            let s_shape = self.interner.object_shape(s_id);
-            let t_shape = self.interner.object_shape(t_id);
-
-            if let (Some(_s_sym), Some(_t_sym)) = (s_shape.symbol, t_shape.symbol) {
-                // Both have symbols - they're both class instances
-                // Check if source extends target through nominal inheritance
-                let source_extends_target = self.check_nominal_inheritance(source, target);
-                if !source_extends_target {
-                    return SubtypeResult::False;
-                }
-                // Valid inheritance - continue to structural check below
-            }
-        }
-
-        // Structural checks (only reached if nominal check passes or doesn't apply)
         if let (Some(s_shape_id), Some(t_shape_id)) = (
             object_shape_id(self.interner, source),
             object_shape_id(self.interner, target),
@@ -1173,6 +1141,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
             return self.check_object_with_index_subtype(&s_shape, Some(s_shape_id), &t_shape);
+        }
+
+        // Nominal type checking for class instances
+        // Before structural checks, verify that classes with different symbols have proper inheritance relationship
+        if let (Some(s_shape_id), Some(t_shape_id)) = (
+            object_with_index_shape_id(self.interner, source),
+            object_with_index_shape_id(self.interner, target),
+        ) {
+            let s_shape = self.interner.object_shape(s_shape_id);
+            let t_shape = self.interner.object_shape(t_shape_id);
+
+            // If both have nominal identity (class symbols), check inheritance relationship
+            if let (Some(_s_sym), Some(_t_sym)) = (s_shape.symbol, t_shape.symbol) {
+                // Both have symbols - they're both class instances
+                // Check if source extends target through nominal inheritance
+                let source_extends_target = self.check_nominal_inheritance(source, target);
+                if !source_extends_target {
+                    return SubtypeResult::False;
+                }
+                // Valid inheritance - continue to structural check below
+            }
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
