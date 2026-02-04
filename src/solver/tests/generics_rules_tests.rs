@@ -144,9 +144,8 @@ fn test_try_expand_application_instantiates_type_params() {
     let param_info = TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     };
     let param_type = interner.intern(TypeKey::TypeParameter(param_info.clone()));
 
@@ -214,9 +213,8 @@ fn test_try_expand_application_self_reference_returns_none() {
         vec![TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         }],
     );
 

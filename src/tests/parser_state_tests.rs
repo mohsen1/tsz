@@ -687,6 +687,23 @@ fn test_parser_template_literal_property_name_no_ts1160() {
 }
 
 #[test]
+fn test_parser_double_comma_emits_ts1136() {
+    let source = "Boolean({ x: 0,, });";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    assert!(!root.is_none());
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED),
+        "Expected TS1136 property assignment expected diagnostic for double comma, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_parser_call_expression() {
     let mut parser = ParserState::new("test.ts".to_string(), "foo(1, 2, 3);".to_string());
     let root = parser.parse_source_file();

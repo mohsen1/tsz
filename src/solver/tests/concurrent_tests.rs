@@ -111,9 +111,8 @@ fn test_concurrent_function_creation() {
                 type_params: vec![TypeParamInfo {
                     name: interner.intern_string("T"),
                     constraint: None,
-                    is_const: false,
                     default: None,
-                    
+                    is_const: false,
                 }],
                 params: vec![
                     ParamInfo {

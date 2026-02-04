@@ -651,9 +651,8 @@ fn test_narrow_by_typeof_function_unconstrained_type_param() {
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let narrowed = narrow_by_typeof(&interner, param, "function");
@@ -681,9 +680,8 @@ fn test_narrow_by_typeof_unconstrained_type_param() {
     let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let narrowed = narrow_by_typeof(&interner, param, "string");

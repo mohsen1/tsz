@@ -627,18 +627,16 @@ fn test_generic_overload_simple() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let generic_sig = CallSignature {
         type_params: vec![TypeParamInfo {
             name: t_name,
             constraint: None,
-            is_const: false,
             default: None,
-            
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -695,7 +693,7 @@ fn test_generic_overload_with_constraint() {
             name: t_name,
             constraint: Some(TypeId::OBJECT),
             default: None,
-        is_const: false,
+            is_const: false,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -739,16 +737,14 @@ fn test_generic_overload_multiple_type_params() {
     let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
     let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     }));
 
     let tuple_return = interner.tuple(vec![
@@ -771,16 +767,14 @@ fn test_generic_overload_multiple_type_params() {
             TypeParamInfo {
                 name: t_name,
                 constraint: None,
-                is_const: false,
                 default: None,
-                
+                is_const: false,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
-                is_const: false,
                 default: None,
-                
+                is_const: false,
             },
         ],
         params: vec![

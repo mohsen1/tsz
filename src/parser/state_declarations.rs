@@ -811,10 +811,10 @@ impl ParserState {
         let is_declare = modifiers
             .as_ref()
             .and_then(|m| m.nodes.first())
-            .map_or(false, |&node| {
+            .is_some_and(|&node| {
                 self.arena
                     .get(node)
-                    .map_or(false, |n| n.kind == SyntaxKind::DeclareKeyword as u16)
+                    .is_some_and(|n| n.kind == SyntaxKind::DeclareKeyword as u16)
             });
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_module_block(is_declare)

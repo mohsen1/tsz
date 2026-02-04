@@ -500,9 +500,8 @@ fn test_contextual_generic_call_union_preserves_literal() {
     let t_param = TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
-        is_const: false,
         default: None,
-        
+        is_const: false,
     };
     let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
     let func = FunctionShape {
@@ -549,7 +548,7 @@ fn test_contextual_generic_return_union_preserves_literal() {
 
     // Simulate generic return inference: T inferred from returning a literal.
     let mut infer_ctx = InferenceContext::new(&interner);
-    let var_t = infer_ctx.fresh_type_param(t_name, false);
+    let var_t = infer_ctx.fresh_type_param(t_name);
     let literal = interner.literal_string("ready");
     infer_ctx.add_lower_bound(var_t, literal);
     let inferred = infer_ctx.resolve_with_constraints(var_t).unwrap();
@@ -618,7 +617,7 @@ fn test_contextual_generic_return_union_any_uses_context() {
     let return_ctx = ctx.for_return();
 
     let mut infer_ctx = InferenceContext::new(&interner);
-    let var_t = infer_ctx.fresh_type_param(t_name, false);
+    let var_t = infer_ctx.fresh_type_param(t_name);
     infer_ctx.add_lower_bound(var_t, TypeId::ANY);
     let inferred = infer_ctx.resolve_with_constraints(var_t).unwrap();
     assert_eq!(inferred, TypeId::ANY);
