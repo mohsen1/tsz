@@ -165,6 +165,15 @@ type ExtractedState = ExtractState<NumberReducer>; // Should be number
 - Numeric enum assignability (bidirectional with number)
 - Mixin pattern with generic functions and nested classes
 
-## Status: Priorities 1-2 complete - 32 failing tests remain
+## Status: Priorities 1-2 Complete - Session Paused
 
-**Next**: Priority 3 - Readonly TS2540 (4 tests)
+**Summary**: Successfully completed core infrastructure fixes for Application expansion and index signatures.
+- Priority 1: Application expansion for type aliases ✅
+- Priority 2: Index signature subtyping ✅
+- Priority 3: Readonly TS2540 ⏸️ (deferred to dedicated session)
+
+**Reason for pausing**: Priority 3 requires extensive architectural refactoring (~30+ locations across multiple files) that should be done in a dedicated session with proper testing.
+
+**Recommendation**: Create new session (tsz-2) for readonly refactoring work.
+
+**Progress**: 51 → 32 failing tests (-19 tests, 37% reduction)
