@@ -38,11 +38,25 @@
 
 **Priority 1:** ✅ **COMPLETED** - Integrate UsageAnalyzer into DeclarationEmitter
    - Location: `src/declaration_emitter/mod.rs`
-   - All filtering logic implemented and compiling
+   - All filtering logic implemented and compiling (commit `d7597b9ff`)
 
-**Priority 2:** 🔄 **IN PROGRESS** - Run conformance tests for baseline
+**Priority 2:** ⏸ **BLOCKED** - Run conformance tests for baseline
    - Goal: Identify tests failing due to extra/missing imports
    - Command: `./scripts/conformance.sh --filter=decl`
+   - **BLOCKER:** Missing BinderState in multi-file driver (commit `a12ab22d8`)
+
+**Current Blocker:** Missing BinderState in Multi-File Mode
+
+The driver's `MergedProgram` doesn't include per-file `BinderState` instances.
+- `BoundFile` has raw binding data (node_symbols, scopes) but no BinderState
+- UsageAnalyzer needs BinderState for `node_symbols` map access
+- Temporarily disabled in multi-file driver (commit `a12ab22d8`)
+
+**Required Fix:**
+1. Store `Vec<Arc<BinderState>>` in MergedProgram (like lib_binders)
+2. OR store `binder: Arc<BinderState>` in each BoundFile
+3. Re-enable usage analysis in emit() method
+4. Run conformance tests
 
 **Key Architecture Decisions:**
 - UsageAnalyzer uses hybrid walk: AST for explicit types, Semantic for inferred
