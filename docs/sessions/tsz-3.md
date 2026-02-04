@@ -1,8 +1,8 @@
-# Session tsz-3 - in Operator Narrowing Implementation
+# Session tsz-3 - Narrowing Implementation Complete
 
 **Started**: 2026-02-04
 **Status**: ACTIVE
-**Focus**: Control Flow Analysis - in Operator Type Narrowing
+**Focus**: Control Flow Analysis - Type Narrowing Features
 
 ## Completed Work
 
@@ -19,51 +19,31 @@
 - Test `test_instanceof_narrows_to_object_union_members` passes
 - Commit: `bcfb9d6a9`
 
-## Current Task: Implement in Operator Narrowing
+✅ **in Operator Narrowing Implementation**
+- Implemented `narrow_by_property_presence` method in `src/solver/narrowing.rs`
+- Added `type_has_property` helper to check if a type has a property
+- Handles object shapes, index signatures, and union filtering
+- Supports both positive (`"prop" in x`) and negative (`!("prop" in x)`) narrowing
+- Test `test_in_operator_narrows_required_property` passes
+- Commit: `9d6da2af7`
 
-### Problem Statement
-Currently, `in` checks are parsed but ignored by the solver. Types are not narrowed in `if ("prop" in x)` blocks, which means:
+## Next Steps
 
-```typescript
-interface A { a: string }
-interface B { b: number }
-function f(x: A | B) {
-    if ("a" in x) {
-        // x should be narrowed to A
-        x.a; // Should work but x is still A | B
-    } else {
-        // x should be narrowed to B
-        x.b; // Should work but x is still A | B
-    }
-}
-```
+All major narrowing features for this session are complete:
+- ✅ instanceof narrowing
+- ✅ in operator narrowing
+- ✅ typeof narrowing (already implemented)
+- ✅ discriminant narrowing (already implemented)
 
-### Implementation Plan
-
-**File**: `src/solver/narrowing.rs`
-
-1. **Locate** the `TypeGuard::InProperty` match arm in `narrow_type` (line ~1135)
-2. **Implement** helper method `narrow_by_property_presence(&self, source: TypeId, prop: Atom, sense: bool) -> TypeId`
-3. **Logic**:
-   - Handle `any` -> `any`, `never` -> `never`
-   - If `source` is a union, filter members:
-     - For `sense == true`: Keep members that *have* the property (required or optional)
-     - For `sense == false`: Keep members that *don't* have the property
-   - Use `object_shape_id` and `object_with_index_shape_id` to check properties
-   - Handle index signatures (string index implies any string property exists)
-   - Return union of matching members
-
-### Key Files
-- `src/solver/narrowing.rs` - Main implementation
-- `src/solver/visitor.rs` - Helper functions for type introspection
+Remaining narrowing gaps in the codebase:
+- `narrow_by_truthiness` has a TODO for proper falsy narrowing (false, 0, "", NaN)
 
 ### Context
 **Previous Sessions**:
 1. Completed error formatting and module validation cleanup
 2. Fixed TS2304 poisoning issue
-3. Implemented instanceof narrowing
 
-**Key Insight**: This is the next logical narrowing feature after instanceof. The `in` operator is commonly used for discriminated unions and interface narrowing.
+**Key Insight**: This session has successfully implemented two major narrowing features (instanceof and in operator), significantly improving tsz's control flow analysis capabilities.
 
 Fix the "poisoning" effect where missing global symbols (TS2304) cause types to default to `any`, which:
 - Suppresses subsequent type errors
