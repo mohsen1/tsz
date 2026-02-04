@@ -2309,6 +2309,20 @@ impl ParserState {
                     let snapshot = self.scanner.save_state();
                     let saved_token = self.current_token;
                     self.next_token();
+
+                    // Check if followed by var/let (invalid pattern: const var foo)
+                    // In this case, consume const without adding to modifiers, let var/let handler emit error
+                    if matches!(
+                        self.current_token,
+                        SyntaxKind::VarKeyword | SyntaxKind::LetKeyword
+                    ) {
+                        // Restore state, consume const, and continue - var/let will emit TS1440
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        self.next_token(); // Consume const
+                        continue;
+                    }
+
                     if self.scanner.has_preceding_line_break() {
                         // Restore and break - const is a property name
                         self.scanner.restore_state(snapshot);
@@ -2355,13 +2369,40 @@ impl ParserState {
                     }
 
                     // Otherwise it's being used as a modifier (invalid)
+                    // Restore state to emit error at var/let position, then consume it
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+
+                    // Check if followed by 'constructor' - emit TS1068 instead of TS1440
+                    let is_followed_by_constructor = if self.current_token == SyntaxKind::VarKeyword
+                        || self.current_token == SyntaxKind::LetKeyword
+                    {
+                        let snapshot2 = self.scanner.save_state();
+                        let saved_token2 = self.current_token;
+                        self.next_token();
+                        let result = self.current_token == SyntaxKind::ConstructorKeyword;
+                        self.scanner.restore_state(snapshot2);
+                        self.current_token = saved_token2;
+                        result
+                    } else {
+                        false
+                    };
+
                     use crate::checker::types::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Unexpected modifier.",
-                        diagnostic_codes::UNEXPECTED_TOKEN,
-                    );
-                    // Don't add to modifiers list - not a valid modifier
-                    continue;
+                    if is_followed_by_constructor {
+                        self.parse_error_at_current_token(
+                            "Unexpected token. A constructor, method, accessor, or property was expected.",
+                            diagnostic_codes::UNEXPECTED_TOKEN_CLASS_MEMBER,
+                        );
+                    } else {
+                        self.parse_error_at_current_token(
+                            "Variable declaration not allowed at this location.",
+                            diagnostic_codes::VAR_DECLARATION_NOT_ALLOWED,
+                        );
+                    }
+                    // Consume var/let and break - done with modifiers
+                    self.next_token();
+                    break;
                 }
                 _ => break,
             };
