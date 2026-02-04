@@ -2,7 +2,7 @@
 
 **Started**: 2026-02-04
 **Status**: 🟢 ACTIVE (Phase 4 in progress)
-**Latest Update**: 2026-02-04 - Task 1 (Nominal BCT) complete, working on remaining tasks
+**Latest Update**: 2026-02-04 - Tasks 1 & 2 complete, Task 3 ready to begin
 **Focus**: Best Common Type, Homomorphic Mapped Types, Inter-Parameter Constraints
 
 ---
@@ -29,18 +29,29 @@ The current generic inference and type system has several gaps that cause `any` 
 **Limitation**: Uses `is_subtype_of` without resolver. Nominal inheritance checks may fail for class hierarchies without structural similarity (e.g. private fields).
 **Action**: Defer fix to Task 1.1 (requires `SubtypeChecker` refactor for `?Sized` support)
 
-#### Task 2: Homomorphic Mapped Type Preservation (HIGH) 🔄 IN PROGRESS
+#### Task 2: Homomorphic Mapped Type Preservation (HIGH) ✅ COMPLETE
+**Commit**: `5cc8b37e0`
 **File**: `src/solver/evaluate_rules/mapped.rs`
 
-**Goal**: Ensure mapped types preserve array/tuple structure instead of degrading to plain objects.
+**Completed Implementation**:
+1. ✅ Added array/tuple preservation in `evaluate_mapped` (lines 233-283)
+   - Checks if source_object is Array/Tuple/ReadonlyArray
+   - Name remapping (as clause) breaks homomorphism
+2. ✅ Added `evaluate_mapped_array`: maps array element type with K=number
+   - Handles optional modifier (unions with undefined)
+   - Handles +readonly/-readonly modifiers
+3. ✅ Added `evaluate_mapped_array_with_readonly`: handles ReadonlyArray<T>
+   - Preserves original readonly status
+   - Uses TypeKey::ReadonlyType wrapper
+4. ✅ Added `evaluate_mapped_tuple`: maps each tuple element with K=0,1,2...
+   - **Critical**: Handles rest elements specially by mapping the array type
+   - Preserves optional/rest modifiers on tuple elements
+   - Fixed ReadonlyArray detection (removed empty properties check)
 
-**Implementation**:
-1. Modify `evaluate_mapped` to detect if source type is `Array` or `Tuple`
-2. Return new `Array`/`Tuple` with template applied to elements
-3. Ensure modifiers (readonly/optional) map correctly
-4. **Critical**: Match `tsc` behavior where `keyof T` implies homomorphic mapping
-
-**Example**: `Partial<number[]>` should be `(number | undefined)[]`, not `{ [n: number]: number | undefined }`
+**Examples**:
+- `Partial<[number, string]>` -> `[number?, string?]` (Tuple)
+- `Partial<number[]>` -> `(number | undefined)[]` (Array)
+- `ReadonlyArray<number>` with `-readonly` -> `number[]`
 
 #### Task 3: Inter-Parameter Constraint Propagation (MEDIUM)
 **File**: `src/solver/infer.rs`
