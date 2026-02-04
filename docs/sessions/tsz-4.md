@@ -68,6 +68,45 @@ Refine control flow analysis and narrowing in three areas:
 - [ ] All changes tested, committed, and pushed
 - [ ] No regressions in previously passing tests
 
+## Progress
+
+### 2025-02-04: Initial Investigation
+
+**Test Case Being Debugged**:
+```typescript
+type D = { done: true, value: 1 } | { done: false, value: 2 };
+declare function fn(): D;
+let o: D;
+if ((o = fn()).done) {
+    const y: 1 = o.value;  // Should work - o should be narrowed to { done: true, value: 1 }
+}
+```
+
+**Expected (tsc)**: No errors
+**Actual (tsz)**: TS2322 - Type '1 | 2' is not assignable to type '1'
+
+**Investigation Findings**:
+- Discriminant narrowing IS implemented in `src/solver/narrowing.rs`
+- Functions: `find_discriminants()`, `narrow_by_discriminant()`, `narrow_by_excluding_discriminant()`
+- Control flow integration in `src/checker/control_flow.rs` (lines 1607-1617)
+- TypeGuard extraction exists but marked as `#[allow(dead_code)]`
+
+**Root Cause Hypothesis**:
+The issue is NOT with discriminant narrowing logic itself, but with integration:
+1. Assignment in condition: `o = fn()` happens in the if condition
+2. Discriminant check: `.done` is checked on the assigned variable
+3. Narrowing doesn't propagate: The narrowed type from the condition isn't properly propagated to the if body for variables assigned in the condition
+
+**Key Files**:
+- `src/solver/narrowing.rs` - Core narrowing logic (complete)
+- `src/checker/control_flow.rs` - Integration point (needs fix)
+- `src/checker/control_flow_narrowing.rs` - TypeGuard extraction (dead code, needs activation)
+
+**Next Steps**:
+1. Fix assignment + discriminant combo in control flow analysis
+2. Ensure narrowed types propagate correctly to statement bodies
+3. Test with `test_assignment_expression_condition_narrows_discriminant`
+
 ## Notes
 
 - Builds on TDZ work from tsz-2
