@@ -650,6 +650,46 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Construct a `RelationCacheKey` for the current checker configuration.
+    ///
+    /// This packs the Lawyer-layer flags into a compact cache key to ensure that
+    /// results computed under different rules (strict vs non-strict) don't contaminate each other.
+    fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
+        // Pack boolean flags into a u8 bitmask:
+        // bit 0: strict_null_checks
+        // bit 1: strict_function_types
+        // bit 2: exact_optional_property_types
+        // bit 3: no_unchecked_indexed_access
+        // bit 4: disable_method_bivariance
+        let mut flags: u8 = 0;
+        if self.strict_null_checks {
+            flags |= 1 << 0;
+        }
+        if self.strict_function_types {
+            flags |= 1 << 1;
+        }
+        if self.exact_optional_property_types {
+            flags |= 1 << 2;
+        }
+        if self.no_unchecked_indexed_access {
+            flags |= 1 << 3;
+        }
+        if self.disable_method_bivariance {
+            flags |= 1 << 4;
+        }
+
+        // CRITICAL: Calculate effective `any_mode` based on depth.
+        // If `any_propagation` is `TopLevelOnly` but `depth > 0`, the effective mode is "None".
+        // This ensures that top-level checks don't incorrectly hit cached results from nested checks.
+        let any_mode = match self.any_propagation {
+            AnyPropagationMode::All => 0,
+            AnyPropagationMode::TopLevelOnly if self.depth == 0 => 1,
+            AnyPropagationMode::TopLevelOnly => 2, // Disabled at depth > 0
+        };
+
+        RelationCacheKey::subtype(source, target, flags, any_mode)
+    }
+
     /// Check if `source` is a subtype of `target`.
     /// This is the main entry point for subtype checking.
     ///
@@ -742,7 +782,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This avoids re-doing expensive structural checks for type pairs
         // already resolved by a prior SubtypeChecker instance.
         if let Some(db) = self.query_db {
-            if let Some(cached) = db.lookup_subtype_cache(source, target) {
+            let key = self.make_cache_key(source, target);
+            if let Some(cached) = db.lookup_subtype_cache(key) {
                 return if cached {
                     SubtypeResult::True
                 } else {
@@ -845,9 +886,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Cache definitive results in the shared QueryCache for cross-checker memoization.
         // Only cache True/False, not non-definitive results (cycle detection artifacts).
         if let Some(db) = self.query_db {
+            let key = self.make_cache_key(source, target);
             match result {
-                SubtypeResult::True => db.insert_subtype_cache(source, target, true),
-                SubtypeResult::False => db.insert_subtype_cache(source, target, false),
+                SubtypeResult::True => db.insert_subtype_cache(key, true),
+                SubtypeResult::False => db.insert_subtype_cache(key, false),
                 SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {} // Don't cache non-definitive results
             }
         }

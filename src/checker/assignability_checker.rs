@@ -16,6 +16,7 @@ use crate::checker::state::{CheckerOverrideProvider, CheckerState};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeId;
+use crate::solver::types::RelationCacheKey;
 use tracing::trace;
 
 // =============================================================================
@@ -446,13 +447,31 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check relation cache for non-inference types
-        // Key format: (source, target, relation_kind) where 0 = subtype
-        const SUBTYPE_RELATION: u8 = 0;
-        let cache_key = (source, target, SUBTYPE_RELATION);
+        // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
         let is_cacheable = !contains_infer_types(self.ctx.types, source)
             && !contains_infer_types(self.ctx.types, target);
 
         if is_cacheable {
+            // Pack boolean flags into a u8 bitmask for the cache key:
+            // bit 0: strict_null_checks
+            // bit 1: strict_function_types
+            // bit 2: exact_optional_property_types
+            // bit 3: no_unchecked_indexed_access
+            // bit 4: disable_method_bivariance
+            let mut flags: u8 = 0;
+            if self.ctx.strict_null_checks() {
+                flags |= 1 << 0;
+            }
+            if self.ctx.strict_function_types() {
+                flags |= 1 << 1;
+            }
+            if self.ctx.exact_optional_property_types() {
+                flags |= 1 << 2;
+            }
+            // Note: For subtype checks in the checker, we use AnyPropagationMode::All (0)
+            // since the checker doesn't track depth like SubtypeChecker does
+            let cache_key = RelationCacheKey::subtype(source, target, flags, 0);
+
             if let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key) {
                 return cached;
             }
@@ -499,6 +518,19 @@ impl<'a> CheckerState<'a> {
 
         // Cache the result for non-inference types
         if is_cacheable {
+            // Reconstruct the cache key with the same flags as the lookup
+            let mut flags: u8 = 0;
+            if self.ctx.strict_null_checks() {
+                flags |= 1 << 0;
+            }
+            if self.ctx.strict_function_types() {
+                flags |= 1 << 1;
+            }
+            if self.ctx.exact_optional_property_types() {
+                flags |= 1 << 2;
+            }
+            let cache_key = RelationCacheKey::subtype(source, target, flags, 0);
+
             self.ctx
                 .relation_cache
                 .borrow_mut()

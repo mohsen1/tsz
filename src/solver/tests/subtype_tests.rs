@@ -20231,6 +20231,8 @@ fn test_variance_method_bivariant_params() {
         call_signatures: vec![],
         construct_signatures: vec![],
         properties: vec![PropertyInfo {
+            visibility: Visibility::Public,
+            parent_id: None,
             name: interner.intern_string("handle"),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
@@ -20263,6 +20265,8 @@ fn test_variance_method_bivariant_params() {
         call_signatures: vec![],
         construct_signatures: vec![],
         properties: vec![PropertyInfo {
+            visibility: Visibility::Public,
+            parent_id: None,
             name: interner.intern_string("handle"),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
@@ -20304,6 +20308,8 @@ fn test_variance_function_property_contravariant() {
 
     // Object with function property taking narrow param
     let narrow_fn_obj = interner.object(vec![PropertyInfo {
+        visibility: Visibility::Public,
+        parent_id: None,
         name: interner.intern_string("handle"),
         type_id: interner.function(FunctionShape {
             type_params: vec![],
@@ -20329,6 +20335,8 @@ fn test_variance_function_property_contravariant() {
 
     // Object with function property taking wide param
     let wide_fn_obj = interner.object(vec![PropertyInfo {
+        visibility: Visibility::Public,
+        parent_id: None,
         name: interner.intern_string("handle"),
         type_id: interner.function(FunctionShape {
             type_params: vec![],
@@ -24897,6 +24905,8 @@ fn test_constructor_with_static_properties() {
             is_method: false,
         }],
         properties: vec![PropertyInfo {
+            visibility: Visibility::Public,
+            parent_id: None,
             name: interner.intern_string("create"),
             type_id: interner.function(FunctionShape {
                 type_params: vec![],
