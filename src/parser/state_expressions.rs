@@ -345,6 +345,11 @@ impl ParserState {
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
+            // Check if next token starts a statement but not an expression
+            // This catches cases like `() => var x` where `{` was expected
+            if self.is_statement_start() && !self.is_expression_start() {
+                self.error_token_expected("{");
+            }
             self.parse_assignment_expression()
         };
 
