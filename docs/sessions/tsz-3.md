@@ -39,6 +39,7 @@ const doubled = nums.map(x => x * 2); // 'x' should be 'number' from array type
 - `f390ccbf2` - Implemented visit_application for generic types
 - `2d2050763` - Fixed visit_ref (CRITICAL BUG)
 - `f669259f5` - Implemented priority-based contextual inference constraints
+- `9b629b157` - Wired up check_with_context API in ExpressionChecker
 
 ### Current Tasks: In Progress
 
@@ -51,7 +52,17 @@ const doubled = nums.map(x => x * 2); // 'x' should be 'number' from array type
   - Use `InferencePriority::Contextual` for contextual hints (lower priority)
   - Use `InferencePriority::Argument` for argument constraints (higher priority)
 
-**Task 1.3: Wire up `check_with_context` in ExpressionChecker (MEDIUM)**
+**Task 1.3: Wire up `check_with_context` in ExpressionChecker (MEDIUM)** ✅ **COMPLETE**
+- **File**: `src/checker/expr.rs`
+- **Goal**: Propagate contextual types down to function expressions
+- **Implementation**:
+  - Added `check_with_context(idx, context_type)` method
+  - Updated `check()` to delegate to `check_with_context(context_type: None)`
+  - Updated `compute_type_impl()` to accept context_type parameter
+  - Bypass cache when contextual type is provided (prevents incorrect results)
+  - Pass context through to parenthesized expressions
+
+### Next Tasks:
 - **File**: `src/checker/expr.rs`
 - **Goal**: Propagate contextual types down to function expressions
 - **Implementation**:
