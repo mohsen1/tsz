@@ -1295,20 +1295,38 @@ impl<'a> DeclarationEmitter<'a> {
                 };
 
                 for &decl_idx in &decl_list.declarations.nodes {
-                    self.write_indent();
-                    // Don't emit 'export' or 'declare' keywords inside a declare namespace
-                    if !self.inside_declare_namespace {
-                        if is_exported {
-                            self.write("export ");
-                        }
-                        self.write("declare ");
-                    }
-                    self.write(keyword);
-                    self.write(" ");
-
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
+                        // Check if this is a destructuring pattern
+                        let name_node = self.arena.get(decl.name);
+                        let is_destructuring = name_node.is_some()
+                            && (name_node.unwrap().kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || name_node.unwrap().kind
+                                    == syntax_kind_ext::ARRAY_BINDING_PATTERN);
+
+                        if is_destructuring {
+                            // Flatten destructuring into individual declarations
+                            self.emit_flattened_variable_declaration(
+                                decl.name,
+                                keyword,
+                                is_exported,
+                            );
+                            continue;
+                        }
+
+                        // Regular variable declaration (not destructuring)
+                        self.write_indent();
+                        // Don't emit 'export' or 'declare' keywords inside a declare namespace
+                        if !self.inside_declare_namespace {
+                            if is_exported {
+                                self.write("export ");
+                            }
+                            self.write("declare ");
+                        }
+                        self.write(keyword);
+                        self.write(" ");
+
                         self.emit_node(decl.name);
 
                         // Determine if we should emit a literal initializer for const
@@ -1360,6 +1378,87 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write_line();
                 }
             }
+        }
+    }
+
+    /// Recursively collects all Identifier NodeIndices from a BindingPattern.
+    ///
+    /// This handles nested destructuring like `const { a: { b } } = obj;`
+    /// by traversing into nested patterns and collecting all leaf identifiers.
+    fn collect_bindings_recursive(&self, node_idx: NodeIndex, bindings: &mut Vec<NodeIndex>) {
+        let Some(node) = self.arena.get(node_idx) else {
+            return;
+        };
+
+        match node.kind {
+            // Leaf case: simple identifier
+            k if k == SyntaxKind::Identifier as u16 => {
+                bindings.push(node_idx);
+            }
+            // Recursive case: object or array binding pattern
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                    for &element_idx in &pattern.elements.nodes {
+                        // element_idx is the NodeIndex for the BindingElement
+                        // Recurse into the BindingElement node
+                        self.collect_bindings_recursive(element_idx, bindings);
+                    }
+                }
+            }
+            // BindingElement: recurse into its name (which might be a pattern)
+            k if k == syntax_kind_ext::BINDING_ELEMENT => {
+                if let Some(element) = self.arena.get_binding_element(node) {
+                    self.collect_bindings_recursive(element.name, bindings);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Emits flattened variable declarations for destructuring patterns.
+    ///
+    /// In .d.ts files, destructuring like `export const { a, b } = obj;`
+    /// must be flattened into individual declarations:
+    /// `export declare const a: Type;`
+    /// `export declare const b: Type;`
+    fn emit_flattened_variable_declaration(
+        &mut self,
+        pattern_idx: NodeIndex,
+        keyword: &str,
+        is_exported: bool,
+    ) {
+        let mut bindings = Vec::new();
+        self.collect_bindings_recursive(pattern_idx, &mut bindings);
+
+        for ident_idx in bindings {
+            self.write_indent();
+            // Don't emit 'export' or 'declare' keywords inside a declare namespace
+            if !self.inside_declare_namespace {
+                if is_exported {
+                    self.write("export ");
+                }
+                self.write("declare ");
+            }
+            self.write(keyword);
+            self.write(" ");
+
+            // Emit the identifier name
+            self.emit_node(ident_idx);
+
+            // Get the type of the specific identifier from the cache
+            // The checker associates the inferred type with the Identifier node
+            if let Some(type_id) = self.get_node_type(ident_idx) {
+                self.write(": ");
+                self.write(&self.print_type_id(type_id));
+            } else {
+                // Fallback to 'any' if no type information available
+                self.write(": any");
+            }
+
+            self.write(";");
+            self.write_line();
         }
     }
 
