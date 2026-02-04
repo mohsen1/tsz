@@ -10,6 +10,8 @@
 
 **Phase 2: Module Path Resolution** ✅ COMPLETE
 
+**Phase 3: Import Synthesis** ✅ COMPLETE
+
 **Phase 1 Implementation Summary:**
 1. Added `current_arena: Arc<NodeArena>` to UsageAnalyzer struct
 2. Added `foreign_symbols: FxHashSet<SymbolId>` to track foreign symbols
@@ -59,9 +61,47 @@
 - Conformance: 269/639 (42.1%) - no regressions
 - Compilation: Successful
 
+**Phase 3 Implementation Summary:**
+1. Added `required_imports: FxHashMap<String, Vec<String>>` to DeclarationEmitter
+2. Implemented `emit_required_imports()` method that:
+   - Emits imports before other declarations
+   - Groups symbols by module path
+   - Sorts modules and symbol names for deterministic output
+   - Format: `import { A, B } from './module';`
+3. Implemented `set_required_imports()` method to set import map from driver
+4. Modified `emit()` to skip UsageAnalyzer run if `used_symbols` already set
+5. Added `calculate_required_imports()` helper in driver that:
+   - Filters out already imported symbols
+   - Filters out symbols declared in current file
+   - Filters out lib symbols (decl_file_idx == MAX)
+   - Calculates relative module paths
+   - Strips TypeScript extensions (.ts, .d.ts)
+   - Adds ./ prefix for relative imports
+6. Integrated import generation into driver flow:
+   - Run UsageAnalyzer once in driver
+   - Get foreign_symbols
+   - Calculate required imports
+   - Set used_symbols and required_imports on emitter
+   - Call emit() which emits required imports first
+7. Fixed borrow checker issues in `emit_required_imports()` by collecting owned strings
+8. Fixed parent check in `check_ambient_module()` (use SymbolId::NONE not Option)
+9. Removed `pathdiff` dependency (replaced with simpler path calculation)
+
+**Architecture Decisions:**
+- Pre-calculate import map in driver where `MergedProgram` is available
+- Run UsageAnalyzer once to avoid double work
+- Store import map as `HashMap<String, Vec<String>>` (module → symbol names)
+- Emit imports before all other declarations in .d.ts
+
 **Commits:**
 - Phase 1: feat: track foreign symbols in UsageAnalyzer for import generation
-- Phase 2: (To be added after commit)
+- Phase 2: feat: implement module path resolution for import generation
+- Phase 3: feat: integrate required imports calculation into driver
+
+**Testing:**
+- Conformance: 269/639 (42.1%) - no regressions
+- Compilation: Successful
+- All phases integrated and working
 
 ### Session Goal
 
@@ -136,7 +176,7 @@ Building on TSZ-5's UsageAnalyzer infrastructure:
 - ✅ Add `pathdiff` dependency to Cargo.toml
 - ✅ Update driver to build and pass `arena_to_path` mapping
 
-**Phase 3: Import Synthesis** ⏭ NEXT
+**Phase 3: Import Synthesis** ✅ COMPLETE
 - Add method to DeclarationEmitter to emit missing imports
 - Insert before other declarations in .d.ts
 - Format: `import { TypeName } from './module';`
@@ -146,10 +186,14 @@ Building on TSZ-5's UsageAnalyzer infrastructure:
 - Conformance tests for multi-file scenarios
 - Edge case handling (name collisions, type-only imports)
 
-**Phase 3: Import Synthesis** ⏭ PENDING
-- Add method to DeclarationEmitter to emit missing imports
-- Insert before other declarations in .d.ts
-- Format: `import { TypeName } from './module';`
+**Phase 3: Import Synthesis** ✅ COMPLETE
+- ✅ Add `required_imports: FxHashMap<String, Vec<String>>` field
+- ✅ Implement `emit_required_imports()` method
+- ✅ Implement `set_required_imports()` setter
+- ✅ Implement `calculate_required_imports()` in driver
+- ✅ Integrate into driver flow (UsageAnalyzer → calculate → set → emit)
+- ✅ Fix borrow checker issues
+- ✅ Remove pathdiff dependency (use simpler path calc)
 
 **Phase 4: Testing & Refinement** ⏭ PENDING
 - Conformance tests for multi-file scenarios
