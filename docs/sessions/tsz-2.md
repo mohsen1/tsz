@@ -14,12 +14,15 @@
 - **Fixed**: Changed `is_method: false` to `is_method: true` for object literal methods
 - **File**: `src/checker/type_computation.rs:1535`
 - **Rationale**: Per TS_UNSOUNDNESS_CATALOG.md item #2, methods should be bivariant to support common OOP patterns. This aligns object literal methods with interface methods.
+- **Verified**: Tested with TSC - tsz now matches TSC bivariance behavior
 
-**Latest Conformance Results** (100 tests):
-- Pass rate: 38% (up from 32%)
-- TS2664: missing=2 (down from before - most cases now caught)
-- TS2322: extra=8 (8 false positives - bivariance fix should help)
-- TS2304: extra=9 (9 "Cannot find name" errors that TSC doesn't)
+**Latest Conformance Results** (500 tests):
+- Pass rate: **46.8%** (up from 38%)
+- TS2322: missing=12, extra=22 (complex - both too strict and too permissive in different cases)
+- TS2664: missing=12 (more cases found in larger sample)
+- TS2300: missing=25, extra=4
+- TS2339: missing=20, extra=7
+- TS2304: missing=11, extra=9
 
 **Next Steps**:
 1. Run larger conformance test to measure TS2322 improvement
