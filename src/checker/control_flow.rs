@@ -2059,21 +2059,41 @@ impl<'a> FlowAnalyzer<'a> {
     ///
     /// Examples of unit types:
     /// - Literals: "foo", 42, true, false, 0n
-    /// - Nullish: null, undefined
-    /// - Unique symbols (though rare in practice)
+    /// - Nullish: null, undefined, void
+    /// - Unions of unit types: "A" | "B" | null (all members are unit types)
     ///
     /// Non-unit types:
-    /// - string, number, boolean, bigint (primitives with multiple values)
+    /// - Primitives with multiple values: string, number, boolean, bigint
     /// - Objects, arrays, etc.
     fn is_unit_type(&self, type_id: TypeId) -> bool {
-        // Check for intrinsics that are unit types
-        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        // 1. Check intrinsics that are unit types
+        if type_id == TypeId::NULL
+            || type_id == TypeId::UNDEFINED
+            || type_id == TypeId::VOID
+            || type_id == TypeId::BOOLEAN_TRUE
+            || type_id == TypeId::BOOLEAN_FALSE
+        {
             return true;
         }
 
-        // Use the solver's visitor to check if it's a literal type
+        // 2. Check for Literal types (String/Number/BigInt literals)
         use crate::solver::visitor::is_literal_type_db;
-        is_literal_type_db(self.interner, type_id)
+        if is_literal_type_db(self.interner, type_id) {
+            return true;
+        }
+
+        // 3. CRITICAL: Check Unions
+        // A union is a unit type if ALL its members are unit types
+        // e.g. "A" | "B" | null is a unit type
+        // This allows: if (x !== y) where y: "A" | "B" to narrow x correctly
+        use crate::solver::visitor::union_list_id;
+        if let Some(list_id) = union_list_id(self.interner, type_id) {
+            let members = self.interner.type_list(list_id);
+            // Recursively check all members
+            return members.iter().all(|&m| self.is_unit_type(m));
+        }
+
+        false
     }
 
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)
