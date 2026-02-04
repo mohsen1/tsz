@@ -645,6 +645,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut wildcard_reexports: FxHashMap<String, Vec<String>> = FxHashMap::default();
 
     // Track which symbols have been merged to avoid duplicate processing
+    // IMPORTANT: This map is ONLY for symbols in the ROOT scope (ScopeId(0))
+    // Symbols from nested scopes should NEVER be merged across files/scopes
     let mut merged_symbols: FxHashMap<String, SymbolId> = FxHashMap::default();
 
     // ==========================================================================
@@ -661,8 +663,20 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         for i in 0..lib_binder.symbols.len() {
             let local_id = SymbolId(i as u32);
             if let Some(lib_sym) = lib_binder.symbols.get(local_id) {
+                // Check if this symbol is from a nested scope
+                // Lib symbols typically don't have nested scopes, but we check for completeness
+                let is_nested_symbol = lib_sym
+                    .declarations
+                    .first()
+                    .and_then(|first_decl| lib_binder.node_scope_ids.get(&first_decl.0))
+                    .and_then(|scope_id| lib_binder.scopes.get(scope_id.0 as usize))
+                    .map(|scope| scope.parent != ScopeId::NONE)
+                    .unwrap_or(false);
+
                 // Check if a symbol with this name already exists (cross-lib merging)
-                let global_id =
+                // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
+                // Nested scope symbols should NEVER be merged across scopes
+                let global_id = if !is_nested_symbol {
                     if let Some(&existing_id) = merged_symbols.get(&lib_sym.escaped_name) {
                         // Symbol already exists - check if we can merge
                         if let Some(existing_sym) = global_symbols.get(existing_id) {
@@ -695,7 +709,13 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         let new_id = global_symbols.alloc_from(lib_sym);
                         merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
                         new_id
-                    };
+                    }
+                } else {
+                    // Nested symbol - always allocate new, never merge
+                    let new_id = global_symbols.alloc_from(lib_sym);
+                    // NOTE: Don't add to merged_symbols - nested symbols should never be cross-file merged
+                    new_id
+                };
 
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), global_id);
@@ -746,33 +766,53 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         for i in 0..result.symbols.len() {
             let old_id = SymbolId(i as u32);
             if let Some(sym) = result.symbols.get(old_id) {
+                // Check if this symbol is from a nested scope by looking up its declaration's scope
+                let is_nested_symbol = sym
+                    .declarations
+                    .first()
+                    .and_then(|first_decl| result.node_scope_ids.get(&first_decl.0))
+                    .and_then(|scope_id| result.scopes.get(scope_id.0 as usize))
+                    .map(|scope| scope.parent != ScopeId::NONE)
+                    .unwrap_or(false);
+
                 // Check if symbol already exists in globals (cross-file merging)
-                let new_id = if let Some(&existing_id) = merged_symbols.get(&sym.escaped_name) {
-                    // Symbol exists - check if we can merge
-                    if let Some(existing_sym) = global_symbols.get(existing_id) {
-                        // Check if symbols can merge (interface+interface, namespace+namespace, etc.)
-                        if can_merge_symbols_cross_file(existing_sym.flags, sym.flags) {
-                            // Merge: reuse existing symbol ID, will merge declarations below
-                            existing_id
+                // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
+                // Nested scope symbols should NEVER be merged across scopes
+                let new_id = if !is_nested_symbol {
+                    if let Some(&existing_id) = merged_symbols.get(&sym.escaped_name) {
+                        // Symbol exists - check if we can merge
+                        if let Some(existing_sym) = global_symbols.get(existing_id) {
+                            // Check if symbols can merge (interface+interface, namespace+namespace, etc.)
+                            if can_merge_symbols_cross_file(existing_sym.flags, sym.flags) {
+                                // Merge: reuse existing symbol ID, will merge declarations below
+                                existing_id
+                            } else {
+                                // Cannot merge - allocate new symbol (shadowing or duplicate)
+                                let new_id =
+                                    global_symbols.alloc(sym.flags, sym.escaped_name.clone());
+                                symbol_arenas.insert(new_id, Arc::clone(&result.arena));
+                                merged_symbols.insert(sym.escaped_name.clone(), new_id);
+                                new_id
+                            }
                         } else {
-                            // Cannot merge - allocate new symbol (shadowing or duplicate)
+                            // Shouldn't happen - allocate new
                             let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                             symbol_arenas.insert(new_id, Arc::clone(&result.arena));
                             merged_symbols.insert(sym.escaped_name.clone(), new_id);
                             new_id
                         }
                     } else {
-                        // Shouldn't happen - allocate new
+                        // New symbol - allocate
                         let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                         symbol_arenas.insert(new_id, Arc::clone(&result.arena));
                         merged_symbols.insert(sym.escaped_name.clone(), new_id);
                         new_id
                     }
                 } else {
-                    // New symbol - allocate
+                    // Nested symbol - always allocate new, never merge or add to merged_symbols
                     let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                     symbol_arenas.insert(new_id, Arc::clone(&result.arena));
-                    merged_symbols.insert(sym.escaped_name.clone(), new_id);
+                    // NOTE: Don't add to merged_symbols - nested symbols should never be cross-file merged
                     new_id
                 };
                 id_remap.insert(old_id, new_id);
