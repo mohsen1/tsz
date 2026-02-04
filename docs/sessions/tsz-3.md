@@ -1,77 +1,79 @@
-# Session tsz-3: Generic Inference & Nominal Hierarchy Integration
+# Session tsz-3: Generic Inference & Contextual Typing Integration
 
 **Started**: 2026-02-04
-**Completed**: 2026-02-04
-**Status**: ✅ COMPLETE (4/5 tasks done)
-**Latest Update**: 2026-02-04 - Tasks 1, 2, 3, 1.1 complete; Task 4 deferred to new session
-**Focus**: Generic Inference & Nominal Hierarchy Integration
+**Status**: 🟢 ACTIVE (Phase 5: Contextual Typing)
+**Latest Update**: 2026-02-04 - Continuing with Contextual Typing (Phase 5)
+**Focus**: Bidirectional Type Inference for Function Expressions
 
 ---
 
-## Session Summary: COMPLETE ✅
+## Current Phase: Contextual Typing & Bidirectional Inference (ACTIVE)
 
-This session successfully implemented major improvements to generic type inference and nominal hierarchy support in the tsz compiler.
-
-### Completed Tasks (4/5)
-
-1. **Task 1: Nominal BCT Bridge** ✅
-   - Enabled BCT to use TypeResolver for nominal inheritance checks
-   - Commits: `bfcf9a683`, `d5d951612`
-
-2. **Task 2: Homomorphic Mapped Type Preservation** ✅
-   - Fixed `Partial<T[]>` to preserve array/tuple structure
-   - Commit: `5cc8b37e0`
-
-3. **Task 3: Inter-Parameter Constraint Propagation** ✅
-   - Fixed transitivity logic for `T extends U` relationships
-   - Commits: `c515d8fbb`, `5d84a37aa`
-   - Fixed inverted logic in `propagate_lower_bound` and `propagate_upper_bound`
-
-4. **Task 1.1: Fix Nominal BCT Resolver** ✅
-   - Made `compute_best_common_type` generic over TypeResolver
-   - Commit: `52060cf9b`
-   - Enables class hierarchy BCT (e.g., `[Dog, Animal] -> Animal`)
-
-### Deferred Task
-
-5. **Task 4: Contextual Return Inference** ⏸️
-   - Requires extensive refactoring of `constrain_types` signature
-   - Needs `InferencePriority` parameter propagation through 6+ helper functions
-   - **Deferred to new session** (tsz-5) for focused implementation
-
-### Key Achievements
-
-- **Nominal Hierarchy Support**: BCT can now recognize class inheritance relationships
-- **Homomorphic Types**: Mapped types preserve array/tuple structure
-- **Constraint Transitivity**: Type parameter constraints flow correctly through `extends` relationships
-- **All changes reviewed by Gemini Pro** for correctness
-
-### Total Impact
-
-- **8 commits** across core solver files
-- **~400 lines changed** in critical type system code
-- **Zero regressions** in existing functionality
-
----
-
-## Current Phase: Generic Inference & Nominal Hierarchy Integration (COMPLETE ✅)
+**Started**: 2026-02-04
+**Status**: Foundation Complete (Task 1.1 ✅, working on Task 1.2)
 
 ### Problem Statement
 
-The current generic inference and type system has several gaps that cause `any` leakage and imprecision:
+Currently, tsz only implements "upward" inference (from arguments to return type). This fails to handle common TypeScript patterns requiring "downward" inference:
 
-1. **Nominal BCT**: `compute_best_common_type` cannot find common base classes (e.g., `[Dog, Cat] -> Animal`) because the Solver can't see the inheritance graph
-2. **Homomorphic Mapped Types**: `Partial<T[]>` turns arrays into plain objects, losing methods like `.push()`
-3. **Inter-Parameter Constraints**: Constraints don't flow between type parameters (e.g., `T extends U` doesn't propagate constraints from `U` to `T`)
-4. **Contextual Return Inference**: Generic calls don't fully utilize expected return types to constrain inference
+```typescript
+// Without contextual typing, 'x' is inferred as 'any' or 'unknown'
+// With contextual typing, 'x' should be inferred as 'string' from the target type
+const f: (x: string) => void = (x) => { console.log(x); };
 
-### Prioritized Tasks
+// Array methods should use contextual typing
+const nums = [1, 2, 3];
+const doubled = nums.map(x => x * 2); // 'x' should be 'number' from array type
+```
+
+### Foundation ✅ COMPLETE
+
+**Implemented:**
+- `get_contextual_signature()` in `src/solver/operations.rs` - Uses TypeVisitor pattern
+- Handles `FunctionShape`, `CallableShape`, and `Application` types
+- `visit_ref` - Critical fix for named types
+- `Contextual` priority added to `InferencePriority` enum
+
+**Commits:**
+- `35cb275b0` - Redefined focus to Generic Contextual Inference
+- `f390ccbf2` - Implemented visit_application for generic types
+- `2d2050763` - Fixed visit_ref (CRITICAL BUG)
+
+### Current Tasks: In Progress
+
+**Task 1.2: Seed InferenceContext with Contextual Constraints (HIGH)**
+- **File**: `src/solver/infer.rs`
+- **Goal**: Allow `InferenceContext` to accept external contextual hints
+- **Implementation**:
+  - Modify `resolve_generic_call` to use contextual return type
+  - Seed type parameters with contextual constraints before argument checking
+  - Ensure `Contextual` priority is lower than `Argument`
+
+**Task 1.3: Wire up `check_with_context` in ExpressionChecker (MEDIUM)**
+- **File**: `src/checker/expr.rs`
+- **Goal**: Propagate contextual types down to function expressions
+- **Implementation**:
+  - Add `check_with_context(idx, context_type)` method
+  - Detect when expressions have contextual types
+  - Call `get_contextual_signature()` to infer parameters
+
+**Known Limitations:**
+- Union contextual typing not yet implemented
+- Intersection contextual typing not yet implemented
+- Both can be added in future tasks
+
+---
+
+## Session History: Phase 4 - Generic Inference COMPLETE ✅
+
+**Completed**: 2026-02-04
+
+### Prioritized Tasks (Phase 4)
 
 #### Task 1: Nominal BCT Bridge (Binder-Solver Link) (HIGH) ✅ COMPLETE
 **Commits**: `bfcf9a683`, `d5d951612`
 **Status**: Complete with deferred limitation
 **Limitation**: Uses `is_subtype_of` without resolver. Nominal inheritance checks may fail for class hierarchies without structural similarity.
-**Action**: Defer fix to Task 1.1.
 
 #### Task 2: Homomorphic Mapped Type Preservation (HIGH) ✅ COMPLETE
 **Commit**: `5cc8b37e0`
@@ -79,61 +81,25 @@ The current generic inference and type system has several gaps that cause `any` 
 **Description**: Implemented preservation of Array/Tuple/ReadonlyArray structure in mapped types.
 
 #### Task 3: Inter-Parameter Constraint Propagation (MEDIUM) ✅ COMPLETE
-**Commits**: `c515d8fbb`, `5d84a37aa`
 **File**: `src/solver/infer.rs`
 
 **Goal**: Implement `strengthen_constraints` for fixed-point iteration over type parameter bounds.
 
-**Implementation**:
-- Fixed inverted logic in `propagate_lower_bound` (was adding upper bounds instead of lower bounds)
-- Fixed no-op bug in `propagate_upper_bound` (was adding bounds back to same variable)
-- Added `strengthen_constraints()` call in `resolve_all_with_constraints`
-
-**Transitivity Rules**:
-- Lower bounds flow UP: L <: S <: T → L is also lower bound of T
-- Upper bounds flow DOWN: T <: U <: V → T is also lower bound of V
-- Upper bounds do NOT flow UP (T's upper bounds ≠ U's upper bounds)
-
-**Safety**:
-- Iteration limit: Max 100 iterations prevents infinite loops
-- `exclude_param`: Prevents immediate back-propagation (T → U won't propagate back to T in same call)
-
-**Review**: Gemini Pro confirmed transitivity logic is correct for TypeScript's type system.
+**Implementation Plan**:
+1. Identify type parameters that reference other type parameters in their bounds (e.g., `T extends U`).
+2. Propagate constraints: If `T` is constrained to `S`, and `T extends U`, then `S` should contribute to `U`'s constraints.
+3. Implement iterative strengthening until a fixed point is reached or recursion limit is hit.
 
 #### Task 1.1: Fix Nominal BCT Resolver (Refactor SubtypeChecker) (MEDIUM) ✅ COMPLETE
 **Commits**: `52060cf9b`
-**File**: `src/solver/expression_ops.rs`
-
-**Goal**: Allow BCT to use TypeResolver for nominal hierarchy checks.
-
-**Implementation**:
-- Made `compute_best_common_type` generic over `R: TypeResolver`
-- Added `check_subtype` helper that uses `SubtypeChecker::with_resolver` when available
-- Enables BCT to recognize class hierarchies (e.g., `[Dog, Animal] -> Animal`)
-
-**Key Insight**: `SubtypeChecker` already had TypeResolver support via generics. We just needed to:
-1. Pass the resolver from `compute_best_common_type` down to `SubtypeChecker`
-2. Use `Option<&R>` to allow calls without a resolver
-
-**Note**: `CheckerContext` already implements `get_base_type()` to return parent class information via the InheritanceGraph. No changes needed there.
-
-**Review**: Gemini Pro approved the implementation. The generic approach is correct and enables nominal inheritance checks.
+**File**: `src/solver/subtype.rs`
+**Goal**: Allow `SubtypeChecker` to accept `dyn TypeResolver` (unsized) to support nominal hierarchy checks in BCT.
 
 #### Task 4: Contextual Return Inference (LOW) ⏸️ DEFERRED
 **File**: `src/solver/operations.rs`
 **Goal**: Refine `resolve_generic_call` to collect constraints from `contextual_type` before resolving.
 
-**Status**: Implementation started but requires extensive refactoring.
-
-**Issue**: Adding `InferencePriority` parameter to `constrain_types` requires updating:
-- `constrain_types_impl` (to propagate priority)
-- `constrain_properties` (helper function)
-- `constrain_function_to_call_signature` (helper function)
-- `constrain_call_signature_to_function` (helper function)
-- `constrain_callable_signatures` (helper function)
-- `constrain_properties_against_index_signatures` (helper function)
-
-**Note**: This refactoring is better suited for a focused session where it can be completed and tested thoroughly. The existing code already has contextual type inference (Step 3.5 in `resolve_generic_call_inner`), but it doesn't use priority differentiation.
+**Status**: Deferred and continued in Phase 5 (Contextual Typing) below.
 
 ---
 
@@ -305,84 +271,16 @@ All 4 tasks completed successfully:
 
 ---
 
-## Gemini Consultation Plan
-
-Following the mandatory Two-Question Rule from `AGENTS.md`:
-
-### Question 1: Approach Validation (BEFORE implementation)
-**Task 4.1 - Loop Mutation Analysis**:
-```bash
-./scripts/ask-gemini.mjs --include=src/checker/control_flow.rs "I need to implement loop mutation analysis for selective widening.
-
-Current situation:
-- Lines 335-365 in control_flow.rs conservatively widen ALL let/var at LOOP_LABEL
-- tsc only widens if variable is mutated in loop body
-
-Planned approach:
-1. Create mutation_scanner function that walks loop body's flow nodes
-2. Check for ASSIGNMENT flags targeting the SymbolId
-3. If no mutations, skip widening in check_flow's LOOP_LABEL handling
-
-Before I implement:
-1) Is this the right approach? What functions should I modify?
-2) How do I handle nested loops and closures?
-3) What about continue statements that re-enter loop?
-4) Are there edge cases I'm missing?"
-```
-
-### Question 2: Implementation Review (AFTER implementation)
-```bash
-./scripts/ask-gemini.mjs --pro --include=src/checker/control_flow.rs "I implemented loop mutation analysis.
-
-Changes: [PASTE CODE OR DIFF]
-
-Please review: 1) Is this correct for TypeScript? 2) Did I miss any edge cases?
-3) Are there type system bugs? Be specific if wrong."
-```
-
----
-
-## Session History
-
-- 2026-02-04: Session started - CFA infrastructure work (TypeEnvironment, Loop Narrowing)
-- 2026-02-04: CFA Phase COMPLETE - all 74 control_flow_tests pass
-- 2026-02-04: **REDEFINED** to "Solver-First Narrowing & Discriminant Hardening"
-- 2026-02-04: Solver-First Phase COMPLETE - all 5 tasks done
-- 2026-02-04: **REDEFINED** to "User-Defined Type Guards"
-- 2026-02-04: User-Defined Type Guards COMPLETE - Priority 2a & 2b done
-- 2026-02-04: **REDEFINED** to "CFA Hardening & Loop Refinement"
-- 2026-02-04: **REDEFINED** to "Generic Inference & Nominal Hierarchy Integration"
-- 2026-02-04: Completed Task 1 (Nominal BCT) and Task 2 (Homomorphic Mapped Types)
-- 2026-02-04: **REDEFINED** - focusing on Task 3 (Inter-Parameter Constraints)
-
----
-
 ## Complexity: MEDIUM-HIGH
 
 **Why Medium-High**: Loop mutation analysis requires careful flow graph traversal:
 - Must handle nested scopes, closures, and continue statements
 - Cache invalidation is subtle (generic instantiations)
 - Switch fallthrough requires aggregating multiple antecedents correctly
+- Falsy narrowing requires matching TypeScript exactly
 
 **Risk**: Incorrect loop analysis could either:
 1. Be too conservative (no improvement over current state)
 2. Be too permissive (incorrect narrowing leading to runtime errors)
 
 **Mitigation**: Follow Two-Question Rule strictly. All changes must be reviewed by Gemini Pro before commit.
-
-
----
-
-## Next Session: tsz-5
-
-**Focus**: Priority-Based Contextual Inference (Task 4 from tsz-3)
-
-This session will implement the deferred Task 4:
-- Add `InferencePriority` parameter to `constrain_types`
-- Propagate priority through helper functions
-- Enable contextual return type inference with proper priority handling
-
-**Prerequisites**: None (this is a focused continuation)
-
-**Complexity**: HIGH (requires careful refactoring of high-traffic functions)
-
