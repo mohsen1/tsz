@@ -40,7 +40,7 @@ use crate::scanner::SyntaxKind;
 use crate::solver::TypeInterner;
 use crate::solver::type_queries;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Declaration emitter for .d.ts files
 pub struct DeclarationEmitter<'a> {
@@ -58,6 +58,9 @@ pub struct DeclarationEmitter<'a> {
     binder: Option<&'a BinderState>,
     /// Set of symbols used in exported declarations (for import elision)
     used_symbols: Option<FxHashSet<SymbolId>>,
+    /// Map of module → symbol names to auto-generate imports for
+    /// Pre-calculated in driver where MergedProgram is available
+    required_imports: FxHashMap<String, Vec<String>>,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     inside_declare_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
@@ -82,6 +85,7 @@ impl<'a> DeclarationEmitter<'a> {
             type_interner: None,
             binder: None,
             used_symbols: None,
+            required_imports: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
         }
@@ -104,6 +108,7 @@ impl<'a> DeclarationEmitter<'a> {
             type_interner: Some(type_interner),
             binder: Some(binder),
             used_symbols: None,
+            required_imports: FxHashMap::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
         }
@@ -139,6 +144,14 @@ impl<'a> DeclarationEmitter<'a> {
         self.binder = binder;
     }
 
+    /// Set the map of required imports for auto-generation.
+    ///
+    /// Maps module specifier to list of symbol names to import from that module.
+    /// Pre-calculated in driver where MergedProgram is available.
+    pub fn set_required_imports(&mut self, imports: FxHashMap<String, Vec<String>>) {
+        self.required_imports = imports;
+    }
+
     /// Emit declaration for a source file
     pub fn emit(&mut self, root_idx: NodeIndex) -> String {
         self.reset_writer();
@@ -161,6 +174,9 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(source_file) = self.arena.get_source_file(root_node) else {
             return String::new();
         };
+
+        // Emit required imports first (before other declarations)
+        self.emit_required_imports();
 
         for &stmt_idx in &source_file.statements.nodes {
             self.emit_statement(stmt_idx);
@@ -2556,6 +2572,105 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             // Fallback if no interner available
             "any".to_string()
+        }
+    }
+
+    /// Check if a symbol needs an import statement.
+    ///
+    /// A symbol needs an import if:
+    /// - It is used (in used_symbols)
+    /// - It is not already imported (symbol.import_module is None)
+    /// - It is not declared in the current file (we can't check this easily without file_idx)
+    fn symbol_needs_import(&self, sym_id: SymbolId) -> bool {
+        // Must have binder and used_symbols
+        let (Some(binder), Some(used)) = (&self.binder, &self.used_symbols) else {
+            return false;
+        };
+
+        // Must be in used_symbols
+        if !used.contains(&sym_id) {
+            return false;
+        }
+
+        // Get the symbol
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        // If already imported, no need to generate import
+        if symbol.import_module.is_some() {
+            return false;
+        }
+
+        // TODO: Check if symbol is declared in current file
+        // This requires knowing the current file index, which we don't have yet
+        // For now, assume all non-imported symbols need imports
+        true
+    }
+
+    /// Calculate the module path for a symbol.
+    ///
+    /// Returns the module specifier (e.g., "./utils") or None if:
+    /// - Symbol is from lib.d.ts (global/ambient)
+    /// - Cannot determine module path
+    fn get_symbol_module_path(&self, sym_id: SymbolId) -> Option<String> {
+        let Some(binder) = &self.binder else {
+            return None;
+        };
+
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return None;
+        };
+
+        // If symbol has import_module, use that
+        if let Some(ref module) = symbol.import_module {
+            return Some(module.clone());
+        }
+
+        // TODO: Look up symbol's declaration file and calculate relative path
+        // This requires access to MergedProgram or file path mapping
+        None
+    }
+
+    /// Emit required imports at the beginning of the .d.ts file.
+    ///
+    /// This should be called before emitting other declarations.
+    fn emit_required_imports(&mut self) {
+        if self.required_imports.is_empty() {
+            return;
+        }
+
+        // Sort modules alphabetically for deterministic output
+        let mut modules: Vec<_> = self.required_imports.keys().collect();
+        modules.sort();
+
+        for module in modules {
+            if let Some(symbol_names) = self.required_imports.get(module) {
+                if symbol_names.is_empty() {
+                    continue;
+                }
+
+                self.write_indent();
+                self.write("import { ");
+
+                // Sort symbol names alphabetically
+                let mut names: Vec<_> = symbol_names.iter().collect();
+                names.sort();
+
+                let mut first = true;
+                for name in names {
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.write(name);
+                }
+
+                self.write(" } from \"");
+                self.write(module);
+                self.write("\";");
+                self.write_line();
+            }
         }
     }
 }
