@@ -40,10 +40,10 @@
    - Location: `src/declaration_emitter/mod.rs`
    - All filtering logic implemented and compiling (commit `d7597b9ff`)
 
-**Priority 2:** ⏸ **BLOCKED** - Run conformance tests for baseline
-   - Goal: Identify tests failing due to extra/missing imports
-   - Command: `./scripts/conformance.sh --filter=decl`
+**Priority 2:** ⏸ **BLOCKED** - Driver integration needed
+   - **Baseline:** 42.1% (269/639) - no change (expected - not wired up yet)
    - **BLOCKER:** Missing BinderState in multi-file driver (commit `a12ab22d8`)
+   - Required: Add BinderState to MergedProgram to enable usage analysis
 
 **Current Blocker:** Missing BinderState in Multi-File Mode
 
