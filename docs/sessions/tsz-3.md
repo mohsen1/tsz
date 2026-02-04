@@ -157,6 +157,11 @@ According to the analysis of the codebase, the next priorities for complex types
 
 ---
 
-## Punted Todos
+## Punted Items
 
-*No punted items*
+1. **Constructor Type Bug** - The type environment maps class symbols to instance type instead of constructor type. This causes tests like `test_abstract_constructor_assignability` to fail because passing a class as a value returns the instance type (with Object.prototype properties) instead of the constructor type.
+   - Attempted fix: Changed type environment to map to constructor type (didn't work)
+   - Status: BLOCKED - Requires comprehensive tracing of type resolution path
+   - Related to: SymbolRef resolution, type environment population
+
+2. **Abstract Mixin Intersection** - `test_abstract_mixin_intersection_ts2339` also fails, likely related to the same type resolution issue
