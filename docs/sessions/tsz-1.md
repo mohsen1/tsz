@@ -73,10 +73,60 @@
   - `36b18157a` - "docs(tsz-1): document test suite restoration progress"
   - `0fa3c40f3` - "feat: restore test suite after PropertyInfo API changes"
 
+## Property Access Recursion Guard (2026-02-04) - 🔄 IN PROGRESS
+
+**Session Transition (2026-02-04)**:
+- **Previous Session**: tsz-2 - COMPLETE ✅
+- **New Focus**: Priority 3 - Property Access Recursion Guard
+- **Context**: tsz-2 investigation provides good mental model for recursion guards
+
+**Implementation Progress**:
+
+**Phase 1: Rename Recursion Guard Infrastructure** ✅ COMPLETE
+- ✅ Renamed `mapped_access_visiting` → `visiting` (general-purpose)
+- ✅ Renamed `mapped_access_depth` → `depth` (general-purpose)
+- ✅ Renamed `MappedAccessGuard` → `PropertyAccessGuard` (general-purpose)
+- ✅ Renamed `enter_mapped_access_guard` → `enter_property_access_guard`
+- ✅ Updated usages in Application and Mapped type handling
+- **Commit**: `34dbdbf53` - "feat(tsz-1): rename recursion guard for general property access"
+
+**Phase 2: Add Guards to Recursive Type Resolutions** ✅ COMPLETE
+Per Gemini Pro review (Question 2 of Two-Question Rule):
+- ✅ **CRITICAL**: Added guard to `TypeKey::Lazy` (type aliases can cycle)
+  - Example: `type A = B; type B = A;` causes infinite recursion without guard
+- ✅ Added guard to `TypeKey::Conditional` (consistency)
+- ✅ Added guard to `TypeKey::IndexAccess` (consistency)
+- All return `PropertyNotFound` on cycle detection (NOT `IsAny` - key lesson from previous regression)
+- **Commit**: `17ea6b6b0` - "fix(tsz-1): add recursion guards to Lazy, Conditional, and IndexAccess"
+
+**Gemini Pro Review Results**:
+- ✅ Renaming approach is correct and safe
+- ✅ `Drop` implementation on `PropertyAccessGuard` ensures cleanup
+- ✅ Returning `PropertyNotFound` is safer than `IsAny`
+  - `IsAny` propagates "validity" where there is none
+  - `PropertyNotFound` correctly flags cyclic/malformed types as unusable
+- ✅ `_guard` lives until end of match arm (RAII works correctly)
+- ✅ **Critical Bug Found**: Missing guard on `TypeKey::Lazy` (now fixed)
+
+**Architecture Decision**:
+- Reused existing `enter_property_access_guard` infrastructure
+- Applied to all recursive type resolution paths:
+  - `TypeKey::Application` (already had guard, renamed)
+  - `TypeKey::Mapped` (already had guard, renamed)
+  - `TypeKey::Lazy` (NEW - critical fix)
+  - `TypeKey::Conditional` (NEW - consistency)
+  - `TypeKey::IndexAccess` (NEW - consistency)
+
+**Testing Status**:
+- Main library builds successfully ✅
+- Manual test with readonly method signature runs without stack overflow ✅
+- Targeted test (`test_readonly_method_signature_assignment_2540`) cannot run due to pre-existing test compilation errors (unrelated to this work)
+
+**Next Steps**:
+- Phase 3: Verify with conformance tests once test suite is restored
+- Monitor for any new stack overflow issues in property access
+
 **Status**: PARTIAL - Main library builds (0 errors), test suite has 237 errors
-- **Main library**: ✅ Builds (0 compilation errors)
-- **Test build**: ❌ 237 errors (217 Visibility imports, 18 PropertyInfo fields, 2 other)
-- **Progress**: 1484 → 0 main library errors, 1484 → 237 test errors
 
 **Strategic Decision** (from Gemini consultation):
 - **Priority 3 (Recursion Guard)**: Can proceed with targeted unit test
