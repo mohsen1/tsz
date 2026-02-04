@@ -1700,7 +1700,9 @@ impl<'a> FlowAnalyzer<'a> {
 
                     // CRITICAL: Use Solver-First architecture for other binary expressions
                     // Extract TypeGuard from AST (Checker responsibility: WHERE + WHAT)
-                    if let Some((guard, guard_target)) = self.extract_type_guard(condition_idx) {
+                    if let Some((guard, guard_target, _is_optional)) =
+                        self.extract_type_guard(condition_idx)
+                    {
                         eprintln!(
                             "DEBUG narrow_type_by_condition_inner: extracted guard, guard_target={}",
                             guard_target.0
@@ -1724,6 +1726,49 @@ impl<'a> FlowAnalyzer<'a> {
                     );
                     return type_id;
                 }
+            }
+
+            // User-defined type guards: isString(x), obj.isString(), assertsIs(x), etc.
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                eprintln!("DEBUG narrow_type_by_condition_inner: is call expression");
+                // CRITICAL: Use Solver-First architecture for call expressions
+                // Extract TypeGuard from AST (Checker responsibility: WHERE + WHAT)
+                if let Some((guard, guard_target, is_optional)) =
+                    self.extract_type_guard(condition_idx)
+                {
+                    eprintln!(
+                        "DEBUG narrow_type_by_condition_inner: extracted guard, guard_target={}, is_optional={}",
+                        guard_target.0, is_optional
+                    );
+
+                    // CRITICAL: Optional chaining behavior
+                    // If call is optional (obj?.method(x)), only narrow the true branch
+                    // The false branch might mean the method wasn't called (obj was nullish)
+                    if is_optional && !is_true_branch {
+                        eprintln!(
+                            "DEBUG narrow_type_by_condition_inner: optional call on false branch, skipping narrowing"
+                        );
+                        return type_id;
+                    }
+
+                    // Check if the guard applies to our target reference
+                    if self.is_matching_reference(guard_target, target) {
+                        eprintln!(
+                            "DEBUG narrow_type_by_condition_inner: guard matches target, calling narrowing.narrow_type"
+                        );
+                        // Delegate to Solver for the calculation (Solver responsibility: RESULT)
+                        return narrowing.narrow_type(type_id, &guard, is_true_branch);
+                    } else {
+                        eprintln!(
+                            "DEBUG narrow_type_by_condition_inner: guard does not match target"
+                        );
+                    }
+                }
+
+                eprintln!(
+                    "DEBUG narrow_type_by_condition_inner: no guard extracted or guard doesn't match, returning type_id"
+                );
+                return type_id;
             }
 
             // Prefix unary: !x

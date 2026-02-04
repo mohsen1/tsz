@@ -1841,26 +1841,38 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
-    /// Extract a TypeGuard from a binary expression node.
+    /// Extract a TypeGuard from a condition node.
     ///
     /// This method translates AST nodes into AST-agnostic TypeGuard enums,
     /// which can then be passed to the Solver's `narrow_type()` method.
     ///
-    /// Returns `Some((guard, target))` where `target` is the node being narrowed,
-    /// or `None` if the expression is not a recognized guard pattern.
+    /// Returns `Some((guard, target, is_optional))` where:
+    /// - `guard` is the extracted TypeGuard
+    /// - `target` is the node being narrowed
+    /// - `is_optional` is true for optional chaining calls (?.)
+    ///
+    /// Returns `None` if the expression is not a recognized guard pattern.
     ///
     /// # Examples
     /// ```ignore
-    /// // typeof x === "string" -> Some(TypeGuard::Typeof("string"), x_node)
-    /// // x === null -> Some(TypeGuard::NullishEquality, x_node)
-    /// // x.kind === "circle" -> Some(TypeGuard::Discriminant { ... }, x_node)
+    /// // typeof x === "string" -> Some(TypeGuard::Typeof("string"), x_node, false)
+    /// // x === null -> Some(TypeGuard::NullishEquality, x_node, false)
+    /// // x.kind === "circle" -> Some(TypeGuard::Discriminant { ... }, x_node, false)
+    /// // isString(x) -> Some(TypeGuard::Predicate { ... }, x_node, false)
+    /// // obj?.isString(x) -> Some(TypeGuard::Predicate { ... }, x_node, true)
     /// ```
     #[allow(dead_code)]
     pub(crate) fn extract_type_guard(
         &self,
         condition: NodeIndex,
-    ) -> Option<(TypeGuard, NodeIndex)> {
+    ) -> Option<(TypeGuard, NodeIndex, bool)> {
         let cond_node = self.arena.get(condition)?;
+
+        // Check for call expression (user-defined type guards) FIRST
+        if cond_node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            return self.extract_call_type_guard(condition);
+        }
+
         let bin = self.arena.get_binary_expr(cond_node)?;
 
         // Check for instanceof operator: x instanceof MyClass
@@ -1869,10 +1881,10 @@ impl<'a> FlowAnalyzer<'a> {
             let target = bin.left;
             // Get the constructor type from the right side
             if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
-                return Some((TypeGuard::Instanceof(instance_type), target));
+                return Some((TypeGuard::Instanceof(instance_type), target, false));
             }
             // If we can't get the instance type, still return a guard with OBJECT as fallback
-            return Some((TypeGuard::Instanceof(TypeId::OBJECT), target));
+            return Some((TypeGuard::Instanceof(TypeId::OBJECT), target, false));
         }
 
         // Check for in operator: "prop" in x
@@ -1881,7 +1893,7 @@ impl<'a> FlowAnalyzer<'a> {
             let target = bin.right;
             // Get the property name from the left side
             if let Some((prop_name, _is_number)) = self.in_property_name(bin.left) {
-                return Some((TypeGuard::InProperty(prop_name), target));
+                return Some((TypeGuard::InProperty(prop_name), target, false));
             }
         }
 
@@ -1890,7 +1902,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Check for typeof comparison: typeof x === "string"
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
-            return Some((TypeGuard::Typeof(type_name.to_string()), target));
+            return Some((TypeGuard::Typeof(type_name.to_string()), target, false));
         }
 
         // Check for loose equality with null/undefined: x == null, x != null, x == undefined, x != undefined
@@ -1901,17 +1913,17 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(_nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
                 // For loose equality with null/undefined, use NullishEquality guard
                 // This narrows to null | undefined in true branch, excludes both in false
-                return Some((TypeGuard::NullishEquality, target));
+                return Some((TypeGuard::NullishEquality, target, false));
             }
         }
 
         // Check for strict nullish comparison: x === null, x !== null, x === undefined, x !== undefined
         if let Some(nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
-            return Some((TypeGuard::LiteralEquality(nullish_type), target));
+            return Some((TypeGuard::LiteralEquality(nullish_type), target, false));
         }
 
         // Check for discriminant comparison: x.kind === "circle"
-        if let Some((prop_name, literal_type, _is_optional)) =
+        if let Some((prop_name, literal_type, is_optional)) =
             self.discriminant_comparison(bin.left, bin.right, target)
         {
             return Some((
@@ -1920,15 +1932,99 @@ impl<'a> FlowAnalyzer<'a> {
                     value_type: literal_type,
                 },
                 target,
+                is_optional,
             ));
         }
 
         // Check for literal comparison: x === "foo", x === 42
         if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {
-            return Some((TypeGuard::LiteralEquality(literal_type), target));
+            return Some((TypeGuard::LiteralEquality(literal_type), target, false));
         }
 
         None
+    }
+
+    /// Extract a TypeGuard from a call expression (user-defined type guard).
+    ///
+    /// Handles both simple type guards `isString(x)` and `this` guards `obj.isString()`.
+    /// Also handles optional chaining `obj?.isString(x)` by returning `is_optional = true`.
+    ///
+    /// For `asserts x` (no type annotation), returns `TypeGuard::Truthy`.
+    ///
+    /// # Examples
+    /// ```ignore
+    /// // isString(x) where isString returns "x is string"
+    /// // -> Some(TypeGuard::Predicate { type_id: Some(string), asserts: false }, x_node, false)
+    ///
+    /// // asserts x is T
+    /// // -> Some(TypeGuard::Predicate { type_id: Some(T), asserts: true }, x_node, false)
+    ///
+    /// // asserts x (no type)
+    /// // -> Some(TypeGuard::Truthy, x_node, false)
+    ///
+    /// // obj?.isString(x)
+    /// // -> Some(TypeGuard::Predicate { ... }, x_node, true)
+    /// ```
+    fn extract_call_type_guard(
+        &self,
+        condition: NodeIndex,
+    ) -> Option<(TypeGuard, NodeIndex, bool)> {
+        let node = self.arena.get(condition)?;
+        let call = self.arena.get_call_expr(node)?;
+
+        // 1. Check for optional chaining on the call
+        let is_optional = self.is_optional_call(condition, call);
+
+        // 2. Resolve callee type (skip parens/assertions to handle (isString as any)(x))
+        let callee_idx = self.skip_parens_and_assertions(call.expression);
+        let callee_type = *self.node_types?.get(&callee_idx.0)?;
+
+        // 3. Get the predicate signature from the callee's type
+        let signature = self.predicate_signature_for_type(callee_type)?;
+
+        // 4. Find the target node (the argument or `this` object being narrowed)
+        let target_node =
+            self.predicate_target_expression(call, &signature.predicate, &signature.params)?;
+
+        // 5. Construct the appropriate guard
+        let guard = if let Some(type_id) = signature.predicate.type_id {
+            // "x is T" or "asserts x is T"
+            TypeGuard::Predicate {
+                type_id: Some(type_id),
+                asserts: signature.predicate.asserts,
+            }
+        } else {
+            // "asserts x" (no type annotation) - narrows to truthy
+            TypeGuard::Truthy
+        };
+
+        Some((guard, target_node, is_optional))
+    }
+
+    /// Check if a call expression uses optional chaining.
+    ///
+    /// For `obj?.method(x)`, `func?.()`, or `func?.(x)`, returns `true`.
+    /// For `obj.method(x)`, returns `false`.
+    fn is_optional_call(&self, call_node_idx: NodeIndex, call: &CallExprData) -> bool {
+        // 1. Check if the call node itself has OptionalChain flag (e.g., func?.())
+        if let Some(node) = self.arena.get(call_node_idx) {
+            if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                return true;
+            }
+        }
+
+        // 2. Check if the callee is a property access with ?. (e.g., obj?.method())
+        if let Some(callee_node) = self.arena.get(call.expression) {
+            if (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.arena.get_access_expr(callee_node)
+                && access.question_dot_token
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Get the target node being narrowed in a comparison expression.
