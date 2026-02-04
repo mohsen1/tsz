@@ -1,12 +1,58 @@
-# Session tsz-8: Contextual Typing & Inference
+# Session tsz-8: Contextual Typing & Bidirectional Inference
 
 **Started**: 2026-02-04
-**Status**: 🟢 ACTIVE (Approach Validation Phase)
-**Focus**: Bidirectional Type Inference for Function Expressions
+**Status**: 🟢 ACTIVE (Generic Inference Focus)
+**Current Priority**: Implement Generic Contextual Inference
 
 ---
 
 ## Session Goal
+
+Implement **bidirectional type inference** to enable TypeScript's contextual typing patterns, with emphasis on **generic contextual inference** as the highest priority.
+
+### Why This Is Critical
+
+Without generic contextual inference, common patterns like `array.map(x => ...)` fail because the compiler cannot infer that `x` should be seeded with the array's element type.
+
+---
+
+## Current Work: Generic Contextual Inference (HIGHEST PRIORITY)
+
+### Foundation ✅ COMPLETE
+- `get_contextual_signature()` implemented in `src/solver/operations.rs`
+- Uses `TypeVisitor` pattern for clean type traversal
+- Handles `FunctionShape` and `CallableShape`
+- `Contextual` priority added to `InferencePriority` enum
+
+### Next Steps: In Progress
+
+**Task 1.1: Implement `visit_application` for Generic Types (HIGH)**
+- **File**: `src/solver/operations.rs`
+- **Goal**: Handle `type Handler<T> = (item: T) => void` patterns
+- **Implementation**: Add `visit_application()` to `ContextualSignatureVisitor`
+  - Extract base signature (e.g., `(item: T) => void`)
+  - Instantiate with type arguments (e.g., `T = string`)
+  - Return concrete `FunctionShape` with substituted types
+
+**Task 1.2: Seed InferenceContext with Contextual Constraints (HIGH)**
+- **File**: `src/solver/infer.rs`
+- **Goal**: Allow `InferenceContext` to accept external contextual hints
+- **Implementation**:
+  - Modify `resolve_generic_call` to use contextual return type
+  - Seed type parameters with contextual constraints before argument checking
+  - Ensure `Contextual` priority is lower than `Argument`
+
+**Task 1.3: Wire up `check_with_context` in ExpressionChecker (MEDIUM)**
+- **File**: `src/checker/expr.rs`
+- **Goal**: Propagate contextual types down to function expressions
+- **Implementation**:
+  - Add `check_with_context(idx, context_type)` method
+  - Detect when expressions have contextual types
+  - Call `get_contextual_signature()` to infer parameters
+
+---
+
+## Background: Original Session Plan
 
 Implement **contextual typing** to enable TypeScript's bidirectional type inference, where types can flow "down" from assignment targets into function expressions.
 
