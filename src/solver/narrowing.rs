@@ -488,11 +488,13 @@ impl<'a> NarrowingContext<'a> {
         // Now narrow based on the sense (positive or negative)
         if sense {
             // Positive: x instanceof Constructor - narrow to the instance type
-            // For interface vs class, create intersection since they're not assignable
-            // but the instanceof check proves the value is both
+            // First, try standard assignability-based narrowing
             let narrowed = self.narrow_to_type(source_type, instance_type);
-            if narrowed == TypeId::NEVER {
-                // If not assignable, create intersection (e.g., interface & class)
+
+            // If that returns NEVER, try intersection approach for interface vs class cases
+            // In TypeScript, instanceof on an interface narrows to intersection, not NEVER
+            if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
+                // Use intersection for interface vs class (or other non-assignable but overlapping types)
                 self.interner.intersection2(source_type, instance_type)
             } else {
                 narrowed
@@ -533,6 +535,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         if source_type == TypeId::UNKNOWN {
+<<<<<<< HEAD
             // For unknown, narrow to object & { prop: unknown } in the true branch
             // This matches TypeScript's behavior where "prop" in x narrows x to have that property
             if present {
@@ -554,6 +557,24 @@ impl<'a> NarrowingContext<'a> {
                 trace!("UNKNOWN in false branch for in operator, returning NEVER");
                 return TypeId::NEVER;
             }
+=======
+            // For unknown, narrow to object & { [prop]: unknown }
+            // This matches TypeScript's behavior where `in` check on unknown
+            // narrows to object type with the property
+            let prop_type = TypeId::UNKNOWN;
+            let required_prop = PropertyInfo {
+                name: property_name,
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false, // Property becomes required after `in` check
+                readonly: false,
+                is_method: false,
+            };
+            let filter_obj = self.interner.object(vec![required_prop]);
+            let narrowed = self.interner.intersection2(TypeId::OBJECT, filter_obj);
+            trace!("Narrowing unknown to object & property = {}", narrowed.0);
+            return narrowed;
+>>>>>>> b1266687d (fix(narrowing): fix instanceof and in operator narrowing bugs)
         }
 
         // If source is a union, filter members based on property presence
@@ -567,41 +588,100 @@ impl<'a> NarrowingContext<'a> {
 
             let matching: Vec<TypeId> = members
                 .iter()
-                .filter(|&&member| {
+                .map(|&member| {
                     let has_property = self.type_has_property(member, property_name);
-                    present == has_property
+                    if present {
+                        // Positive: "prop" in member
+                        if has_property {
+                            // Property exists: Promote to required
+                            let prop_type = self.get_property_type(member, property_name);
+                            let required_prop = PropertyInfo {
+                                name: property_name,
+                                type_id: prop_type.unwrap_or(TypeId::UNKNOWN),
+                                write_type: prop_type.unwrap_or(TypeId::UNKNOWN),
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                            };
+                            let filter_obj = self.interner.object(vec![required_prop]);
+                            self.interner.intersection2(member, filter_obj)
+                        } else {
+                            // Property not found: Intersect with { prop: unknown }
+                            // This handles open objects and unresolved Lazy types
+                            let required_prop = PropertyInfo {
+                                name: property_name,
+                                type_id: TypeId::UNKNOWN,
+                                write_type: TypeId::UNKNOWN,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                            };
+                            let filter_obj = self.interner.object(vec![required_prop]);
+                            self.interner.intersection2(member, filter_obj)
+                        }
+                    } else {
+                        // Negative: !("prop" in member)
+                        // For now, keep the member as-is (TypeScript has more complex behavior here)
+                        member
+                    }
                 })
-                .copied()
                 .collect();
 
             if matching.is_empty() {
-                trace!("No matching members found, returning NEVER");
+                trace!("No members in union, returning NEVER");
                 return TypeId::NEVER;
             } else if matching.len() == 1 {
-                trace!("Found single matching member, returning {}", matching[0].0);
+                trace!("Found single member, returning {}", matching[0].0);
                 return matching[0];
-            } else if matching.len() == members.len() {
-                trace!("All members match, returning unchanged");
-                return source_type;
             } else {
-                trace!(
-                    "Found {} matching members, creating new union",
-                    matching.len()
-                );
+                trace!("Created union with {} members", matching.len());
                 return self.interner.union(matching);
             }
         }
 
         // For non-union types, check if the property exists
         let has_property = self.type_has_property(source_type, property_name);
-        if present == has_property {
-            source_type
+
+        if present {
+            // Positive: "prop" in x
+            if has_property {
+                // Property exists: Promote to required
+                let prop_type = self.get_property_type(source_type, property_name);
+                let required_prop = PropertyInfo {
+                    name: property_name,
+                    type_id: prop_type.unwrap_or(TypeId::UNKNOWN),
+                    write_type: prop_type.unwrap_or(TypeId::UNKNOWN),
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                };
+                let filter_obj = self.interner.object(vec![required_prop]);
+                self.interner.intersection2(source_type, filter_obj)
+            } else {
+                // Property not found (or Lazy type): Intersect with { prop: unknown }
+                // This handles open objects and unresolved Lazy types safely
+                let required_prop = PropertyInfo {
+                    name: property_name,
+                    type_id: TypeId::UNKNOWN,
+                    write_type: TypeId::UNKNOWN,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                };
+                let filter_obj = self.interner.object(vec![required_prop]);
+                self.interner.intersection2(source_type, filter_obj)
+            }
         } else {
-            trace!(
-                "Property {} mismatch, returning NEVER",
-                self.interner.resolve_atom_ref(property_name)
-            );
-            TypeId::NEVER
+            // Negative: !("prop" in x)
+            if has_property {
+                // Property exists but we're excluding it
+                // For optional properties, narrow to undefined (effectively missing)
+                // For required properties, this would be NEVER, but TypeScript handles this differently
+                source_type
+            } else {
+                // Property doesn't exist and we're checking it doesn't exist - no change
+                source_type
+            }
         }
     }
 
@@ -610,6 +690,7 @@ impl<'a> NarrowingContext<'a> {
     /// Returns true if the type has the property (required or optional),
     /// or has an index signature that would match the property.
     fn type_has_property(&self, type_id: TypeId, property_name: Atom) -> bool {
+<<<<<<< HEAD
         // TODO: Resolve Lazy types before checking properties
         // This requires adding resolver access to NarrowingContext
         // For now, Lazy types will not be properly handled
@@ -620,6 +701,25 @@ impl<'a> NarrowingContext<'a> {
             return members
                 .iter()
                 .any(|&member| self.type_has_property(member, property_name));
+=======
+        self.get_property_type(type_id, property_name).is_some()
+    }
+
+    /// Get the type of a property if it exists.
+    ///
+    /// Returns Some(type) if the property exists, None otherwise.
+    fn get_property_type(&self, type_id: TypeId, property_name: Atom) -> Option<TypeId> {
+        // Check intersection types - property exists if ANY member has it
+        if let Some(members_id) = intersection_list_id(self.interner, type_id) {
+            let members = self.interner.type_list(members_id);
+            // Return the type from the first member that has the property
+            for &member in members.iter() {
+                if let Some(prop_type) = self.get_property_type(member, property_name) {
+                    return Some(prop_type);
+                }
+            }
+            return None;
+>>>>>>> b1266687d (fix(narrowing): fix instanceof and in operator narrowing bugs)
         }
 
         // Check object shape
@@ -627,26 +727,26 @@ impl<'a> NarrowingContext<'a> {
             let shape = self.interner.object_shape(shape_id);
 
             // Check if the property exists in the object's properties
-            if shape.properties.iter().any(|p| p.name == property_name) {
-                return true;
+            if let Some(prop) = shape.properties.iter().find(|p| p.name == property_name) {
+                return Some(prop.type_id);
             }
 
             // Check index signatures
             // If the object has a string index signature, it has any string property
             if let Some(ref string_idx) = shape.string_index {
                 // String index signature matches any string property
-                return true;
+                return Some(string_idx.value_type);
             }
 
             // If the object has a number index signature and the property name is numeric
             if let Some(ref number_idx) = shape.number_index {
                 let prop_str = self.interner.resolve_atom_ref(property_name);
                 if prop_str.chars().all(|c| c.is_ascii_digit()) {
-                    return true;
+                    return Some(number_idx.value_type);
                 }
             }
 
-            return false;
+            return None;
         }
 
         // Check object with index signature
@@ -654,28 +754,28 @@ impl<'a> NarrowingContext<'a> {
             let shape = self.interner.object_shape(shape_id);
 
             // Check properties first
-            if shape.properties.iter().any(|p| p.name == property_name) {
-                return true;
+            if let Some(prop) = shape.properties.iter().find(|p| p.name == property_name) {
+                return Some(prop.type_id);
             }
 
             // Check index signatures
-            if shape.string_index.is_some() {
-                return true;
+            if let Some(ref string_idx) = shape.string_index {
+                return Some(string_idx.value_type);
             }
 
-            if shape.number_index.is_some() {
+            if let Some(ref number_idx) = shape.number_index {
                 let prop_str = self.interner.resolve_atom_ref(property_name);
                 if prop_str.chars().all(|c| c.is_ascii_digit()) {
-                    return true;
+                    return Some(number_idx.value_type);
                 }
             }
 
-            return false;
+            return None;
         }
 
         // For other types (functions, classes, arrays, etc.), assume they don't have arbitrary properties
         // unless they have been handled above (object shapes, etc.)
-        false
+        None
     }
 
     /// Narrow a type to include only members assignable to target.
