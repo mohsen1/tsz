@@ -2,15 +2,35 @@
 
 ## Current Work
 
-**Task**: Module Resolution and Lib Loading (TS2307, TS2318)
+**Task**: Understanding TS2307 Module Resolution Status
 
-**Target Issues**:
-- TS2307 (Cannot find module) - 2,139 false negatives
-- TS2318 (Cannot find global type) - 3,386 false negatives
+**Key Findings**:
+1. **TS2307 checking code ALREADY EXISTS** in `src/checker/import_checker.rs`:
+   - `check_import_declaration()` - Validates ES6 imports
+   - `check_import_equals_declaration()` - Validates CommonJS require
+   - `check_namespace_import()` - Validates namespace imports
 
-**Rationale**: These are "Environment" errors. If tsz fails to load the standard library or imports, it lacks the definitions required to perform accurate type checking. Fixing these False Negatives will likely reduce the count of False Positives (like TS2304 and TS2322).
+2. **The driver DOES populate module resolution info**:
+   - `src/cli/driver.rs:1969-1993` builds `resolved_modules` set
+   - Sets `checker.ctx.resolved_modules = Some(resolved_modules)`
+   - Sets `checker.ctx.report_unresolved_imports = true`
 
-**Starting Point**: Asking Gemini for guidance on module resolution architecture and where to start investigating.
+3. **TS2307 unit tests exist but are marked `#[ignore]`**:
+   - `src/tests/checker_state_tests.rs:test_ts2307_relative_import_not_found`
+   - These tests use `CheckerState::new()` directly without going through driver
+   - They don't set up the module resolution context (`resolved_modules`, `report_unresolved_imports`)
+
+4. **Side task completed**: Fixed compilation errors from tsz-3's const type parameter work by adding `is_const: false` to all `TypeParamInfo` instances.
+
+**Current Theory**: The TS2307 logic is implemented, but there may be issues with:
+- How `resolved_modules` is populated in multi-file scenarios
+- The conformance test setup not properly configuring module resolution
+- Edge cases in module resolution (e.g., bare specifiers, node_modules)
+
+**Next Steps**:
+1. Run a TS2307 unit test to verify it fails as expected
+2. Check how conformance tests configure module resolution
+3. Investigate specific failing conformance tests to understand the gap
 
 ---
 
