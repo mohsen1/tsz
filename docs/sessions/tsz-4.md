@@ -20,14 +20,19 @@ Fixed all missing `is_const` field compilation errors in `TypeParamInfo` initial
 
 ## Session Status
 
-**Latest ignored test count**: 7875 passing, 191 failing (up from 7874 passing, 192 failing)
+**Latest test status**: 7869 passing, 41 failing, 156 skipped (up from 7867 passing, 43 failing)
 
-Most remaining ignored tests require:
-- Complex feature implementation (e.g., weak type detection - TS2559)
-- Control flow analysis fixes
-- Symbol resolution improvements
+Remaining failing tests include:
+- Symbol resolution issues (TS2318 - Cannot find global type)
+- Unknown fallback behavior for generic parameters
+- Tail-recursion for conditional types (tsz-3's work)
+- Readonly property checking (TS2540)
+- LSP signature help issues
+- Various type checking edge cases
 
-The easy configuration/flag fixes have been addressed.
+**Recent fixes**:
+1. Fixed all compilation errors from tsz-3's const type parameter work
+2. Updated selective migration tests for Phase 4.3 behavior (2 tests fixed)
 
 ---
 
@@ -117,6 +122,19 @@ Fixed all TS2304 ignored tests in `src/tests/checker_state_tests.rs` by adding t
 ---
 
 ## History (Last 20)
+
+### 2025-02-04: Fixed selective migration tests for Phase 4.3 behavior
+
+**Root cause**: Tests were written for Phase 4.2.1 when DefId creation was selective, but commit `5e1495492` extended Lazy(DefId) pattern to all named types including classes and interfaces.
+
+**Changes made**:
+- Renamed `test_selective_migration_class_no_def_id` → `test_selective_migration_class_has_def_id`
+- Renamed `test_selective_migration_interface_no_def_id` → `test_selective_migration_interface_has_def_id`
+- Updated test expectations to verify DefIds ARE created (not that they aren't)
+
+**Impact**: Fixed 2 tests (7867 passing → 7869 passing, 43 failing → 41 failing)
+
+---
 
 ### 2025-02-04: Fixed compilation errors from tsz-3's const type parameter work
 
