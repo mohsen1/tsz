@@ -20,8 +20,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { fileURLToPath } from 'url';
-import { Worker } from 'worker_threads';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
+import { CliTranspiler } from './cli-transpiler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '../../..');
@@ -30,8 +30,8 @@ const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
 
 // Configuration
-const TEST_TIMEOUT_MS = 400;   // 400ms timeout per test
-const WORKER_RECYCLE_AFTER = 50; // Recycle worker after N tests to prevent memory buildup
+const TEST_TIMEOUT_MS = 400;   // 400ms timeout per test (legacy, kept for compatibility)
+const CLI_TIMEOUT_MS = 400;    // 400ms timeout per test
 
 // ANSI colors
 const colors = {
@@ -267,106 +267,17 @@ function findTestCases(filter: string, maxTests: number): TestCase[] {
 }
 
 // ============================================================================
-// Worker Management
+// CLI Transpiler Wrapper (replaces Worker-based approach)
 // ============================================================================
 
-class TranspileWorker {
-  private worker: Worker | null = null;
-  private jobId = 0;
-  private pendingJobs = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void; timer: NodeJS.Timeout }>();
-  private testsRun = 0;
-  private wasmPath: string;
-
-  constructor(wasmPath: string) {
-    this.wasmPath = wasmPath;
-  }
-
-  private async ensureWorker(): Promise<void> {
-    if (this.worker && this.testsRun < WORKER_RECYCLE_AFTER) {
-      return;
-    }
-
-    // Recycle worker
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-      this.testsRun = 0;
-    }
-
-    const workerPath = path.join(__dirname, 'emit-worker.js');
-    this.worker = new Worker(workerPath, {
-      workerData: { wasmPath: this.wasmPath },
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      const onMessage = (msg: any) => {
-        if (msg.type === 'ready') {
-          this.worker!.off('message', onMessage);
-          resolve();
-        } else if (msg.type === 'error') {
-          reject(new Error(msg.error));
-        }
-      };
-      this.worker!.on('message', onMessage);
-      this.worker!.on('error', reject);
-    });
-
-    this.worker.on('message', (msg: any) => {
-      if (msg.id !== undefined) {
-        const pending = this.pendingJobs.get(msg.id);
-        if (pending) {
-          clearTimeout(pending.timer);
-          this.pendingJobs.delete(msg.id);
-          if (msg.error) {
-            pending.reject(new Error(msg.error));
-          } else {
-            pending.resolve({ js: msg.output, dts: msg.declaration });
-          }
-        }
-      }
-    });
-  }
-
-  async transpile(source: string, target: number, module: number, declaration = false): Promise<{js: string, dts?: string | null}> {
-    await this.ensureWorker();
-    this.testsRun++;
-
-    const id = this.jobId++;
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingJobs.delete(id);
-        // Kill and recreate worker on timeout
-        if (this.worker) {
-          this.worker.terminate();
-          this.worker = null;
-          this.testsRun = 0;
-        }
-        reject(new Error('TIMEOUT'));
-      }, TEST_TIMEOUT_MS);
-
-      this.pendingJobs.set(id, { resolve, reject, timer });
-      this.worker!.postMessage({ id, source, target, module, declaration });
-    });
-  }
-
-  terminate(): void {
-    if (this.worker) {
-      for (const { timer } of this.pendingJobs.values()) {
-        clearTimeout(timer);
-      }
-      this.pendingJobs.clear();
-      this.worker.terminate();
-      this.worker = null;
-    }
-  }
-}
+// Compatibility wrapper - CLI transpiler is already async
+type Transpiler = CliTranspiler;
 
 // ============================================================================
 // Test Execution
 // ============================================================================
 
-async function runTest(worker: TranspileWorker, testCase: TestCase, config: Config): Promise<TestResult> {
+async function runTest(worker: Transpiler, testCase: TestCase, config: Config): Promise<TestResult> {
   const start = Date.now();
   const testName = testCase.baselineFile.replace('.js', '');
 
@@ -515,20 +426,17 @@ async function main() {
   console.log(`${colors.bold}  TSZ Emit Test Runner${colors.reset}`);
   console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
   console.log(`${colors.dim}  Max tests: ${config.maxTests === Infinity ? 'all' : config.maxTests}${colors.reset}`);
-  console.log(`${colors.dim}  Timeout: ${TEST_TIMEOUT_MS}ms per test${colors.reset}`);
+  console.log(`${colors.dim}  Timeout: ${CLI_TIMEOUT_MS}ms per test${colors.reset}`);
   if (config.filter) {
     console.log(`${colors.dim}  Filter: ${config.filter}${colors.reset}`);
   }
   console.log(`${colors.dim}  Mode: ${config.jsOnly ? 'JS only' : config.dtsOnly ? 'DTS only' : 'JS + DTS'}${colors.reset}`);
+  console.log(`${colors.dim}  Engine: Native CLI (with type checking)${colors.reset}`);
   console.log(`${colors.cyan}════════════════════════════════════════════════════════════${colors.reset}`);
   console.log('');
 
-  // Check WASM module exists
-  const wasmPath = path.join(ROOT_DIR, 'pkg/wasm.js');
-  if (!fs.existsSync(wasmPath)) {
-    console.error('WASM module not found. Run: wasm-pack build --target nodejs --out-dir pkg');
-    process.exit(1);
-  }
+  // Create CLI transpiler
+  const transpiler = new CliTranspiler();
 
   // Find test cases
   console.log(`${colors.dim}Discovering test cases...${colors.reset}`);
@@ -536,8 +444,8 @@ async function main() {
   console.log(`${colors.dim}Found ${testCases.length} test cases${colors.reset}`);
   console.log('');
 
-  // Create worker
-  const worker = new TranspileWorker(wasmPath);
+  // Use transpiler alias for compatibility
+  const worker = transpiler as Transpiler;
 
   // Run tests
   let jsPass = 0, jsFail = 0, jsSkip = 0, jsTimeout = 0;
