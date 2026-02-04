@@ -1124,11 +1124,10 @@ impl<'a> NarrowingContext<'a> {
 
             TypeGuard::Truthy => {
                 if sense {
-                    // Truthy: remove falsy types (null, undefined, false, 0, "", NaN)
+                    // Truthy: remove null and undefined (TypeScript doesn't narrow other falsy values)
                     self.narrow_by_truthiness(source_type)
                 } else {
-                    // Falsy: intersection with falsy types
-                    // TODO: Implement proper falsy narrowing
+                    // Falsy: TypeScript doesn't narrow in falsy branches
                     source_type
                 }
             }
@@ -1198,21 +1197,23 @@ impl<'a> NarrowingContext<'a> {
         self.narrow_excluding_type(source_type, excluded)
     }
 
-    /// Narrow a type by removing falsy values.
+    /// Narrow a type by removing null and undefined (truthiness check).
     ///
-    /// Removes: null, undefined, false, 0, "", NaN
+    /// Note: TypeScript only removes null and undefined in truthiness checks,
+    /// not other falsy values like false, 0, or "". This matches tsc behavior.
     fn narrow_by_truthiness(&self, source_type: TypeId) -> TypeId {
+        let _span = span!(
+            Level::TRACE,
+            "narrow_by_truthiness",
+            source_type = source_type.0
+        )
+        .entered();
+
         let mut result = source_type;
 
-        // Remove nullish types
+        // Remove nullish types only (TypeScript doesn't narrow other falsy literals)
         result = self.narrow_excluding_type(result, TypeId::NULL);
         result = self.narrow_excluding_type(result, TypeId::UNDEFINED);
-
-        // Remove false literal
-        if let Some(_false_type) = self.interner.lookup(TypeId::BOOLEAN) {
-            // For now, just keep the implementation simple
-            // TODO: Remove false literal from unions
-        }
 
         result
     }
