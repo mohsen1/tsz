@@ -642,9 +642,15 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
+                // Always emit initializer value to match TypeScript behavior
+                // For explicit initializers, emit the expression
+                // For implicit (auto-incremented), emit the index value
                 if !member.initializer.is_none() {
                     self.write(" = ");
                     self.emit_expression(member.initializer);
+                } else {
+                    self.write(" = ");
+                    self.write(&i.to_string());
                 }
             }
             if i < enum_data.members.nodes.len() - 1 {
@@ -1115,9 +1121,15 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
+                // Always emit initializer value to match TypeScript behavior
+                // For explicit initializers, emit the expression
+                // For implicit (auto-incremented), emit the index value
                 if !member.initializer.is_none() {
                     self.write(" = ");
                     self.emit_expression(member.initializer);
+                } else {
+                    self.write(" = ");
+                    self.write(&i.to_string());
                 }
             }
             if i < enum_data.members.nodes.len() - 1 {
