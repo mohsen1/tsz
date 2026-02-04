@@ -143,6 +143,26 @@ Ensure the checker correctly updates flow-sensitive type cache:
 
 - 2026-02-04: Previous session completed - all 8 narrowing bugs fixed
 - 2026-02-04: Session redefined - focus on switch exhaustiveness and CFA orchestration
+- 2026-02-04: Fixed cache bug - SWITCH_CLAUSE nodes now skip cache to enable proper traversal
+- 2026-02-04: **BINDER BUG FOUND**: `get_switch_for_clause` returns None for default clauses
+
+## Root Cause Identified 🐛
+
+**File**: `src/checker/control_flow.rs`
+**Function**: `handle_switch_clause_iterative` (line 582)
+
+**Bug**: `binder.get_switch_for_clause(clause_idx)` returns `None`
+- flow.node=34 (default clause)
+- Expected: Should return the switch statement node index
+- Actual: Returns None, causing early return before narrowing logic
+
+**Impact**: Switch exhaustiveness cannot work because the binder doesn't associate default clause flow nodes with their switch statements.
+
+**Status**: 🐛 Root cause found - requires binder investigation
+
+## Next Steps
+
+Ask Gemini to investigate binder's get_switch_for_clause function to understand why it's not finding the switch for default clauses.
 
 ## Previous Achievements (Archived)
 

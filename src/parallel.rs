@@ -199,6 +199,9 @@ pub struct BindResult {
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
+    /// Map from switch clause NodeIndex to parent switch statement NodeIndex
+    /// Used by control flow analysis for switch exhaustiveness checking
+    pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     /// Whether this file is an external module (has imports/exports)
     pub is_external_module: bool,
 }
@@ -265,6 +268,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 lib_binders: Vec::new(), // No libs in this path
                 flow_nodes: binder.flow_nodes,
                 node_flow: binder.node_flow,
+                switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
                 is_external_module: binder.is_external_module,
             }
         })
@@ -300,6 +304,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         lib_binders: Vec::new(), // No libs in this path
         flow_nodes: binder.flow_nodes,
         node_flow: binder.node_flow,
+        switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
         is_external_module: binder.is_external_module,
     }
 }
@@ -470,6 +475,7 @@ pub fn parse_and_bind_parallel_with_libs(
                 lib_binders,
                 flow_nodes: binder.flow_nodes,
                 node_flow: binder.node_flow,
+                switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
                 is_external_module: binder.is_external_module,
             }
         })
@@ -504,6 +510,9 @@ pub struct BoundFile {
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
+    /// Map from switch clause NodeIndex to parent switch statement NodeIndex
+    /// Used by control flow analysis for switch exhaustiveness checking
+    pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     /// Whether this file is an external module (has imports/exports)
     pub is_external_module: bool,
 }
@@ -1085,6 +1094,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             module_augmentations,
             flow_nodes: result.flow_nodes.clone(),
             node_flow: result.node_flow.clone(),
+            switch_clause_to_switch: result.switch_clause_to_switch.clone(),
             is_external_module: result.is_external_module,
         });
     }
@@ -1504,6 +1514,7 @@ pub(crate) fn create_binder_from_bound_file(
         program.shorthand_ambient_modules.clone(),
         file.flow_nodes.clone(),
         file.node_flow.clone(),
+        file.switch_clause_to_switch.clone(),
     );
 
     binder.declared_modules = program.declared_modules.clone();

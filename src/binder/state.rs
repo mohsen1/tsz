@@ -476,6 +476,7 @@ impl BinderState {
             FxHashSet::default(), // shorthand_ambient_modules
             FlowNodeArena::new(),
             FxHashMap::default(), // node_flow
+            FxHashMap::default(), // switch_clause_to_switch
         )
     }
 
@@ -503,6 +504,7 @@ impl BinderState {
         shorthand_ambient_modules: FxHashSet<String>,
         flow_nodes: FlowNodeArena,
         node_flow: FxHashMap<u32, FlowNodeId>,
+        switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     ) -> Self {
         // Find the unreachable flow node in the existing flow_nodes, or create a new one
         let unreachable_flow = flow_nodes.find_unreachable().unwrap_or_else(|| {
@@ -528,7 +530,7 @@ impl BinderState {
             declaration_arenas,
             node_flow,
             top_level_flow: FxHashMap::default(),
-            switch_clause_to_switch: FxHashMap::default(),
+            switch_clause_to_switch,
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
             scopes,
