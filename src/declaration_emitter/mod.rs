@@ -84,6 +84,10 @@ pub struct DeclarationEmitter<'a> {
     in_constructor_params: bool,
     /// Track function names that have overload signatures (to skip implementation signatures)
     function_names_with_overloads: FxHashSet<String>,
+    /// Track whether current class has constructor overloads (to skip implementation constructor)
+    class_has_constructor_overloads: bool,
+    /// Track method names that have overload signatures in current class (to skip implementation signatures)
+    method_names_with_overloads: FxHashSet<String>,
 }
 
 struct SourceMapState {
@@ -115,6 +119,8 @@ impl<'a> DeclarationEmitter<'a> {
             inside_declare_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
+            class_has_constructor_overloads: false,
+            method_names_with_overloads: FxHashSet::default(),
         }
     }
 
@@ -146,6 +152,8 @@ impl<'a> DeclarationEmitter<'a> {
             inside_declare_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
+            class_has_constructor_overloads: false,
+            method_names_with_overloads: FxHashSet::default(),
         }
     }
 
@@ -458,6 +466,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
+        // Reset constructor and method overload tracking for this class
+        self.class_has_constructor_overloads = false;
+        self.method_names_with_overloads = FxHashSet::default();
+
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
@@ -552,6 +564,32 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        // Get method name as string for overload tracking
+        let method_name = self.get_function_name(method_idx);
+
+        // Check if this is an overload (no body) or implementation (has body)
+        let is_overload = method.body.is_none();
+        let is_implementation = !is_overload;
+
+        // Method overload handling:
+        // - If this is an overload, emit it and mark that this method has overloads
+        // - If this is an implementation and the method already has overloads, skip it
+        // - If this is an implementation with no overloads, emit it
+        if is_overload {
+            // Mark that this method name has overload signatures
+            if let Some(ref name) = method_name {
+                self.method_names_with_overloads.insert(name.clone());
+            }
+        } else if is_implementation {
+            // This is an implementation - check if we've seen overloads for this name
+            if let Some(ref name) = method_name {
+                if self.method_names_with_overloads.contains(name) {
+                    // Skip implementation signature when overloads exist
+                    return;
+                }
+            }
+        }
+
         self.write_indent();
 
         // Check if private/abstract
@@ -593,6 +631,25 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(ctor) = self.arena.get_constructor(ctor_node) else {
             return;
         };
+
+        // Check if this is an overload (no body) or implementation (has body)
+        let is_overload = ctor.body.is_none();
+        let is_implementation = !is_overload;
+
+        // Constructor overload handling:
+        // - If this is an overload, emit it and mark that the class has constructor overloads
+        // - If this is an implementation and the class already has constructor overloads, skip it
+        // - If this is an implementation with no overloads, emit it
+        if is_overload {
+            // Mark that this class has constructor overloads
+            self.class_has_constructor_overloads = true;
+        } else if is_implementation {
+            // This is an implementation - check if we've seen constructor overloads
+            if self.class_has_constructor_overloads {
+                // Skip implementation constructor when overloads exist
+                return;
+            }
+        }
 
         self.write_indent();
         self.write("constructor(");
@@ -1636,6 +1693,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(" {");
         self.write_line();
         self.increase_indent();
+
+        // Reset constructor and method overload tracking for this class
+        self.class_has_constructor_overloads = false;
+        self.method_names_with_overloads = FxHashSet::default();
 
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
@@ -2836,13 +2897,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.has_modifier(modifiers, SyntaxKind::ExportKeyword as u16)
     }
 
-    /// Get the function name as a string for overload tracking
+    /// Get the function/method name as a string for overload tracking
     fn get_function_name(&self, func_idx: NodeIndex) -> Option<String> {
         let func_node = self.arena.get(func_idx)?;
-        let func = self.arena.get_function(func_node)?;
 
-        // Get the name node
-        let name_node = self.arena.get(func.name)?;
+        // Try to get as function first
+        let name_node = if let Some(func) = self.arena.get_function(func_node) {
+            self.arena.get(func.name)?
+        // Try to get as method
+        } else if let Some(method) = self.arena.get_method_decl(func_node) {
+            self.arena.get(method.name)?
+        } else {
+            return None;
+        };
 
         // Only extract identifier names (not computed or other name types)
         if name_node.kind == SyntaxKind::Identifier as u16 {
