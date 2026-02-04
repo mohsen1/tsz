@@ -113,6 +113,42 @@ Use presets to automatically include the most relevant files:
 | `--types` | Type system overview | `./scripts/ask-gemini.mjs --types "How are generics handled?"` |
 | `--modules` | Module resolution, imports, exports | `./scripts/ask-gemini.mjs --modules "How does module resolution work?"` |
 
+### Flash vs Pro Model Selection
+
+The script defaults to **Flash** for fast responses. Use **Pro** (`--pro` flag) for complex questions.
+
+#### Use Flash (default) for:
+- Code lookup: "What function handles X?"
+- Simple questions: "How does feature X work?"
+- Approach validation: "Is this the right direction?"
+- Most day-to-day questions (80% of use cases)
+
+#### Use Pro (`--pro`) for:
+- **Implementation reviews**: "Review this code for bugs"
+- **Complex architectural decisions**: "How should I redesign this?"
+- **Multi-file changes**: "I'm touching 5 files, is this right?"
+- **Type system logic validation**: "Is this subtype check correct?"
+
+**Key Rule**: If asking "is this code correct?" or "did I implement this right?", use `--pro`.
+
+Examples:
+```bash
+# Flash - simple lookup
+./scripts/ask-gemini.mjs --solver "Where is discriminant narrowing implemented?"
+
+# Flash - approach validation
+./scripts/ask-gemini.mjs --solver "Should I use visitor pattern for this?"
+
+# Pro - implementation review (CRITICAL)
+./scripts/ask-gemini.mjs --pro --solver "Review my discriminant narrowing implementation:
+[PASTE CODE]
+Does this match TypeScript behavior?"
+
+# Pro - architectural question
+./scripts/ask-gemini.mjs --pro --solver "I need to add conditional type inference.
+What's the architectural approach? Which files need changes?"
+```
+
 ### Including Test Files
 
 By default, test files are filtered out. Include them when needed:

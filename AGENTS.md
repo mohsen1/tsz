@@ -150,6 +150,7 @@ so I can add a debug log."
 
 ### Template for Pre-Implementation:
 ```bash
+# Use Flash (default) for approach validation - fast and sufficient
 ./scripts/ask-gemini.mjs --solver "I need to implement [FEATURE].
 Problem: [PROBLEM STATEMENT]
 My planned approach: [YOUR APPROACH]
@@ -160,7 +161,8 @@ Before I implement: 1) Is this the right approach? 2) What functions should I mo
 
 ### Template for Post-Implementation Review:
 ```bash
-./scripts/ask-gemini.mjs --solver "I implemented [FEATURE] in [FILE]:[FUNCTION].
+# Use Pro (--pro flag) for implementation reviews - better at catching architectural bugs
+./scripts/ask-gemini.mjs --pro --solver "I implemented [FEATURE] in [FILE]:[FUNCTION].
 Changes: [PASTE CODE OR DIFF]
 
 Please review: 1) Is this logic correct for TypeScript? 2) Did I miss any edge cases?
@@ -214,6 +216,48 @@ This is not an exaggeration - it's a pattern proven by investigation.
 - Take a break, document findings, or work on non-critical tasks (docs, tests, CLI)
 - Come back and ask Gemini once rate limit resets
 - Only proceed with implementation AFTER getting Gemini's guidance
+
+---
+
+## CRITICAL: Flash vs Pro Model Selection
+
+**ask-gemini.mjs now defaults to Flash model for faster responses.**
+
+### When to use Flash (default):
+- **Code lookup**: "What function handles X?"
+- **Simple questions**: "How does feature X work?"
+- **Approach validation**: "Is this the right direction?"
+- **Most day-to-day questions**
+
+**Flash is faster and cheaper - use it for 80% of questions.**
+
+### When to use Pro (`--pro` flag):
+- **Implementation reviews**: "Review this code for bugs"
+- **Complex architectural decisions**: "How should I redesign this?"
+- **Multi-file changes**: "I'm touching 5 files, is this right?"
+- **Type system logic**: "Is this subtype check correct?"
+
+**Pro is more thorough for complex questions - use it for the remaining 20%.**
+
+### Examples:
+```bash
+# Flash (default) - simple lookup
+./scripts/ask-gemini.mjs --solver "Where is discriminant narrowing implemented?"
+
+# Flash (default) - approach validation
+./scripts/ask-gemini.mjs --solver "Should I use visitor pattern or direct TypeKey match?"
+
+# Pro - implementation review (CRITICAL)
+./scripts/ask-gemini.mjs --pro --solver "Review my discriminant narrowing implementation:
+[PASTE CODE]
+Does this match TypeScript behavior?"
+
+# Pro - architectural question
+./scripts/ask-gemini.mjs --pro --solver "I need to add support for conditional type inference.
+What's the right approach? Which files need to change?"
+```
+
+**Key Rule**: If you're asking "is this code correct?" or "did I implement this right?", use `--pro`.
 
 ---
 

@@ -172,7 +172,10 @@ function extractSignature(text, type) {
 // ./scripts/ask-gemini.mjs --include="src/solver" "Custom path question"
 // ./scripts/ask-gemini.mjs --no-use-vertex "Use direct Gemini API instead of Vertex"
 
-const DEFAULT_MODEL = 'gemini-3-pro-preview';
+// Flash model is faster and cheaper, use by default
+// Pro model is for complex architectural questions
+const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const PRO_MODEL = 'gemini-3-pro-preview';
 const TARGET_TOKEN_UTILIZATION = 0.90; // Target 90% of 1M context
 const MAX_GEMINI_TOKENS = 1_000_000;
 const INITIAL_YEK_LIMIT = '4000k'; // Start high, will auto-adjust down
@@ -520,6 +523,8 @@ const { values, positionals } = parseArgs({
       short: 'm',
       default: DEFAULT_MODEL,
     },
+    // Use Pro model for complex questions
+    pro: { type: 'boolean', default: false },
     help: {
       type: 'boolean',
       short: 'h',
@@ -573,10 +578,15 @@ Focused Presets (pick one for best context):
   --types             Type system overview (solver + checker)
   --modules           Module resolution, imports, exports
 
+Model Selection:
+  --pro               Use Gemini Pro for complex architectural questions
+                      (default: Flash for faster responses)
+  --flash             Use Gemini Flash model (explicit, same as default)
+
 General Options:
   -i, --include=PATH  Include specific path(s) (overrides preset)
   -t, --tokens=SIZE   Override yek token limit (default: auto-sized to ~90% of Gemini's 1M context)
-  -m, --model=NAME    Gemini model (default: ${DEFAULT_MODEL})
+  -m, --model=NAME    Specific Gemini model (overrides --pro/--flash)
   --dry               Show files that would be included without calling API
   --query             Print the full query payload (system prompt + context + prompt)
   --no-skeleton       Disable code skeleton extraction. Skeletons show fn/struct/enum/
@@ -585,6 +595,10 @@ General Options:
   --no-use-vertex     Use direct Gemini API instead of Vertex AI (fallback for
                       rate limits or when Vertex credentials aren't available)
   -h, --help          Show this help message
+
+When to use Flash vs Pro:
+  Flash (default):     Most questions - code lookup, simple fixes, "how does X work"
+  Pro (--pro flag):    Complex architectural decisions, multi-file changes, "how should I redesign X"
 
 Note: Test files, markdown docs, and locale JSONs are excluded from full content
       by default. Skeletons still include all code signatures.
@@ -596,6 +610,7 @@ Environment:
 Examples:
   ./scripts/ask-gemini.mjs --solver "How does type inference work?"
   ./scripts/ask-gemini.mjs --checker "How are diagnostics reported?"
+  ./scripts/ask-gemini.mjs --pro "Review this implementation for correctness"
   ./scripts/ask-gemini.mjs --types "How does the type system handle generics?"
   ./scripts/ask-gemini.mjs --parser "How does ASI work?"
   ./scripts/ask-gemini.mjs --emitter "How are source maps generated?"
@@ -620,6 +635,9 @@ if (activePresets.length > 1) {
 
 const activePreset = activePresets[0] ? PRESETS[activePresets[0]] : null;
 const presetName = activePresets[0] || null;
+
+// Use Pro model if --pro flag is set
+const effectiveModel = values.pro ? PRO_MODEL : effectiveModel;
 
 // Token limit: explicit flag overrides auto-sizing
 const explicitTokenLimit = values.tokens || null;
@@ -684,7 +702,11 @@ try {
   if (presetName) {
     console.log(`Using preset: --${presetName} (${activePreset.description})`);
   }
-  console.log(`Using model: ${values.model}`);
+  if (values.pro) {
+    console.log(`Using model: ${effectiveModel} (Pro - for complex questions)`);
+  } else {
+    console.log(`Using model: ${effectiveModel} (Flash - fast, for most questions)`);
+  }
   console.log(`Using API: ${useVertex ? 'Vertex AI Express' : 'Direct Gemini API'}`);
   console.log('Gathering context...');
 
@@ -796,10 +818,10 @@ try {
 
   if (useVertex) {
     // Vertex AI Express Mode endpoint - uses API key
-    url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${values.model}:generateContent?key=${GCP_VERTEX_EXPRESS_API_KEY}`;
+    url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${effectiveModel}:generateContent?key=${GCP_VERTEX_EXPRESS_API_KEY}`;
   } else {
     // Direct Gemini API endpoint
-    url = `https://generativelanguage.googleapis.com/v1beta/models/${values.model}:generateContent?key=${GEMINI_API_KEY}`;
+    url = `https://generativelanguage.googleapis.com/v1beta/models/${effectiveModel}:generateContent?key=${GEMINI_API_KEY}`;
   }
 
   // Build system prompt based on preset
