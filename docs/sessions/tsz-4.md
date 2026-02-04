@@ -2,15 +2,72 @@
 
 ## Date: 2026-02-04
 
-## Status: 🟡 ACTIVE - 5th Task Defined (2026-02-04)
+## Status: 🟡 ACTIVE - Function Overload Normalization In Progress (2026-02-04)
 
-Completed 4 tasks successfully:
+Completed 4.5 tasks:
 1. Class Heritage and Generics (type literal formatting fix)
 2. Computed Property Names and unique symbol Support
 3. Type Predicates and Assertion Functions
 4. Module System Fidelity (ambient modules, import equals, namespace exports)
+5. **Function Overload Normalization** - PARTIAL (functions done, constructors/methods pending)
 
-### Module System Fidelity ✅ COMPLETE (2026-02-04)
+### Function Overload Normalization - Progress Update (2026-02-04)
+
+**Completed:**
+- ✅ Top-level function overloads (export function foo())
+- ✅ Single function signatures (no overloads)
+- ✅ Overload tracking infrastructure
+
+**Pending:**
+- ⏳ Constructor overloads (class constructors)
+- ⏳ Method overloads (class methods)
+- ⏳ Default export synthesis (export default expression)
+
+**Commit:** 32c7e28ca (feat: function overload normalization)
+
+**Test Results (Functions):**
+```typescript
+// Input
+export function foo(x: string): void;
+export function foo(x: number): void;
+export function foo(x: string | number): void {}
+export function bar(x: number): void {}
+
+// Output ✅ (matches tsc)
+export declare function foo(x: string): void;
+export declare function foo(x: number): void;
+export declare function bar(x: number): void;
+```
+
+**Test Results (Constructors):**
+```typescript
+// Input
+export class C {
+    constructor(x: string);
+    constructor(x: number);
+    constructor(x: string | number) {}
+}
+
+// Current Output ❌ (implementation signature not suppressed)
+export declare class C {
+    constructor(x: string);
+    constructor(x: number);
+    constructor(x: string | number);
+}
+
+// Expected Output ✅
+export declare class C {
+    constructor(x: string);
+    constructor(x: number);
+}
+```
+
+**Next Steps:**
+1. Apply same overload logic to `emit_constructor_declaration()`
+2. Apply overload logic to `emit_method_declaration()` for methods
+3. Implement default export synthesis for expression exports
+
+---
 
 ### Type Predicates and Assertion Functions ✅ COMPLETE (2026-02-04)
 
