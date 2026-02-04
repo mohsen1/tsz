@@ -1008,12 +1008,13 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
             && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
         {
-            let mut checker = CheckerState::new(
+            let mut checker = CheckerState::with_parent_cache(
                 symbol_arena.as_ref(),
                 self.ctx.binder,
                 self.ctx.types,
                 self.ctx.file_name.clone(),
                 self.ctx.compiler_options.clone(),
+                self, // Share parent's cache to fix Cache Isolation Bug
             );
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();

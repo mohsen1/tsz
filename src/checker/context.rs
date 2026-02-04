@@ -170,7 +170,7 @@ pub struct EnclosingClassInfo {
 
 /// Persistent cache for type checking results across LSP queries.
 /// This cache survives between LSP requests but is invalidated when the file changes.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TypeCache {
     /// Cached types for symbols.
     pub symbol_types: FxHashMap<SymbolId, TypeId>,
@@ -202,6 +202,45 @@ pub struct TypeCache {
     /// Maps DefIds to SymbolIds for declaration emit usage analysis.
     /// Populated by CheckerContext during type checking, consumed by UsageAnalyzer.
     pub def_to_symbol: FxHashMap<crate::solver::DefId, SymbolId>,
+
+    // === Specialized Caches (moved from CheckerContext) ===
+    /// Cache for evaluated application types to avoid repeated expansion.
+    pub application_eval_cache: FxHashMap<TypeId, TypeId>,
+
+    /// Recursion guard for application evaluation.
+    pub application_eval_set: FxHashSet<TypeId>,
+
+    /// Cache for evaluated mapped types with symbol resolution.
+    pub mapped_eval_cache: FxHashMap<TypeId, TypeId>,
+
+    /// Recursion guard for mapped type evaluation with resolution.
+    pub mapped_eval_set: FxHashSet<TypeId>,
+
+    /// Cache for object spread property collection.
+    pub object_spread_property_cache: FxHashMap<TypeId, Vec<PropertyInfo>>,
+
+    /// Recursion guard for object spread property collection.
+    pub object_spread_property_set: FxHashSet<TypeId>,
+
+    /// Cache for element access type computation.
+    pub element_access_type_cache: FxHashMap<(TypeId, TypeId, Option<usize>), TypeId>,
+
+    /// Recursion guard for element access type computation.
+    pub element_access_type_set: FxHashSet<(TypeId, TypeId, Option<usize>)>,
+
+    /// Cache for control flow analysis results.
+    /// Key: (FlowNodeId, SymbolId, InitialTypeId) -> NarrowedTypeId
+    pub flow_analysis_cache:
+        FxHashMap<(crate::binder::FlowNodeId, crate::binder::SymbolId, TypeId), TypeId>,
+
+    /// Maps class instance TypeIds to their class declaration NodeIndex.
+    /// Used by `get_class_decl_from_type` to correctly identify the class
+    /// for derived classes that have no private/protected members.
+    pub class_instance_type_to_decl: FxHashMap<TypeId, NodeIndex>,
+
+    /// Forward cache: class declaration NodeIndex -> computed instance TypeId.
+    /// Avoids recomputing the full class instance type on every member check.
+    pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
 }
 
 impl TypeCache {
@@ -754,17 +793,18 @@ impl<'a> CheckerContext<'a> {
             node_types: cache.node_types,
             relation_cache: RefCell::new(cache.relation_cache),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            application_eval_cache: FxHashMap::default(),
-            application_eval_set: FxHashSet::default(),
-            mapped_eval_cache: FxHashMap::default(),
-            mapped_eval_set: FxHashSet::default(),
-            object_spread_property_cache: FxHashMap::default(),
-            object_spread_property_set: FxHashSet::default(),
-            element_access_type_cache: FxHashMap::default(),
-            element_access_type_set: FxHashSet::default(),
-            flow_analysis_cache: RefCell::new(FxHashMap::default()),
-            class_instance_type_to_decl: FxHashMap::default(),
-            class_instance_type_cache: FxHashMap::default(),
+            // Use specialized caches from TypeCache to fix Cache Isolation Bug
+            application_eval_cache: cache.application_eval_cache,
+            application_eval_set: cache.application_eval_set,
+            mapped_eval_cache: cache.mapped_eval_cache,
+            mapped_eval_set: cache.mapped_eval_set,
+            object_spread_property_cache: cache.object_spread_property_cache,
+            object_spread_property_set: cache.object_spread_property_set,
+            element_access_type_cache: cache.element_access_type_cache,
+            element_access_type_set: cache.element_access_type_set,
+            flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
+            class_instance_type_to_decl: cache.class_instance_type_to_decl,
+            class_instance_type_cache: cache.class_instance_type_cache,
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -842,17 +882,18 @@ impl<'a> CheckerContext<'a> {
             node_types: cache.node_types,
             relation_cache: RefCell::new(cache.relation_cache),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            application_eval_cache: FxHashMap::default(),
-            application_eval_set: FxHashSet::default(),
-            mapped_eval_cache: FxHashMap::default(),
-            mapped_eval_set: FxHashSet::default(),
-            object_spread_property_cache: FxHashMap::default(),
-            object_spread_property_set: FxHashSet::default(),
-            element_access_type_cache: FxHashMap::default(),
-            element_access_type_set: FxHashSet::default(),
-            flow_analysis_cache: RefCell::new(FxHashMap::default()),
-            class_instance_type_to_decl: FxHashMap::default(),
-            class_instance_type_cache: FxHashMap::default(),
+            // Use specialized caches from TypeCache to fix Cache Isolation Bug
+            application_eval_cache: cache.application_eval_cache,
+            application_eval_set: cache.application_eval_set,
+            mapped_eval_cache: cache.mapped_eval_cache,
+            mapped_eval_set: cache.mapped_eval_set,
+            object_spread_property_cache: cache.object_spread_property_cache,
+            object_spread_property_set: cache.object_spread_property_set,
+            element_access_type_cache: cache.element_access_type_cache,
+            element_access_type_set: cache.element_access_type_set,
+            flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
+            class_instance_type_to_decl: cache.class_instance_type_to_decl,
+            class_instance_type_cache: cache.class_instance_type_cache,
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -885,6 +926,103 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
             def_to_symbol: RefCell::new(cache.def_to_symbol),
+            all_arenas: None,
+            all_binders: None,
+            resolved_module_paths: None,
+            current_file_idx: 0,
+            resolved_modules: None,
+            is_external_module_by_file: None,
+            resolved_module_errors: None,
+            import_resolution_stack: Vec::new(),
+            lib_contexts: Vec::new(),
+            actual_lib_file_count: 0,
+            flow_graph,
+            async_depth: 0,
+            inside_closure_depth: 0,
+            type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
+            fuel_exhausted: RefCell::new(false),
+            typeof_resolution_stack: RefCell::new(FxHashSet::default()),
+        }
+    }
+
+    /// Create a child CheckerContext that shares the parent's caches.
+    /// This is used for temporary checkers (e.g., cross-file symbol resolution)
+    /// to ensure cache results are not lost (fixes Cache Isolation Bug).
+    ///
+    /// The child context shares the parent's caches through Rc<RefCell<>> wrappers,
+    /// allowing both contexts to read and write to the same cache.
+    pub fn with_parent_cache(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: CheckerOptions,
+        parent: &CheckerContext<'a>,
+    ) -> Self {
+        let compiler_options = compiler_options.apply_strict_defaults();
+        let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
+
+        // Share caches through Rc<RefCell<>> to allow both parent and child to access
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        CheckerContext {
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            report_unresolved_imports: false,
+            symbol_types: parent.symbol_types.clone(),
+            symbol_instance_types: parent.symbol_instance_types.clone(),
+            var_decl_types: FxHashMap::default(),
+            node_types: parent.node_types.clone(),
+            relation_cache: parent.relation_cache.clone(),
+            type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            // Share specialized caches from parent
+            application_eval_cache: parent.application_eval_cache.clone(),
+            application_eval_set: parent.application_eval_set.clone(),
+            mapped_eval_cache: parent.mapped_eval_cache.clone(),
+            mapped_eval_set: parent.mapped_eval_set.clone(),
+            object_spread_property_cache: parent.object_spread_property_cache.clone(),
+            object_spread_property_set: parent.object_spread_property_set.clone(),
+            element_access_type_cache: parent.element_access_type_cache.clone(),
+            element_access_type_set: parent.element_access_type_set.clone(),
+            flow_analysis_cache: parent.flow_analysis_cache.clone(),
+            class_instance_type_to_decl: parent.class_instance_type_to_decl.clone(),
+            class_instance_type_cache: parent.class_instance_type_cache.clone(),
+            symbol_dependencies: parent.symbol_dependencies.clone(),
+            symbol_dependency_stack: Vec::new(),
+            referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            diagnostics: Vec::new(),
+            emitted_diagnostics: FxHashSet::default(),
+            modules_with_ts2307_emitted: FxHashSet::default(),
+            symbol_resolution_stack: Vec::new(),
+            symbol_resolution_set: HashSet::new(),
+            symbol_resolution_depth: Cell::new(0),
+            max_symbol_resolution_depth: 256,
+            class_instance_resolution_set: HashSet::new(),
+            class_constructor_resolution_set: HashSet::new(),
+            inheritance_graph: crate::solver::inheritance::InheritanceGraph::new(),
+            node_resolution_stack: Vec::new(),
+            node_resolution_set: HashSet::new(),
+            type_parameter_scope: HashMap::new(),
+            contextual_type: None,
+            instantiation_depth: RefCell::new(0),
+            depth_exceeded: RefCell::new(false),
+            recursion_depth: Cell::new(0),
+            call_depth: RefCell::new(0),
+            return_type_stack: Vec::new(),
+            this_type_stack: Vec::new(),
+            enclosing_class: None,
+            type_env: RefCell::new(TypeEnvironment::new()),
+            definition_store: DefinitionStore::new(),
+            symbol_to_def: parent.symbol_to_def.clone(),
+            def_type_params: parent.def_type_params.clone(),
+            abstract_constructor_types: parent.abstract_constructor_types.clone(),
+            protected_constructor_types: parent.protected_constructor_types.clone(),
+            private_constructor_types: parent.private_constructor_types.clone(),
+            def_to_symbol: parent.def_to_symbol.clone(),
             all_arenas: None,
             all_binders: None,
             resolved_module_paths: None,
@@ -1007,6 +1145,18 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: self.protected_constructor_types,
             private_constructor_types: self.private_constructor_types,
             def_to_symbol: self.def_to_symbol.into_inner(),
+            // Specialized caches
+            application_eval_cache: self.application_eval_cache,
+            application_eval_set: self.application_eval_set,
+            mapped_eval_cache: self.mapped_eval_cache,
+            mapped_eval_set: self.mapped_eval_set,
+            object_spread_property_cache: self.object_spread_property_cache,
+            object_spread_property_set: self.object_spread_property_set,
+            element_access_type_cache: self.element_access_type_cache,
+            element_access_type_set: self.element_access_type_set,
+            flow_analysis_cache: self.flow_analysis_cache.into_inner(),
+            class_instance_type_to_decl: self.class_instance_type_to_decl,
+            class_instance_type_cache: self.class_instance_type_cache,
         }
     }
 

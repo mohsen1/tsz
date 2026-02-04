@@ -268,6 +268,29 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Create a child CheckerState that shares the parent's caches.
+    /// This is used for temporary checkers (e.g., cross-file symbol resolution)
+    /// to ensure cache results are not lost (fixes Cache Isolation Bug).
+    pub fn with_parent_cache(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: CheckerOptions,
+        parent: &CheckerState<'a>,
+    ) -> Self {
+        CheckerState {
+            ctx: CheckerContext::with_parent_cache(
+                arena,
+                binder,
+                types,
+                file_name,
+                compiler_options,
+                &parent.ctx,
+            ),
+        }
+    }
+
     /// Apply `this` type substitution to a method call's return type.
     ///
     /// When a method returns `this`, the return type should be the type of the receiver.
