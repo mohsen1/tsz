@@ -3162,7 +3162,7 @@ impl<'a> DeclarationEmitter<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+mod inline_tests {
     use super::*;
     use crate::parser::ParserState;
 
