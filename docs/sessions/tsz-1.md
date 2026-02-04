@@ -157,6 +157,13 @@ This requires understanding:
 
 **Status**: DEFERRED - Requires Solver refactoring, not a Checker patch. 4 tests affected.
 
-## Current Task: Find New Error Cluster
+## Completed: String Enum Assignability Test Fix
 
-Moving on from TS2540 to find other fixable issues in the remaining 50 failing tests.
+**Test**: test_string_enum_not_assignable_to_string
+- **Issue**: Test expected TS2322 for string enum to string assignment
+- **Fix**: Corrected test expectation - string enums ARE assignable to string in TypeScript
+- **Conformance**: 49 → 48 failing tests
+
+## Current Task: Finding More Simple Fixes
+
+Successfully identified and fixed a test with wrong expectation. Continuing to review remaining 48 failing tests for more incorrect expectations or missing diagnostics.
