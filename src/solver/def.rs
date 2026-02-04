@@ -23,7 +23,9 @@
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
 
 use crate::interner::Atom;
-use crate::solver::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
+use crate::solver::types::{
+    ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo,
+};
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
