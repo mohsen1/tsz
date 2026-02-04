@@ -933,14 +933,41 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
                         self.emit_node(decl.name);
-                        // Emit explicit type annotation if present
-                        if !decl.type_annotation.is_none() {
-                            self.write(": ");
-                            self.emit_type(decl.type_annotation);
-                        } else if let Some(type_id) = self.get_node_type(decl_idx) {
-                            // No explicit type, but we have inferred type from cache
-                            self.write(": ");
-                            self.write(&self.print_type_id(type_id));
+
+                        // Determine if we should emit a literal initializer for const
+                        let use_literal_initializer = if keyword == "const"
+                            && decl.type_annotation.is_none()
+                            && !decl.initializer.is_none()
+                        {
+                            // Check if initializer is a primitive literal
+                            if let Some(init_node) = self.arena.get(decl.initializer) {
+                                let k = init_node.kind;
+                                k == SyntaxKind::StringLiteral as u16
+                                    || k == SyntaxKind::NumericLiteral as u16
+                                    || k == SyntaxKind::TrueKeyword as u16
+                                    || k == SyntaxKind::FalseKeyword as u16
+                                    || k == SyntaxKind::NullKeyword as u16
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        // Emit literal initializer for const with primitive literals
+                        if use_literal_initializer {
+                            self.write(" = ");
+                            self.emit_expression(decl.initializer);
+                        } else {
+                            // Emit explicit type annotation if present
+                            if !decl.type_annotation.is_none() {
+                                self.write(": ");
+                                self.emit_type(decl.type_annotation);
+                            } else if let Some(type_id) = self.get_node_type(decl_idx) {
+                                // No explicit type, but we have inferred type from cache
+                                self.write(": ");
+                                self.write(&self.print_type_id(type_id));
+                            }
                         }
                     }
 
