@@ -1,63 +1,49 @@
-# Session tsz-2: Type Inference & Evaluation Fixes
+# Session tsz-2: Type Correctness & Conformance
 
 **Started**: 2026-02-04
-**Current Focus**: Application Type Expansion and Type Evaluation Fixes
+**Current Focus**: Conformance validation and nominal subtyping fix
 
 ## Background
 
-Completed Best Common Type (BCT) implementation for class instance types. Now focused on fixing critical type evaluation issues.
+Completed BCT implementation for class instances and verified Application expansion is working. Now focused on core correctness issues and conformance validation.
 
 ## Current Session Plan (Redefined 2026-02-04)
 
-### Priority 1: Conformance Verification
-Run conformance tests to verify BCT implementation against TypeScript:
+### Priority 1: Conformance Testing
+**Goal**: Validate BCT implementation against TypeScript conformance suite
 ```bash
-./scripts/conformance/run.sh --filter="arrayLiteral" --filter="bestCommonType"
+./scripts/conformance.sh run --server --max=200
 ```
+- Check for regressions in class inheritance
+- Check for regressions in generic type inference
+- Document any failures in session file
 
-### Priority 2: Application Type Expansion
-**File**: `src/solver/evaluate.rs` (lines 110-135)
+### ✅ Priority 2: Application Type Expansion (COMPLETE)
+**Status**: Already implemented and working
+- evaluate_application is wired up in evaluate function
+- DefIds created for type aliases
+- Type parameters stored in def_type_params map
+- TODO in evaluate.rs was outdated
 
-**Problem**: `Application(Ref(sym), args)` types (like `Reducer<S, A>`) pass through `evaluate` unchanged, causing:
-- Diagnostics to show internal IDs instead of expanded types
-- Broken inference for complex libraries (Redux, etc.)
-- BCT falling back to generic unions instead of finding common structural supertype
-
-**Task**: Implement `TypeEvaluator::evaluate_application` expansion logic
-
-### Priority 3: Nominal Subtyping Fix
-**File**: `src/solver/subtype.rs`
+### Priority 3: Nominal Subtyping Fix (CRITICAL)
+**Files**: `src/solver/subtype.rs`, `src/solver/compat.rs`
 
 **Problem**: Subtype check treats ObjectWithIndex types structurally instead of nominally
 - `is_subtype_of(Cat, Dog)` incorrectly returns `true`
-- Classes with private/protected members should use nominal (private brand) checking
+- Classes with private/protected members must use nominal (private brand) checking
+- This is a "Judge" level error affecting system soundness
+
+**Impact**: If private members from Class A and Class B are treated as compatible, violates TS safety
+
+**Reference**: NORTH_STAR.md Section 3.3 (Judge vs. Lawyer)
 
 ### Priority 4: BCT for Intersections
 **File**: `src/solver/expression_ops.rs`
 
-Extend BCT to handle intersection types correctly.
+Extend `compute_best_common_type` to handle intersection types.
+- Example: `(Dog & Serializable) | (Cat & Serializable)` → `Animal & Serializable`
 
 ---
-
-const animals = [new Dog(), new Cat()];
-// tsc infers: Animal[]
-// tsz currently infers: Dog | Cat (union - WRONG)
-```
-
-This leads to "type not assignable" errors when the result is passed to functions expecting the base class.
-
-## Tasks
-
-### Task 1: Nominal Hierarchy Infrastructure
-**Files**: `src/solver/db.rs`, `src/checker/state_type_analysis.rs`, `src/solver/infer.rs`
-
-**Steps**:
-1. Add `get_class_base_type(symbol_id: SymbolId) -> Option<TypeId>` to `TypeDatabase` trait
-2. Implement in `CheckerState` to bridge Solver → Binder (query `extends` clause)
-3. Refine `get_class_hierarchy` in `infer.rs` with robust traversal
-
-### Task 2: Literal Widening Logic
-**File**: `src/solver/infer.rs`
 
 **Steps**:
 1. Implement `widen_literal_type` - widen `1 | 2` to `number`
