@@ -189,8 +189,35 @@ Fixed Cache Isolation Bug where lib.d.ts type aliases weren't resolving correctl
 
 ## Session Status: 🟢 ACTIVE
 
-**Phase**: Task 1 - Fix Discriminant Narrowing Regressions
-**Focus**: Critical bug fix
+**Phase**: Task 2 - Implement Solver::narrow
+**Focus**: Architecture
 **Current Task**: Question 1 - Approach validation
+
+---
+
+## Progress Update (2026-02-04)
+
+### Task 1 Complete ✅
+
+**Commit**: `c109f1ffe` - "fix(tsz-2): handle optional properties in discriminant narrowing"
+
+**Changes Made**:
+1. Added handling for `prop_info.optional` in `narrow_by_discriminant`
+   - For optional properties, effective type is `Union(prop_type, Undefined)`
+   - Ensures correct narrowing for `{ prop?: "a" }` cases
+
+2. Added same fix to `narrow_by_excluding_discriminant`
+   - Ensures optional properties are handled in exclusion narrowing
+
+3. Removed outdated TODO comment about Lazy/Intersection resolution
+
+**Bug Status**:
+- Bug #1 (reversed subtype check): Already fixed with warning comment
+- Bug #2 (missing type resolution): Already implemented in lines 316-328
+- Bug #3 (optional properties): FIXED in this commit
+
+**Gemini Guidance**: Followed Two-Question Rule (Question 2: Implementation Review)
+
+**Next**: Task 2 - Implement Solver::narrow
 
 ---
