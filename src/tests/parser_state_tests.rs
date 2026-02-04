@@ -4096,3 +4096,32 @@ fn test_ts1038_declare_inside_regular_namespace() {
     let root = parser.parse_source_file();
     assert!(!root.is_none());
 }
+
+// =============================================================================
+// Reserved Word Tests (TS1359)
+// =============================================================================
+
+#[test]
+fn test_reserved_word_emits_ts1359() {
+    let source = "var break = 5;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _source_file = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+
+    // Should have at least one diagnostic
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected at least one diagnostic for 'break' reserved word"
+    );
+
+    // Should have TS1359
+    let ts1359_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 1359).collect();
+    assert!(
+        !ts1359_errors.is_empty(),
+        "Expected TS1359 error for 'break' reserved word, got {:?}",
+        diagnostics
+    );
+
+    println!("TS1359 errors: {:?}", ts1359_errors);
+}
