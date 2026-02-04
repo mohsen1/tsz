@@ -9,14 +9,14 @@ Completed BCT implementation for class instances and verified Application expans
 
 ## Current Session Plan (Redefined 2026-02-04)
 
-### Priority 1: Conformance Testing
-**Goal**: Validate BCT implementation against TypeScript conformance suite
-```bash
-./scripts/conformance.sh run --server --max=200
-```
-- Check for regressions in class inheritance
-- Check for regressions in generic type inference
-- Document any failures in session file
+### ✅ Priority 1: Conformance Testing (COMPLETE)
+**Status**: Baseline established
+- **Result**: 5357/12847 passed (41.7%)
+- **Time**: 84.5s
+- **Key issues**:
+  - TS2322 (assignability): 544 extra errors (tsz stricter than tsc)
+  - TS2345 (argument compatibility): 448 extra errors
+- These extra strictness errors align with nominal subtyping bug
 
 ### ✅ Priority 2: Application Type Expansion (COMPLETE)
 **Status**: Already implemented and working
@@ -25,17 +25,18 @@ Completed BCT implementation for class instances and verified Application expans
 - Type parameters stored in def_type_params map
 - TODO in evaluate.rs was outdated
 
-### Priority 3: Nominal Subtyping Fix (CRITICAL)
-**Files**: `src/solver/subtype.rs`, `src/solver/compat.rs`
+### Priority 3: Nominal Subtyping Fix (IN PROGRESS)
+**Files**: `src/solver/subtype_rules/objects.rs`, `src/solver/subtype.rs`
 
-**Problem**: Subtype check treats ObjectWithIndex types structurally instead of nominally
-- `is_subtype_of(Cat, Dog)` incorrectly returns `true`
-- Classes with private/protected members must use nominal (private brand) checking
-- This is a "Judge" level error affecting system soundness
+**Current Status**: Asked Gemini Question 1, approach validated
 
-**Impact**: If private members from Class A and Class B are treated as compatible, violates TS safety
+**Plan**:
+1. Modify `check_object_with_index_to_object` in `src/solver/subtype_rules/objects.rs` (line 425)
+2. Extract `symbol` field from source and target ObjectShapes
+3. If both symbols present and differ, use inheritance_graph for nominal check
+4. Only fall through to structural check if nominal check passes or if no symbols
 
-**Reference**: NORTH_STAR.md Section 3.3 (Judge vs. Lawyer)
+**Function to modify**: `check_object_with_index_to_object` at line 425
 
 ### Priority 4: BCT for Intersections
 **File**: `src/solver/expression_ops.rs`
@@ -67,7 +68,7 @@ Extend `compute_best_common_type` to handle intersection types.
 
 ## Success Criteria
 
-- [ ] `get_class_base_type` added to TypeDatabase trait
+- [x] `get_class_base_type` added to TypeDatabase trait
 - [ ] Common base class detection implemented
 - [ ] Literal widening works: `[1, 2]` → `number[]`
 - [ ] Nominal BCT works: `[dog, cat]` → `Animal[]`
