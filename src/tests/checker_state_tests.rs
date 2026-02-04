@@ -13,7 +13,7 @@ use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
-use crate::solver::{PropertyInfo, TypeId, TypeInterner, Visibility, types::TypeKey};
+use crate::solver::{TypeId, TypeInterner, Visibility, types::TypeKey};
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
 
 // =============================================================================

@@ -165,6 +165,7 @@ pub fn would_create_inheritance_cycle(
 mod tests {
     use super::*;
     use crate::solver::TypeInterner;
+    use crate::solver::types::Visibility;
 
     #[test]
     fn test_merge_properties() {

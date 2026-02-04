@@ -581,6 +581,7 @@ impl ContentAddressedDefIds {
 mod tests {
     use super::*;
     use crate::solver::TypeInterner;
+    use crate::solver::types::Visibility;
 
     fn create_test_interner() -> TypeInterner {
         TypeInterner::new()
