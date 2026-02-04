@@ -323,6 +323,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Check if abstract for special handling
         let is_abstract = self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16);
+        // Check if private for type annotation omission
+        let is_private = self.has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword as u16);
 
         // Modifiers
         self.emit_member_modifiers(&prop.modifiers);
@@ -336,11 +338,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Type - use explicit annotation if present, otherwise use inferred type
-        if !prop.type_annotation.is_none() {
+        // SPECIAL CASE: For private properties, TypeScript omits type annotations in .d.ts
+        if !prop.type_annotation.is_none() && !is_private {
             self.write(": ");
             self.emit_type(prop.type_annotation);
-        } else if is_abstract || !prop.initializer.is_none() {
-            // For abstract properties OR properties with initializers, use inferred type
+        } else if is_abstract || (!is_private && !prop.initializer.is_none()) {
+            // For abstract properties OR properties with initializers (non-private), use inferred type
             if let Some(type_id) = self.get_node_type(prop_idx) {
                 self.write(": ");
                 self.write(&self.print_type_id(type_id));
@@ -361,6 +364,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write_indent();
 
+        // Check if private/abstract
+        let is_private = self.has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword as u16);
+        let _is_abstract = self.has_modifier(&method.modifiers, SyntaxKind::AbstractKeyword as u16);
+
         // Modifiers
         self.emit_member_modifiers(&method.modifiers);
 
@@ -379,8 +386,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_parameters(&method.parameters);
         self.write(")");
 
-        // Return type
-        if !method.type_annotation.is_none() {
+        // Return type - SPECIAL CASE: For private methods, TypeScript omits return type in .d.ts
+        if !method.type_annotation.is_none() && !is_private {
             self.write(": ");
             self.emit_type(method.type_annotation);
         }
@@ -1153,9 +1160,14 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
+
         self.write_indent();
         if !self.inside_declare_namespace {
             self.write("export declare ");
+        }
+        if is_abstract {
+            self.write("abstract ");
         }
         self.write("class ");
         self.emit_node(class.name);
@@ -1379,13 +1391,40 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
                         self.emit_node(decl.name);
-                        if !decl.type_annotation.is_none() {
-                            self.write(": ");
-                            self.emit_type(decl.type_annotation);
-                        } else if let Some(type_id) = self.get_node_type(decl_idx) {
-                            // No explicit type, but we have inferred type from cache
-                            self.write(": ");
-                            self.write(&self.print_type_id(type_id));
+
+                        // Determine if we should emit a literal initializer for const
+                        let use_literal_initializer = if keyword == "const"
+                            && decl.type_annotation.is_none()
+                            && !decl.initializer.is_none()
+                        {
+                            // Check if initializer is a primitive literal
+                            if let Some(init_node) = self.arena.get(decl.initializer) {
+                                let k = init_node.kind;
+                                k == SyntaxKind::StringLiteral as u16
+                                    || k == SyntaxKind::NumericLiteral as u16
+                                    || k == SyntaxKind::TrueKeyword as u16
+                                    || k == SyntaxKind::FalseKeyword as u16
+                                    || k == SyntaxKind::NullKeyword as u16
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        // Emit literal initializer for const with primitive literals
+                        if use_literal_initializer {
+                            self.write(" = ");
+                            self.emit_expression(decl.initializer);
+                        } else {
+                            if !decl.type_annotation.is_none() {
+                                self.write(": ");
+                                self.emit_type(decl.type_annotation);
+                            } else if let Some(type_id) = self.get_node_type(decl_idx) {
+                                // No explicit type, but we have inferred type from cache
+                                self.write(": ");
+                                self.write(&self.print_type_id(type_id));
+                            }
                         }
                     }
 
