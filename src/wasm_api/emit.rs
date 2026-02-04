@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use crate::LoweringPass;
+use crate::declaration_emitter::DeclarationEmitter;
 use crate::emit_context::EmitContext;
 use crate::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 use crate::parser::{NodeArena, NodeIndex, ParserState};
@@ -158,11 +159,20 @@ pub fn transpile_module(source: &str, options_json: &str) -> String {
 
     let output_text = printer.get_output().to_string();
 
+    // Generate declaration file if requested
+    let declaration_text = if options.declaration.unwrap_or(false) {
+        let mut decl_emitter = DeclarationEmitter::new(&arena);
+        let decl_output = decl_emitter.emit(root_idx);
+        Some(decl_output)
+    } else {
+        None
+    };
+
     // Build result
     let result = TranspileOutput {
         output_text,
-        source_map_text: None,  // TODO: implement source maps
-        declaration_text: None, // TODO: implement declarations
+        source_map_text: None, // TODO: implement source maps
+        declaration_text,
         diagnostics: Vec::new(),
     };
 
